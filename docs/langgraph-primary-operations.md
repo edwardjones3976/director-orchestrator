@@ -1,3 +1,23 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
@@ -380,12 +400,91 @@ their mere presence:
   `-SourceRemoteName` selects one explicitly; creation requires that remote to
   be an exact GitHub URL for the allowlisted repository and requires its live
   starting-ref head to equal the pinned commit before creating the target.
+  Snapshot verification uses `LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_*`
+  when both are set; otherwise it reuses `LANGGRAPH_PRIMARY_PINNED_*` for the
+  allowlisted repository worktree while service acceptance keeps the Director
+  candidate pins.
 - `scripts/windows-host-provider-bridge.ps1 -Action Preflight` verifies the
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
+  `-Action CheckEnvironment` prints the per-lane production configuration
+  digests and makes no provider call. It opens no validation route, so it
+  omits `antigravity`, which the bridge validates only through the team route,
+  and omits `openai` when `DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG`
+  is set; for those lanes the bridge binds the team fingerprint or the
+  Responses route digest, which only the authenticated
+  `GET /v1/provider/configuration-digest` endpoint reports. Host-command
+  provider children and those digests read only ten operating-system names
+  (`SYSTEMROOT`, `WINDIR`, `PATH`, `PATHEXT`,
+  `TEMP`, `TMP`, `COMSPEC`, `LOCALAPPDATA`, `APPDATA`, `USERPROFILE`) and the
+  lane credentials (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GH_TOKEN`,
+  `GITHUB_TOKEN`). When the profile sets
+  `DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE`, the bridge, before any
+  digest or provider run, replaces the ten names with the pinned file's values
+  and drops every inherited lane credential. A lane credential then reaches a
+  provider only when the bridge profile sets it and names it in
+  `DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES` (comma-separated, no spaces); the
+  launcher copies that value from the profile and refuses an unknown or unset
+  name. With a pin, the digests depend on the pinned file and the profile, not
+  on the launching shell. Without a pin, the launching shell's values are used.
+  The `openai` lane's native Codex child is not a host command: besides the ten
+  names it inherits `HOME`, `PROGRAMDATA`, `PROGRAMFILES`, `PROGRAMFILES(X86)`,
+  `LANG` and `LC_ALL` from the bridge process. Those six are neither pinned nor
+  hashed, so that child still follows the launching shell or Scheduled Task.
+  The pinned file is a UTF-8 JSON object of at most 64 KiB at an absolute path
+  with exactly two keys: `version`, equal to
+  `director-native-process-environment/v1`, and `environment`, an object with
+  the ten names above and optionally `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+  `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE` and
+  `CURL_CA_BUNDLE`. Under a pin the bridge drops those proxy and CA names (in
+  any case) from its inherited environment and uses only the file's; they reach
+  the bridge's own HTTPS client, never a host-command child, and the Responses
+  route digest binds them. Every value is a non-empty string without CR, LF
+  or NUL, every `PATH` entry and the `TEMP`, `TMP`, `SYSTEMROOT`, `WINDIR`,
+  `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` directories must be absolute and
+  exist, `COMSPEC` must be an absolute existing file, and an empty `PATH` entry
+  (including a trailing `;`) refuses. Any other file refuses startup without
+  echoing its content.
+  `-Action Install -InstallRoot <dir>` requires the pinned file and a clean
+  checkout: the runtime paths it copies (`src/director_orchestrator`,
+  `docs/schemas`, `docs/provider-profiles`, `prompts` and the launcher) may hold
+  no modified, untracked or ignored file other than bytecode caches. It copies
+  the bridge runtime into a content-addressed directory, records the source
+  commit and tree beside it in `<digest>.source.json`, runs `CheckEnvironment`
+  from the copy and registers a restart-on-failure Scheduled Task without
+  starting it. Each `Run` or `CheckEnvironment` from an installed copy
+  recomputes its manifest and refuses to start on a mismatch; that detects
+  drift, not a same-user edit, since that user can also edit the task. The
+  `-Python` interpreter and its packages are neither copied nor hashed: the task
+  runs them in place, so Install requires an explicit absolute `-Python` path
+  outside the source checkout and refuses the in-checkout `.venv-win` default
+  or any interpreter under the checkout, before copying anything. Symlink and
+  junction components of the interpreter, the checkout and the install root are
+  resolved to their final targets before those containment checks (a reparse
+  point without a link target refuses), and the task registers the resolved
+  interpreter path. Before provenance is written or the task registered, every
+  installed file is re-proved against the recorded commit's blob (with this
+  checkout's line-ending conversion, via `git hash-object --path`), so a file
+  changed after the clean-source check cannot be attested. Every lane digest
+  (native, team and Responses) also binds the runtime content address: every
+  file Install copies (code, `docs/schemas`, `docs/provider-profiles`,
+  `prompts` and the launcher), which for an installed copy equals its
+  directory name. Each validation request hashes those bytes before
+  admission and rehashes them at every post-execution check, never trusting
+  file size or modification time. The Responses digest also binds the proxies
+  urllib resolves, the bytes of the `SSL_CERT_FILE` bundle or every file in
+  `SSL_CERT_DIR` (both must be absolute paths, and absolute existing entries
+  when pinned),
+  which on Windows fall back to the registry when no proxy variable is set, and
+  `SSLKEYLOGFILE` joins the proxy and CA names dropped under a pin.
+  Install is persistent host configuration and needs owner
+  approval. Generations must pin the digests printed by the installed copy,
+  and for the routed `openai` and `antigravity` lanes the digests the running
+  bridge's authenticated endpoint reports.
 - `scripts/windows-langgraph-primary-control.ps1` provides separate `Preflight`,
-  `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`, and `Rollback`
-  operations. Every invocation requires the exact environment-file path,
+  `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`,
+  `ActivateOffline`, and `Rollback` operations. Every invocation requires the exact environment-file path,
   Compose project, and host port; profile identity is never inferred.
 - `scripts/windows-postgres-test-lane.ps1` starts, inspects, exports, tests
   against, and removes one disposable `postgres:17-alpine` container pinned to
@@ -453,23 +552,67 @@ GitHub author association, and its body must exactly equal the canonical
 `director-activation-review/v1` JSON artifact. Comments, quoted markers, and
 free-form prose never qualify. For alternative modes, see the separately signed
 [provider-acceptance-v2](provider-acceptance-v2.md) and
-[two-party-activation-v3](two-party-activation-v3.md) contracts. Under `github-v1`, the CI, security, and independent-review issuers
+[two-party-activation-v3](two-party-activation-v3.md) contracts, and the unsigned
+`owner-local-evidence-v1` owner adoption described below. Under `github-v1`, the CI, security, and independent-review issuers
 must supply a closed canonical artifact with a canonical facts digest and their
-separate domain-separated HMAC attestations. The control process does not mint
-those attestations: it requires `-AcceptanceArtifactPath`, independently reads
+separate domain-separated HMAC attestations.
+
+The `github-v1` control process does not mint those attestations: it requires
+`-AcceptanceArtifactPath`, independently reads
 GitHub, and fails unless the supplied artifact exactly matches the observed
 repository, pull request, head, checks, and reviews. `ACCEPTED` accepts only that
 exact artifact path;
 raw `--facts-json` and caller-selected `--evidence-digest` values are rejected.
+
+With explicit owner authorization, `owner-local-evidence-v1` instead adopts an
+exact release's retained local QA, independent review and security evidence. It
+keeps hosted checks recorded as `HOSTED_NOT_EXECUTED`; actual failed run records
+remain in the pinned evidence bundle. This is owner adoption, not a GitHub or
+provider signature. Default `github-v1` and both signed provider modes are unchanged.
+
+Mount the owner-protected evidence directory read-only in **every** Compose
+invocation and the persistent service. Set `LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH`
+to its container-side `adoption.json` and pin its bytes with
+`LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256`. The closed adoption document
+uses `director-primary-local-evidence-adoption/v1`, decision
+`ADOPT_SCOPED_LOCAL_EVIDENCE`, and the existing owner token's domain-separated
+signature. Its QA, independent review and security digests must identify actual
+files in `pinned_evidence`; each path is a simple filename beside the adoption
+document. Loading enforces at most 32 unique pins, a 64 MiB aggregate bundle
+limit, and an 8 MiB per-file cap before hashing. Loading and replay verify those file bytes. Reviewed source must match
+the candidate tree. An earlier full-suite receipt remains earlier evidence;
+changed code needs fresh focused QA and current-head independent/security review.
+
+The acceptance artifact uses version
+`director-primary-acceptance-artifact/owner-local-evidence-v1` and a single
+`owner_adoption` attestation from `owner-local-evidence-adoption`, signed with the
+existing owner token over its canonical unsigned artifact using the
+`director-primary-acceptance/owner_adoption/owner-local-evidence-adoption/v1` domain.
+The control command checks the explicitly supplied repository, PR and reviewer
+allowlists. It never manufactures an independent reviewer or security signature.
+
+Select a fresh owner-pinned generation with version
+`director-primary-generation/owner-local-evidence-v1`; it retains the existing
+generation fields, substituting `owner_adoption_path`/`owner_adoption_sha256` for
+the provider registry pair. All image, resolved Compose, configuration, provider
+binding, candidate and database checks still run. Its SQLite generation marker
+has a companion `.evidence.json` file for the ordered activation history, so older
+generations are preserved. The existing `SelectGeneration`, `Preflight`, `Accept`,
+`Migrate`, `Backup`, `RestoreDrill`, staging and activation sequence applies.
+Startup verifies readiness and generation before opening the primary database.
+This path changes no enrollment, budget, provider qualification or Slack delivery
+requirement.
 The durable record retains the source artifact and its digest for deterministic
-offline replay. Every reader of an accepted history must be constructed with all
-three distinct verifier secrets; replay revalidates the full closed artifact and
-all three attestations before readiness can pass. Every stage digest is also
-recomputed from canonical facts on read, so coordinated public-fact/hash rewrite,
-fact mutation, artifact substitution, or digest replacement fails closed.
+offline replay. Every reader needs the selected mode's verifier secrets:
+`github-v1` requires three distinct authorities, while `owner-local-evidence-v1`
+requires the owner adoption authority. Replay revalidates the full closed artifact
+and its attestations before readiness can pass. Acceptance signatures detect
+artifact substitution. Later stage digests detect inconsistent or corrupted
+facts; their public hashes do not authenticate someone who can rewrite both
+facts and hashes. Protect the durable evidence volume and generation pins.
 Operator-set booleans are not acceptance evidence.
 
-Before issuer signing, `windows-langgraph-primary-control.ps1 -Action
+For `github-v1`, before issuer signing, `windows-langgraph-primary-control.ps1 -Action
 PrepareAcceptance -GitHubRepository owner/repository -PullRequestNumber 98
 -CandidateCommit <exact-40-character-PR-head>
 -SecurityReviewerAllowlistJson '["security-login"]'
@@ -506,10 +649,65 @@ accounts, signing credentials, deployment authority, or a fallback acceptance mo
 
 Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
-activation, graph ownership, and zero ambiguous effects. Rollback stops Slack and
-the orchestrator, waits for the writer lease to expire, refuses when ambiguous
-effects exist, performs the fenced generation change back to legacy, and preserves
-the primary database.
+activation, graph ownership, and zero ambiguous effects. It creates the Slack
+gateway stopped from the verified candidate image, reads back the created
+gateway's image ID, records `ACTIVATED`, and only then starts n8n and the
+gateway, so a failed readback or evidence write unwinds with Slack and n8n
+intake still closed. `ActivateOffline` needs the same
+acceptance, migration and restore evidence but not provider readiness: it turns
+offline simulation on and paid runs and live dispatch off, requires the paid-off
+intake projection with the live runtime inactive, and records no `ACTIVATED`
+stage. `ActivateOffline` first applies the `PrepareOfflineHandoff` profile
+guard (a provider-v2 or provider-v3-two-party generation, and explicit `false`
+for `ALLOW_PAID_RUNS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` and
+`DIRECTOR_PROVIDER_VALIDATION_ENABLED`) before anything stops. Both `Activate`
+and `ActivateOffline` require a quiescent primary plane
+(`primary_quiescence_metrics().rollback_safe`) before they stop anything, and
+again after the stop, so unfinished work approved in one mode is never
+recovered by the other mode's dispatcher; on refusal nothing is switched. The
+post-stop check keeps writer leases: it waits up to 75 seconds (the 60-second
+default lease plus margin) only while leases are the sole blocker, refuses at
+once on any other unfinished work, and refuses a lease still live after the
+wait. If paid `Activate` fails after recording `ACTIVATED` (for example an n8n
+or Slack start), the next `Activate` on the same identity resumes only from
+that unwound state: a read-only `require-activated` check, a readback that
+every intake surface is already stopped (a running `ACTIVATED` deployment is
+refused as already activated and nothing is stopped), and a proof that the
+primary still owns new intake (Rollback forces a new generation) replace the
+quiescence, inventory and `require-ready` steps, and the same switches, image
+readbacks and health proof precede reopening intake. `ACTIVATED` is never
+recorded twice; before reopening, the resume also waits (bounded, as above) for
+no writer lease to be live, so it never runs beside a foreign writer. A failed
+`ActivateOffline` leaves a marker beside the profile; the next `ActivateOffline`
+then requires only that no writer lease is live (its runtime took intake before
+its health proof could pass, so it may have admitted offline work), and paid
+`Activate` clears the marker once it proves quiescence. `SSLKEYLOGFILE` is
+refused in the pinned file. A recovered task keeps its persisted `execution_mode` exactly;
+an empty or blank label is held, never defaulted. Independently, live dispatch holds any task whose persisted
+`execution_mode` is not exactly `live` (including `unknown`, missing or
+malformed labels), and the offline dispatcher holds any task not labelled
+`offline_simulation` or `paid_off`.
+A later paid `Activate` can reuse that evidence chain only while the
+legacy SQLite task ID/status inventory is unchanged: it binds the inventory
+again and refuses any difference as immutable. Legacy tasks stay live under
+primary (startup and periodic recovery of queued, planning, running and
+reviewing legacy tasks, legacy approvals and callbacks), so a legacy status
+change during offline operation means paid activation needs a new generation.
+Rollback stops Slack and the orchestrator, waits for the writer lease to expire,
+refuses when ambiguous effects exist, performs the fenced generation change back
+to legacy, and preserves the primary database. It then recreates the
+orchestrator on the image recorded before the first candidate recreate (by
+`StageRuntime`, or by activation when no staging ran) in
+`<profile>.prior-images.<generation>.<image>.json`, reads its image ID back and
+waits for health, creates the gateway stopped on the recorded gateway image and
+reads it back, and only then starts n8n and the gateway. If a readback or health
+check fails after the compare-and-swap, it stops and proves Slack, n8n and API
+intake closed again before it reports the failure. An invalid record refuses
+rollback before anything stops. With no record, the fenced return to legacy
+still runs on the candidate image with paid runs and primary off, and the tool
+reports that no image was restored. No record is written when the orchestrator
+or gateway container is absent (a fresh stack, or after `docker compose down`)
+or already runs the candidate image; staging and activation then proceed.
 
 The control tool persists `/data/langgraph-primary-activation-evidence.json` as
 an atomic versioned state machine. Its identity binds the exact Director
@@ -547,9 +745,9 @@ legacy SQLite task ID/status inventory and durably binds that immutable snapshot
 to legacy ownership before `require-ready` may pass. Pre-cutover tasks remain
 legacy-owned; only the fenced new-intake generation transfers to LangGraph.
 
-If any post-start activation health check fails, the tool stops the orchestrator,
-restores paid/live/new-intake switches to their closed values, and leaves Slack,
-n8n, and API intake stopped. Rollback uses unconditional runtime exceptions for
+If any post-start activation check fails, including the gateway image readback,
+the tool stops and proves Slack, n8n, and API intake closed, and restores the
+paid, live, offline-simulation and new-intake switches to their closed values. Rollback uses unconditional runtime exceptions for
 ambiguous-effect and quiescence failures; Python optimization cannot remove the
 safety checks.
 
@@ -569,9 +767,13 @@ requirement to dispatch every provider. Current authenticated app and adapter
 readiness must cover OpenAI orchestration and at least two other primary providers
 capable of implementation and independent review. OpenAI production is explicitly assigned under the frozen allocation profile;
 control-plane work creates no production credit and material authors cannot self-review. The planner freezes one implementation provider and a
-different reviewer before the existing exact-plan execution approval. Eligible
-providers satisfy the prospective hard cap; the normal band guides preference,
-then operator-configured comparable cost ranks break ties. Pair selection projects
+different reviewer before the existing exact-plan execution approval. Every task
+stops there except a small read-only task that a live standing grant
+pre-authorizes (phase 4S in `docs/human-out-of-the-loop-operation.md`), which
+is audited and then dispatched without that button. Eligible
+providers exclude only zero-target lanes; the retired rolling-twenty hard cap no
+longer blocks admission, and the normal band guides preference, then
+operator-configured comparable cost ranks break ties. Pair selection projects
 research (when requested), production, then review in dependency order so rollover
 can unlock an independent reviewer; these projections never create ledger rows. Missing cost authority
 holds selection. Dispatch rechecks admission atomically; it never substitutes a
@@ -596,8 +798,9 @@ policy while preserving existing rows. Unknown or incompatible schema/history
 fails closed; the v1-only table still requires explicit remediation before any
 provider attempt. Legacy reservations without frozen profile-admission provenance
 require explicit reconciliation before new admissions, preserving their history.
-Mature windows still assess last
-nineteen plus the prospective assignment at target+5 percentage points.
+Mature windows still assess last nineteen plus the prospective assignment
+against the normal ±3-point band as an advisory preference; the owner retired
+the target+5 rolling-twenty hard ceiling on 2026-09-21.
 The approved Engineering profile replaces the former unsustainable core-only
 allocation: OpenAI35/Claude30/Cursor15/Grok10/Antigravity10. The full matrix,
 role boundaries, zero-target rule and preserved-history profile changes are in
@@ -678,3 +881,27 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->

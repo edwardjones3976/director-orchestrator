@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
@@ -45,6 +48,7 @@ from director_orchestrator.delegation_ledger import (
     parse_record,
 )
 from director_orchestrator.store import (
+    DelegationAuditAdvanced,
     DelegationAuditConflict,
     DelegationAuditAnchorUnavailable,
     DelegationAuditLedgerCorrupt,
@@ -140,10 +144,10 @@ class MemoryAnchor:
     def __init__(self):
         self.head = (0, "0" * 64)
 
-    def read_head(self):
+    def read_head(self, *, timeout=None):
         return self.head
 
-    def compare_and_set(self, expected, updated):
+    def compare_and_set(self, expected, updated, *, timeout=None):
         if self.head != expected:
             raise RuntimeError("anchor changed")
         self.head = updated
@@ -1190,6 +1194,103 @@ class ExecutesNoDecisionTests(unittest.TestCase):
         )
 
 
+SMALL_GRANT = json.dumps({
+    "schema_version": GRANT_SCHEMA_VERSION, "grant_id": "grant-small",
+    "repository": "example/project", "branch_pattern": "main",
+    "classes": [Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK.value],
+    "providers": ["claude", "cursor"], "expires_at": (NOW + timedelta(days=1)).isoformat(),
+    "max_exercises": 5, "revoked": False,
+})
+
+
+class PreAuthorizedRecordTests(unittest.TestCase):
+    """PRE_AUTHORIZED is additive: its own strict rules, the ACCEPT rule untouched."""
+
+    @staticmethod
+    def pre_authorized(**overrides) -> DelegationAuditRecord:
+        return record(**{
+            "outcome": RecordedOutcome.PRE_AUTHORIZED,
+            "grant_id": "grant-small",
+            "grant_snapshot": SMALL_GRANT,
+            "decision_class": Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            "acting_agent": "director-langgraph:DIR-LG-SMALL",
+            "verdicts": (),
+            "gate_results": (gate("authorization"), gate("gates"), gate("scope")),
+            **overrides,
+        })
+
+    def test_valid_records_round_trip(self):
+        for original in (
+            self.pre_authorized(),
+            # The trip record: a refusal for the same class, with no verdict.
+            record(
+                grant_id="grant-small", grant_snapshot=SMALL_GRANT,
+                decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK, verdicts=(),
+                gate_results=(gate("delegation_trip", GateStatus.FAIL),),
+            ),
+        ):
+            with self.subTest(outcome=original.outcome):
+                self.assertEqual(original, parse_record(original.canonical_json()))
+
+    def test_malformed_pre_authorizations_are_refused(self):
+        cases = {
+            "with_verdicts": {"verdicts": (verdict(),)},
+            "failing_gate": {"gate_results": (gate("authorization", GateStatus.FAIL),)},
+            "unreadable_gate": {"gate_results": (gate("gates", GateStatus.UNREADABLE),)},
+            "no_gates": {"gate_results": ()},
+            "no_grant": {"grant_id": None, "grant_snapshot": None},
+            "no_sha": {"candidate_sha": None},
+            "another_class": {"decision_class": Tier1Class.MARK_PULL_REQUEST_READY},
+            "snapshot_lacks_class": {"grant_id": "grant-001", "grant_snapshot": GRANT},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(case=name), self.assertRaises(DelegationAuditError):
+                self.pre_authorized(**overrides)
+        # The wire form cannot smuggle a verdict in either.
+        payload = self.pre_authorized().to_payload()
+        payload["verdicts"] = [verdict().to_payload()]
+        with self.assertRaises(DelegationAuditError):
+            parse_record(json.dumps(payload))
+
+    def test_the_small_class_never_mints_a_delegated_record(self):
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            with self.subTest(outcome=outcome), self.assertRaises(DelegationAuditError):
+                # Two ACCEPTs and passing gates: valid for any other class.
+                record(
+                    outcome=outcome, grant_id="grant-small", grant_snapshot=SMALL_GRANT,
+                    decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                )
+        # The existing ACCEPT rule for other classes is unchanged.
+        self.assertIs(
+            RecordedOutcome.DELEGATED, record(outcome=RecordedOutcome.DELEGATED).outcome
+        )
+
+    def test_a_conditional_append_refuses_a_ledger_that_advanced(self):
+        """Two processes that counted the same history cannot both spend it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path, anchor = str(Path(directory) / "audit.sqlite3"), MemoryAnchor()
+            first = TaskStore(path, delegation_audit_anchor=anchor)
+            second = TaskStore(path, delegation_audit_anchor=anchor)
+            seen = len(second.delegation_audit_records())
+            first.append_delegation_audit_record(
+                self.pre_authorized(acting_agent="director-langgraph:DIR-LG-A"),
+                expected_sequence=seen,
+            )
+            with self.assertRaises(DelegationAuditAdvanced):
+                second.append_delegation_audit_record(
+                    self.pre_authorized(acting_agent="director-langgraph:DIR-LG-B"),
+                    expected_sequence=seen,
+                )
+            [kept] = first.delegation_audit_records()
+            self.assertEqual("director-langgraph:DIR-LG-A", kept.acting_agent)
+            self.assertEqual(1, anchor.head[0])
+            # Unconditional appends keep their existing behaviour.
+            second.append_delegation_audit_record(
+                self.pre_authorized(acting_agent="director-langgraph:DIR-LG-C"))
+            self.assertEqual(2, len(first.delegation_audit_records()))
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
@@ -1199,3 +1300,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]

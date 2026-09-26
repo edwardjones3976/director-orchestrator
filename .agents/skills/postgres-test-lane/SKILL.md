@@ -5,6 +5,15 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | BEGIN]] -->
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]] -->
+
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
+
+<!-- [[Claude | Sonnet 5 | 2026-09-21 | 21:35 UTC | BEGIN]] -->
+<!-- Fallback-author correction: add tests/test_status_receipts.py to the inventory only. -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 12:18 UTC | BEGIN]] -->
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 17:11 UTC | BEGIN]] -->
@@ -31,6 +40,7 @@ This is local host tooling, not a shared provider workflow skill: the Director n
 
 These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than skip when it is absent:
 
+- `tests/test_edge_activation_contract.py`
 - `tests/test_entitlement_control_plane.py`
 - `tests/test_langgraph_postgres.py`
 - `tests/test_primary_authenticated_ingress_postgres.py`
@@ -44,6 +54,8 @@ These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than ski
 - `tests/test_primary_staging_controls.py`
 - `tests/test_provider_validation.py`
 - `tests/test_primary_workload.py`
+- `tests/test_responses_team_readiness_composition.py`
+- `tests/test_status_receipts.py`
 
 `tests/test_primary_backup_restore.py` also runs `pg_dump` and `pg_restore` inside the container named by `LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER`, so no host PostgreSQL install is needed.
 
@@ -88,3 +100,9 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 17:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 12:18 UTC | END]] -->
+<!-- [[Claude | Sonnet 5 | 2026-09-21 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]] -->
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | END]] -->

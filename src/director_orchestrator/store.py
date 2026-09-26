@@ -1,3 +1,12 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | BEGIN]]
@@ -31,6 +40,7 @@
 from __future__ import annotations
 
 import hmac
+import math
 import json
 import secrets
 import sqlite3
@@ -40,6 +50,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
+from time import monotonic
 from typing import Any, Callable, Iterator, Protocol
 
 from .delegation_ledger import (
@@ -134,6 +145,14 @@ class DelegationAuditConflict(RuntimeError):
     """
 
 
+class DelegationAuditAdvanced(RuntimeError):
+    """A conditional append found the ledger past the sequence its caller read.
+
+    Nothing was written. The caller decided on a history that is no longer
+    current, so it must read again rather than append on stale evidence.
+    """
+
+
 class DelegationAuditLedgerCorrupt(RuntimeError):
     """Stored delegation evidence disagrees with its digest or external anchor.
 
@@ -145,6 +164,14 @@ class DelegationAuditLedgerCorrupt(RuntimeError):
 
 class DelegationAuditAnchorUnavailable(RuntimeError):
     """No trustworthy external checkpoint can be read or durably advanced."""
+
+
+class DelegationAuditDeadlineExceeded(RuntimeError):
+    """A verifying read reached its caller's deadline before it finished.
+
+    Nothing is returned and nothing is claimed about the ledger: the caller
+    decides what an unread history means (a standing grant keeps the button).
+    """
 
 
 class DelegationAuditAnchor(Protocol):
@@ -162,13 +189,36 @@ class DelegationAuditAnchor(Protocol):
     supplied anchor the ledger fails closed. Checkpoint advancement occurs before
     SQLite commit: an ambiguous failure or crash can leave a mismatch, which
     requires external recovery and must never be silently rebased or retried.
+
+    A bounded caller passes ``timeout``: the seconds left of its absolute
+    deadline. An implementation must spend no more than that on the call
+    (socket, lock and database busy timeouts set from it) and raise
+    DelegationAuditDeadlineExceeded when it runs out. A compare-and-set that
+    times out is ambiguous (the checkpoint may have advanced), so the store
+    treats it as an anchor failure, never as a clean refusal.
     """
 
-    def read_head(self) -> tuple[int, str]: ...
+    def read_head(self, *, timeout: float | None = None) -> tuple[int, str]: ...
 
     def compare_and_set(
-        self, expected: tuple[int, str], updated: tuple[int, str]
+        self, expected: tuple[int, str], updated: tuple[int, str],
+        *, timeout: float | None = None,
     ) -> None: ...
+
+
+def _anchor_timeout(deadline: float | None) -> dict[str, float]:
+    """The keyword a bounded anchor call gets: the remainder of the deadline.
+
+    Unbounded callers pass nothing, so anchors outside the bounded paths keep
+    their existing call shape.
+    """
+
+    if deadline is None:
+        return {}
+    left = deadline - monotonic()
+    if not left > 0:
+        raise DelegationAuditDeadlineExceeded("audit deadline reached before the anchor call")
+    return {"timeout": left}
 
 
 def _audit_chain_digest(
@@ -2946,17 +2996,13 @@ class TaskStore:
                     )
                     # Profile admission retains real reservations after failure or
                     # ambiguity; accepted-output accounting stays a separate ledger.
+                    # The owner retired the rolling-twenty target+5 hard ceiling on
+                    # 2026-09-21 as outdated; only zero-target ineligibility remains.
                     if kind is not WorkKind.COORDINATION and (bound is None or not bool(bound["admitted"])):
                         lane = canonical_allocation_lane(provider.value)
                         target = allocation_targets(allocation_profile)[lane]
-                        recent = connection.execute(
-                            "SELECT provider FROM workload_profile_bindings WHERE admitted = 1 ORDER BY rowid DESC LIMIT 19"
-                        ).fetchall()
-                        count = 1 + sum(canonical_allocation_lane(str(item["provider"])) == lane for item in recent)
                         if target == 0:
                             extra_violations.append(f"allocation_profile_lane_ineligible:{lane}")
-                        elif count * 5 > target + 5:
-                            extra_violations.append(f"allocation_admission_hard_cap_exceeded:{lane}:{target + 5}")
                     decision = self._decision_with_violations(
                         decision, extra_violations
                     )
@@ -3960,7 +4006,8 @@ class TaskStore:
         return self.save(record)
 
     def _verified_audit_snapshot(
-        self, connection: sqlite3.Connection, *, limit: int = 0, after_digest: str | None = None
+        self, connection: sqlite3.Connection, *, limit: int = 0, after_digest: str | None = None,
+        deadline: float | None = None,
     ) -> tuple[tuple[int, str], list[sqlite3.Row]]:
         """Verify every row, retaining only the page from the same cursor.
 
@@ -3976,7 +4023,10 @@ class TaskStore:
         if self._audit_anchor is None:
             raise DelegationAuditAnchorUnavailable("external audit anchor is required")
         try:
-            expected = self._audit_anchor.read_head()
+            expected = self._audit_anchor.read_head(**_anchor_timeout(deadline))
+        except DelegationAuditDeadlineExceeded:
+            # A read changes nothing: out of time is a clean refusal.
+            raise
         except Exception as exc:
             raise DelegationAuditAnchorUnavailable("external audit anchor is unreadable") from exc
         if (
@@ -3996,6 +4046,8 @@ class TaskStore:
             "FROM delegated_decision_audit ORDER BY ledger_id"
         ):
             count += 1
+            if deadline is not None and monotonic() > deadline:
+                raise DelegationAuditDeadlineExceeded("audit read reached its deadline")
             if row["ledger_id"] != count:
                 raise DelegationAuditLedgerCorrupt("audit sequence has a gap")
             chain = _audit_chain_digest(
@@ -4012,7 +4064,47 @@ class TaskStore:
             raise ValueError("after_digest is not in this ledger")
         return (count, chain), page
 
-    def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
+    @contextmanager
+    def _audit_connection(self, deadline: float | None) -> Iterator[sqlite3.Connection]:
+        """The store lock and a connection, both acquired within ``deadline``.
+
+        The in-process lock is waited on only for the time left, and SQLite's
+        busy wait is set to the same remainder, so a contended ledger raises
+        DelegationAuditDeadlineExceeded instead of blocking past the deadline.
+        """
+
+        if deadline is not None and math.isinf(deadline) and deadline > 0:
+            deadline = None  # an unbounded caller
+        remaining = None if deadline is None else deadline - monotonic()
+        if remaining is not None and not remaining > 0:
+            # Reached, or not a number: refused either way.
+            raise DelegationAuditDeadlineExceeded("audit deadline already reached")
+        if not self._lock.acquire(timeout=-1 if remaining is None else remaining):
+            raise DelegationAuditDeadlineExceeded("audit store lock not acquired in time")
+        try:
+            with self._connect() as connection:
+                if deadline is not None:
+                    left = deadline - monotonic()
+                    if left <= 0:
+                        raise DelegationAuditDeadlineExceeded("audit deadline reached")
+                    connection.execute(f"PRAGMA busy_timeout = {max(1, int(left * 1000))}")
+                yield connection
+        finally:
+            self._lock.release()
+
+    @staticmethod
+    def _begin(connection: sqlite3.Connection, statement: str, deadline: float | None) -> None:
+        try:
+            connection.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if deadline is not None and "locked" in str(exc).lower():
+                raise DelegationAuditDeadlineExceeded("audit ledger busy past its deadline") from exc
+            raise
+
+    def append_delegation_audit_record(
+        self, record: DelegationAuditRecord, *, expected_sequence: int | None = None,
+        deadline: float | None = None,
+    ) -> str:
         """Append one immutable delegation audit record and return its digest.
 
         This is the whole write surface for the ledger. There is deliberately no
@@ -4026,15 +4118,25 @@ class TaskStore:
         ceiling. BEGIN IMMEDIATE remains necessary here to serialize verification,
         insertion and external anchor advancement across store instances, including
         the interval between anchor advancement and SQLite commit.
+
+        ``expected_sequence`` makes the append conditional: it is refused with
+        DelegationAuditAdvanced unless the ledger still holds exactly that many
+        records, checked inside the same BEGIN IMMEDIATE transaction. A caller
+        that counts records and then appends uses it so a concurrent writer in
+        another process cannot make both appends count the same history.
         """
 
         if not isinstance(record, DelegationAuditRecord):
             raise TypeError("delegation audit ledger accepts validated records only")
         digest = record.digest
         try:
-            with self._lock, self._connect() as connection:
-                connection.execute("BEGIN IMMEDIATE")
-                previous, _ = self._verified_audit_snapshot(connection)
+            with self._audit_connection(deadline) as connection:
+                self._begin(connection, "BEGIN IMMEDIATE", deadline)
+                # ``deadline`` bounds this verification like a read; nothing
+                # is written if it is reached.
+                previous, _ = self._verified_audit_snapshot(connection, deadline=deadline)
+                if expected_sequence is not None and previous[0] != expected_sequence:
+                    raise DelegationAuditAdvanced("audit ledger advanced since it was read")
                 cursor = connection.execute(
                     """INSERT INTO delegated_decision_audit(
                         record_digest, record_json, recorded_at
@@ -4047,12 +4149,36 @@ class TaskStore:
                     previous[1], cursor.lastrowid, digest, record.canonical_json(),
                     record.recorded_at.isoformat(),
                 ))
+                # Last point at which nothing is written: the anchor advance
+                # cannot be undone, so the deadline is checked before it.
+                if deadline is not None and monotonic() > deadline:
+                    raise DelegationAuditDeadlineExceeded("audit append reached its deadline")
+                # The store lock and this transaction are held across the
+                # anchor advance, because the advance and the SQLite commit
+                # must stay one unit; each anchor call is instead bounded by
+                # what is left of the deadline.
                 try:
-                    self._audit_anchor.compare_and_set(previous, updated)
-                    if self._audit_anchor.read_head() != updated:
+                    self._audit_anchor.compare_and_set(
+                        previous, updated, **_anchor_timeout(deadline))
+                    if self._audit_anchor.read_head(**_anchor_timeout(deadline)) != updated:
                         raise RuntimeError("checkpoint was not durably acknowledged")
                 except Exception as exc:
+                    # Ambiguous, a timeout included: the checkpoint may have
+                    # advanced. Never a clean refusal.
                     raise DelegationAuditAnchorUnavailable("audit anchor advance failed") from exc
+                # The commit waits on SQLite's busy handler, which still holds
+                # the timeout set when the connection opened; verification
+                # and the anchor advance have spent most of that. It gets only
+                # what is left. The anchor has already advanced, so a commit
+                # that cannot finish is the same ambiguous anchor failure.
+                if deadline is not None:
+                    left = deadline - monotonic()
+                    connection.execute(f"PRAGMA busy_timeout = {max(1, int(left * 1000))}")
+                try:
+                    connection.commit()
+                except sqlite3.OperationalError as exc:
+                    raise DelegationAuditAnchorUnavailable(
+                        "audit commit did not finish after the anchor advanced") from exc
         except sqlite3.IntegrityError as exc:
             # Both the UNIQUE constraint and the no-replace trigger surface
             # here.  Neither is worked around: an identical record is refused.
@@ -4060,7 +4186,8 @@ class TaskStore:
         return digest
 
     def delegation_audit_records(
-        self, *, limit: int = 100, after_digest: str | None = None
+        self, *, limit: int = 100, after_digest: str | None = None,
+        deadline: float | None = None,
     ) -> list[DelegationAuditRecord]:
         """Read a bounded page from one cursor verified against the external anchor.
 
@@ -4074,6 +4201,9 @@ class TaskStore:
         A record is meant to be independently checkable by a reader who was not
         present when it was written, and that property is worth nothing if the
         reader that ships with the writer skips the check.
+
+        ``deadline`` is a ``time.monotonic()`` value; the traversal checks it
+        as it goes and raises DelegationAuditDeadlineExceeded mid-scan.
         """
 
         if isinstance(limit, bool) or not isinstance(limit, int):
@@ -4085,24 +4215,30 @@ class TaskStore:
             or any(c not in "0123456789abcdef" for c in after_digest)
         ):
             raise ValueError("after_digest must be a full record digest")
-        with self._lock, self._connect() as connection:
+        with self._audit_connection(deadline) as connection:
             # A deferred read transaction needs no writer reservation: the cursor
             # supplies one SQLite snapshot, and the retained page must match the
             # observed external head before anything returns. A concurrent append
             # may cause a fail-closed mismatch; never retry or rebase that anchor.
             # In rollback-journal mode, the read lock can still delay writer commit.
-            connection.execute("BEGIN")
+            self._begin(connection, "BEGIN", deadline)
             _, rows = self._verified_audit_snapshot(
-                connection, limit=limit, after_digest=after_digest
+                connection, limit=limit, after_digest=after_digest, deadline=deadline
             )
         records: list[DelegationAuditRecord] = []
         for row in rows:
+            # Parsing and re-hashing each row spends the same deadline as the
+            # scan that retained it.
+            if deadline is not None and monotonic() > deadline:
+                raise DelegationAuditDeadlineExceeded("audit page parse reached its deadline")
             try:
                 record = parse_record(row["record_json"])
             except DelegationAuditError as exc:
                 raise DelegationAuditLedgerCorrupt(str(row["record_digest"])) from exc
             if not hmac.compare_digest(record.digest, str(row["record_digest"])):
                 raise DelegationAuditLedgerCorrupt(str(row["record_digest"]))
+            if deadline is not None and monotonic() > deadline:
+                raise DelegationAuditDeadlineExceeded("audit page parse reached its deadline")
             records.append(record)
         return records
 
@@ -4201,3 +4337,12 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

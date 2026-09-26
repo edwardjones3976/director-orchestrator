@@ -1,0 +1,256 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
+# Project profile (director-project-profile/v1) for homemade-llm.
+# Do not place secrets, credentials, tokens, or raw private source here.
+# Workflow skills are procedure overlays, not permission grants.
+# Provider roles and debate rules: docs/team-operating-charter.md
+schema_version: "director-project-profile/v1"
+
+project:
+  id: "homemade-llm"
+  name: "Homemade LLM"
+  rollout_packet: "rollout-packet.md"
+  proposition: "Fine-tune and serve two local models on the owner's PC (RTX 5070 12 GB): DIRECTOR, which writes model-work-packet-v1 packets for this orchestrator, and COMPANION, a friend/conversational persona with long-term memory."
+  state: "building" # exploring | framing | building | validating | operating | paused | closed
+  owner: "Ed (repository owner)"
+  created_at: "2026-09-24T06:05:00Z"
+  updated_at: "2026-09-26T00:05:00Z"
+
+source_context:
+  thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
+  preserve:
+    - "Contribution-tag, envelope, and non-author review rules of director-orchestrator"
+    - "Z.ai trial-lane gating pattern (zai_lane.py, zai_trial_readiness) for the M3 local lane"
+  reshape:
+    - "Repository-level Director role: Claude directs this project only (see provider-roles-contract.yaml deviations)"
+  discard:
+    - "Ollama serving and the old xo-fleet Open WebUI deployment"
+    - "A separate slack-bridge container or Slack app (workspace is at the free-plan app limit)"
+  inherited_authority: false
+
+outcomes:
+  desired:
+    - value: "L1 DIRECTOR launch (end M3, target 2026-11-12): >60 % of packets accepted as-is on both held-out sets; local lane in shadow mode"
+      status: "confirmed"
+    - value: "L2 COMPANION launch (end M5b, target 2026-12-17): hard-line suite 100 %, judge panel and owner daily-use rating >=4.3/5, memory recall >=8/10"
+      status: "confirmed"
+    - value: "Measured reduction in paid-API spend; target set at M3 from the M0 baseline"
+      status: "provisional"
+  non_goals:
+    - "Distributing, publishing, or selling any model or dataset"
+    - "Cloud GPU training (local only, owner decision O-020)"
+    - "Changing repository-level leadership docs or other projects"
+  evidence_standard:
+    - "Every number in a gate report comes from a file this project wrote and re-read, graded [verified]"
+    - "Quality claims cite a promptfoo report, lm-eval JSON, or scorer CSV at a named adapter digest"
+  stopping_point: "Each milestone gate is a hard stop; a missed bar moves the date, never the bar (O-022)"
+
+surfaces:
+  deployment:
+    intent: "analysis_only" # analysis_only | planned | live
+    concurrently_active: "true" # other Director stacks are live on this host (see rollout-packet.md)
+    profile: "C:/llm/secrets/open-webui.env (outside the repository; template compose/.env.homemade-llm.example)"
+    compose_namespace: "homemade-llm (Open WebUI + SearXNG only; no orchestrator instance)"
+    state_namespace: "C:/llm on the host plus the Docker volume homemade-llm_open-webui-data"
+    status: "confirmed"
+  slack:
+    workspace_id: "pending"
+    owner_user_allowlist_reference: "pending"
+    runtime_channel_allowlist:
+      - "pending"
+    app:
+      display_name: "pending"
+      app_id: "pending"
+      bot_user_id: "pending"
+      manifest_sha256: "pending"
+      installation_status: "provisional"
+      socket_mode_status: "provisional"
+      credential_references:
+        app_token: "SLACK_APP_TOKEN"
+        bot_token: "SLACK_BOT_TOKEN"
+    channel: "pending"
+    thread: "not_created"
+    status: "provisional"
+    isolation:
+      dedicated_app_per_active_deployment: true
+      dedicated_channel_per_active_deployment: true
+      distinct_profile_and_state_namespace: true
+      concurrent_deployment_collision_check: "pending"
+  repositories:
+    - name: "edwardjones3976/director-orchestrator"
+      starting_ref: "1892b841a78580b2664236b16dcc61094bdce9c8"
+      worktree: "C:\\Users\\edwar\\director-orchestrator\\.worktrees\\homemade-llm"
+      status: "confirmed"
+  systems_and_data:
+    classification: "mixed"
+    allowed_sources:
+      - "director-orchestrator repository docs, schemas, and PR history"
+      - "Local orchestrator ledgers (held-out eval only)"
+      - "Exemplars from competing-only-clause providers (O-026), tagged source_provider + terms_tier"
+    prohibited_sources:
+      - "Training use of Z.ai, xAI, Google consumer Gemini, or Antigravity outputs (grading only)"
+      - "Life_Coach.Modelfile and the old xo-fleet open-webui data directory (personal data)"
+  browser_conversations:
+    - "none"
+  external_effects:
+    mode: "analysis_only" # analysis_only | explicitly_scoped
+    allowed: []
+    prohibited:
+      - "Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)"
+
+modules:
+  discovery:
+    state: "enabled"
+    purpose: "Launch definition and host facts gathered 2026-09-24"
+  research_and_evidence:
+    state: "enabled"
+    purpose: "Provider terms, base-model licenses, and M1 base shortlist"
+  design_and_decision:
+    state: "enabled"
+    purpose: "Plan v1.3 and the decision log"
+  implementation:
+    state: "optional"
+    purpose: "M0 scripts after PR-0 merges"
+  quality_and_security:
+    state: "optional"
+    purpose: "gitleaks on datasets; hard-line suite from M4"
+  review_to_merge:
+    state: "enabled"
+    purpose: "Non-author review of every Director PR; owner merges"
+  operations:
+    state: "disabled"
+    purpose: "Enabled at L1 (always-on serving)"
+  learning_and_reuse:
+    state: "optional"
+    purpose: "Monthly retrain loop after each launch (O-025)"
+
+team:
+  provider_roles_contract: "provider-roles-contract.yaml"
+  director:
+    provider: "claude"
+    # Owner appointment 2026-09-24, this project only: decision-log.md O-001.
+    responsibilities: ["framing", "routing", "synthesis", "acceptance"]
+  lanes:
+    - id: "review-grok"
+      provider: "grok"
+      role: "reviewer"
+      workflow_skill: "none"
+      responsibilities:
+        - "Non-author review of Director PRs (plan mode, read-only)"
+      forbidden_authority:
+        - "merge"
+        - "training-data generation (xAI terms: grading only)"
+    - id: "review-codex"
+      provider: "other"
+      role: "reviewer"
+      workflow_skill: "none"
+      responsibilities:
+        - "Fallback non-author reviewer (OpenAI Codex, read-only sandbox)"
+      forbidden_authority:
+        - "merge"
+    - id: "research-perplexity"
+      provider: "perplexity"
+      role: "researcher"
+      workflow_skill: "perplexity-research-workflow"
+      responsibilities:
+        - "Public, citation-backed research briefs"
+      forbidden_authority:
+        - "repository context"
+        - "operational verdicts"
+  shared_skill_catalog:
+    cursor_agent_workflow: "unknown"
+    antigravity_sandbox_workflow: "unknown"
+    perplexity_research_workflow: "unknown"
+
+coordination:
+  live_transport: "slack"
+  execution_transport: "local_cli_in_verified_worktree"
+  canonical_review_and_merge: "github"
+  browser_role: "continuity_only"
+  provider_messages_relay_through_director: true
+
+contribution_attribution:
+  enabled: true
+  canonical_format: "[[Contributor | System | YYYY-MM-DD | HH:MM UTC | BEGIN|END]]"
+  preserve_prior_valid_tags: true
+  safe_human_text: "matching_inline_or_message_envelope"
+  structured_or_syntax_sensitive_artifacts: "external_submission_envelope"
+  authentication_or_authority_effect: "none"
+
+controls:
+  total_budget: "USD 175 (7 milestones x USD 25)"
+  phase_budget: "USD 25 per milestone"
+  timeout: "12 weeks to L2 target; per-dispatch timeouts in workstream-plan.md"
+  provider_contact_attempt_limit: 3
+  minimal_fix:
+    enabled: true
+    attempt_limit: 3
+    changed_candidate_invalidates_evidence: true
+  revision_limit: "3 per PR"
+  hop_limit: "2"
+  allowlists:
+    projects: []
+    repositories: []
+    starting_refs: []
+  approval_gates:
+    - "Every milestone gate (owner)"
+    - "Any paid call that would breach the milestone envelope"
+    - "Any fan-out over 3 concurrent agents or dispatches"
+    - "Downloads, deletions, config/ACL/Scheduled Task changes, messages to other Directors"
+    - "Every merge (owner, --merge --match-head-commit)"
+  acceptance_checks:
+    - "L1 and L2 checklists in PLAN.md"
+  serious_safety_stop: true
+
+review_chain:
+  producer: "claude"
+  material_authors: ["claude"]
+  eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
+  candidate:
+    repository: "edwardjones3976/director-orchestrator"
+    # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
+    # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
+    base_sha: "f0a7752e7aa780389fb78d4e45da1125254d650e"
+    head_sha: "bound on PR #277 review-of-record comment"
+    artifact_digest: "none"
+    last_merged_candidate: "PR #275 at ed317a813f85d2405738461f9f40924ff94ea28b, xAI ACCEPT, merged 2026-09-25T23:31:37Z"
+  required_evidence:
+    - "different-provider exact-candidate review"
+    - "current security evidence when configured"
+    - "trusted CI when configured"
+  candidate_change_invalidates_evidence: true
+  merge_authority: "deterministic_gate_after_all_required_approval"
+
+assumptions:
+  confirmed:
+    - "RTX 5070 12 GB; Unsloth supports RTX 50 series (Unsloth docs)"
+    - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
+    - "Only 16 real dispatched work packets exist locally (held out for eval)"
+    - "LM Studio on 127.0.0.1:1234 is reachable from containers through host.docker.internal (HTTP 200, 2026-09-25)"
+    - "Paid spend is metered from the provider-dispatch receipts (run scripts/spend_meter.py for the live figure); homemade-llm M0 was USD 0.55 at 2026-09-26 00:01 UTC"
+  provisional:
+    - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
+    - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
+  unknown: []
+  not_applicable: []
+
+fallbacks:
+  unavailable_provider: "Rotate reviewer Grok -> Codex; research falls back to Claude web research"
+  incomplete_evidence: "Pause at the gate and report; the owner decides"
+  ambiguous_paid_dispatch: "reconcile_existing_run_before_retry"
+  slack_delivery:
+    retry_limit: 3
+    additional_attempt_requires: "second_temporary_failure_third_new_information_or_different_transport"
+    resource_budget_required: true
+    ambiguous_slack_side_effect: "do_not_retry_reconcile_first"
+    exhausted_route: "same_project_durable_transport_never_borrow_another_deployment_surface"
+  changed_scope: "reshape_profile_before_dependent_work"
+
+next:
+  action: "Owner merges #277 (this report) when CI is green at its reviewed head; #276 after it is split into single-author candidates; then M1 held-out sets"
+  responsible_party: "owner, then Director"
+  expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]

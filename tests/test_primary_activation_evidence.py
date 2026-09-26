@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | BEGIN]]
@@ -13,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from director_orchestrator.primary_activation_evidence import (
@@ -135,6 +138,21 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
         )
         return path
 
+    def test_github_mode_rejects_owner_local_acceptance_artifact_version(self) -> None:
+        ident = identity()
+        facts = self.acceptance_facts()
+        unsigned = {
+            "facts": facts,
+            "facts_digest": canonical_facts_digest(facts),
+            "pull_request_number": 77,
+            "repository": "owner/repository",
+            "version": "director-primary-acceptance-artifact/owner-local-evidence-v1",
+        }
+        artifact = {**unsigned, "attestations": {"owner_adoption": {"issuer": "x", "signature": "a" * 64}}}
+        with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": "github-v1"}, clear=False):
+            with self.assertRaisesRegex(ActivationEvidenceError, "selected mode"):
+                self.store._validate_acceptance_artifact(ident, artifact)
+
     def test_requires_exact_order_and_same_identity(self) -> None:
         with self.assertRaisesRegex(ActivationEvidenceError, "start at PREFLIGHT"):
             self.record(ActivationStage.MIGRATED)
@@ -181,7 +199,17 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             self.identity, inventory_digest="e" * 64, task_count=3
         )
         self.store.require_ready(self.identity)
+        with self.assertRaisesRegex(ActivationEvidenceError, "not ACTIVATED"):
+            self.store.require_activated(self.identity)
         self.record(ActivationStage.ACTIVATED)
+        # A resumable chain: ACTIVATED for this identity, never ready again.
+        self.store.require_activated(self.identity)
+        with self.assertRaisesRegex(ActivationEvidenceError, "prerequisites"):
+            self.store.require_ready(self.identity)
+        from dataclasses import replace
+        other = replace(self.identity, candidate_commit="f" * 40)
+        with self.assertRaisesRegex(ActivationEvidenceError, "stale"):
+            self.store.require_activated(other)
 
     def test_backup_requires_artifact_digest_and_corruption_fails_closed(self) -> None:
         self.record(ActivationStage.PREFLIGHT)
@@ -448,3 +476,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:48 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

@@ -1,3 +1,5 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | BEGIN]] -->
@@ -43,7 +45,9 @@ Use one primary attempt. One recovery is allowed only for a demonstrably tempora
 failure; a third requires a materially different transport or new evidence. Never
 redispatch an ambiguous paid attempt. After three recorded failures mark the route
 unavailable. Record real assignments, preserving history and the rolling 20-assignment
-controls (normal tolerance ±3 points; hard ceiling target +5 points).
+controls (normal tolerance ±3 points, advisory only; the owner retired the target+5
+hard ceiling on 2026-09-21, so it no longer blocks admission, and a zero target
+remains ineligible).
 
 The initial integration is a tools-disabled packet trial: propose code in your answer;
 the local test harness validates it. Do not claim you ran shell commands. This document
@@ -76,3 +80,5 @@ transport and the trial lane.
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->

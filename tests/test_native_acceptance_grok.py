@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
 """Documentation-derived synthetic ACP fixtures, never native capture evidence.
@@ -183,9 +184,10 @@ class GrokSecurityIssuerTests(unittest.TestCase):
         for flag in ("--no-subagents", "--disable-web-search"):
             self.assertIn(flag, argv)
         # Single-turn only: no resume, no imported session, no interactive shell.
-        for absent in ("--resume", "--continue", "--api-key", "--base-url", "--api",
-                       "--json-schema", "--allowed-tools", "--yolo", "acp", "exec"):
-            self.assertNotIn(absent, argv)
+        # The same set a bridge-attested Grok lane must never carry.
+        from director_orchestrator.bridge_attestation import FORBIDDEN_ARGS
+        for part in argv[1:]:
+            self.assertNotIn(part.split("=", 1)[0].lower(), FORBIDDEN_ARGS)
         self.assertFalse(any("api.x.ai" in part or "http" in part for part in argv))
 
     def test_session_identifier_binds_this_exact_run_nonce(self):
@@ -284,3 +286,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]

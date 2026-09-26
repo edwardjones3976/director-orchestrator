@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 """Historical plan identity remains frozen across allocation schema upgrades."""
@@ -86,7 +87,7 @@ class HistoricalParallelRecoveryTests(unittest.TestCase):
         activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.application = Mock()
         activation.application.recover.side_effect = ValueError("parallel plan binding changed")
-        activation.services = object()
+        activation.services = SimpleNamespace(occupied=lambda _task_id: False)
         activation.coordinator = self.coordinator
         with self.assertRaisesRegex(ValueError, "parallel plan binding changed"):
             activation.reconcile_once()
@@ -125,3 +126,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]

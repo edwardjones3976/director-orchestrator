@@ -1,3 +1,11 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
@@ -30,6 +38,7 @@ from director_orchestrator.provider_validation import (
     SCHEMA,CHECKPOINT_NAMESPACE,PostgresValidationStore,ValidationError,ValidationRequest,
     CaptureVerifier,capture_verifier_from_environment,make_capture,digest,normalize_capture,
     ValidationBridgeService,production_configuration_digest,
+    CANONICAL_LANES,ADDITIONAL_CONTACTS,preflight_fixture,read_only_lane_preflight,
 )
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -37,6 +46,108 @@ OWNER="owner-fixture-"+"o"*40
 KEY="bridge-fixture-"+"k"*40
 CANDIDATE="a"*40
 TREE="b"*40
+
+
+class ReadOnlyLanePreflightTests(unittest.TestCase):
+    """Section 5 tooling: one synthetic fixture, every lane, zero calls."""
+
+    def test_static_inventory_lists_eight_lanes_and_three_separate_contacts_all_unknown(self):
+        report=read_only_lane_preflight()
+        self.assertEqual([name for name,_,_ in CANONICAL_LANES],[row["lane"] for row in report["lanes"]])
+        self.assertEqual(8,len(report["lanes"]))
+        self.assertEqual(["grok-bot","z-ai","vscode-coding-bot"],[row["contact"] for row in report["additional_contacts"]])
+        self.assertEqual(3,len(ADDITIONAL_CONTACTS))
+        for row in report["lanes"]:
+            self.assertEqual("UNKNOWN",row["verdict"])
+            self.assertEqual("UNKNOWN",row["enrollment_and_live_eligibility"])
+            self.assertIsNone(row["asserted_evidence"])
+            self.assertEqual("no_authenticated_collector",row["reason"])
+        for contact in report["additional_contacts"]:
+            self.assertIsNone(contact["canonical_lane"])
+            self.assertEqual("UNKNOWN",contact["general_enrollment"])
+            self.assertEqual("UNKNOWN",contact["separate_contact_qualification"])
+        self.assertEqual((0,0,0),(report["provider_calls"],report["work_reservations"],report["spend_reservations"]))
+        self.assertEqual(0,report["qualified_lane_count"])
+        self.assertEqual(8,report["unknown_lane_count"])
+        self.assertTrue(report["read_only"])
+
+    def test_same_fixture_digest_for_every_lane_and_research_lanes_keep_zero_engineering(self):
+        first=read_only_lane_preflight(["claude"]);second=read_only_lane_preflight(["perplexity","firecrawl"])
+        self.assertEqual(first["fixture_sha256"],second["fixture_sha256"])
+        self.assertEqual(digest(canonical_json_bytes(preflight_fixture())),first["fixture_sha256"])
+        for row in second["lanes"]:
+            self.assertTrue(row["research_only"])
+            self.assertEqual(0,row["engineering_target_percent"])
+        self.assertFalse(first["lanes"][0]["research_only"])
+
+    def test_preflight_makes_no_store_bridge_or_transport_call(self):
+        import director_orchestrator.provider_validation as module
+        with patch.object(module.PostgresValidationStore,"__init__",side_effect=AssertionError("store constructed")), \
+             patch.object(module.ValidationBridgeService,"run",side_effect=AssertionError("bridge ran")):
+            report=read_only_lane_preflight(["openai","claude","grok"])
+        self.assertEqual(3,len(report["lanes"]))
+
+    def test_unknown_lane_names_and_grok_bot_are_not_admitted_through_grok_evidence(self):
+        evidence={"grok":{"collected":True,"enrollment_and_live_eligibility":"ENROLLED","source":"fixture"}}
+        report=read_only_lane_preflight(["grok","grok-bot","z-ai"],evidence=evidence)
+        by_lane={row["lane"]:row for row in report["lanes"]}
+        # A caller string is recorded as an assertion; it never becomes eligibility.
+        self.assertEqual("UNKNOWN",by_lane["grok"]["enrollment_and_live_eligibility"])
+        self.assertEqual(evidence["grok"],by_lane["grok"]["asserted_evidence"])
+        self.assertEqual("asserted_evidence_recorded_not_verified",by_lane["grok"]["reason"])
+        self.assertEqual("UNKNOWN",by_lane["grok"]["verdict"])
+        for name in ("grok-bot","z-ai"):
+            self.assertEqual("not_a_canonical_lane",by_lane[name]["reason"])
+            self.assertEqual("UNKNOWN",by_lane[name]["verdict"])
+        self.assertEqual(0,report["qualified_lane_count"])
+
+    def test_no_asserted_string_changes_enrollment_or_eligibility(self):
+        for evidence in ({"claude":{"collected":False,"enrollment_and_live_eligibility":"ENROLLED"}},
+                         {"claude":{"collected":True,"enrollment_and_live_eligibility":"PASS"}},
+                         {"claude":{"collected":True,"enrollment_and_live_eligibility":"ENROLLED","verified":True}},
+                         {"claude":"ENROLLED"}):
+            with self.subTest(evidence=evidence):
+                row=read_only_lane_preflight(["claude"],evidence=evidence)["lanes"][0]
+                self.assertEqual("UNKNOWN",row["enrollment_and_live_eligibility"])
+                self.assertEqual("UNKNOWN",row["verdict"])
+                self.assertNotIn("verified",row["reason"].replace("not_verified",""))
+
+    def test_allocation_weights_come_from_the_allocation_authority(self):
+        from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES,LANES,allocation_targets
+        self.assertEqual(list(LANES),[name for name,_,_ in CANONICAL_LANES])
+        for name,_,profiles in CANONICAL_LANES:
+            self.assertEqual({profile:targets[name] for profile,targets in ALLOCATION_PROFILES.items()},profiles)
+            self.assertEqual(allocation_targets("engineering")[name],profiles["engineering"])
+        report=read_only_lane_preflight()
+        self.assertEqual([allocation_targets("engineering")[row["lane"]] for row in report["lanes"]],
+                         [row["engineering_target_percent"] for row in report["lanes"]])
+
+    def test_fixture_that_reserves_tools_effects_or_budget_is_refused(self):
+        for change in ({"allowed_tools":["shell"]},{"allowed_external_effects":["slack"]},
+                       {"limits":{"budget_units":1}}):
+            with self.subTest(change=change), self.assertRaises(ValidationError):
+                read_only_lane_preflight(fixture={**preflight_fixture(),**change})
+
+    def test_cli_preflight_needs_no_dsn_owner_token_or_bridge_url(self):
+        from director_orchestrator import provider_validation_cli as cli
+        manifest={"generation":"f"*64,"candidate":CANDIDATE,"tree":TREE,"expires_at":0,"budget_units":0,
+                  "lanes":["openai","claude","perplexity"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"manifest.json";path.write_text(json.dumps(manifest),encoding="utf-8")
+            environment={"DIRECTOR_PROVIDER_VALIDATION_MANIFEST":str(path)}
+            import io
+            from contextlib import redirect_stdout
+            printed=io.StringIO()
+            with patch.dict(os.environ,environment,clear=True), \
+                 patch.object(cli,"PostgresValidationStore",side_effect=AssertionError("store constructed")), \
+                 patch.object(cli.urllib.request,"build_opener",side_effect=AssertionError("network opener built")), \
+                 redirect_stdout(printed):
+                self.assertEqual(0,cli.main(["preflight"]))
+        report=json.loads(printed.getvalue())
+        self.assertEqual(["openai","claude","perplexity"],[row["lane"] for row in report["lanes"]])
+        self.assertEqual((0,0,0),(report["provider_calls"],report["work_reservations"],report["spend_reservations"]))
+        self.assertEqual(CANDIDATE,report["candidate"])
+        self.assertTrue(all(row["verdict"]=="UNKNOWN" for row in report["lanes"]))
 
 
 def work_packet():
@@ -476,15 +587,10 @@ class PostgresValidationTests(unittest.TestCase):
             return remaining
         return remaining_seconds
 
-    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
-        import time
-        from types import SimpleNamespace
+    def _team_canary_grant(self):
         from tests.test_antigravity_team import grant
-        from tests import test_entitlement_control_plane as fixtures
         from director_orchestrator.antigravity_team import SourceBlob
-        from director_orchestrator.antigravity_team_worker import sign,DENIED
-        from director_orchestrator.entitlement_contracts import document_digest
-        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        from director_orchestrator.provider_validation_team import SYNTHETIC_SOURCE
         work=work_packet()
         work["project"]="uppercut"
         g=grant(task_id=work["task_id"],assignment_id=work["assignment_id"],project_id=work["project"],
@@ -492,6 +598,22 @@ class PostgresValidationTests(unittest.TestCase):
             operation="review",review_base=CANDIDATE,writable_paths=(),commands=(),
             binding_digest=digest(canonical_json_bytes(asdict(binding("antigravity")))) ,
             source=tuple(SourceBlob(path=p,sha256=digest(b)) for p,b in SYNTHETIC_SOURCE.items()))
+        return work,g
+
+    def _attempts_and_reserved(self,generation):
+        with self.store.connect() as db:
+            attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",(generation,)).fetchone()[0]
+            reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",(generation,)).fetchone()[0]
+        return attempts,reserved
+
+    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
+        import time
+        from types import SimpleNamespace
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.antigravity_team_worker import sign,DENIED
+        from director_orchestrator.entitlement_contracts import document_digest
+        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        work,g=self._team_canary_grant()
         worker_key=b"w"*32
         calls=[]
         class Worker:
@@ -620,6 +742,14 @@ class PostgresValidationTests(unittest.TestCase):
         with patch.dict(os.environ,env,clear=False):
             verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
             self.assertEqual(TREE,verifier.tree)
+        derived={k:v for k,v in env.items() if k!="DIRECTOR_PROVIDER_VALIDATION_GENERATION"}
+        derived["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]="0"*64
+        with patch.dict(os.environ,derived,clear=False):
+            verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
+            self.assertEqual("0"*64,verifier.generation)
+        with patch.dict(os.environ,{**derived,"DIRECTOR_PROVIDER_VALIDATION_GENERATION":"f"*64},clear=False):
+            with self.assertRaisesRegex(ValidationError,"differs from staged generation"):
+                capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
             # The environment pin is authoritative: a caller tree that differs
             # from it, or a missing caller tree, is refused before any store
             # access rather than silently adopting either side.
@@ -1185,6 +1315,21 @@ class PostgresValidationTests(unittest.TestCase):
             if thread is not None:
                 thread.join(5)
 
+    def test_service_openai_responses_refuses_runtime_bytes_changed_during_execution(self):
+        """The post-execution check rehashes bytes; a change mid-request refuses."""
+        from director_orchestrator import provider_validation as module
+        fixture=self._responses_service_fixture()
+        real=module._hash_runtime(Path(module.__file__).resolve().parents[2])
+        hashes=iter((real,"f"*64))
+        with patch.object(module,"_hash_runtime",side_effect=lambda _root:next(hashes)):
+            with self.assertRaisesRegex(ValidationError,"changed during execution"):
+                fixture["service"].run(ValidationRequest(generation=fixture["generation"],provider="openai"),OWNER)
+        self.assertEqual(1,len(fixture["sends"]))
+        with self.store.connect() as db:
+            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s AND state='succeeded'",
+                                 (fixture["generation"],)).fetchone()[0]
+        self.assertEqual(0,succeeded)
+
     def test_service_openai_responses_control_uncontended_success(self):
         """The C3 control case: an uncontended run through the real service,
         store and capture verifier reaches 'succeeded' with exactly one
@@ -1266,6 +1411,159 @@ class PostgresValidationTests(unittest.TestCase):
                     service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
                 execute.assert_not_called()
 
+    def test_configuration_drift_burns_no_attempt_or_budget(self):
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        generation=self.generation()
+        with tempfile.TemporaryDirectory() as directory:
+            account=Path(directory)/"synthetic-auth";account.write_text("fixture")
+            executor=WindowsHostProviderExecutor({"claude":(str(Path(sys.executable).resolve(strict=True)),"-c","pass")},cwd=directory)
+            service=ValidationBridgeService(store=self.store,production_executor=executor,capture_key=KEY,
+                owner_token=OWNER,account_files={"claude":(str(account),)})
+            with self.assertRaisesRegex(ValidationError,"binding drift"):
+                service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
+        with self.store.connect() as db:
+            attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",(generation,)).fetchone()[0]
+            reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",(generation,)).fetchone()[0]
+        self.assertEqual((attempts,reserved),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for a corrected pin.
+        self.assertEqual(self.admit(generation)["provider"],"claude")
+
+    def test_team_configuration_drift_burns_no_attempt_or_budget(self):
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.provider_validation_team import TeamValidationRoute
+        work,g=self._team_canary_grant()
+        def no_worker(grant):
+            raise AssertionError("drift must be refused before any worker exists")
+        route=TeamValidationRoute(grant=g,owner_secret=fixtures.OWNER_SECRET,worker_secret=b"w"*32,
+            worker_factory=no_worker,configuration_digest=lambda:"d"*64)
+        generation=secrets.token_hex(32)
+        self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,owner_token=OWNER,
+            expires_at=int(time.time())+600,budget_units=2,lanes={"antigravity":{
+            "binding":asdict(binding("antigravity")),"configuration_digest":"c"*64,"cost_units":2,"work_packet":work}})
+        service=ValidationBridgeService(store=self.store,production_executor=None,capture_key=KEY,owner_token=OWNER,
+            account_files={},team_route=route)
+        with self.assertRaisesRegex(ValidationError,"team validation binding or generation mismatch"):
+            service.run(ValidationRequest(generation=generation,provider="antigravity"),OWNER)
+        self.assertEqual(self._attempts_and_reserved(generation),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for a corrected fingerprint.
+        self.assertEqual(self.admit(generation,"antigravity")["provider"],"antigravity")
+
+    def test_responses_configuration_drift_burns_no_attempt_or_budget(self):
+        fixture=self._responses_service_fixture()
+        route=fixture["service"].openai_responses_route
+        registered=route.configuration_digest
+        request=ValidationRequest(generation=fixture["generation"],provider="openai")
+        with patch.object(route.transport,"model","gpt-fixture-drifted"):
+            self.assertNotEqual(route.configuration_digest,registered)
+            with self.assertRaisesRegex(ValidationError,"configuration digest drift"):
+                fixture["service"].run(request,OWNER)
+        self.assertEqual(fixture["sends"],[])
+        route.budget_authority.reserve.assert_not_called()
+        self.assertEqual(self._attempts_and_reserved(fixture["generation"]),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for the registered configuration.
+        self.assertEqual(self.store.admit(request,OWNER,preserve_canary_identity=True)["provider"],"openai")
+
+    def test_expected_configuration_digest_is_a_read_only_lane_lookup(self):
+        generation=self.generation()
+        self.assertEqual(self.store.expected_configuration_digest(generation,"claude"),"c"*64)
+        self.assertIsNone(self.store.expected_configuration_digest(generation,"grok"))
+        self.assertIsNone(self.store.expected_configuration_digest(secrets.token_hex(32),"claude"))
+
+
+class RuntimePackageDigestTests(unittest.TestCase):
+    """Native and team digests bind every .py file in the running package."""
+
+    def test_runtime_package_digest_covers_every_module(self):
+        import shutil
+        from director_orchestrator import provider_validation as module
+        source = Path(module.__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "runtime"
+            for tree in ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts"):
+                shutil.copytree(source / tree, root / tree, ignore=shutil.ignore_patterns("__pycache__"))
+            before = module.runtime_package_digest(root)
+            package = root / "src" / "director_orchestrator"
+            (package / "__pycache__").mkdir()
+            (package / "__pycache__" / "ignored.py").write_text("IGNORED = 1\n")
+            self.assertEqual(module.runtime_package_digest(root), before)
+            # Code, and every non-Python asset the runtime reads.
+            for relative in ("src/director_orchestrator/response_meter.py",
+                             "docs/schemas/model-work-packet-v1.schema.json",
+                             "docs/provider-profiles/routes.yaml", "prompts/director-system.md"):
+                with self.subTest(changed=relative):
+                    previous = module.runtime_package_digest(root)
+                    with (root / relative).open("a") as handle:
+                        handle.write("\n")
+                    self.assertNotEqual(module.runtime_package_digest(root), previous)
+
+    def test_same_size_same_mtime_replacement_changes_the_digest(self):
+        from director_orchestrator import provider_validation as module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "docs" / "schemas" / "packet.json"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b'{"a":1}')
+            stamp = target.stat()
+            before = module.runtime_package_digest(root)
+            target.write_bytes(b'{"a":2}')
+            os.utime(target, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            self.assertEqual((target.stat().st_size, target.stat().st_mtime_ns),
+                             (stamp.st_size, stamp.st_mtime_ns))
+            self.assertNotEqual(module.runtime_package_digest(root), before)
+
+    def test_request_scope_rehashes_bytes_at_each_security_point(self):
+        from director_orchestrator import provider_validation as module
+        hashes = iter(("a" * 64, "b" * 64, "c" * 64))
+        with patch.object(module, "_hash_runtime", side_effect=lambda _root: next(hashes)):
+            token = module._RUNTIME_SCOPE.set({"digest": None})
+            try:
+                self.assertEqual(module.rehash_runtime_scope(), "a" * 64)  # pre-admission
+                self.assertEqual(module.runtime_package_digest(), "a" * 64)  # between points
+                self.assertEqual(module.rehash_runtime_scope(), "b" * 64)  # post-execution
+                self.assertEqual(module.runtime_package_digest(), "b" * 64)
+            finally:
+                module._RUNTIME_SCOPE.reset(token)
+            # Outside a request every call hashes the bytes again.
+            self.assertEqual(module.runtime_package_digest(), "c" * 64)
+
+    def test_security_point_outside_a_request_retains_nothing(self):
+        from director_orchestrator import provider_validation as module
+        hashes = iter(("a" * 64, "b" * 64))
+        with patch.object(module, "_hash_runtime", side_effect=lambda _root: next(hashes)):
+            self.assertEqual(module.rehash_runtime_scope(), "a" * 64)
+            self.assertEqual(module.runtime_package_digest(), "b" * 64)
+
+    def test_native_and_team_digests_bind_the_runtime_package(self):
+        from director_orchestrator import provider_validation_team as team
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        from tests.test_antigravity_team import grant
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            account = root / "account.json"
+            account.write_text("synthetic fixture account, not a credential")
+            python = str(Path(sys.executable).resolve(strict=True))
+            executor = WindowsHostProviderExecutor({"claude": (python, "-c", "pass")}, cwd=root)
+            names = ("owner_key_file", "worker_key_file", "ssh", "identity_file", "known_hosts")
+            config = {name: str(root / name) for name in names}
+            for name in names:
+                Path(config[name]).write_bytes(name.encode())
+            (root / "grant.json").write_text(grant().model_dump_json())
+            config.update(grant_file=str(root / "grant.json"), ssh_sha256="a" * 64, host="host.invalid",
+                          user="fixture", worker_command="worker")
+            (root / "team.json").write_text(json.dumps(config))
+            captured = {}
+            with patch.dict(os.environ, {"DIRECTOR_PROVIDER_VALIDATION_TEAM_CONFIG": str(root / "team.json")}), \
+                    patch.object(team, "TeamValidationRoute", side_effect=lambda **kwargs: captured.update(kwargs)):
+                team.team_route_from_environment()
+            observed = {}
+            for runtime in ("a" * 64, "b" * 64):
+                with patch("director_orchestrator.provider_validation.runtime_package_digest", return_value=runtime):
+                    observed[runtime] = (
+                        production_configuration_digest(executor, "claude", account_files=(str(account),)),
+                        captured["configuration_digest"]())
+            self.assertNotEqual(observed["a" * 64][0], observed["b" * 64][0])
+            self.assertNotEqual(observed["a" * 64][1], observed["b" * 64][1])
+
 
 if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
@@ -1280,3 +1578,11 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

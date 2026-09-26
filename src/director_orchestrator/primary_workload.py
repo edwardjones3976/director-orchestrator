@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:07 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -12,14 +16,16 @@ never removed after provider failure. No synthetic bootstrap history is created.
 """
 from __future__ import annotations
 
-from collections import Counter
 import hashlib
 import json
 from typing import Any, Sequence
 from types import MappingProxyType
 
 from .langgraph_postgres import _require_schema
-from .allocation_profiles import allocation_targets, allocation_profile_digest, DEFAULT_ALLOCATION_PROFILE
+from .allocation_profiles import (
+    allocation_targets, allocation_profile_digest, DEFAULT_ALLOCATION_PROFILE,
+    PRE_RETIREMENT_V3 as _PRE_RETIREMENT_V3,
+)
 
 POLICY_VERSION = "primary-assignment-count-v3"
 TARGETS = allocation_targets()
@@ -29,19 +35,15 @@ LEGACY_V2_DIGEST = "sha256:" + hashlib.sha256(json.dumps({
     "window":20,"hard_tolerance":5,"unit":"admitted_assignment","bootstrap":"fixed_twenty_slot_denominator",
 },sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
-# Read-only history provenance from allocation_profiles.py at
-# 6c09a1e1aba8921464fa3564cdeb00b34ce1b962. These identities never authorize a
-# new reservation or replace an existing row's immutable admission binding.
-_PRE_RETIREMENT_V3 = MappingProxyType({
-    "engineering": ("sha256:84a77ab961f256ab03384b8474bb5c903c04d7248c6b0bb0b74bf79c2b1c6219",
-                    frozenset({"openai", "claude", "cursor", "grok", "antigravity"})),
-    "mixed": ("sha256:8d52b872f98a03b893e87f53e607ddf8525092f647c7179baa23732f55fe94f3",
-              frozenset({"openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"})),
-    "public_research": ("sha256:bc543fafca4d720f6260fbee218600a1d8b88f93d0d73ae19b34040bac522a5b",
-                        frozenset({"openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl"})),
-    "enterprise": ("sha256:7dc8522cf2d607d150d71924bb0a6eabe2b4ef1312f70942924bd74349e47313",
-                   frozenset({"openai", "claude", "cursor", "grok", "antigravity", "firecrawl", "github-copilot", "microsoft-365-copilot"})),
+# _PRE_RETIREMENT_V3 is the shared allocation_profiles.PRE_RETIREMENT_V3 registry,
+# re-exported here for existing callers of this module.
+_CURRENT_AT_BASE_V3 = MappingProxyType({
+    "engineering": "sha256:1928779a3d24e9172a8f74911b601bc01905dc2dbfd49c306f0dcff73e442a68",
+    "mixed": "sha256:f228e056553673abdffce8f84af45801deb73e0b2bd612930e07fcc36980e976",
+    "public_research": "sha256:81687a465f4fcbae938733dc83cddc2ad293e519983f4f9c79394f41a9d9474c",
+    "enterprise": "sha256:db08376ea3c632828f326d6e08f4ead2a865bd8fbb7faa1396969275c5a8815a",
 })
+
 _HISTORY_LANES = frozenset(TARGETS) | {"microsoft-365-copilot"}
 
 def _valid_history_row(row):
@@ -53,6 +55,8 @@ def _valid_history_row(row):
             return False
         profile = row["allocation_profile"]
         if row["policy_digest"] == allocation_profile_digest(profile):
+            return row["provider_lane"] in TARGETS
+        if row["policy_digest"] == _CURRENT_AT_BASE_V3.get(profile):
             return row["provider_lane"] in TARGETS
         old_digest, old_lanes = _PRE_RETIREMENT_V3[profile]
         return row["policy_digest"] == old_digest and row["provider_lane"] in old_lanes
@@ -69,6 +73,13 @@ class WorkloadAdmissionHold(RuntimeError):
         self.reason_code = reason_code
 
 
+class ProvenNoRunHold(WorkloadAdmissionHold):
+    """A hold raised after an attempt was admitted but before any provider
+    request left this process, or refused by the host with authenticated
+    proof that nothing ran. Its admitted attempt is settled as refused
+    before I/O rather than left STARTED."""
+
+
 def admission_reason(provider: str, history: Sequence[str], *, allocation_profile: str = DEFAULT_ALLOCATION_PROFILE) -> str | None:
     targets = allocation_targets(allocation_profile)
     if provider not in targets:
@@ -79,9 +90,6 @@ def admission_reason(provider: str, history: Sequence[str], *, allocation_profil
         return "workload_history_invalid"
     if targets[provider] == 0:
         return "workload_profile_lane_ineligible"
-    counts = Counter((*history[-19:], provider))
-    if 100 * counts[provider] > (targets[provider] + 5) * 20:
-        return "workload_assignment_hard_limit"
     return None
 
 
@@ -162,3 +170,7 @@ schema is trusted and validated by its owner, never supplied by a work packet.
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:07 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]

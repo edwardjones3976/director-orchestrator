@@ -1,8 +1,15 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | BEGIN]] -->
 # Director-Orchestrator operator guide
+
 
 For the owner running this system day to day. It covers what to do, what the
 output means, and what to do when something refuses.
@@ -11,6 +18,18 @@ One idea underpins everything here: **the system is built to refuse, and a
 refusal is information rather than a fault.** Almost every stop you will hit is
 a gate doing its job. The useful response is to read what it refused on, not to
 retry it.
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director members also act as **INVESTIGATOR** under the
+[canonical charter](team-operating-charter.md#openaidirector--investigator): identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue, when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
+If none exists, retain details locally and request an authorized destination;
+never post them to Slack.
 
 ## Daily operation
 
@@ -92,7 +111,7 @@ requires the head to equal the frozen candidate, every named CI check completed
 successfully with none skipped, pending or failed, and two distinct non-author
 artifacts — security and independent review — each an `APPROVED` review whose
 body is exactly the canonical `director-activation-review/v1` JSON. Comments,
-quoted markers and prose never qualify. This runtime-activation requirement is distinct from ordinary single-reviewer engineering review. Alternative modes apply their own specific evidence rules. See [langgraph-primary-operations.md](langgraph-primary-operations.md) for the `github-v1` path, [provider-acceptance-v2.md](provider-acceptance-v2.md) and [provider-acceptance-v2-runtime.md](provider-acceptance-v2-runtime.md) for v2, and [two-party-activation-v3.md](two-party-activation-v3.md) for v3's explicit signed adoption path. Exact candidate, CI, security, independent identity, owner approvals, and fail-closed requirements remain mandatory where the selected contract imposes them, without imposing v3's signed `owner_adoption` mechanism on all modes.
+quoted markers and prose never qualify. This runtime-activation requirement is distinct from ordinary single-reviewer engineering review. Alternative modes apply their own specific evidence rules. See [langgraph-primary-operations.md](langgraph-primary-operations.md) for the `github-v1` path, [provider-acceptance-v2.md](provider-acceptance-v2.md) and [provider-acceptance-v2-runtime.md](provider-acceptance-v2-runtime.md) for v2, [two-party-activation-v3.md](two-party-activation-v3.md) for v3's explicit signed adoption path, and the `owner-local-evidence-v1` section of [langgraph-primary-operations.md](langgraph-primary-operations.md) for owner adoption of retained local evidence. Exact candidate, CI, security, independent identity, owner approvals, and fail-closed requirements remain mandatory where the selected contract imposes them, without imposing v3's signed `owner_adoption` mechanism on all modes.
 
 ## Backups
 
@@ -125,13 +144,20 @@ effects. It is the fast stop. It does not undo anything already executed.
 
 **Rollback changes who owns new intake. It is not an undo.**
 
-It requires, in order: intake proved closed (it stops `slackbot`, `n8n` and
-`orchestrator`, then re-reads the container lists and throws if any survives);
-the same accepted pins, a clean checkout matching them, and an exact-candidate
-image; `ambiguous_effect_count == 0`; and quiescence.
+It requires, in order: a valid prior-image record or none (an invalid
+`<profile>.prior-images.<generation>.<image>.json` refuses before anything
+stops); intake proved closed (it stops `slackbot`, `n8n` and `orchestrator`,
+then re-reads the container lists and throws if any survives); the same
+accepted pins, a clean checkout matching them, and an exact-candidate image;
+`ambiguous_effect_count == 0`; and quiescence. After the compare-and-swap it
+restores the recorded prior orchestrator and gateway images and reads both
+back before n8n and Slack start; a failed readback or health check closes all
+intake again. With no record it stays on the candidate image and says no image
+was restored.
 
-Both refusals fire **after** intake has been stopped and the switches written
-false. A refused rollback is therefore not a no-op — it leaves the deployment
+The ambiguous-effect and quiescence refusals fire **after** intake has been
+stopped and the switches written false. A refused rollback is
+therefore not a no-op — it leaves the deployment
 with intake down and primary still owning the authority row. The deployed script
 does not yet carry PR #115's correction, and that correction does not change the
 refusal path.
@@ -180,3 +206,9 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->

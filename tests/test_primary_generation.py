@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
@@ -54,7 +57,9 @@ class PrimaryGenerationTests(unittest.TestCase):
                 "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
                 "LANGGRAPH_PARALLEL_KILL_SWITCH": "true", "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "unverified"},
             "volumes": [{"type": "bind", "source": "/protected", "target": "/repository", "read_only": True}],
-            "networks": {"default": None}}}, "networks": {"default": {"name": "project_default"}}}
+            "networks": {"default": None}},
+            "slackbot": {"image": image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}},
+            "networks": {"default": {"name": "project_default"}}}
         original = resolved_deployment_digest(document, image)
         for field, replacement in (("volumes", [{"type": "bind", "source": "/unapproved", "target": "/repository"}]), ("networks", {"host": None})):
             changed = copy.deepcopy(document)
@@ -72,6 +77,32 @@ class PrimaryGenerationTests(unittest.TestCase):
         service["environment"]["ALLOW_PAID_RUNS"] = "true"
         with self.assertRaises(ActivationEvidenceError):
             resolved_deployment_digest(staged, image)
+
+    def test_resolved_compose_binds_gateway_to_verified_image_id(self):
+        import copy
+        image = "sha256:" + "8" * 64
+        document = {"name": "project", "services": {"orchestrator": {
+            "image": image, "command": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
+            "environment": {"DIRECTOR_RUNTIME_IMAGE_ID": image, "DIRECTOR_RUNTIME_IMAGE": image,
+                "DIRECTOR_ASGI_APP": "director_orchestrator.main:app"}},
+            "slackbot": {"image": image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}}}
+        original = resolved_deployment_digest(document, image)
+        self.assertRegex(original, r"^[0-9a-f]{64}$")
+        missing_service = copy.deepcopy(document)
+        del missing_service["services"]["slackbot"]
+        missing_image = copy.deepcopy(document)
+        del missing_image["services"]["slackbot"]["image"]
+        variants = [missing_service, missing_image]
+        for replacement in ("director-orchestrator-orchestrator", "edge-engine-director-slackbot", "sha256:" + "7" * 64):
+            changed = copy.deepcopy(document)
+            changed["services"]["slackbot"]["image"] = replacement
+            variants.append(changed)
+        for changed in variants:
+            with self.subTest(slackbot=changed["services"].get("slackbot")), self.assertRaises(ActivationEvidenceError):
+                resolved_deployment_digest(changed, image)
+        pulled = copy.deepcopy(document)
+        pulled["services"]["slackbot"]["pull_policy"] = "always"
+        self.assertNotEqual(resolved_deployment_digest(pulled, image), original)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -157,6 +188,34 @@ class PrimaryGenerationTests(unittest.TestCase):
             require_generation(self.settings, self.identity)
         self.assertFalse(self.journal.exists())
 
+    def test_resolved_compose_normalizes_validation_generation_selector(self):
+        import copy
+        image = "sha256:" + "8" * 64
+        document = {"name": "project", "services": {"orchestrator": {
+            "image": image, "command": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
+            "environment": {"DIRECTOR_RUNTIME_IMAGE_ID": image, "DIRECTOR_RUNTIME_IMAGE": image,
+                "DIRECTOR_ASGI_APP": "director_orchestrator.main:app",
+                "ALLOW_PAID_RUNS": "false", "LANGGRAPH_PRIMARY_ENABLED": "false",
+                "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
+                "LANGGRAPH_PARALLEL_KILL_SWITCH": "true",
+                "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "a" * 64,
+                "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "a" * 64},
+            "volumes": [],
+            "networks": {"default": None}},
+            "slackbot": {"image": image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}},
+            "networks": {"default": {"name": "project_default"}}}
+        without = copy.deepcopy(document)
+        without["services"]["orchestrator"]["environment"].pop("DIRECTOR_PROVIDER_VALIDATION_GENERATION")
+        self.assertEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(without, image))
+        for value in ("b" * 64, "invalid", 1, 0, None, " " + "a" * 64):
+            conflicting = copy.deepcopy(document)
+            conflicting["services"]["orchestrator"]["environment"]["DIRECTOR_PROVIDER_VALIDATION_GENERATION"] = value
+            with self.subTest(value=value), self.assertRaises(ActivationEvidenceError):
+                resolved_deployment_digest(conflicting, image)
+        changed = copy.deepcopy(without)
+        changed["services"]["orchestrator"]["environment"]["DIRECTOR_PROVIDER_VALIDATION_MANIFEST"] = "/data/validation.json"
+        self.assertNotEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(changed, image))
+
     def test_validation_manifest_cannot_select_another_candidate_or_generation(self):
         validation = self.root / "validation.json"
         document = dict(generation=os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"],
@@ -169,6 +228,30 @@ class PrimaryGenerationTests(unittest.TestCase):
                 validation.write_text(json.dumps(changed))
                 with self.assertRaises(ActivationEvidenceError):
                     require_validation_generation(self.identity)
+
+    def test_deployment_digest_binds_project_execution_pins(self) -> None:
+        baseline = deployment_digest(self.settings)
+        changed = deployment_digest(
+            replace(
+                self.settings,
+                langgraph_primary_project_execution_pinned_commit_sha="a" * 40,
+                langgraph_primary_project_execution_pinned_tree_sha="b" * 40,
+            )
+        )
+        self.assertNotEqual(baseline, changed)
+
+    def test_malformed_project_execution_pins_fail_before_reserve(self) -> None:
+        with self.assertRaises(ActivationEvidenceError):
+            require_generation(
+                replace(
+                    self.settings,
+                    langgraph_primary_project_execution_pinned_commit_sha="a" * 40,
+                    langgraph_primary_project_execution_pinned_tree_sha="",
+                ),
+                self.identity,
+                reserve=True,
+            )
+        self.assertFalse(self.journal.exists())
 
     def test_substituted_journal_generation_marker_is_rejected_without_repair(self):
         require_generation(self.settings, self.identity, reserve=True)
@@ -185,3 +268,6 @@ class PrimaryGenerationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]

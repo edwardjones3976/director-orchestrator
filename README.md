@@ -1,3 +1,10 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -57,7 +64,8 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=883f7fafa38449c1ddfbeb9570bddb044c56ccd5ca90b82c5a06748cf4b3cb7e -->
+
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=25e2b914bb6ce71df313a5b9bd5485ddd1447d31083b2e18177608282311bf1d -->
 
 I am the Director.
 
@@ -87,6 +95,18 @@ and that includes me: I may write a change or I may accept one, never both.
 and [Claude's project instructions](CLAUDE.md). The leadership handoff does not
 attest that a deployed service has switched its executing provider.
 
+## INVESTIGATOR responsibility
+
+OpenAI/Director members also act as **INVESTIGATOR** under the
+[canonical charter](docs/team-operating-charter.md#openaidirector--investigator): identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue, when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
+If none exists, retain details locally and request an authorized destination;
+never post them to Slack.
+
 ## What I am built from
 
 - A Slack Socket Mode gateway, so the desktop needs no public inbound port.
@@ -106,7 +126,7 @@ attest that a deployed service has switched its executing provider.
 - Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all eight
   provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and
   Antigravity 10%; other profiles reserve real research and enterprise work. A fixed
-  real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion,
+  real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement) and zero-target exclusion,
   with ±3-point normal preference. A zero-target lane is ineligible, not merely unlikely.
 - Deterministic accepted-productive-work accounting, an immutable pre-stage packet, rolling
   twenty-assignment preferences, cheap-capable-model selection, and a five-action ordinary
@@ -737,3 +757,10 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->

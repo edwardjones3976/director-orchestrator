@@ -1,3 +1,6 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | BEGIN]]
 """One-shot publication of existing native captures; no execution or signing."""
@@ -219,18 +222,22 @@ def publish_requests(store, verifier, *, settings, requests, now=None, deadline=
 def publish_file(path, *, settings, identity):
     """Preflight exact generation and restore before opening the write pool."""
     from .primary_generation import require_generation, require_validation_generation
-    from .primary_activation_evidence import ActivationEvidenceStore
+    from .primary_activation_evidence import ActivationEvidenceStore, _acceptance_secrets_from_environment
     from .provider_validation import capture_verifier_from_environment
     from .langgraph_postgres import open_provider_activation_store
     deadline = time.monotonic() + MAX_SECONDS
     require_runtime_off(settings)
     require_generation(settings, identity)
     ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json",
-        read_only=True).require_staged(identity)
+        acceptance_secrets=_acceptance_secrets_from_environment(), read_only=True).require_staged(identity)
     require_validation_generation(identity)
     generation = os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
-    if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION") != generation:
-        raise ActivationEvidenceError("capture verifier generation differs from staged generation")
+    from .provider_validation import ValidationError, resolved_provider_validation_generation
+    try:
+        if resolved_provider_validation_generation() != generation:
+            raise ActivationEvidenceError("capture verifier generation differs from staged generation")
+    except ValidationError as exc:
+        raise ActivationEvidenceError(str(exc)) from None
     with open(path, "rb") as stream:
         requests = read_requests(stream, settings=settings, identity=identity, generation=generation)
     verifier = capture_verifier_from_environment(candidate=identity.candidate_commit,
@@ -247,3 +254,7 @@ def publish_file(path, *, settings, identity):
     return dict(result, generation=generation)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

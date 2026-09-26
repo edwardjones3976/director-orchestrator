@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:53 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
@@ -96,7 +98,8 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
         activation=object.__new__(DefaultPrimaryActivation)
         activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.coordinator=self.coordinator
-        activation.services=SimpleNamespace(available_provider_lanes=())
+        activation.services=SimpleNamespace(
+            available_provider_lanes=(), occupied=lambda _task_id: False)
         activation.application=SimpleNamespace(recover=self.coordinator.recover)
         settings=Settings()
         cleared={field.name:'' for field in fields(settings)
@@ -312,7 +315,22 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
                     "WHERE task_id=%s FOR UPDATE", (self.task,))
                 future = executor.submit(self.parallel.reconcile_cancelled_pending, task_id=self.task, writer=writer)
                 self.assertTrue(entered.wait(timeout=5))
-                time.sleep(2.1)  # Deliberate local lock-contention test, not live polling.
+                # Hold the projection lock until the database itself reports the
+                # lease expired. A fixed 2.1 s host sleep assumed the database
+                # clock keeps pace with the host; under load the Docker VM clock
+                # lags, and the repair resumed on a still-live lease (observed on
+                # the self-hosted Windows runner, 2026-09-23).
+                deadline = time.monotonic() + 10
+                while True:  # Deliberate local lock-contention test, not live polling.
+                    with self.pool.connection() as probe:
+                        expired = probe.execute(
+                            f"SELECT lease_expires_at <= clock_timestamp() AS expired "
+                            f"FROM {self.schema}.director_primary_task_writer WHERE task_id=%s",
+                            (self.task,)).fetchone()["expired"]
+                    if expired:
+                        break
+                    self.assertLess(time.monotonic(), deadline, "lease never expired by the database clock")
+                    time.sleep(0.05)
             with self.assertRaisesRegex(ParallelDispatchError, "expired during reconciliation"):
                 future.result(timeout=5)
         self.assertEqual(rows, self.rows())
@@ -466,3 +484,6 @@ if __name__ == '__main__':
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:53 UTC | END]]

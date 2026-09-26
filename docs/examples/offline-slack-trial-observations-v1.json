@@ -113,6 +113,149 @@
           "terminal_cost_text": true,
           "native_delivery": true
         }
+      },
+      "qualification_evidence": {
+        "readback": {
+          "state": "collected",
+          "reason": null,
+          "source": "http://127.0.0.1:8080/v1/tasks/DIR-LG-AB12?include_qualification_evidence=true",
+          "complete": true,
+          "truncated": [],
+          "absent": [
+            "provider_usage"
+          ],
+          "snapshot": {
+            "isolation": "REPEATABLE READ",
+            "read_only": true,
+            "single_transaction": true,
+            "covers_task_record": true
+          },
+          "projection_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "engine_owner": "langgraph",
+          "captured_at": "2026-09-13T12:00:32Z",
+          "task_updated_at": "2026-09-13T12:00:31Z",
+          "task_scope_counters": {
+            "thread_tasks": 1,
+            "assignments": 1,
+            "provider_attempts": 0,
+            "attempt_ordinals": 0,
+            "started_attempts": 0,
+            "status_receipts": 0,
+            "effect_reservations": 0
+          },
+          "status_receipt_rows": [],
+          "partial_diagnostics": null
+        },
+        "unjoined_context": {
+          "assignment_sequences": [],
+          "provider_result_digests": [
+            "1111111111111111111111111111111111111111111111111111111111111111"
+          ],
+          "provider_routes": [
+            "openai"
+          ],
+          "delivery_ids": [
+            "synthetic-terminal-message"
+          ],
+          "note": "ordinary task-record/deliveries context; not the validated snapshot join"
+        },
+        "chain": {
+          "source_event_id_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "DIR-LG-AB12",
+          "assignment_ids": [
+            "DIR-LG-AB12-A1"
+          ],
+          "assignment_sequences": [
+            1
+          ],
+          "attempt_ids": [],
+          "effect_ids": [],
+          "delivery_ids": [
+            "synthetic-terminal-message"
+          ],
+          "approval_delivery_keys": [],
+          "status_receipt_ids": [],
+          "provider_result_digests": [],
+          "slack_delivery_ts": "1789300830.100000",
+          "slack_readback_state": "DELIVERED"
+        },
+        "timestamps": {
+          "request_ts": "1789300800.100000",
+          "first_byte_at": null,
+          "completion_at": null,
+          "validation_at": null,
+          "delivery_at": "2026-09-13T12:00:30Z",
+          "readback_at": "2026-09-13T12:00:31Z",
+          "unknown_reasons": {
+            "first_byte_at": "no producer records provider first-byte time",
+            "validation_at": "no producer records a separate validation time",
+            "completion_at": "no settled provider attempt row"
+          }
+        },
+        "lineage": {
+          "provider_routes": [],
+          "transport": null,
+          "recorded_attempt_count": 0,
+          "retry_observed": null,
+          "attempt_history_count": 0,
+          "contact_attempt_count": 0,
+          "fallback_observed": null
+        },
+        "effect_state": "ZERO_PROVIDER_EFFECT",
+        "provider_effect_state": "ZERO_PROVIDER_ATTEMPT",
+        "external_effect_state": "NO_EXTERNAL_EFFECT_RESERVATION",
+        "usage": {
+          "actual_usage": null,
+          "actual_cost_usd": null,
+          "cost_basis": "UNKNOWN"
+        },
+        "status_receipts": {
+          "tasks_created": null,
+          "assignments_created": null,
+          "provider_attempts_created": null,
+          "deduplicated_receipts": 0,
+          "durable_receipt_rows": 0,
+          "counter_scope": "task-and-thread-local; not a global zero-work claim",
+          "task_scope_counters": {
+            "thread_tasks": 1,
+            "assignments": 1,
+            "provider_attempts": 0,
+            "attempt_ordinals": 0,
+            "started_attempts": 0,
+            "status_receipts": 0,
+            "effect_reservations": 0
+          },
+          "baseline": null,
+          "baseline_provenance": null,
+          "dependency": "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
+        },
+        "allocation": {
+          "rolling_twenty": "UNKNOWN",
+          "deviation_from_target_points": null
+        },
+        "revision_binding": {
+          "runtime_head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "image_id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "offline_configured": true,
+          "paid_configured": false,
+          "configuration_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "configuration_scope": "supplied-public-configuration-resolved-with-declared-defaults/v1",
+          "configuration_keys": [
+            "ALLOW_PAID_RUNS",
+            "INTAKE_ALLOCATION_PROFILE",
+            "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+            "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
+            "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED",
+            "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"
+          ],
+          "supplied_keys": [
+            "ALLOW_PAID_RUNS",
+            "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"
+          ],
+          "execution_time_binding": "UNKNOWN",
+          "execution_time_reason": "no producer records the configuration in force at execution time"
+        },
+        "terminal_message_ts": "1789300830.100000"
       }
     }
   ],

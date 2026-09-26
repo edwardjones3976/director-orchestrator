@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -20,6 +23,10 @@ OpenAI, Claude, Cursor, and Grok are primary-capable lanes. The owner-approved a
 ## Principle
 
 Every model receives the same bounded work packet and returns the same bounded result packet. Provider-specific prompts, run IDs, session URLs, token metadata, and tool representations are adapter details. They never become project authority.
+
+**Adapter detail, accepted by the owner on 2026-09-23 as a Gate-0 amendment (recorded on the pull request that adds it):** the work packet above stays the Director-side authority, validated in full and bound by `work_packet_digest`. On the native CLI work-packet lanes, the OpenAI Responses lane, and the Claude and Grok host-bridge lanes, the model is shown a `director-compact-work-view/v1` document derived from it: the packet's fields under the view's own schema version, with the snapshot inventory replaced by its commit, digest, file count, and at most 64 entries under owned paths or named in the objective, never under prohibited paths, plus the packet's `work_packet_digest`. Every result is still validated and rebound against the full packet. The cursor, github-copilot, native Codex, and Antigravity host-bridge lanes still receive the full packet or the Antigravity closed directive.
+
+**Compact view schema (2026-09-24).** The adapter detail above is unchanged. The `director-compact-work-view/v1` document is defined by `docs/schemas/director-compact-work-view-v1.schema.json`, whose fields reference this contract's work-packet schema, and every view is validated against it before a transport sends it. For a small read-only task only (`docs/human-out-of-the-loop-operation.md`), the view also carries a bounded `contents` array: the text of each path the request names, read from the git blob the packet's snapshot binds and bound by that blob hash. Results are still rebound to the full packet.
 
 ## Required work-packet fields
 
@@ -147,3 +154,6 @@ A self-contained digest detects accidental or unsynchronized modification; it is
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:42 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->

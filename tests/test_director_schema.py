@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -551,6 +554,25 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 canonical_director_operating_directive_json().encode("utf-8")
             ).hexdigest(),
         )
+
+    def test_investigator_mandate_is_synchronized_across_runtime_and_charter(self):
+        root = Path(__file__).resolve().parents[1]
+        directive = team_operating_charter()["director_operating_directive"]
+        expected = "OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority."
+        self.assertIn("investigator", directive["duties"])
+        prompt = (root / "prompts/director-system.md").read_text(encoding="utf-8")
+        charter = (root / "docs/team-operating-charter.md").read_text(encoding="utf-8")
+        section = charter.split("## OpenAI/Director — INVESTIGATOR", 1)[1].split("\n## ", 1)[0]
+        import yaml
+
+        profile = yaml.safe_load((root / "docs/provider-profiles/openai.yaml").read_text(encoding="utf-8"))
+        contract = yaml.safe_load((root / "docs/templates/project-bootstrap/provider-roles-contract.yaml").read_text(encoding="utf-8"))
+        rendered = (root / "docs/provider-profiles/openai.profile.md").read_text(encoding="utf-8")
+        for surface in (prompt, section, profile["roles"]["summary"],
+                        contract["providers"]["openai"]["investigator_responsibility"], rendered):
+            self.assertIn(expected, " ".join(surface.split()))
+        self.assertIn("2026-09-22 20:57:47 UTC", section)
+        self.assertIn("The OpenAI/Director team will now include the title INVESTIGATOR in their roles and responsibilities. In this capacity, team members will proactively identify issues that may arise while other providers are engaged in ongoing tasks. Rather than addressing these issues directly, the INVESTIGATOR will focus on thoroughly documenting each problem encountered. This documentation will include suggested solutions, which will be communicated to other providers for further action. This approach aims to improve collaboration, ensure efficient problem resolution, and optimize the team's workflow.", section)
 
     def test_full_directive_fingerprint_is_synchronized_across_surfaces(self):
         root = Path(__file__).resolve().parents[1]
@@ -1616,3 +1638,6 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]

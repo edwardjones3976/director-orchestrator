@@ -1,3 +1,13 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
@@ -19,6 +29,7 @@ an explicit operator action; constructing a store or verifying evidence does no 
 """
 from __future__ import annotations
 
+import contextvars
 from dataclasses import asdict, dataclass
 import hashlib
 import hmac
@@ -370,6 +381,19 @@ class PostgresValidationStore:
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
                         packet=raw,owner_digest=row[2])
 
+    def expected_configuration_digest(self, generation: str, provider: str, *,
+                                      remaining_seconds=None) -> str | None:
+        """Read-only lookup so a drifted lane pin is refused before any attempt row exists."""
+        with self._connect_bounded(remaining_seconds) as db:
+            db.execute("SET TRANSACTION READ ONLY")
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
+            row = db.execute(f"SELECT configuration FROM {SCHEMA}.generations WHERE generation=%s",
+                             (generation,)).fetchone()
+        # Index the jsonb in Python: configuration->%s is ambiguous for an untyped parameter.
+        spec = None if row is None else row[0].get(provider)
+        return spec.get("configuration_digest") if isinstance(spec, dict) else None
+
     def claim_execution(self, admission: dict, *, remaining_seconds=None) -> None:
         with self._connect_bounded(remaining_seconds) as db:
             if remaining_seconds is not None:
@@ -521,6 +545,30 @@ class CaptureVerifier:
             return False
 
 
+_GENERATION_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def resolved_provider_validation_generation() -> str:
+    """Resolve the validation generation pin from protected generation selection.
+
+    When DIRECTOR_PROVIDER_VALIDATION_GENERATION is absent, derive it from
+    LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256. Explicit values must match.
+    """
+    import os
+
+    manifest = os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", "")
+    explicit = os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "")
+    if explicit:
+        if _GENERATION_SHA256.fullmatch(explicit) is None:
+            raise ValidationError("validation generation pin is malformed")
+        if manifest and explicit != manifest:
+            raise ValidationError("validation generation differs from staged generation")
+        return explicit
+    if _GENERATION_SHA256.fullmatch(manifest) is None:
+        raise ValidationError("validation generation is unavailable")
+    return manifest
+
+
 def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", require_enabled: bool = True):
     """No DDL or dispatch. Staged readers may opt out of the execution switch.
 
@@ -539,7 +587,7 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", re
     return CaptureVerifier(PostgresValidationStore(os.environ["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"]),
         capture_key=os.environ["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"],
         candidate=os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"],
-        generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],
+        generation=resolved_provider_validation_generation(),
         tree=os.environ["DIRECTOR_PROVIDER_VALIDATION_TREE"],
         team_route=team_route_from_environment(),
         openai_responses_route=responses_route_from_environment())
@@ -587,8 +635,9 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None,
     native = _decode_json(raw,source="native validation capture")
     if not isinstance(native,dict) or "schema_version" in native:
         raise ValidationError("raw native terminal envelope is required")
-    # These are native CLI envelopes, not result-packet status assertions.
-    # Three vendor dialects are recognised.  The third was established by an
+    # These are authenticated provider envelopes, not result-packet assertions.
+    # Grok Responses keeps its API terminal status/id and is validated by the
+    # shared normalizer. Three CLI dialects are recognised; the third came from an
     # authenticated grok canary on 2026-09-08: that CLI reports terminal success
     # as stopReason and names its session sessionId.  Only the exact value
     # "end_turn" is accepted, so a truncated ("max_tokens") or errored run still
@@ -599,10 +648,12 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None,
     # true would pass.  Only grok's envelope was observed, and a
     # provider payload must never select the dialect it is judged by.
     grok = provider == "grok"
+    responses = grok and native.get("object") == "response"
     success = grok_terminal_success(native) if grok else (native.get("status") == "SUCCESS" or (
         native.get("type") == "result" and native.get("subtype") == "success"
         and native.get("is_error") is False))
-    session_keys = ("session_id","conversation_id") + (("sessionId",) if grok else ())
+    session_keys = (("id",) if responses else
+                    ("session_id","conversation_id") + (("sessionId",) if grok else ()))
     session = next((native[key] for key in session_keys
         if isinstance(native.get(key),str) and native[key]),None)
     if not success or session is None:
@@ -610,8 +661,9 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None,
     if any(native.get(key) for key in ("tool_calls","tool_uses","side_effects")):
         raise ValidationError("unexpected native canary tool effects")
     native = dict(native)
-    # Whichever dialect supplied it, the canonical key is promoted once here.
-    native["session_id"] = session
+    # API captures keep their genuine request id; only CLI dialects need an alias.
+    if not responses:
+        native["session_id"] = session
     return validate_packet("result",normalize_native_provider_envelope(provider,work,native))
 
 
@@ -648,6 +700,68 @@ def pinned_path_manifest(value: str) -> dict:
             raise ValidationError("pinned runtime contains a special file or hardlink")
     return manifest
 
+# Set for one validation request by ValidationBridgeService.run: bytes are
+# hashed at the pre-admission point and rehashed at each post-execution point,
+# never trusted from file metadata.
+# The value is a per-request holder, so a security point outside a request
+# never leaves a sticky digest behind.
+_RUNTIME_SCOPE: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "director_runtime_digest", default=None)
+# The trees Install copies (Get-BridgeRuntimeManifest in
+# scripts/windows-host-provider-bridge.ps1): code plus every non-Python asset
+# the runtime reads (packet and profile schemas, provider profiles, prompts).
+_RUNTIME_TREES = ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts")
+_RUNTIME_LAUNCHER = "scripts/windows-host-provider-bridge.ps1"
+
+
+def _hash_runtime(root) -> str:
+    """Hash every runtime byte now; no metadata shortcut."""
+    from pathlib import Path
+    root = Path(root)
+    files = [path for tree in _RUNTIME_TREES if (root / tree).is_dir()
+             for path in (root / tree).rglob("*")
+             if path.is_file() and "__pycache__" not in path.relative_to(root).parts]
+    if (root / _RUNTIME_LAUNCHER).is_file():
+        files.append(root / _RUNTIME_LAUNCHER)
+    lines = sorted(f"{digest(path.read_bytes())}  {path.relative_to(root).as_posix()}" for path in files)
+    return digest(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def runtime_package_digest(root=None) -> str:
+    """Content address of the running bridge runtime.
+
+    The same manifest Install copies: every file under the runtime trees plus
+    the launcher, bytecode caches excluded, as sorted ``sha256  path`` lines
+    hashed together, so an installed copy's digest equals its directory name.
+    Each lane's configuration digest binds it, so a change to any code or
+    runtime-read asset is configuration drift. Outside a validation request
+    every call rehashes the bytes. Inside one, the value bytes-hashed at the
+    request's latest security point (pre-admission, then each post-execution
+    check via rehash_runtime_scope) is returned, so the checks between those
+    points cost nothing and none trusts file metadata.
+    """
+    from pathlib import Path
+    default = Path(__file__).resolve().parents[2]
+    root = default if root is None else Path(root)
+    scope = _RUNTIME_SCOPE.get()
+    if scope is not None and scope.get("digest") is not None and root == default:
+        return scope["digest"]
+    return _hash_runtime(root)
+
+
+def rehash_runtime_scope() -> str:
+    """Security point: rehash every runtime byte and bind it for the request.
+
+    Outside a request the fresh value is returned and nothing is retained.
+    """
+    from pathlib import Path
+    value = _hash_runtime(Path(__file__).resolve().parents[2])
+    scope = _RUNTIME_SCOPE.get()
+    if scope is not None:
+        scope["digest"] = value
+    return value
+
+
 def production_configuration_digest(executor, provider: str, *, account_files: tuple[str,...]) -> str:
     """Pin the real executable, argv files, workspace, adapter and auth material.
 
@@ -675,7 +789,8 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
     from .host_provider_bridge import _SAFE_OS_ENV, _LANE_AUTH_ENV
     environment={k:v for k,v in os.environ.items() if k.upper() in _SAFE_OS_ENV or k in _LANE_AUTH_ENV[provider]}
     return digest(canonical_json_bytes({"argv":list(argv),"files":files,
-                  "workspace":str(executor.cwd),"environment_digest":digest(canonical_json_bytes(environment))}))
+                  "workspace":str(executor.cwd),"environment_digest":digest(canonical_json_bytes(environment)),
+                  "runtime":runtime_package_digest()}))
 
 
 class ValidationBridgeService:
@@ -697,17 +812,28 @@ class ValidationBridgeService:
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
+        # One request scope: runtime bytes are hashed here, before admission,
+        # and rehashed at each post-execution check.
+        scope = _RUNTIME_SCOPE.set({"digest": None})
+        try:
+            rehash_runtime_scope()
+            return self._run_lane(request, owner_token)
+        finally:
+            _RUNTIME_SCOPE.reset(scope)
+
+    def _run_lane(self, request: ValidationRequest, owner_token: str) -> dict:
         if request.provider == "antigravity":
             if self.team_route is None:
                 raise ValidationError("Antigravity team SSH validation route is unbound")
             return self.team_route.run(self,request,owner_token)
         if request.provider == "openai" and self.openai_responses_route is not None:
             return self._run_openai_responses(request, owner_token)
+        pin=production_configuration_digest(self.production,request.provider,
+                                           account_files=self.account_files.get(request.provider,()))
+        self.refuse_configuration_drift(request,pin,"production executable/account/workspace/adapter binding drift")
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
         try:
-            pin=production_configuration_digest(self.production,request.provider,
-                                               account_files=self.account_files.get(request.provider,()))
             if pin!=admission["configuration_digest"]:
                 raise ValidationError("production executable/account/workspace/adapter binding drift")
             self.store.claim_execution(admission)
@@ -729,6 +855,7 @@ class ValidationBridgeService:
             executor.execute(bridge,execution_observer=observe)
             if len(raw_captures)!=1:
                 raise ValidationError("native transport discarded its execution capture")
+            rehash_runtime_scope()
             if pin!=production_configuration_digest(self.production,request.provider,
                     account_files=self.account_files.get(request.provider,())):
                 raise ValidationError("native configuration changed during execution")
@@ -747,6 +874,19 @@ class ValidationBridgeService:
             except Exception:
                 pass
             raise
+
+    def refuse_configuration_drift(self, request: ValidationRequest, pin: str, message: str, *,
+                                   remaining_seconds=None) -> None:
+        """Refuse a drifted lane pin before admission on every lane.
+
+        The comparison uses a read-only lookup, so drift creates no attempt row
+        and burns neither budget nor the one-attempt lane slot. Each lane keeps
+        its post-admission and post-execution checks.
+        """
+        expected=self.store.expected_configuration_digest(request.generation,request.provider,
+                                                          remaining_seconds=remaining_seconds)
+        if expected is not None and pin!=expected:
+            raise ValidationError(message)
 
     def _run_openai_responses(self, request: ValidationRequest, owner_token: str) -> dict:
         """Explicit Responses API validation; never falls back to native Codex.
@@ -797,6 +937,9 @@ class ValidationBridgeService:
                 raise ValidationError("Responses validation cleanup allowance is exhausted")
             return rem
 
+        self.refuse_configuration_drift(request, route.configuration_digest,
+                                        "Responses validation configuration digest drift",
+                                        remaining_seconds=remaining_seconds)
         admission = self.store.admit(request, owner_token, preserve_canary_identity=True,
                                      remaining_seconds=remaining_seconds)
         raw_captures: list[bytes] = []
@@ -863,6 +1006,7 @@ class ValidationBridgeService:
             if len(raw_captures) != 1:
                 raise ValidationError("Responses transport discarded its execution capture")
             self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
+            rehash_runtime_scope()
             if route.configuration_digest != admission["configuration_digest"]:
                 raise ValidationError("Responses validation configuration changed during execution")
             remaining_seconds()
@@ -884,6 +1028,105 @@ class ValidationBridgeService:
             except Exception:
                 pass
             raise
+
+
+# ---------------------------------------------------------------------------
+# Read-only all-lane qualification preflight
+# ---------------------------------------------------------------------------
+#
+# The static lane inventory (eight canonical lanes plus three separately
+# qualified contacts). Lane classes are descriptive only; every allocation
+# weight is read from the owner-approved allocation_profiles authority rather
+# than duplicated here. The inventory grants nothing: enrollment, live
+# eligibility and paid readiness stay UNKNOWN because no authenticated
+# collector exists yet. Research-only lanes keep an engineering target of zero.
+_LANE_CLASSES = {
+    "openai": "director_control_plane",
+    "claude": "capability_routed_lane",
+    "cursor": "capability_routed_lane",
+    "grok": "capability_routed_lane",
+    "antigravity": "capability_routed_lane",
+    "perplexity": "evidence_only_research",
+    "firecrawl": "public_search_transport",
+    "github-copilot": "capability_routed_lane",
+}
+
+
+def _canonical_lanes():
+    from .allocation_profiles import ALLOCATION_PROFILES, LANES
+    if set(_LANE_CLASSES) != set(LANES):
+        raise ValidationError("lane inventory drifted from the allocation authority")
+    return tuple((lane, _LANE_CLASSES[lane],
+                  {profile: int(targets[lane]) for profile, targets in ALLOCATION_PROFILES.items()})
+                 for lane in LANES)
+
+
+CANONICAL_LANES = _canonical_lanes()
+ADDITIONAL_CONTACTS = (
+    ("grok-bot", "Grok Bot", "Unverified as an enrolled transport; direct Grok evidence cannot qualify this contact."),
+    ("z-ai", "Z.ai", "Separate tools-off Lite trial contract; not a canonical production lane."),
+    ("vscode-coding-bot", "VS Code Coding Bot", "Editor host; the actual underlying provider/model identity must be preserved."),
+)
+RESEARCH_ONLY_LANES = frozenset({"perplexity", "firecrawl"})
+PREFLIGHT_VERDICT = "UNKNOWN"
+
+
+def preflight_fixture() -> dict:
+    """One synthetic read-only fixture shared by every lane; never dispatched."""
+    return {"schema_version": "director-preflight-fixture/v1", "task_id": "PREFLIGHT-synthetic",
+            "assignment_id": "PREFLIGHT-synthetic", "objective": "Read-only lane preflight; no provider contact.",
+            "allowed_tools": [], "allowed_external_effects": [], "starting_ref": "0" * 40,
+            "limits": {"max_hops": 0, "max_revisions": 0, "timeout_seconds": 0, "budget_units": 0}}
+
+
+def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
+                             evidence: Mapping[str, Mapping] | None = None) -> dict:
+    """Evaluate every enrolled-or-listed lane against one synthetic fixture.
+
+    Zero provider, work or spend calls: this function only projects the static
+    inventory plus caller-supplied evidence rows, which are recorded verbatim
+    as *asserted* (untrusted) evidence. No string in that evidence can change a
+    lane's enrollment or live eligibility: both stay UNKNOWN until an
+    authenticated collector exists, and missing evidence is never converted
+    into a pass or a failure. Unknown lane names are reported, not admitted.
+    """
+    fixture = preflight_fixture() if fixture is None else dict(fixture)
+    if fixture.get("allowed_tools") or fixture.get("allowed_external_effects") \
+            or int(fixture.get("limits", {}).get("budget_units", 1)) != 0:
+        raise ValidationError("preflight fixture must reserve no tools, effects or budget")
+    fixture_digest = digest(canonical_json_bytes(fixture))
+    known = {name: (lane_class, profiles) for name, lane_class, profiles in CANONICAL_LANES}
+    requested = list(known) if lanes is None else list(dict.fromkeys(lanes))
+    evidence = dict(evidence or {})
+    rows = []
+    for name in requested:
+        if name not in known:
+            rows.append({"lane": name, "lane_class": None, "allocation_profiles": None,
+                         "enrollment_and_live_eligibility": PREFLIGHT_VERDICT, "research_only": None,
+                         "asserted_evidence": None, "verdict": PREFLIGHT_VERDICT, "reason": "not_a_canonical_lane"})
+            continue
+        lane_class, profiles = known[name]
+        row_evidence = evidence.get(name)
+        asserted = dict(row_evidence) if isinstance(row_evidence, Mapping) else None
+        rows.append({"lane": name, "lane_class": lane_class, "allocation_profiles": dict(profiles),
+                     "enrollment_and_live_eligibility": PREFLIGHT_VERDICT,
+                     "research_only": name in RESEARCH_ONLY_LANES,
+                     "engineering_target_percent": profiles["engineering"],
+                     "asserted_evidence": asserted,
+                     "verdict": PREFLIGHT_VERDICT,
+                     "reason": "no_authenticated_collector" if asserted is None
+                     else "asserted_evidence_recorded_not_verified"})
+    contacts = [{"contact": key, "name": label, "canonical_lane": None,
+                 "separate_contact_qualification": PREFLIGHT_VERDICT, "general_enrollment": PREFLIGHT_VERDICT,
+                 "note": note} for key, label, note in ADDITIONAL_CONTACTS]
+    return {"schema": "director-lane-preflight/v1", "read_only": True, "fixture_sha256": fixture_digest,
+            "provider_calls": 0, "work_reservations": 0, "spend_reservations": 0,
+            "lanes": rows, "additional_contacts": contacts,
+            "qualified_lane_count": 0, "unknown_lane_count": sum(row["verdict"] == PREFLIGHT_VERDICT for row in rows),
+            "limitations": ["Static inventory plus caller-asserted evidence only; no provider, work or spend call was made.",
+                            "Asserted evidence is untrusted and never establishes enrollment or eligibility; no authenticated collector exists yet.",
+                            "UNKNOWN is never converted into pass or failure; a live canary needs separate owner authorization.",
+                            "Research-only lanes keep their public-research restrictions; no trial route is promoted."]}
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
@@ -899,3 +1142,13 @@ class ValidationBridgeService:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

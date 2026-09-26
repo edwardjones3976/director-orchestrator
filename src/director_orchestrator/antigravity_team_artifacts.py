@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | BEGIN]]
 """Durable returned bytes and immutable Git candidates; never a checkout or merge."""
@@ -124,11 +126,29 @@ class GitTeamCandidateIntegrator:
         return result.stdout
 
     def integrate(self, *, grant, attempt_digest, capture_digest, query,
-                  owner_token, fencing_generation):
+                  owner_token, fencing_generation, deadline=None, authority_recheck=None):
+        """One immutable candidate for one authenticated capture, or nothing.
+
+        `authority_recheck` is the primary lane's own durable recheck of the
+        wave's cancellation, this assignment's binding and this attempt's
+        latest event. When it is carried it is called as
+        `authority_recheck(connection=..., stage="candidate")` on this
+        transaction's connection, after the writer row below is held and
+        before the first Git object is written. A standalone caller carries
+        none and keeps the previous contract unchanged.
+        """
         from .antigravity_team_worker import authenticate
         if not re.fullmatch(r"sha256:[0-9a-f]{64}",attempt_digest):
             raise TeamAuthorizationError("invalid candidate attempt identity")
-        self._deadline.set(time.monotonic()+60)
+        # The primary lane's own completion bound when one is carried; the
+        # standalone sixty seconds only when it is not. Integration never
+        # starts a fresh timer over a budget that is already running, and an
+        # exhausted bound refuses before any Git or database work.
+        if deadline is None:
+            deadline = time.monotonic() + 60
+        elif deadline - time.monotonic() <= 0:
+            raise TeamAuthorizationError("candidate integration deadline exhausted")
+        self._deadline.set(deadline)
         evidence = authenticate(self.worker_secret,self.artifacts.get(capture_digest))
         completed=datetime.fromisoformat(evidence["completed_at"])
         if completed.tzinfo is None or completed>datetime.now(timezone.utc):
@@ -138,13 +158,25 @@ class GitTeamCandidateIntegrator:
             raise TeamAuthorizationError("candidate capture binding mismatch")
         files = decode_returned_files(grant, evidence["returned_files"])
         schema = self.authority.schema
-        with self.pool.connection() as connection, connection.transaction():
+        from .langgraph_postgres import bounded_transaction
+        with bounded_transaction(self.pool, deadline) as connection:
             writer = connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
                 WHERE task_id=%s AND engine_owner='langgraph' AND owner_token=%s
                 AND fencing_generation=%s AND lease_expires_at>clock_timestamp() FOR UPDATE""",
                 (grant.task_id, owner_token, fencing_generation)).fetchone()
             if writer is None:
                 raise TeamAuthorizationError("candidate integration lacks current writer")
+            if authority_recheck is not None:
+                # Under primary authority, re-read here rather than trusting
+                # the transport's read a moment ago: that ran in a separate
+                # transaction, and a same-owner cancellation locks this very
+                # writer row before it commits its kill switch. One that
+                # completed before the lock above is seen by this read and
+                # refused before any Git object, retention ref or row exists;
+                # one still waiting behind that lock is serialized after this
+                # candidate and never races it. The captured evidence already
+                # stored by the transport is kept either way.
+                authority_recheck(connection=connection, stage="candidate")
             self.authority.authorize(connection, grant_digest=grant.digest,
                 query=query, stage="result", attempt_digest=attempt_digest)
             existing = connection.execute(f"SELECT candidate_sha,capture_digest FROM {schema}.director_primary_team_candidate WHERE attempt_digest=%s", (attempt_digest,)).fetchone()
@@ -201,3 +233,5 @@ class GitTeamCandidateIntegrator:
             return candidate
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

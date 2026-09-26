@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -582,6 +585,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "acceptance_review",
             "review_handoff",
             "milestone_reporting",
+            "investigator",
         ])
         profiles = self.directive["allocation_profiles"]
         self.assertEqual(profiles["weights"]["engineering"], [40,25,15,10,10,0,0,0])
@@ -651,7 +655,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["share_pressure_action"], "block_above_direct_target_plus_five")
+        self.assertEqual(enforcement["share_pressure_action"], "historical_nonenforcing")
         self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
@@ -2192,3 +2196,6 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]

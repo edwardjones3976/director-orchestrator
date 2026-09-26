@@ -1,3 +1,12 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
@@ -44,6 +53,9 @@ def resolved_deployment_digest(document, image_id):
         service = observed["services"]["orchestrator"]
         if service["image"] != image_id:
             raise ValueError("Compose image is not the verified immutable ID")
+        # The Slack gateway is an intake surface: bind its content ID, never a mutable name.
+        if observed["services"]["slackbot"]["image"] != image_id:
+            raise ValueError("gateway image is not the verified immutable ID")
         command = service["command"]
         valid_apps = {"director_orchestrator.main:app", "director_orchestrator.primary_staging:app"}
         if command not in [["uvicorn", app, "--host", "0.0.0.0", "--port", "8080"] for app in valid_apps]:
@@ -51,6 +63,13 @@ def resolved_deployment_digest(document, image_id):
         if service.get("entrypoint") not in (None, []):
             raise ValueError("unexpected entrypoint override")
         environment = service["environment"]
+        validation_generation = environment.pop("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "")
+        if validation_generation != "" and (
+            not isinstance(validation_generation, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", validation_generation)
+            or validation_generation != environment.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
+        ):
+            raise ValueError("validation generation differs from protected selection")
         if environment.get("DIRECTOR_RUNTIME_IMAGE_ID") != image_id:
             raise ValueError("runtime image metadata mismatch")
         if environment.get("DIRECTOR_RUNTIME_IMAGE") != image_id or environment.get("DIRECTOR_ASGI_APP") != command[1]:
@@ -120,7 +139,9 @@ def require_generation(settings, identity, *, reserve=False):
     owner selects the manifest's exact bytes via a separately protected digest.
     """
     try:
-        if settings.langgraph_primary_acceptance_mode not in {"provider-v2", "provider-v3-two-party"}:
+        settings.project_execution_authority_pins()
+        local = settings.langgraph_primary_acceptance_mode == "owner-local-evidence-v1"
+        if settings.langgraph_primary_acceptance_mode not in {"provider-v2", "provider-v3-two-party", "owner-local-evidence-v1"}:
             raise ValueError("generation selection requires signed provider acceptance")
         source = Path(os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH"])
         pin = os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
@@ -129,17 +150,40 @@ def require_generation(settings, identity, *, reserve=False):
             raise ValueError("manifest pin mismatch")
         from .provider_acceptance_v2 import _pairs
         manifest = json.loads(raw, object_pairs_hook=_pairs)
-        expected_fields = {"version", "activation", "journal_path", "registry_path",
-            "registry_sha256", "provider_bindings_sha256", "deployment_configuration_sha256",
+        evidence_path_field = "owner_adoption_path" if local else "registry_path"
+        evidence_digest_field = "owner_adoption_sha256" if local else "registry_sha256"
+        expected_fields = {"version", "activation", "journal_path", evidence_path_field,
+            evidence_digest_field, "provider_bindings_sha256", "deployment_configuration_sha256",
             "image_id", "resolved_compose_sha256"}
-        if set(manifest) != expected_fields or manifest["version"] != "director-primary-generation/v1":
+        version = "director-primary-generation/owner-local-evidence-v1" if local else "director-primary-generation/v1"
+        if set(manifest) != expected_fields or manifest["version"] != version:
             raise ValueError("closed generation contract mismatch")
-        registry = Path(settings.langgraph_primary_acceptance_registry_path)
+        if local:
+            from .primary_activation_evidence import load_pinned_owner_local_adoption
+            evidence_path = Path(settings.langgraph_primary_local_evidence_adoption_path)
+            evidence_digest = settings.langgraph_primary_local_evidence_adoption_sha256
+            adoption = load_pinned_owner_local_adoption(evidence_path,
+                expected_sha256=evidence_digest, owner_token=settings.langgraph_primary_owner_token)
+            if adoption["reviewed_source_tree"] != identity.candidate_tree:
+                raise ValueError("adopted review source differs from generation")
+            if len(settings.repository_allowlist) != 1:
+                raise ValueError("generation selection requires exactly one configured repository")
+            service_repository = settings.langgraph_primary_service_repository.strip()
+            if service_repository and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", service_repository):
+                raise ValueError("malformed service repository")
+            expected_repository = service_repository or settings.repository_allowlist[0]
+            if adoption["repository"] != expected_repository:
+                raise ValueError("adopted repository differs from configured authority")
+            observed_evidence_digest = adoption["adoption_digest"]
+        else:
+            evidence_path = Path(settings.langgraph_primary_acceptance_registry_path)
+            evidence_digest = settings.langgraph_primary_acceptance_registry_sha256
+            observed_evidence_digest = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
         if (manifest["activation"] != asdict(identity)
             or manifest["journal_path"] != settings.langgraph_primary_acceptance_journal_path
-            or manifest["registry_path"] != str(registry)
-            or manifest["registry_sha256"] != settings.langgraph_primary_acceptance_registry_sha256
-            or hashlib.sha256(registry.read_bytes()).hexdigest() != manifest["registry_sha256"]
+            or manifest[evidence_path_field] != str(evidence_path)
+            or manifest[evidence_digest_field] != evidence_digest
+            or observed_evidence_digest != manifest[evidence_digest_field]
             or manifest["provider_bindings_sha256"] != hashlib.sha256(
                 os.environ.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "").encode()).hexdigest()
             or manifest["deployment_configuration_sha256"] != deployment_digest(settings)):
@@ -225,8 +269,9 @@ def main():
         return
     require_generation(settings, expected, reserve=args.command == "reserve")
     if args.command == "validate-providers":
-        from .primary_activation_evidence import ActivationEvidenceStore
-        ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json", read_only=True).require_staged(expected)
+        from .primary_activation_evidence import ActivationEvidenceStore, _acceptance_secrets_from_environment
+        ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json",
+            acceptance_secrets=_acceptance_secrets_from_environment(), read_only=True).require_staged(expected)
         require_validation_generation(expected)
         # The adopted bounded harness owns authentication, durable admission,
         # budgets, captures and ambiguity handling. Never substitute commands.
@@ -248,3 +293,14 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]

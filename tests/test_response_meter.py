@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
@@ -31,7 +32,7 @@ from director_orchestrator.primary_transports import OpenAIResponsesPacketTransp
 from director_orchestrator.config import Settings
 from director_orchestrator.primary_default import build_automatic_primary_live_dependencies
 from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
-from director_orchestrator.response_meter import EnrolledResponseMeter, ResponseMeterEnrollment, ResponseMeterRegistry, load_response_meter_registry
+from director_orchestrator.response_meter import ACCOUNTING_ALLOWANCE_SECONDS, EnrolledResponseMeter, ResponseMeterEnrollment, ResponseMeterRegistry, load_response_meter_registry
 from tests import test_antigravity_team as team
 
 
@@ -279,8 +280,15 @@ class ResponseMeterTests(unittest.TestCase):
                             OpenAIResponsesPacketTransport(api_key="test-key",model=self.enrollment.model,
                                 response_meter=self.meter).send(self.packet,context=context)
                         elapsed=monotonic()-started
-                        self.assertLess(elapsed,2.5)
-                        self.assertTrue(all(0 < call.kwargs["timeout"] <= 1 for call in acquisition.call_args_list))
+                        # Execution stays bounded by the attempt's own second.
+                        # Recording the usage of a request that was already
+                        # admitted and sent is additionally allowed exactly one
+                        # fixed accounting window, derived once from that same
+                        # deadline, and nothing beyond it: the reservation is
+                        # still held and no usage row is written.
+                        bound = 1 + (ACCOUNTING_ALLOWANCE_SECONDS if phase=="settle" else 0)
+                        self.assertLess(elapsed,bound+1.5)
+                        self.assertTrue(all(0 < call.kwargs["timeout"] <= bound for call in acquisition.call_args_list))
                 self.assertEqual(0 if phase=="prepare" else 2,len(requests))
                 self.assertEqual(0,self.count_rows())
                 with self.store._pool.connection() as c:
@@ -517,3 +525,4 @@ class ResponseMeterTests(unittest.TestCase):
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

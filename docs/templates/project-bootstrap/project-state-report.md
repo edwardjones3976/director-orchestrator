@@ -1,3 +1,6 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
@@ -28,7 +31,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=883f7fafa38449c1ddfbeb9570bddb044c56ccd5ca90b82c5a06748cf4b3cb7e -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=25e2b914bb6ce71df313a5b9bd5485ddd1447d31083b2e18177608282311bf1d -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -76,7 +79,7 @@ report or submission envelope.
 - **Director/control plane:** <ChatGPT/Codex project leadership and actual runtime provider separately reported; material provider production is attributed and requires non-author review/merge>
 - **Enforced accepted-productive-work routing:** <frozen approved allocation profile and digest; all eight active lane targets, real admissions, accepted output, deviations and capacity exclusions>
 - **Prospective total effort:** <observed immutable effort points, tokens, costs, missing telemetry, waste and separate subscription/API budgets; no independent legacy percentage matrix>
-- **Workload accounting:** <last nineteen real assignments plus candidate, fixed20 startup denominator, zero-target ineligible, target+5 hard ceiling, ±3 preference, preserved history across profile changes>
+- **Workload accounting:** <last nineteen real assignments plus candidate, fixed20 startup denominator, zero-target ineligible, target+5 hard ceiling retired by the owner 2026-09-21 (advisory reference only), ±3 preference, preserved history across profile changes>
 - **External OpenAI production:** <none, or exact owner authorization, authenticated candidate identity, different-provider exact-candidate review, and current security/CI/merge evidence>
 - **Team-first routing:** <distinct provider roles, one writer lease per file/error surface, rotating different non-author reviewer, or exact truly-simple local OpenAI exception>
 - **Cheap-capable selection:** <eligible candidates and exclusions; exact scope/allowlists, transport/readiness, capability/tools/context/risk/independence; under-target preference; trusted comparable costs; selected provider/model; deterministic tie-break reason; exact trusted Claude/model requirement or none>
@@ -181,3 +184,6 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->

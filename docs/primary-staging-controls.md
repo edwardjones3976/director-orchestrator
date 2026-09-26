@@ -1,3 +1,7 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
@@ -24,7 +28,16 @@ Use the same Compose project/environment as the deployment, with
 `--build-arg DIRECTOR_CANDIDATE_COMMIT=<exact-commit>` and
 `--build-arg DIRECTOR_CANDIDATE_TREE=<exact-tree>` on `docker compose build
 orchestrator`. These label values must match the control checkout and configured
-candidate pins. Building is not acceptance. The image must already exist for
+candidate pins. Building is not acceptance. When the registered project
+repository differs from the accepted Director service candidate, keep
+`LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and `LANGGRAPH_PRIMARY_PINNED_TREE_SHA` on
+the Director candidate and set
+`LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA` and
+`LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA` to the clean allowlisted
+project snapshot, and set `LANGGRAPH_PRIMARY_SERVICE_REPOSITORY` to the
+owner-local adoption repository when that adoption names the Director service PR
+while `REPOSITORY_ALLOWLIST` names the execution project. Leave both project
+execution values empty to retain the legacy single-repository binding. The image must already exist for
 utility containers, which use `--no-deps --pull never`. The control tool inspects
 the actual content-addressed image ID and rejects an embedded entrypoint. It
 then sets the Compose image to that immutable ID. Candidate labels help identify
@@ -59,7 +72,7 @@ contract is `director-primary-generation/v1`, with exactly these fields:
 | `provider_bindings_sha256` | SHA256 of the complete UTF-8 `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` string |
 | `deployment_configuration_sha256` | `primary_generation.deployment_digest(Settings())` under the intended resolved container settings and new journal path |
 | `image_id` | Actual `sha256:...` Docker image ID from host inspection, covering image configuration and root filesystem content |
-| `resolved_compose_sha256` | `primary_generation.resolved_deployment_digest` of the complete resolved Compose JSON with that immutable image selected |
+| `resolved_compose_sha256` | `primary_generation.resolved_deployment_digest` of the complete resolved Compose JSON with that immutable image selected for both the orchestrator and the Slack gateway (`slackbot`); a gateway on another image or a mutable name is refused |
 
 The deployment digest covers all resolved Settings fields, including secrets
 only through the digest. Its documented exclusions are the operational switches
@@ -156,8 +169,19 @@ ownership and effect gates. Normal startup under either signed-provider mode
 (`provider-v2` or `provider-v3-two-party`) verifies the selected immutable
 generation and runtime acceptance, including bound inventory, before offline
 provider doubles are selected. `PrepareOfflineHandoff` satisfies that
-inventory prerequisite without being live activation. Rollback selects the
-normal application after its existing fenced proof.
+inventory prerequisite without being live activation. `ActivateOffline` runs
+the same stop, inventory and `require-ready` steps, then selects the normal
+application with offline simulation on and paid runs and live dispatch off. It
+does not require provider readiness and records no `ACTIVATED` stage; a later
+paid `Activate` on the same generation passes only while the legacy inventory
+is unchanged. Rollback selects the normal application after its existing fenced
+proof and restores the orchestrator and gateway images recorded beside the
+profile before the first candidate recreate
+(`<profile>.prior-images.<generation>.<image>.json`, written once and never
+overwritten), reading each back before n8n and Slack start. A failed readback
+or health check closes all intake again. An invalid record refuses before
+anything stops; with no record the return to legacy runs on the candidate image
+and reports that no image was restored.
 
 `ValidateProviders` requires the verified staged container and freshly checked
 generation/acceptance/restore evidence. It checks the validation manifest's
@@ -264,3 +288,7 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->

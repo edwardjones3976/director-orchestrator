@@ -1,3 +1,4 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
@@ -458,7 +459,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         ):
             self.assertIn(expected, charter)
         self.assertIn("Freeze one approved allocation profile and its digest before plan approval", prompt)
-        self.assertIn("blocks above target plus 5 percentage points", prompt)
+        self.assertIn("historical share bounds are maintained but non-enforcing (retired by owner 2026-09-21)", prompt)
         self.assertIn("startup uses the full 20-slot denominator with real assignments only", prompt)
         self.assertIn("cheapest capable trusted model first", prompt)
         self.assertIn("GitHub Copilot Lite", prompt)
@@ -1573,3 +1574,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]]

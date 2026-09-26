@@ -1,3 +1,5 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 10:40 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]]
@@ -41,9 +43,13 @@ Key architectural constraints:
 7. Specialty boundaries: Perplexity (public research) and Firecrawl (authorized
    retrieval) retain bounded roles. No permanent specialties exist for other lanes.
 8. Soft/Hard tolerance: Window of 20 slots (5% per slot). Normal tolerance is +/-3
-   percentage points (preference), hard ceiling is target + 5 points. For Firecrawl
-   (target 1%), a 5% mathematical slot is within the hard ceiling (6%), but this
-   descriptor confers no actual admission or execution authority.
+   percentage points (preference). `hard_ceiling`/`hard_tolerance_percentage_points`
+   retain the target + 5 point historical reference number only; the owner retired
+   that rolling-twenty hard-ceiling enforcement mechanism on 2026-09-21 as outdated.
+   This staged descriptor was never bound to any runtime cap, so nothing here was
+   removed or newly enforced; the fields are reference numbers only. For Firecrawl
+   (target 1%), a 5% mathematical slot is within that reference ceiling (6%), but
+   this descriptor confers no actual admission or execution authority.
 9. Canonical digest: All semantic descriptor fields (prerequisites, dates, OpenAI
    floor, denominators, contacts, boundaries) are bound in one canonical payload,
    and the digest is derived directly from that payload.
@@ -189,7 +195,7 @@ class ConditionalContactDescriptor:
     route_binding: str | None
     boundary_note: str | None
     soft_tolerance_band: tuple[int, int]
-    hard_ceiling: int
+    hard_ceiling: int  # Historical reference number only; not an enforced runtime cap.
 
 
 def _build_contacts() -> MappingProxyType[str, ConditionalContactDescriptor]:
@@ -376,3 +382,5 @@ def shares_policy_family(lane_a: str, lane_b: str) -> bool:
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 10:40 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]

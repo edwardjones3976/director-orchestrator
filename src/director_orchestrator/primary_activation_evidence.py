@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
@@ -17,6 +22,7 @@ import hmac
 import json
 import os
 import re
+import stat
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass
@@ -27,6 +33,33 @@ from typing import Any, Mapping
 
 
 ACCEPTANCE_ARTIFACT_VERSION = "director-primary-acceptance-artifact/v1"
+ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION = (
+    "director-primary-acceptance-artifact/owner-local-evidence-v1"
+)
+OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE = "owner-local-evidence-v1"
+OWNER_LOCAL_ADOPTION_VERSION = "director-primary-local-evidence-adoption/v1"
+OWNER_LOCAL_ADOPTION_DECISION = "ADOPT_SCOPED_LOCAL_EVIDENCE"
+OWNER_LOCAL_CI_ISSUER = "owner-local-evidence-adoption"
+HOSTED_CI_NOT_EXECUTED = "HOSTED_NOT_EXECUTED"
+_OWNER_LOCAL_ADOPTION_MAX_BYTES = 256 * 1024
+_OWNER_LOCAL_PINNED_EVIDENCE_MAX_COUNT = 32
+_OWNER_LOCAL_PINNED_EVIDENCE_MAX_FILE_BYTES = 8 * 1024 * 1024
+_OWNER_LOCAL_PINNED_EVIDENCE_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+_ACCEPTANCE_ARTIFACT_MAX_BYTES = 256 * 1024
+_OWNER_LOCAL_ADOPTION_DOMAIN = (
+    b"director-primary-local-evidence-adoption/v1\0"
+)
+_OWNER_LOCAL_EXTRA_FACT_NAMES = frozenset(
+    {
+        "generation_manifest_sha256",
+        "hosted_ci_failure_cause",
+        "local_qa_evidence_digest",
+        "reviewed_source_commit",
+        "reviewed_source_tree",
+        "owner_local_evidence_adoption_digest",
+        "unchanged_source_reconciliation_digest",
+    }
+)
 _ACCEPTANCE_SECRET_ENVIRONMENTS = {
     "ci": "LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET",
     "independent_review": "LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET",
@@ -50,6 +83,8 @@ _ACCEPTANCE_FACT_NAMES = {
     "security_reviewer",
     "security_verdict",
 }
+
+_OWNER_LOCAL_FACT_NAMES = _ACCEPTANCE_FACT_NAMES | _OWNER_LOCAL_EXTRA_FACT_NAMES
 
 
 class ActivationEvidenceError(RuntimeError):
@@ -92,6 +127,307 @@ def _closed_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ActivationEvidenceError("canonical artifact contains duplicate fields")
         value[name] = item
     return value
+
+
+def unchanged_source_reconciliation_digest(
+    *,
+    reviewed_source_commit: str,
+    reviewed_source_tree: str,
+    activation_candidate_commit: str,
+    activation_candidate_tree: str,
+    pinned_evidence: object,
+) -> str:
+    payload = {
+        "activation_candidate_commit": activation_candidate_commit,
+        "activation_candidate_tree": activation_candidate_tree,
+        "pinned_evidence": pinned_evidence,
+        "reviewed_source_commit": reviewed_source_commit,
+        "reviewed_source_tree": reviewed_source_tree,
+    }
+    return canonical_facts_digest(payload)
+
+
+def hosted_ci_absence_digest(*, failure_cause: str, required_check_count: int) -> str:
+    return canonical_facts_digest(
+        {
+            "failure_cause": failure_cause,
+            "hosted_ci_conclusion": HOSTED_CI_NOT_EXECUTED,
+            "required_check_count": required_check_count,
+        }
+    )
+
+
+def _owner_local_adoption_signature(owner_token: str, document: Mapping[str, Any]) -> str:
+    return hmac.new(
+        owner_token.encode("utf-8"),
+        _OWNER_LOCAL_ADOPTION_DOMAIN + _canonical_json(dict(document)),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _read_regular_file_bounded(
+    path: Path,
+    *,
+    max_bytes: int,
+    error_label: str,
+) -> bytes:
+    if max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
+    try:
+        if not path.is_file():
+            raise ActivationEvidenceError(f"{error_label} must be a regular file")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ActivationEvidenceError(f"{error_label} must be a regular file")
+            if info.st_size > max_bytes:
+                raise ActivationEvidenceError(f"{error_label} is oversized")
+            raw = stream.read(max_bytes + 1)
+    except OSError as exc:
+        raise ActivationEvidenceError(f"{error_label} is unreadable") from exc
+    if len(raw) > max_bytes:
+        raise ActivationEvidenceError(f"{error_label} is oversized")
+    if len(raw) != info.st_size:
+        raise ActivationEvidenceError(f"{error_label} changed during read")
+    return raw
+
+
+def _verify_owner_local_pinned_evidence(
+    bundle_root: Path,
+    pinned_evidence: list[object],
+) -> None:
+    if len(pinned_evidence) > _OWNER_LOCAL_PINNED_EVIDENCE_MAX_COUNT:
+        raise ActivationEvidenceError(
+            "owner-local evidence adoption pins exceed the allowed count"
+        )
+    seen_paths: set[str] = set()
+    total_bytes = 0
+    resolved_root = bundle_root.resolve()
+    entries: list[tuple[Path, str, int]] = []
+    for item in pinned_evidence:
+        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
+        digest = item.get("sha256")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
+        path_value = item.get("path")
+        if (
+            not isinstance(path_value, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", path_value) is None
+        ):
+            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
+        path_key = path_value.casefold()
+        if path_key in seen_paths:
+            raise ActivationEvidenceError(
+                "owner-local evidence adoption pins contain duplicate paths"
+            )
+        seen_paths.add(path_key)
+        evidence = bundle_root / path_value
+        try:
+            if evidence.resolve().parent != resolved_root:
+                raise ActivationEvidenceError(
+                    "adopted evidence is outside its bundle or oversized"
+                )
+            info = evidence.stat()
+            if not stat.S_ISREG(info.st_mode):
+                raise ActivationEvidenceError("adopted evidence is unavailable")
+            size = info.st_size
+        except OSError as exc:
+            raise ActivationEvidenceError("adopted evidence is unavailable") from exc
+        if size > _OWNER_LOCAL_PINNED_EVIDENCE_MAX_FILE_BYTES:
+            raise ActivationEvidenceError(
+                "adopted evidence is outside its bundle or oversized"
+            )
+        total_bytes += size
+        if total_bytes > _OWNER_LOCAL_PINNED_EVIDENCE_MAX_TOTAL_BYTES:
+            raise ActivationEvidenceError(
+                "adopted evidence bundle exceeds the aggregate byte limit"
+            )
+        entries.append((evidence, digest, size))
+    for evidence, digest, size in entries:
+        raw = _read_regular_file_bounded(
+            evidence,
+            max_bytes=size,
+            error_label="adopted evidence",
+        )
+        observed = hashlib.sha256(raw).hexdigest()
+        if len(raw) != size or not hmac.compare_digest(observed, digest):
+            raise ActivationEvidenceError("adopted evidence bytes changed")
+
+
+def load_pinned_owner_local_adoption(
+    path: str | Path,
+    *,
+    expected_sha256: str,
+    owner_token: str,
+) -> dict[str, Any]:
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise ActivationEvidenceError("owner-local evidence adoption pin is invalid")
+    if len(owner_token) < 32:
+        raise ActivationEvidenceError("owner-local evidence adoption authority is unavailable")
+    source = Path(path)
+    raw = _read_regular_file_bounded(
+        source,
+        max_bytes=_OWNER_LOCAL_ADOPTION_MAX_BYTES,
+        error_label="owner-local evidence adoption",
+    )
+    observed_sha256 = hashlib.sha256(raw).hexdigest()
+    if not hmac.compare_digest(observed_sha256, expected_sha256.lower()):
+        raise ActivationEvidenceError("owner-local evidence adoption pin mismatch")
+    try:
+        envelope = json.loads(raw, object_pairs_hook=_closed_json_object)
+    except json.JSONDecodeError as exc:
+        raise ActivationEvidenceError("owner-local evidence adoption is invalid JSON") from exc
+    if not isinstance(envelope, dict) or set(envelope) != {"document", "signature"}:
+        raise ActivationEvidenceError("owner-local evidence adoption contract is invalid")
+    document = envelope.get("document")
+    signature = envelope.get("signature")
+    if not isinstance(document, dict) or not isinstance(signature, str):
+        raise ActivationEvidenceError("owner-local evidence adoption contract is invalid")
+    expected_document_names = {
+        "decision",
+        "hosted_ci_failure_cause",
+        "independent_review_evidence_digest",
+        "independent_reviewer",
+        "local_qa_evidence_digest",
+        "pinned_evidence",
+        "pull_request_author",
+        "pull_request_number",
+        "repository",
+        "reviewed_source_commit",
+        "reviewed_source_tree",
+        "security_evidence_digest",
+        "security_reviewer",
+        "version",
+    }
+    if set(document) != expected_document_names:
+        raise ActivationEvidenceError("owner-local evidence adoption document is invalid")
+    if document.get("version") != OWNER_LOCAL_ADOPTION_VERSION:
+        raise ActivationEvidenceError("owner-local evidence adoption version is invalid")
+    if document.get("decision") != OWNER_LOCAL_ADOPTION_DECISION:
+        raise ActivationEvidenceError("owner-local evidence adoption decision is invalid")
+    for field in ("reviewed_source_commit", "reviewed_source_tree"):
+        value = document.get(field)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ActivationEvidenceError("owner-local evidence adoption source identity is invalid")
+    repository = document.get("repository")
+    if (
+        not isinstance(repository, str)
+        or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None
+    ):
+        raise ActivationEvidenceError("owner-local evidence adoption repository is invalid")
+    pull_request_number = document.get("pull_request_number")
+    if (
+        isinstance(pull_request_number, bool)
+        or not isinstance(pull_request_number, int)
+        or pull_request_number < 1
+    ):
+        raise ActivationEvidenceError("owner-local evidence adoption pull request is invalid")
+    failure_cause = document.get("hosted_ci_failure_cause")
+    if not isinstance(failure_cause, str) or not failure_cause.strip():
+        raise ActivationEvidenceError("hosted CI failure cause is required")
+    if failure_cause != failure_cause.strip():
+        raise ActivationEvidenceError("hosted CI failure cause is noncanonical")
+    pinned_evidence = document.get("pinned_evidence")
+    if not isinstance(pinned_evidence, list) or not pinned_evidence:
+        raise ActivationEvidenceError("owner-local evidence adoption lacks pinned artifacts")
+    _verify_owner_local_pinned_evidence(source.parent, pinned_evidence)
+    for name in (
+        "security_evidence_digest",
+        "independent_review_evidence_digest",
+        "local_qa_evidence_digest",
+    ):
+        value = document.get(name)
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ActivationEvidenceError("owner-local evidence adoption digests are invalid")
+        if value not in {item["sha256"] for item in pinned_evidence}:
+            raise ActivationEvidenceError("required review or QA evidence is not pinned")
+    for name in ("security_reviewer", "independent_reviewer", "pull_request_author"):
+        value = document.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ActivationEvidenceError("owner-local evidence adoption actors are invalid")
+    security_actor = str(document["security_reviewer"])
+    independent_actor = str(document["independent_reviewer"])
+    pull_request_author = str(document["pull_request_author"])
+    if (
+        hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
+        or hmac.compare_digest(security_actor.casefold(), pull_request_author.casefold())
+        or hmac.compare_digest(independent_actor.casefold(), pull_request_author.casefold())
+    ):
+        raise ActivationEvidenceError(
+            "owner-local evidence adoption requires distinct attributable identities"
+        )
+    expected_signature = _owner_local_adoption_signature(owner_token, document)
+    if not hmac.compare_digest(signature, expected_signature):
+        raise ActivationEvidenceError("owner-local evidence adoption signature is invalid")
+    return {
+        **document,
+        "adoption_digest": observed_sha256,
+        "canonical_document": dict(document),
+    }
+
+
+def owner_local_acceptance_facts(
+    identity: ActivationIdentity,
+    adoption: Mapping[str, Any],
+    *,
+    repository: str,
+    pull_request_number: int,
+    required_check_count: int = 6,
+) -> dict[str, Any]:
+    if repository != adoption["repository"] or pull_request_number != adoption["pull_request_number"] or required_check_count != 6:
+        raise ActivationEvidenceError("owner-local acceptance target or baseline checks differ")
+    failure_cause = str(adoption["hosted_ci_failure_cause"]).strip()
+    reviewed_source_commit = str(adoption["reviewed_source_commit"])
+    reviewed_source_tree = str(adoption["reviewed_source_tree"])
+    reconciliation = unchanged_source_reconciliation_digest(
+        reviewed_source_commit=reviewed_source_commit,
+        reviewed_source_tree=reviewed_source_tree,
+        activation_candidate_commit=identity.candidate_commit,
+        activation_candidate_tree=identity.candidate_tree,
+        pinned_evidence=adoption["pinned_evidence"],
+    )
+    return {
+        "candidate_commit": identity.candidate_commit,
+        "candidate_tree": identity.candidate_tree,
+        "generation_manifest_sha256": os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", ""),
+        "ci_conclusion": HOSTED_CI_NOT_EXECUTED,
+        "ci_evidence_digest": hosted_ci_absence_digest(
+            failure_cause=failure_cause,
+            required_check_count=required_check_count,
+        ),
+        "ci_required_check_count": required_check_count,
+        "ci_run_ids": [],
+        "hosted_ci_failure_cause": failure_cause,
+        "local_qa_evidence_digest": adoption["local_qa_evidence_digest"],
+        "independent_review_evidence_digest": adoption["independent_review_evidence_digest"],
+        "independent_review_verdict": "ACCEPT",
+        "independent_reviewed_commit": identity.candidate_commit,
+        "independent_reviewer": adoption["independent_reviewer"],
+        "owner_local_evidence_adoption_digest": adoption["adoption_digest"],
+        "pull_request_author": adoption["pull_request_author"],
+        "remote_head_commit": identity.candidate_commit,
+        "reviewed_source_commit": reviewed_source_commit,
+        "reviewed_source_tree": reviewed_source_tree,
+        "security_evidence_digest": adoption["security_evidence_digest"],
+        "security_reviewed_commit": identity.candidate_commit,
+        "security_reviewer": adoption["security_reviewer"],
+        "security_verdict": "ACCEPT",
+        "unchanged_source_reconciliation_digest": reconciliation,
+    }
 
 
 def _acceptance_issuer(kind: str, facts: Mapping[str, Any]) -> str:
@@ -152,12 +488,18 @@ class ActivationEvidenceStore:
         self._read_only = read_only
         self._journal = journal_from_environment(read_only=read_only)
         self._revision = None
+        if os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE") == OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
+            generation_journal = os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH", "")
+            if not generation_journal or not Path(generation_journal).is_absolute() or Path(generation_journal).suffix != ".sqlite3":
+                raise ActivationEvidenceError("owner-local acceptance requires a selected generation journal")
+            path = Path(generation_journal).with_suffix(".evidence.json")
         self.path = Path(path).resolve()
         if not read_only:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._acceptance_secrets = (
             dict(acceptance_secrets) if acceptance_secrets is not None else None
         )
+        self._owner_local_adoption = owner_local_adoption_from_environment()
 
     def load(self) -> dict[str, Any] | None:
         if self._journal is not None:
@@ -282,12 +624,11 @@ class ActivationEvidenceStore:
     @staticmethod
     def _load_acceptance_artifact(path: str | Path) -> dict[str, Any]:
         source = Path(path)
-        try:
-            raw = source.read_bytes()
-        except OSError as exc:
-            raise ActivationEvidenceError("canonical acceptance artifact is unreadable") from exc
-        if len(raw) > 256 * 1024:
-            raise ActivationEvidenceError("canonical acceptance artifact is oversized")
+        raw = _read_regular_file_bounded(
+            source,
+            max_bytes=_ACCEPTANCE_ARTIFACT_MAX_BYTES,
+            error_label="canonical acceptance artifact",
+        )
         try:
             artifact = json.loads(raw, object_pairs_hook=_closed_json_object)
         except json.JSONDecodeError as exc:
@@ -303,7 +644,8 @@ class ActivationEvidenceStore:
         }
         if not isinstance(artifact, dict) or set(artifact) != expected_names:
             raise ActivationEvidenceError("canonical acceptance artifact contract is invalid")
-        if artifact.get("version") != ACCEPTANCE_ARTIFACT_VERSION:
+        version = artifact.get("version")
+        if version not in {ACCEPTANCE_ARTIFACT_VERSION, ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION}:
             raise ActivationEvidenceError("canonical acceptance artifact version is invalid")
         if not isinstance(artifact.get("facts"), dict):
             raise ActivationEvidenceError("canonical acceptance artifact facts are invalid")
@@ -321,7 +663,8 @@ class ActivationEvidenceStore:
         if not isinstance(artifact.get("facts_digest"), str):
             raise ActivationEvidenceError("acceptance artifact facts digest is invalid")
         attestations = artifact.get("attestations")
-        if not isinstance(attestations, dict) or set(attestations) != set(_ACCEPTANCE_SECRET_ENVIRONMENTS):
+        expected_attestations = {"owner_adoption"} if version == ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION else set(_ACCEPTANCE_SECRET_ENVIRONMENTS)
+        if not isinstance(attestations, dict) or set(attestations) != expected_attestations:
             raise ActivationEvidenceError("acceptance artifact attestations are invalid")
         for kind, value in attestations.items():
             if not isinstance(value, dict) or set(value) != {"issuer", "signature"}:
@@ -404,7 +747,23 @@ class ActivationEvidenceStore:
         facts = artifact.get("facts")
         if not isinstance(facts, dict):
             raise ActivationEvidenceError("canonical acceptance artifact facts are invalid")
-        self._validate_acceptance(identity, facts)
+        selected_mode = os.environ.get(
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1"
+        )
+        artifact_version = str(artifact.get("version"))
+        if selected_mode == OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
+            if artifact_version != ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION:
+                raise ActivationEvidenceError(
+                    "acceptance artifact version does not match selected mode"
+                )
+        elif artifact_version != ACCEPTANCE_ARTIFACT_VERSION:
+            raise ActivationEvidenceError(
+                "acceptance artifact version does not match selected mode"
+            )
+        if artifact_version == ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION:
+            self._validate_owner_local_acceptance(identity, facts)
+        else:
+            self._validate_acceptance(identity, facts)
         unsigned = {
             name: artifact.get(name)
             for name in (
@@ -429,10 +788,11 @@ class ActivationEvidenceStore:
             raise ActivationEvidenceError(
                 "accepted evidence requires durable attestation verifier secrets"
             )
-        relevant_secrets = {
-            kind: supplied_secrets.get(kind)
-            for kind in _ACCEPTANCE_SECRET_ENVIRONMENTS
-        }
+        local = artifact_version == ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION
+        roles = ("owner_adoption",) if local else tuple(_ACCEPTANCE_SECRET_ENVIRONMENTS)
+        if local and (artifact["repository"] != self._owner_local_adoption["repository"] or artifact["pull_request_number"] != self._owner_local_adoption["pull_request_number"]):
+            raise ActivationEvidenceError("acceptance artifact differs from the owner-adopted target")
+        relevant_secrets = {kind: supplied_secrets.get(kind) for kind in roles}
         if any(
             not isinstance(secret, str) or len(secret) < 32
             for secret in relevant_secrets.values()
@@ -440,7 +800,7 @@ class ActivationEvidenceStore:
             raise ActivationEvidenceError(
                 "acceptance artifact verification authority is unavailable"
             )
-        if len(set(relevant_secrets.values())) != len(_ACCEPTANCE_SECRET_ENVIRONMENTS):
+        if len(set(relevant_secrets.values())) != len(roles):
             raise ActivationEvidenceError(
                 "acceptance artifact verification authorities must be distinct"
             )
@@ -454,7 +814,7 @@ class ActivationEvidenceStore:
                 raise ActivationEvidenceError(
                     f"acceptance artifact {kind} attestation is invalid"
                 )
-            issuer = _acceptance_issuer(kind, facts)
+            issuer = OWNER_LOCAL_CI_ISSUER if local else _acceptance_issuer(kind, facts)
             if attestation.get("issuer") != issuer:
                 raise ActivationEvidenceError(
                     f"acceptance artifact {kind} issuer is invalid"
@@ -468,6 +828,132 @@ class ActivationEvidenceStore:
                     f"acceptance artifact {kind} attestation is invalid"
                 )
         return facts_digest
+
+    def _validate_owner_local_acceptance(
+        self, identity: ActivationIdentity, facts: Mapping[str, Any]
+    ) -> None:
+        if os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1") != OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
+            raise ActivationEvidenceError("owner-local evidence requires explicit mode selection")
+        if set(facts) != _OWNER_LOCAL_FACT_NAMES:
+            raise ActivationEvidenceError("acceptance artifact facts contract is invalid")
+        generation_pin = os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", generation_pin) or facts.get("generation_manifest_sha256") != generation_pin:
+            raise ActivationEvidenceError("owner-local acceptance belongs to another or unselected generation")
+        if facts.get("ci_conclusion") != HOSTED_CI_NOT_EXECUTED:
+            raise ActivationEvidenceError("hosted CI failure was not preserved explicitly")
+        run_ids = facts.get("ci_run_ids")
+        if not isinstance(run_ids, list) or run_ids:
+            raise ActivationEvidenceError("hosted CI run identity must remain absent")
+        check_count = facts.get("ci_required_check_count")
+        if isinstance(check_count, bool) or not isinstance(check_count, int) or check_count != 6:
+            raise ActivationEvidenceError("hosted CI required check count is invalid")
+        failure_cause = facts.get("hosted_ci_failure_cause")
+        if not isinstance(failure_cause, str) or not failure_cause.strip():
+            raise ActivationEvidenceError("hosted CI failure cause is required")
+        expected_ci_digest = hosted_ci_absence_digest(
+            failure_cause=failure_cause.strip(),
+            required_check_count=check_count,
+        )
+        ci_digest = facts.get("ci_evidence_digest")
+        if not isinstance(ci_digest, str) or not hmac.compare_digest(ci_digest, expected_ci_digest):
+            raise ActivationEvidenceError("hosted CI absence digest is invalid")
+        exact_fields = {
+            "candidate_commit": identity.candidate_commit,
+            "candidate_tree": identity.candidate_tree,
+            "remote_head_commit": identity.candidate_commit,
+            "security_reviewed_commit": identity.candidate_commit,
+            "independent_reviewed_commit": identity.candidate_commit,
+        }
+        if any(facts.get(name) != expected for name, expected in exact_fields.items()):
+            raise ActivationEvidenceError(
+                "acceptance evidence is not bound to the exact candidate"
+            )
+        if facts.get("security_verdict") != "ACCEPT":
+            raise ActivationEvidenceError("security review has not accepted the exact head")
+        if facts.get("independent_review_verdict") != "ACCEPT":
+            raise ActivationEvidenceError(
+                "independent review has not accepted the exact head"
+            )
+        security_actor = facts.get("security_reviewer")
+        independent_actor = facts.get("independent_reviewer")
+        pull_request_author = facts.get("pull_request_author")
+        if (
+            not isinstance(security_actor, str)
+            or not security_actor.strip()
+            or not isinstance(independent_actor, str)
+            or not independent_actor.strip()
+            or hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
+            or not isinstance(pull_request_author, str)
+            or not pull_request_author.strip()
+            or hmac.compare_digest(security_actor.casefold(), pull_request_author.casefold())
+            or hmac.compare_digest(independent_actor.casefold(), pull_request_author.casefold())
+        ):
+            raise ActivationEvidenceError(
+                "producer and acceptance actors require distinct attributable identities"
+            )
+        for name in (
+            "security_evidence_digest",
+            "independent_review_evidence_digest",
+            "owner_local_evidence_adoption_digest",
+            "unchanged_source_reconciliation_digest",
+        ):
+            value = facts.get(name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ActivationEvidenceError(
+                    "acceptance evidence lacks exact artifact digests"
+                )
+        reviewed_source_commit = facts.get("reviewed_source_commit")
+        reviewed_source_tree = facts.get("reviewed_source_tree")
+        if (
+            not isinstance(reviewed_source_commit, str)
+            or len(reviewed_source_commit) != 40
+            or not isinstance(reviewed_source_tree, str)
+            or len(reviewed_source_tree) != 40
+        ):
+            raise ActivationEvidenceError("reviewed source identity is invalid")
+        # Recheck retained evidence on replay, including within an existing store.
+        adoption = owner_local_adoption_from_environment()
+        self._owner_local_adoption = adoption
+        if adoption is None:
+            raise ActivationEvidenceError("owner-local evidence adoption is unavailable")
+        adoption_digest = facts.get("owner_local_evidence_adoption_digest")
+        if not hmac.compare_digest(str(adoption_digest), str(adoption["adoption_digest"])):
+            raise ActivationEvidenceError("owner-local evidence adoption digest mismatch")
+        for field in (
+            "hosted_ci_failure_cause",
+            "local_qa_evidence_digest",
+            "independent_review_evidence_digest",
+            "independent_reviewer",
+            "pull_request_author",
+            "security_evidence_digest",
+            "security_reviewer",
+        ):
+            if facts.get(field) != adoption.get(field):
+                raise ActivationEvidenceError("owner-local evidence adoption facts mismatch")
+        if facts.get("reviewed_source_commit") != adoption.get("reviewed_source_commit"):
+            raise ActivationEvidenceError("reviewed source commit mismatch")
+        if facts.get("reviewed_source_tree") != adoption.get("reviewed_source_tree"):
+            raise ActivationEvidenceError("reviewed source tree mismatch")
+        reconciliation = unchanged_source_reconciliation_digest(
+            reviewed_source_commit=str(reviewed_source_commit),
+            reviewed_source_tree=str(reviewed_source_tree),
+            activation_candidate_commit=identity.candidate_commit,
+            activation_candidate_tree=identity.candidate_tree,
+            pinned_evidence=adoption.get("pinned_evidence"),
+        )
+        if not hmac.compare_digest(
+            str(facts.get("unchanged_source_reconciliation_digest")), reconciliation
+        ):
+            raise ActivationEvidenceError("unchanged source reconciliation digest mismatch")
+        if identity.candidate_commit != reviewed_source_commit:
+            if identity.candidate_tree != reviewed_source_tree:
+                raise ActivationEvidenceError(
+                    "changed activation candidate requires unchanged source tree reconciliation"
+                )
 
     @staticmethod
     def _validate_acceptance(
@@ -629,6 +1115,21 @@ class ActivationEvidenceStore:
             raise ActivationEvidenceError("pre-cutover legacy ownership inventory is unavailable")
         return current
 
+    def require_activated(self, identity: ActivationIdentity) -> dict[str, Any]:
+        """Validate that this exact identity's chain is complete and ACTIVATED.
+
+        Read-only; it lets a paid activation whose post-record start failed
+        resume the start steps without recording the terminal stage again.
+        """
+        current = self.load()
+        if current is None or current.get("identity_digest") != identity.digest or current.get("identity") != asdict(identity):
+            raise ActivationEvidenceError("activation evidence identity is unavailable or stale")
+        if [item.get("stage") for item in current.get("stages", [])] != [stage.value for stage in _ORDER]:
+            raise ActivationEvidenceError("activation chain is not ACTIVATED")
+        if not isinstance(current.get("legacy_inventory"), dict):
+            raise ActivationEvidenceError("pre-cutover legacy ownership inventory is unavailable")
+        return current
+
     def bind_legacy_inventory(
         self, identity: ActivationIdentity, *, inventory_digest: str, task_count: int
     ) -> dict[str, Any]:
@@ -690,15 +1191,33 @@ def _identity(arguments: argparse.Namespace) -> ActivationIdentity:
 
 
 def _acceptance_secrets_from_environment() -> dict[str, str]:
-    return {
+    values = {
         kind: os.environ.get(environment, "")
         for kind, environment in _ACCEPTANCE_SECRET_ENVIRONMENTS.items()
     }
+    values["owner_adoption"] = os.environ.get("LANGGRAPH_PRIMARY_OWNER_TOKEN", "")
+    return values
+
+
+def owner_local_adoption_from_environment() -> dict[str, Any] | None:
+    mode = os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1")
+    if mode != OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
+        return None
+    path = os.environ.get("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH", "").strip()
+    pin = os.environ.get("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256", "").strip().lower()
+    owner_token = os.environ.get("LANGGRAPH_PRIMARY_OWNER_TOKEN", "")
+    if not path or not pin:
+        raise ActivationEvidenceError("owner-local evidence adoption pin is unavailable")
+    return load_pinned_owner_local_adoption(
+        path,
+        expected_sha256=pin,
+        owner_token=owner_token,
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("record", "require-ready", "require-staged", "require-accepted", "verify-backup", "bind-legacy-inventory", "challenge"))
+    parser.add_argument("command", choices=("record", "require-ready", "require-staged", "require-accepted", "require-activated", "verify-backup", "bind-legacy-inventory", "challenge"))
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--candidate-commit", required=True)
     parser.add_argument("--candidate-tree", required=True)
@@ -719,9 +1238,13 @@ def main() -> None:
     store = ActivationEvidenceStore(
         arguments.artifact,
         acceptance_secrets=_acceptance_secrets_from_environment(),
-        read_only=arguments.command in {"require-ready", "require-staged", "require-accepted", "verify-backup"},
+        read_only=arguments.command in {"require-ready", "require-staged", "require-accepted", "require-activated", "verify-backup"},
     )
     identity = _identity(arguments)
+    if os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE") == OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
+        from .config import Settings
+        from .primary_generation import require_generation
+        require_generation(Settings(), identity)
     if arguments.command in {"require-staged", "require-accepted"}:
         getattr(store, arguments.command.replace("-", "_"))(identity)
         print("prerequisites_verified=true")
@@ -735,6 +1258,10 @@ def main() -> None:
     if arguments.command == "require-ready":
         store.require_ready(identity)
         print("activation_prerequisites_ready=true")
+        return
+    if arguments.command == "require-activated":
+        store.require_activated(identity)
+        print("activation_recorded=true")
         return
     if arguments.command == "verify-backup":
         if arguments.backup_digest is None:
@@ -796,3 +1323,11 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:30 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:30 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

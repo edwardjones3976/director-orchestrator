@@ -1,3 +1,47 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
+# [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
+# Material repair and regression authored by Grok; applied by Codex from the retained provider response.
+# Codex QA aligned the existing reconciliation test double with the occupied() interface.
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -38,14 +82,26 @@ import subprocess
 import sys
 import tempfile
 import threading
+import re
 import unittest
+from functools import partial
 from unittest.mock import patch
 import uuid
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from director_orchestrator.config import Settings
+from director_orchestrator.delegation import GRANT_SCHEMA_VERSION, Tier1Class
+from director_orchestrator.delegation_ledger import (
+    AUDIT_SCHEMA_VERSION,
+    DelegationAuditRecord,
+    GateResult,
+    GateStatus,
+    RecordedOutcome,
+)
+from director_orchestrator.store import TaskStore
 from director_orchestrator.langgraph_postgres import open_postgres_control_plane
 from director_orchestrator.langgraph_primary import (
     ApprovalDecision,
@@ -66,7 +122,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.packet_contracts import document_digest
-from director_orchestrator.packet_routing import DirectorPacketTaskRouter
+from director_orchestrator.packet_routing import DirectorPacketTaskRouter, git_blob_sha
 from director_orchestrator.policy import preview_plan
 from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
 from director_orchestrator.primary_effect_gateways import (
@@ -104,7 +160,14 @@ from director_orchestrator.primary_default import (
     build_primary_packet_result_resolver,
     build_typed_external_effect_grant,
     resolve_default_primary_authority,
+    small_pre_authorization_refusal,
+    small_producer_result_refusal,
+    small_review_bounds,
+    small_read_only_eligible,
+    small_task_packet_read_only,
+    small_task_usage_refusal,
     typed_external_effect_grant_kinds,
+    _small_producer_constraints,
 )
 
 
@@ -116,19 +179,1600 @@ def digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+# The fixture README.md a small read-only task is shown, bound by its real
+# git blob hash so the content check re-verifies it.
+README_TEXT = b"# Default\n\nA plain fixture file for the owner.\n"
+README_BLOB = git_blob_sha(README_TEXT)
+
+
+def fixture_blob_reader(blob_sha: str):
+    return README_TEXT if blob_sha == README_BLOB else None
+
+
+def use_fixture_blobs(test: unittest.TestCase) -> None:
+    started = patch("director_orchestrator.packet_routing._BLOB_READER", fixture_blob_reader)
+    started.start()
+    test.addCleanup(started.stop)
+
+
 class _FixedAuthorityResolver:
     def resolve(self, record, assignment):
-        return [{"path": "README.md", "commit_sha": SHA, "blob_sha": "c" * 40}]
+        return [{"path": "README.md", "commit_sha": SHA, "blob_sha": README_BLOB}]
 
 
-def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
+def packet_router(settings: Settings, **options) -> DirectorPacketTaskRouter:
     return DirectorPacketTaskRouter(
         authority_snapshots=_FixedAuthorityResolver(),
         boundary_adapters={},
         writer_owner_id="langgraph-primary-default",
         writer_secret="default-primary-test-writer-secret",
         timeout_seconds=settings.provider_timeout_seconds,
+        **options,
     )
+
+
+# The preview plan's producer and reviewer lanes, as compact-view transports.
+SMALL_LANES = frozenset({"claude", "cursor"})
+
+
+class SmallReviewBoundsTests(unittest.TestCase):
+    """The reviewer of an eligible small read-only task is capped deterministically."""
+
+    SMALL = "Project: default\nSummarize README.md for the owner."
+
+    def setUp(self) -> None:
+        self.settings = replace(
+            Settings(), repository_allowlist=("owner/director-orchestrator",)
+        )
+        self.router = packet_router(self.settings)
+
+    def record(self, result: str, *, text: str = SMALL) -> TaskRecord:
+        record = TaskRecord(
+            task_id="DIR-LG-SMALLREVIEW",
+            status=TaskStatus.RUNNING,
+            intake=SlackIntake(
+                source_event_id="event-small-review",
+                channel_id="CDEFAULT",
+                thread_ts="1720000000.000001",
+                user_id="UOWNER",
+                text=text,
+            ),
+        )
+        record.plan = preview_plan(text, self.settings)
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        record.assignment_outcomes.append(
+            AssignmentOutcome(
+                assignment_sequence=producer.sequence,
+                provider=producer.agent,
+                run_id="run-1",
+                result=result,
+                review_summary="accepted producer evidence",
+            )
+        )
+        return record
+
+    def bounds(self, record: TaskRecord, *, reviewer: bool = True, lanes=SMALL_LANES):
+        pick = max if reviewer else min
+        assignment = pick(record.plan.assignments, key=lambda item: item.sequence)
+        packet = self.router.planned_work_packet(record, assignment)
+        return small_review_bounds(
+            record, self.settings, assignment, packet, compact_view_lanes=lanes)
+
+    def test_small_class_packets_carry_only_the_read_only_tool(self):
+        """No test execution, write or effect is granted to the small class."""
+
+        record = self.record("done")
+        read_only = packet_router(self.settings, read_only_tools=lambda item: small_read_only_eligible(
+            item, self.settings, compact_view_lanes=SMALL_LANES))
+        for assignment in record.plan.assignments:
+            with self.subTest(sequence=assignment.sequence):
+                packet = read_only.planned_work_packet(record, assignment)
+                self.assertEqual(["READ_REPOSITORY"], packet["allowed_tools"])
+                self.assertTrue(small_task_packet_read_only(packet))
+                # The router without the hook still grants RUN_TESTS, and the
+                # dispatch guard refuses such a packet for the class.
+                self.assertFalse(small_task_packet_read_only(
+                    self.router.planned_work_packet(record, assignment)))
+        # A task outside the class keeps its tools.
+        ineligible = self.record("done", text="Project: default\nCreate a bounded implementation plan.")
+        first = min(ineligible.plan.assignments, key=lambda item: item.sequence)
+        self.assertIn("RUN_TESTS", read_only.planned_work_packet(ineligible, first)["allowed_tools"])
+
+    def test_an_oversized_review_packet_is_refused(self):
+        self.assertEqual(
+            ("small_task_review_packet_over_cap", 40_000),
+            self.bounds(self.record("x" * 20_000)),
+        )
+
+    def test_a_small_review_carries_the_configured_token_cap(self):
+        self.assertEqual((None, 40_000), self.bounds(self.record("done")))
+        capped = replace(self.settings, small_task_review_max_tokens=1_234)
+        record = self.record("done")
+        review = max(record.plan.assignments, key=lambda item: item.sequence)
+        packet = self.router.planned_work_packet(record, review)
+        self.assertEqual((None, 1_234), small_review_bounds(
+            record, capped, review, packet, compact_view_lanes=SMALL_LANES))
+
+    def test_a_small_task_result_must_report_complete_usage(self):
+        complete = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
+                    "cost_usd": 0.001}
+        for usage, refused in (
+            (complete, False),
+            ({"total_tokens": 15, "cost_usd": 0}, False),
+            (None, True),
+            ({}, True),
+            ({"input_tokens": 10, "output_tokens": None, "cost_usd": 0.001}, True),
+            ({"total_tokens": 15}, True),
+            ({"total_tokens": 15, "cost_usd": None}, True),
+            ({"total_tokens": True, "cost_usd": 0.001}, True),
+            ({"total_tokens": 15, "cost_usd": True}, True),
+            ({"total_tokens": 15, "cost_usd": float("nan")}, True),
+            ({"total_tokens": 15, "cost_usd": -1}, True),
+            ({"total_tokens": -1, "cost_usd": 0.001}, True),
+        ):
+            with self.subTest(usage=usage):
+                result = {"status": "SUCCEEDED", "usage": usage}
+                self.assertEqual(
+                    "small_task_usage_unmeasured" if refused else None,
+                    small_task_usage_refusal(result, "claude", small_class=True))
+                # Outside the class nothing is asked of the usage.
+                self.assertIsNone(small_task_usage_refusal(result, "claude", small_class=False))
+        # The Responses lane reports tokens only: its cost is metered.
+        self.assertIsNone(small_task_usage_refusal(
+            {"usage": {"total_tokens": 15, "cost_usd": None}}, "openai", small_class=True))
+        self.assertEqual("small_task_usage_unmeasured", small_task_usage_refusal(
+            {"usage": {"cost_usd": None}}, "openai", small_class=True))
+
+    def test_the_producer_and_ineligible_tasks_are_not_bounded(self):
+        self.assertEqual((None, None), self.bounds(self.record("done"), reviewer=False))
+        ineligible = self.record(
+            "done", text="Project: default\nCreate a bounded implementation plan."
+        )
+        self.assertEqual((None, None), self.bounds(ineligible))
+
+    def test_a_full_packet_reviewer_lane_is_outside_the_class(self):
+        # The cursor host-bridge lane posts the whole packet, so its reviewer is
+        # never measured on a compact view it is not sent: no class, no cap.
+        self.assertEqual((None, None), self.bounds(self.record("done"), lanes={"claude"}))
+        self.assertEqual((None, None), self.bounds(self.record("x" * 20_000), lanes={"claude"}))
+
+    def producer_refusal(self, outcome: str, record: TaskRecord | None = None):
+        record = record or self.record("unused")
+        record.assignment_outcomes = []
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        return small_producer_result_refusal(
+            record, self.settings, producer,
+            {"run_reference": "run-1", "outcome": outcome}, "sha256:" + "e" * 64,
+            self.router, compact_view_lanes=SMALL_LANES,
+        )
+
+    def test_a_producer_result_is_bounded_before_any_reviewer_work(self):
+        """The producer check and the reviewer check agree to the byte."""
+
+        self.assertIsNone(self.producer_refusal("done"))
+        low, high = 1, 20_000
+        while low < high:
+            middle = (low + high + 1) // 2
+            if self.producer_refusal("x" * middle) is None:
+                low = middle
+            else:
+                high = middle - 1
+        self.assertEqual("small_task_producer_result_over_cap",
+                         self.producer_refusal("x" * (low + 1)))
+        # A result exactly at the limit still reaches its reviewer uncapped.
+        record = self.record("x" * low)
+        record.assignment_outcomes[0].review_summary = "x" * low
+        record.assignment_outcomes[0].provider_result_digest = "e" * 64
+        self.assertEqual((None, 40_000), self.bounds(record))
+        record.assignment_outcomes[0].result = record.assignment_outcomes[0].review_summary = (
+            "x" * (low + 1))
+        self.assertEqual("small_task_review_packet_over_cap", self.bounds(record)[0])
+        # Quotes and newlines are escaped twice, so they fit fewer characters.
+        self.assertEqual("small_task_producer_result_over_cap",
+                         self.producer_refusal('"\n' * (low // 2)))
+        # Past the outcome model's own bounds it is refused, not raised.
+        self.assertEqual("small_task_producer_result_over_cap",
+                         self.producer_refusal("x" * 60_000))
+        # Every other task and the reviewer itself are unaffected.
+        ineligible = self.record(
+            "unused", text="Project: default\nCreate a bounded implementation plan.")
+        self.assertIsNone(self.producer_refusal("x" * 60_000, ineligible))
+
+    def test_the_producer_is_told_the_ceiling_before_dispatch(self):
+        hinted = DirectorPacketTaskRouter(
+            authority_snapshots=_FixedAuthorityResolver(),
+            boundary_adapters={},
+            writer_owner_id="langgraph-primary-default",
+            writer_secret="default-primary-test-writer-secret",
+            timeout_seconds=self.settings.provider_timeout_seconds,
+            extra_constraints=partial(
+                _small_producer_constraints, self.settings, compact_view_lanes=SMALL_LANES),
+        )
+        record = self.record("unused")
+        record.assignment_outcomes = []
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        [hint] = [item for item in hinted.planned_work_packet(record, producer)["constraints"]
+                  if item.startswith("Small read-only task:")]
+        ceiling = int(re.search(r"under (\d+) characters", hint).group(1))
+        self.assertGreater(ceiling, 0)
+        # The advertised ceiling holds for the costliest characters it allows:
+        # quotes and backslashes, newlines and tabs, and non-ASCII text.
+        for character in ("x", '"', "\\", "\n", "\t", "\u00e9", "\u4e2d", "\U0001f600"):
+            with self.subTest(character=character):
+                self.assertIsNone(self.producer_refusal(character * ceiling))
+        # A task outside the class under the activation's lanes is not told:
+        # nothing would refuse its outcome (the cursor bridge posts the full packet).
+        unhinted = DirectorPacketTaskRouter(
+            authority_snapshots=_FixedAuthorityResolver(),
+            boundary_adapters={},
+            writer_owner_id="langgraph-primary-default",
+            writer_secret="default-primary-test-writer-secret",
+            timeout_seconds=self.settings.provider_timeout_seconds,
+            extra_constraints=partial(
+                _small_producer_constraints, self.settings, compact_view_lanes={"claude"}),
+        )
+        self.assertFalse(any(item.startswith("Small read-only task:") for item in
+                             unhinted.planned_work_packet(record, producer)["constraints"]))
+        # Deterministic, so the approval packet and the dispatched one agree.
+        self.assertEqual(hinted.planned_work_packet(record, producer),
+                         hinted.planned_work_packet(record, producer))
+        ineligible = self.record(
+            "unused", text="Project: default\nCreate a bounded implementation plan.")
+        ineligible.assignment_outcomes = []
+        first = min(ineligible.plan.assignments, key=lambda item: item.sequence)
+        self.assertFalse(any(item.startswith("Small read-only task:") for item in
+                             hinted.planned_work_packet(ineligible, first)["constraints"]))
+
+
+class _MemoryAuditAnchor:
+    """Test double only: production must supply a durable, separately protected anchor."""
+
+    def __init__(self):
+        self.head = (0, "0" * 64)
+
+    def read_head(self, *, timeout=None):
+        return self.head
+
+    def compare_and_set(self, expected, updated, *, timeout=None):
+        if self.head != expected:
+            raise RuntimeError("anchor changed")
+        self.head = updated
+
+
+class _UnreadableAuditAnchor(_MemoryAuditAnchor):
+    def read_head(self, *, timeout=None):
+        raise OSError("anchor unavailable")
+
+
+class _SlowAuditAnchor(_MemoryAuditAnchor):
+    """Each call takes ``latency`` seconds, but honors the caller's timeout."""
+
+    def __init__(self, latency):
+        super().__init__()
+        self.latency = latency
+        self.timeouts = []
+
+    def _spend(self, timeout):
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+        import time as time_module
+        self.timeouts.append(timeout)
+        if timeout is not None and timeout < self.latency:
+            time_module.sleep(timeout)
+            raise DelegationAuditDeadlineExceeded("anchor call timed out")
+        time_module.sleep(self.latency)
+
+    def read_head(self, *, timeout=None):
+        self._spend(timeout)
+        return self.head
+
+    def compare_and_set(self, expected, updated, *, timeout=None):
+        self._spend(timeout)
+        super().compare_and_set(expected, updated)
+
+
+SMALL_GRANT = {
+    "schema_version": GRANT_SCHEMA_VERSION,
+    "grant_id": "grant-small-1",
+    "repository": "owner/director-orchestrator",
+    "branch_pattern": "main",
+    "classes": ["execute_small_read_only_task"],
+    "providers": ["claude", "cursor"],
+    "expires_at": "2099-01-01T00:00:00+00:00",
+    "max_exercises": 5,
+    "revoked": False,
+}
+SMALL_TEXT = "Project: default\nSummarize README.md for the owner."
+TERM_ORDER = [
+    "authorization", "eligibility", "bounds", "verification",
+    "lane_independence", "safe_stopping", "owned_paths_declared",
+]
+
+
+RUNNING = {"terminal_classification": None, "parallel_plan_digest": digest("parallel-plan")}
+
+
+def small_grant(**changes) -> str:
+    return json.dumps({**SMALL_GRANT, **changes})
+
+
+def audit_ledger(directory: str) -> TaskStore:
+    return TaskStore(
+        str(Path(directory) / f"audit-{uuid.uuid4().hex}.sqlite3"),
+        delegation_audit_anchor=_MemoryAuditAnchor(),
+    )
+
+
+def gate_statuses(entry) -> dict:
+    return {item.gate: item.status for item in entry.gate_results}
+
+
+def module_failed(coordinator, records):
+    from director_orchestrator.primary_default import _failed_pre_authorized_task
+
+    return _failed_pre_authorized_task(coordinator, records)
+
+
+class StandingGrantExerciseTests(unittest.TestCase):
+    """The tier-1 class execute_small_read_only_task, evaluated before execution."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = directory.name
+        self.settings = replace(
+            Settings(),
+            app_env="default-test",
+            allow_paid_runs=False,
+            project_allowlist=("default",),
+            repository_allowlist=("owner/director-orchestrator",),
+            allowed_starting_refs=("main",),
+            slack_owner_user_id="UOWNER",
+            slack_channel_id="CDIRECTOR",
+            delegation_enabled=True,
+            delegation_suspended=False,
+            delegation_grant_json=small_grant(),
+        )
+        self.ledger = audit_ledger(self.directory)
+        self.sequence = 0
+        use_fixture_blobs(self)
+
+    def application(self, ledger="default", *, dispatcher=True, lanes=SMALL_LANES, **changes):
+        settings = replace(self.settings, **changes)
+        return DefaultPrimaryApplication(
+            settings,
+            # Prior pre-authorized tasks read as never started unless a test
+            # supplies their durable state.
+            self.coordinator(None),
+            # The production router: it builds the producer packet whose named
+            # files must be showable before a grant pre-authorizes.
+            SimpleNamespace(_packet_router=packet_router(
+                settings, read_only_tools=lambda item: small_read_only_eligible(
+                    item, settings, compact_view_lanes=lanes))),
+            DefaultPrimaryAuthority(SHA, digest("authority")),
+            parallel_dispatcher=(lambda reservation: None) if dispatcher else None,
+            delegation_ledger=self.ledger if ledger == "default" else ledger,
+            compact_view_lanes=lanes,
+        )
+
+    def record(self, text=SMALL_TEXT, *, user="UOWNER", channel="CDIRECTOR",
+               authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED):
+        self.sequence += 1
+        record = TaskRecord(
+            task_id=f"DIR-LG-GRANT{self.sequence:04d}",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id=f"event-grant-{self.sequence}",
+                channel_id=channel,
+                thread_ts="1720000000.000001",
+                user_id=user,
+                text=text,
+            ),
+            intake_authentication=authentication,
+        )
+        record.plan = preview_plan(text, self.settings)
+        return record
+
+    @staticmethod
+    def exercise(application, record) -> bool:
+        return application._exercise_standing_grant(
+            record, attested=application._attested_owner_intake(record)
+        )
+
+    def audit(self, ledger=None):
+        return (ledger or self.ledger).delegation_audit_records(limit=1_000)
+
+    def test_eligible_owner_task_is_pre_authorized_with_one_audit_record(self):
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        [entry] = self.audit()
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, entry.outcome)
+        self.assertIs(Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK, entry.decision_class)
+        self.assertEqual("grant-small-1", entry.grant_id)
+        self.assertEqual((), entry.verdicts)
+        self.assertEqual(TERM_ORDER, [item.gate for item in entry.gate_results])
+        self.assertTrue(all(item.status is GateStatus.PASS for item in entry.gate_results))
+        self.assertEqual(SHA, entry.candidate_sha)
+        self.assertTrue(entry.acting_agent.endswith(record.task_id))
+
+    def test_no_live_configured_grant_for_the_class_writes_nothing(self):
+        cases = {
+            "absent": {"delegation_grant_json": ""},
+            "malformed": {"delegation_grant_json": "{not json"},
+            "disabled": {"delegation_enabled": False},
+            "suspended": {"delegation_suspended": True},
+            "other_class": {"delegation_grant_json": small_grant(
+                classes=["mark_pull_request_ready_for_review"])},
+        }
+        for name, changes in cases.items():
+            with self.subTest(case=name):
+                self.assertFalse(self.exercise(self.application(**changes), self.record()))
+        self.assertEqual([], self.audit())
+
+    def test_expired_revoked_or_exhausted_grant_is_refused_and_audited(self):
+        for name, grant in {
+            "expired": small_grant(expires_at="2000-01-01T00:00:00+00:00"),
+            "revoked": small_grant(revoked=True),
+        }.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                application = self.application(ledger, delegation_grant_json=grant)
+                self.assertFalse(self.exercise(application, self.record()))
+                [entry] = self.audit(ledger)
+                self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+                self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+
+        application = self.application(delegation_grant_json=small_grant(max_exercises=1))
+        self.assertTrue(self.exercise(application, self.record()))
+        self.assertFalse(self.exercise(application, self.record()))
+        first, second = self.audit()
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, first.outcome)
+        self.assertIs(RecordedOutcome.REFUSED, second.outcome)
+        self.assertIs(GateStatus.FAIL, gate_statuses(second)["authorization"])
+
+    def test_non_owner_foreign_channel_or_unattested_intake_is_refused(self):
+        application = self.application()
+        for name, record in {
+            "non_owner": self.record(user="UOTHER"),
+            "foreign_channel": self.record(channel="COTHER"),
+            "bearer": self.record(authentication=IntakeAuthentication.BEARER_DRY_RUN),
+        }.items():
+            with self.subTest(case=name):
+                self.assertFalse(application._attested_owner_intake(record))
+                self.assertFalse(self.exercise(application, record))
+        self.assertFalse(application._exercise_standing_grant(self.record(), attested=False))
+        entries = self.audit()
+        self.assertEqual(4, len(entries))
+        for entry in entries:
+            self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+            self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+
+    def test_an_ineligible_task_is_refused_and_audited(self):
+        for application, record in (
+            (self.application(), self.record(
+                "Project: default\nCreate a bounded implementation plan.")),
+            # The reviewer's cursor lane posts the full packet: outside the class.
+            (self.application(lanes={"claude"}), self.record()),
+        ):
+            self.assertFalse(self.exercise(application, record))
+        for entry in self.audit():
+            self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+            # Refused on eligibility alone; no other term is claimed evaluated.
+            self.assertEqual({"eligibility": GateStatus.FAIL}, gate_statuses(entry))
+        self.assertEqual(2, len(self.audit()))
+
+    def test_no_record_claims_the_candidate_bound_gates_or_independence(self):
+        self.assertTrue(self.exercise(self.application(), self.record()))
+        self.assertFalse(self.exercise(self.application(), self.record(user="UOTHER")))
+        for entry in self.audit():
+            self.assertFalse({"gates", "independence", "scope"} & set(gate_statuses(entry)))
+
+    def test_an_absent_or_unreadable_ledger_latches_attended(self):
+        application = self.application(ledger=None)
+        self.assertFalse(self.exercise(application, self.record()))
+        application._delegation_ledger = self.ledger
+        self.assertFalse(self.exercise(application, self.record()))
+        self.assertEqual([], self.audit())
+
+        unreadable = TaskStore(
+            str(Path(self.directory) / "unreadable.sqlite3"),
+            delegation_audit_anchor=_UnreadableAuditAnchor(),
+        )
+        application = self.application(unreadable)
+        self.assertFalse(self.exercise(application, self.record()))
+        self.assertTrue(application._delegation_tripped)
+
+    def test_a_recorded_trip_suspends_only_that_grant_id(self):
+        now = datetime.now(timezone.utc)
+        self.ledger.append_delegation_audit_record(DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION,
+            outcome=RecordedOutcome.REFUSED,
+            grant_id="grant-small-1",
+            grant_snapshot=self.settings.delegation_grant_json,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA,
+            acting_agent="director-langgraph:DIR-LG-EARLIER",
+            verdicts=(),
+            gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+            recorded_at=now,
+        ))
+        self.assertFalse(self.exercise(self.application(), self.record()))
+        self.assertIs(GateStatus.FAIL, gate_statuses(self.audit()[-1])["authorization"])
+        # Only an explicit owner action, a new grant_id, clears it.
+        renewed = self.application(delegation_grant_json=small_grant(grant_id="grant-small-2"))
+        self.assertTrue(self.exercise(renewed, self.record()))
+
+    def test_a_grant_never_reaches_past_its_repository_branch_lanes_or_holds(self):
+        refused = {
+            "foreign_repository": {"delegation_grant_json": small_grant(
+                repository="owner/other-repository")},
+            "branch_not_covered": {"delegation_grant_json": small_grant(
+                branch_pattern="release/*")},
+            "lane_not_named": {"delegation_grant_json": small_grant(
+                providers=["claude", "grok"])},
+        }
+        for name, changes in refused.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                self.assertFalse(self.exercise(self.application(ledger, **changes), self.record()))
+                [entry] = self.audit(ledger)
+                self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+                self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+        with self.subTest(case="unbound_starting_commit"):
+            ledger = audit_ledger(self.directory)
+            application = self.application(ledger)
+            application.authority = DefaultPrimaryAuthority("not-a-sha", digest("authority"))
+            self.assertFalse(self.exercise(application, self.record()))
+            [entry] = self.audit(ledger)
+            self.assertIs(GateStatus.FAIL, gate_statuses(entry)["verification"])
+        with self.subTest(case="workload_hold"):
+            ledger = audit_ledger(self.directory)
+            record = self.record()
+            record.workload_selection_hold_reasons = ["workload_hold"]
+            self.assertFalse(self.exercise(self.application(ledger), record))
+            self.assertEqual([], self.audit(ledger))
+
+    def test_an_unattested_intake_is_refused_without_reading_history(self):
+        application = self.application()
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=AssertionError("history read")):
+            self.assertFalse(self.exercise(application, self.record(user="UOTHER")))
+        self.assertFalse(application._delegation_tripped)
+        [entry] = self.audit()
+        self.assertEqual({"authorization": GateStatus.FAIL}, gate_statuses(entry))
+
+    def test_health_reports_4s_only_when_the_application_can_pre_authorize(self):
+        import importlib
+
+        main = importlib.import_module("director_orchestrator.main")
+
+        def live(application):
+            # The live plan builder: each lane's frozen budget, not the preview's zero.
+            application.services._live_composition = True
+            return application
+
+        cases = {
+            "capable": (self.application(), True),
+            # The class's own budget and token terms, by the predicate
+            # eligibility uses: no pair can be eligible, so nothing is armed.
+            "no_review_tokens": (self.application(small_task_review_max_tokens=0), False),
+            "live_default_budgets": (live(self.application()), False),
+            "live_budgets_over_the_class": (live(self.application(
+                langgraph_primary_provider_attempt_budgets_usd_json='{"claude":0.3,"cursor":0.3}')),
+                False),
+            "live_reviewer_over_its_cap": (live(self.application(
+                langgraph_primary_provider_attempt_budgets_usd_json='{"claude":0.1,"cursor":0.1}',
+                small_task_review_max_usd=0.2)), False),
+            "live_budgets_in_the_class": (live(self.application(
+                langgraph_primary_provider_attempt_budgets_usd_json='{"claude":0.15,"cursor":0.1}')),
+                True),
+            "no_ledger": (self.application(None), False),
+            "no_compact_lane": (self.application(lanes=frozenset()), False),
+            # A small task needs a producer and an independent reviewer.
+            "one_compact_lane": (self.application(lanes=frozenset({"claude"})), False),
+            "one_family": (self.application(lanes=frozenset({"grok", "grok-bot"})), False),
+            # The pair must be lanes the live grant names, in its scope.
+            "grant_names_one_lane": (self.application(
+                delegation_grant_json=small_grant(providers=["claude"])), False),
+            "grant_lanes_not_compact": (self.application(
+                delegation_grant_json=small_grant(providers=["claude", "grok"])), False),
+            "grant_other_repository": (self.application(
+                delegation_grant_json=small_grant(repository="owner/other-repository")), False),
+            "grant_other_branch": (self.application(
+                delegation_grant_json=small_grant(branch_pattern="release/*")), False),
+            "grant_revoked": (self.application(
+                delegation_grant_json=small_grant(revoked=True)), False),
+            "no_grant": (self.application(delegation_grant_json=""), False),
+            "paid_off": (self.application(
+                dispatcher=False,
+                langgraph_primary_offline_simulation_enabled=False,
+                langgraph_primary_live_provider_dispatch_enabled=False), False),
+        }
+        for name, (application, armed) in cases.items():
+            with self.subTest(case=name), patch.object(
+                main, "primary_default_activation",
+                SimpleNamespace(application=application, live_dependencies=None,
+                                health=lambda: {}),
+            ), patch.object(main, "settings", replace(
+                main.settings, delegation_enabled=True, delegation_suspended=False,
+                delegation_grant_json=small_grant())):
+                delegation = main.health()["delegation"]
+                self.assertIs(armed, delegation["pre_execution_armed"])
+                self.assertIs(armed, delegation["executes_decisions"])
+        latched = self.application()
+        latched._delegation_tripped = True
+        self.assertFalse(latched.pre_execution_capable())
+
+    def test_an_in_flight_replay_never_exercises_the_grant(self):
+        """A retry that finds the claim before its projection keeps the button."""
+
+        application = self.application()
+        requests = []
+
+        class Stop(Exception):
+            pass
+
+        def create_intake(request):
+            requests.append(request)
+            raise Stop
+
+        application.coordinator = SimpleNamespace(
+            claim_authenticated_intake=lambda **_: ("DIR-LG-INFLIGHT", False),
+            get_projection=lambda task_id, **_: None,
+            create_intake=create_intake,
+        )
+        application.services = SimpleNamespace(
+            _live_composition=False, register=lambda *_, **__: None,
+            discard=lambda *_: None)
+        record = self.record()
+        with patch.object(application, "_exercise_standing_grant",
+                          side_effect=AssertionError("grant exercised")), \
+                self.assertRaises(Stop):
+            application.create_intake(
+                record.intake,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                authenticated_replay_identity=("a" * 64, "b" * 64),
+            )
+        [request] = requests
+        self.assertEqual("DIR-LG-INFLIGHT", request.task_id)
+        self.assertTrue(request.execution_approval_required)
+        self.assertEqual([], self.audit())
+
+    def test_a_pre_authorized_record_must_carry_every_term_exactly_once(self):
+        """Non-empty and all PASS is not enough: it must cover the term set."""
+
+        record = self.record()
+        now = datetime.now(timezone.utc)
+
+        def refusal(gates):
+            ledger = audit_ledger(self.directory)
+            ledger.append_delegation_audit_record(DelegationAuditRecord(
+                schema_version=AUDIT_SCHEMA_VERSION,
+                outcome=RecordedOutcome.PRE_AUTHORIZED,
+                grant_id="grant-small-1",
+                grant_snapshot=self.settings.delegation_grant_json,
+                decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                candidate_sha=SHA,
+                acting_agent=f"director-langgraph:{record.task_id}",
+                verdicts=(),
+                gate_results=tuple(GateResult(term, GateStatus.PASS, now) for term in gates),
+                recorded_at=now,
+            ))
+            return small_pre_authorization_refusal(
+                record, self.settings, ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None))
+
+        self.assertIsNone(refusal(TERM_ORDER))
+        for name, gates in {
+            "one_term": ["authorization"],
+            "missing_bounds": [term for term in TERM_ORDER if term != "bounds"],
+            "extra_term": [*TERM_ORDER, "gates"],
+            "duplicate": [*TERM_ORDER, "bounds"],
+        }.items():
+            with self.subTest(gates=name):
+                self.assertEqual("small_task_pre_authorization_unaudited", refusal(gates))
+
+    def test_a_pre_authorized_task_that_no_longer_qualifies_is_refused(self):
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        stricter = replace(self.settings, small_task_review_max_tokens=0)
+
+        def refusal(ledger, settings=self.settings, lanes=SMALL_LANES, *, approval_free=True):
+            return small_pre_authorization_refusal(
+                record, settings, ledger, approval_free=approval_free,
+                compact_view_lanes=lanes, coordinator=self.coordinator(None))
+
+        # Still in the class with its ledger: its bounds apply, nothing is refused.
+        self.assertIsNone(refusal(self.ledger))
+        # Restarted under a stricter reviewer cap, or with a full-packet lane.
+        self.assertEqual("small_task_pre_authorization_lapsed", refusal(self.ledger, stricter))
+        self.assertEqual("small_task_pre_authorization_lapsed",
+                         refusal(self.ledger, lanes={"claude"}))
+        # Restarted under a lower hop or revision ceiling than the plan froze.
+        plan = record.plan
+        for lowered in (replace(self.settings, max_agent_hops=plan.max_hops - 1),
+                        replace(self.settings, max_revisions=plan.max_revisions - 1)):
+            self.assertEqual("small_task_pre_authorization_lapsed", refusal(self.ledger, lowered))
+        # Restarted with the ledger omitted or unreadable: refused even when
+        # the task still qualifies, since its trips could not be recorded.
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(None))
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(None, stricter))
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=OSError("ledger unavailable")):
+            self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
+        # A durable trip on the grant, written by any process after this
+        # task was pre-authorized, stops its dispatch too.
+        now = datetime.now(timezone.utc)
+        self.ledger.append_delegation_audit_record(DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION,
+            outcome=RecordedOutcome.REFUSED,
+            grant_id="grant-small-1",
+            grant_snapshot=self.settings.delegation_grant_json,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA,
+            acting_agent="director-langgraph:DIR-LG-FAILED",
+            verdicts=(),
+            gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+            recorded_at=now,
+        ))
+        self.assertEqual("small_task_pre_authorization_tripped", refusal(self.ledger))
+        # A trip on another grant_id does not; nor, for an unread tail, may the
+        # record merely be found: a history past its bound refuses.
+        with patch("director_orchestrator.primary_default._AUDIT_HISTORY_MAX_SECONDS", -1.0):
+            self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
+        # The grant keeps its grant_id but its document changed (narrowed
+        # repository, branch or lanes, or a new expiry): not the grant that
+        # authorized this task.
+        for name, changes in {
+            "repository": {"repository": "owner/other-repository"},
+            "branch": {"branch_pattern": "release/*"},
+            "providers": {"providers": ["claude", "grok"]},
+            "expiry": {"expires_at": "2098-01-01T00:00:00+00:00"},
+        }.items():
+            with self.subTest(narrowed=name):
+                narrowed = replace(self.settings, delegation_grant_json=small_grant(**changes))
+                fresh = audit_ledger(self.directory)
+                self.assertEqual("small_task_pre_authorization_unaudited", refusal(fresh, narrowed))
+                self.assertEqual("small_task_pre_authorization_revoked", refusal(self.ledger, narrowed))
+        # Same grant document, but the task itself no longer falls under it.
+        moved = record.model_copy(deep=True)
+        moved.plan = moved.plan.model_copy(update={"prestage": moved.plan.prestage.model_copy(
+            update={"repository": "owner/other-repository"})})
+        self.assertEqual("small_task_pre_authorization_revoked", small_pre_authorization_refusal(
+            moved, self.settings, self.ledger, approval_free=True, compact_view_lanes=SMALL_LANES,
+            coordinator=self.coordinator(None)))
+        # A readable ledger that lacks this task's own record: a fresh
+        # replacement, or one holding only another task's pre-authorization.
+        self.assertEqual("small_task_pre_authorization_unaudited",
+                         refusal(audit_ledger(self.directory)))
+        other_ledger = audit_ledger(self.directory)
+        other_application = self.application(other_ledger)
+        self.assertTrue(self.exercise(other_application, self.record()))
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(other_ledger))
+        # The record must be under the grant that is live now.
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(
+            self.ledger, replace(self.settings, delegation_grant_json=small_grant(
+                grant_id="grant-small-2"))))
+        for name, changes in {
+            "revoked": {"delegation_grant_json": small_grant(revoked=True)},
+            "expired": {"delegation_grant_json": small_grant(expires_at="2000-01-01T00:00:00+00:00")},
+            "other_class": {"delegation_grant_json": small_grant(
+                classes=["mark_pull_request_ready_for_review"])},
+            "absent": {"delegation_grant_json": ""},
+            "suspended": {"delegation_suspended": True},
+            "disabled": {"delegation_enabled": False},
+        }.items():
+            with self.subTest(grant=name):
+                self.assertEqual("small_task_pre_authorization_revoked",
+                                 refusal(self.ledger, replace(self.settings, **changes)))
+        # A task whose graph keeps the button is never affected and never
+        # reads the ledger, with or without one.
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=AssertionError("ledger read")):
+            for ledger in (None, self.ledger):
+                for settings in (self.settings, stricter):
+                    self.assertIsNone(refusal(ledger, settings, approval_free=False))
+
+    def test_the_approval_free_flag_survives_the_application_projection(self):
+        """Recovery rehydrates it; a projection written before the grant keeps the button."""
+
+        services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings))
+        granted, ordinary = self.record(), self.record()
+        services.register(granted, approval_free=True)
+        services.register(ordinary)
+        self.assertTrue(services.execution_approval_free(granted.task_id))
+        self.assertFalse(services.execution_approval_free(ordinary.task_id))
+        views = {task_id: services.application_projection(task_id)
+                 for task_id in (granted.task_id, ordinary.task_id)}
+        self.assertIs(False, views[granted.task_id]["execution_approval_required"])
+        self.assertIs(True, views[ordinary.task_id]["execution_approval_required"])
+        legacy = dict(views[ordinary.task_id])
+        del legacy["execution_approval_required"]
+        for task_id, view, expected in (
+            (granted.task_id, views[granted.task_id], True),
+            (ordinary.task_id, views[ordinary.task_id], False),
+            (ordinary.task_id, legacy, False),
+        ):
+            with self.subTest(task_id=task_id, keys=sorted(view)):
+                services.discard(task_id)
+                self.assertFalse(services.execution_approval_free(task_id))
+                services.hydrate(SimpleNamespace(projection={"application": view}))
+                self.assertIs(expected, services.execution_approval_free(task_id))
+
+    def test_a_grant_needs_every_named_file_showable(self):
+        """Missing, unreadable or screened named files keep the button."""
+
+        for name, reader in {
+            "no_reader": None,
+            "unreadable": lambda blob_sha: None,
+            "screened": lambda blob_sha: b"export OPENAI_API_KEY=sk-" + b"a" * 24 + b"\n",
+            "binary": lambda blob_sha: b"\0\1\2",
+        }.items():
+            with self.subTest(case=name), patch(
+                    "director_orchestrator.packet_routing._BLOB_READER", reader):
+                ledger = audit_ledger(self.directory)
+                self.assertFalse(self.exercise(self.application(ledger), self.record()))
+                [entry] = self.audit(ledger)
+                self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+                self.assertEqual({"eligibility": GateStatus.FAIL}, gate_statuses(entry))
+        # A named path that is not in the snapshot.
+        ledger = audit_ledger(self.directory)
+        self.assertFalse(self.exercise(self.application(ledger), self.record(
+            "Project: default\nSummarize docs/missing.md for the owner.")))
+        self.assertEqual({"eligibility": GateStatus.FAIL}, gate_statuses(self.audit(ledger)[0]))
+
+    def test_an_audit_history_past_its_bound_keeps_the_button(self):
+        """No exercise rescans an unbounded ledger: past the bound it is refused."""
+
+        application = self.application()
+        page = [SimpleNamespace(grant_id="grant-other", outcome=RecordedOutcome.REFUSED,
+                                gate_results=(), digest="0" * 64)] * 1_000
+        for name, bound in (("records", {"_AUDIT_HISTORY_MAX_RECORDS": 3_000}),
+                            ("seconds", {"_AUDIT_HISTORY_MAX_SECONDS": -1.0})):
+            with self.subTest(bound=name), patch.multiple(
+                    "director_orchestrator.primary_default", **bound), patch.object(
+                    self.ledger, "delegation_audit_records", return_value=page) as read, \
+                    patch.object(self.ledger, "append_delegation_audit_record",
+                                 side_effect=AssertionError("audit written")):
+                self.assertFalse(self.exercise(application, self.record()))
+                # One read past the ceiling tells a history of exactly 3,000
+                # records from a longer one.
+                self.assertEqual(4 if name == "records" else 1, read.call_count)
+                self.assertFalse(application._delegation_tripped)
+
+    def test_recovery_refuses_when_another_task_of_the_grant_failed_unrecorded(self):
+        """Task A failed and no intake since wrote its trip: task B still stops."""
+
+        application = self.application()
+        first, second = self.record(), self.record()
+        self.assertTrue(self.exercise(application, first))
+        self.assertTrue(self.exercise(application, second))
+        states = {first.task_id: {"terminal_classification": "FAILED",
+                                  "parallel_plan_digest": digest("plan")},
+                  second.task_id: RUNNING}
+        coordinator = SimpleNamespace(
+            get_projection=lambda task_id, **_: SimpleNamespace(projection=states[task_id]),
+            parallel_aggregate=lambda task_id, **_: SimpleNamespace(
+                ambiguous_slot_count=0, terminal=False, succeeded=False))
+        self.assertEqual([], [entry for entry in self.audit()
+                              if "delegation_trip" in gate_statuses(entry)])
+        self.assertEqual("small_task_pre_authorization_tripped", small_pre_authorization_refusal(
+            second, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=coordinator))
+        # Ambiguous or unreadable prior tasks count the same way.
+        for name, prior in {
+            "ambiguous": SimpleNamespace(
+                get_projection=lambda task_id, **_: SimpleNamespace(projection=RUNNING),
+                parallel_aggregate=lambda task_id, **_: SimpleNamespace(
+                    ambiguous_slot_count=1, terminal=False, succeeded=False)),
+            "unreadable": SimpleNamespace(
+                get_projection=lambda task_id, **_: (_ for _ in ()).throw(OSError("down")),
+                parallel_aggregate=lambda task_id, **_: None),
+        }.items():
+            with self.subTest(prior=name):
+                self.assertEqual("small_task_pre_authorization_tripped",
+                                 small_pre_authorization_refusal(
+                                     second, self.settings, self.ledger, approval_free=True,
+                                     compact_view_lanes=SMALL_LANES, coordinator=prior))
+        # With every prior task still running, nothing is refused.
+        self.assertIsNone(small_pre_authorization_refusal(
+            second, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(RUNNING)))
+
+    def test_a_failed_terminal_records_its_grants_trip_at_once(self):
+        application = self.application()
+        failed, other = self.record(), self.record()
+        self.assertTrue(self.exercise(application, failed))
+        # A success, or a task no grant pre-authorized, records nothing.
+        application._trip_on_failed_terminal(failed.task_id, "SUCCEEDED")
+        application._trip_on_failed_terminal(other.task_id, "FAILED")
+        self.assertEqual(1, len(self.audit()))
+        application._trip_on_failed_terminal(failed.task_id, "POLICY_BLOCKED")
+        pre, trip = self.audit()
+        self.assertEqual({"delegation_trip": GateStatus.FAIL}, gate_statuses(trip))
+        self.assertEqual("grant-small-1", trip.grant_id)
+        self.assertEqual(pre.grant_snapshot, trip.grant_snapshot)
+        self.assertTrue(trip.acting_agent.endswith(failed.task_id))
+        # Once is enough; and the grant then pre-authorizes nothing more.
+        application._trip_on_failed_terminal(failed.task_id, "FAILED")
+        self.assertEqual(2, len(self.audit()))
+        self.assertFalse(self.exercise(application, self.record()))
+        # The application wires itself as the coordinator's terminal observer.
+        self.assertEqual(application._trip_on_failed_terminal,
+                         application.coordinator.terminal_observer)
+
+    def test_a_replay_that_creates_the_task_attended_retires_its_pre_authorization(self):
+        """The first intake pre-authorized but never created its task; the
+        replay creates it attended, so that authorization never started it."""
+
+        record = self.record()
+        application = self.application()
+        self.assertTrue(self.exercise(application, record))
+
+        class Stop(Exception):
+            pass
+
+        requests = []
+        application.coordinator = SimpleNamespace(
+            claim_authenticated_intake=lambda **_: (record.task_id, False),
+            get_projection=lambda task_id, **_: None,
+            create_intake=lambda request: requests.append(request) or (_ for _ in ()).throw(Stop()),
+        )
+        application.services = SimpleNamespace(
+            _live_composition=False, register=lambda *_, **__: None,
+            discard=lambda *_: None, _packet_router=application.services._packet_router)
+        with self.assertRaises(Stop):
+            application.create_intake(
+                record.intake, intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                authenticated_replay_identity=("a" * 64, "b" * 64))
+        [request] = requests
+        self.assertTrue(request.execution_approval_required)
+        pre, superseded = self.audit()
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+        self.assertIs(RecordedOutcome.REFUSED, superseded.outcome)
+        self.assertEqual({"pre_authorization_superseded": GateStatus.FAIL},
+                         gate_statuses(superseded))
+        self.assertEqual(pre.acting_agent, superseded.acting_agent)
+        # The attended task's later failure trips nothing, in the observer or
+        # the durable scan, and its old authorization dispatches nothing.
+        failed = self.coordinator({"terminal_classification": "FAILED"})
+        application.coordinator = failed
+        application._trip_on_failed_terminal(record.task_id, "FAILED")
+        self.assertEqual(2, len(self.audit()))
+        self.assertIsNone(module_failed(failed, self.audit()))
+        self.assertEqual("small_task_pre_authorization_unaudited", small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+        # Retiring twice appends nothing more.
+        application._supersede_orphaned_authorization(record.task_id)
+        self.assertEqual(2, len(self.audit()))
+
+    def test_a_trip_the_observer_runs_out_of_time_for_is_still_derived(self):
+        """One absolute deadline for the observer; spent, it writes nothing,
+        and the next exercise still trips on the durable failed terminal."""
+
+        import time as time_module
+
+        application = self.application()
+        failed_task = self.record()
+        self.assertTrue(self.exercise(application, failed_task))
+        application.coordinator = self.coordinator({"terminal_classification": "FAILED"})
+        application._trip_on_failed_terminal(
+            failed_task.task_id, "FAILED", deadline=time_module.monotonic() - 1)
+        self.assertEqual(1, len(self.audit()))
+        self.assertFalse(self.exercise(application, self.record()))
+        pre, trip, refused = self.audit()
+        self.assertEqual({"delegation_trip": GateStatus.FAIL}, gate_statuses(trip))
+        self.assertTrue(trip.acting_agent.endswith(failed_task.task_id))
+
+    def test_the_coordinator_observes_only_pre_authorized_terminals_within_one_bound(self):
+        from director_orchestrator import primary_coordinator as coordinator_module
+
+        observed = []
+        coordinator = object.__new__(coordinator_module.PrimaryTaskCoordinator)
+        coordinator._owner_token = "o" * 32
+        coordinator.terminal_observer = (
+            lambda task_id, classification, *, deadline: observed.append(deadline))
+        coordinator._store = SimpleNamespace(
+            read_primary_task_projection=lambda *_, **__: None,
+            update_primary_task_projection=lambda **kw: SimpleNamespace(projection=kw["projection"]))
+        writer = SimpleNamespace(fencing_generation=1)
+        outcome = SimpleNamespace(task_id="DIR-LG-OBSERVED", state_digest="s")
+        import time as time_module
+        for required, expected in ((True, 0), (False, 1), (None, 1)):
+            observed.clear()
+            coordinator._application_projection_provider = (
+                lambda _task, required=required: None if required is None
+                else {"execution_approval_required": required})
+            with patch.object(coordinator_module, "_outcome_projection",
+                              return_value={"terminal_classification": "FAILED",
+                                            "state_digest": "s"}):
+                start = time_module.monotonic()
+                coordinator._persist_outcome(outcome, writer, deadline=start + 60)
+            with self.subTest(execution_approval_required=required):
+                self.assertEqual(expected, len(observed))
+                if observed:
+                    self.assertLessEqual(observed[0] - start, 5.5)
+
+    def test_the_plan_and_readiness_bind_the_sole_configured_starting_ref(self):
+        """No pin and one ref: the plan, the prestage branch and readiness all
+        use it. Several refs and no pin: nothing arms and nothing is exercised."""
+
+        from director_orchestrator.policy import plan_starting_ref
+
+        release = replace(self.settings, allowed_starting_refs=("release/x",),
+                          delegation_grant_json=small_grant(branch_pattern="release/x"))
+        self.assertEqual("release/x", plan_starting_ref(release))
+        plan = preview_plan(SMALL_TEXT, release)
+        self.assertEqual({"release/x"}, {item.starting_ref for item in plan.assignments})
+        self.assertEqual("release/x", plan.prestage.branch)
+        self.assertTrue(self.application(
+            allowed_starting_refs=("release/x",),
+            delegation_grant_json=small_grant(branch_pattern="release/x")).pre_execution_capable())
+        # A grant for main does not cover a deployment bound to release/x.
+        self.assertFalse(self.application(
+            allowed_starting_refs=("release/x",)).pre_execution_capable())
+        several = replace(self.settings, allowed_starting_refs=("main", "release/x"))
+        self.assertIsNone(plan_starting_ref(several))
+        self.assertFalse(self.application(
+            allowed_starting_refs=("main", "release/x")).pre_execution_capable())
+        record = self.record()
+        self.assertFalse(self.exercise(self.application(
+            allowed_starting_refs=("main", "release/x")), record))
+
+    def test_a_page_is_parsed_within_the_readers_deadline(self):
+        import time as time_module
+        import director_orchestrator.store as store_module
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        real = store_module.parse_record
+
+        def slow(value):
+            time_module.sleep(0.3)
+            return real(value)
+
+        with patch.object(store_module, "parse_record", side_effect=slow), \
+                self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.delegation_audit_records(
+                limit=10, deadline=time_module.monotonic() + 0.1)
+
+    def test_a_history_at_exactly_the_ceiling_is_read_whole(self):
+        """Ten full pages and an empty eleventh are the whole history; one
+        record past the ceiling is refused."""
+
+        import director_orchestrator.primary_default as module
+
+        class Ledger:
+            def __init__(self, size):
+                self.records = [SimpleNamespace(digest=f"{index:064x}") for index in range(size)]
+                self.reads = 0
+
+            def delegation_audit_records(self, *, limit, after_digest, deadline):
+                self.reads += 1
+                start = 0 if after_digest is None else int(after_digest, 16) + 1
+                return self.records[start:start + limit]
+
+        ceiling = module._AUDIT_HISTORY_MAX_RECORDS
+        exact = Ledger(ceiling)
+        history = module._bounded_audit_history(exact)
+        self.assertEqual(ceiling, len(history))
+        self.assertEqual(ceiling // 1_000 + 1, exact.reads)
+        self.assertIsNone(module._bounded_audit_history(Ledger(ceiling + 1)))
+        self.assertEqual(ceiling - 1, len(module._bounded_audit_history(Ledger(ceiling - 1))))
+
+    def test_a_proven_no_run_terminal_records_no_trip(self):
+        application = self.application()
+        held = self.record()
+        self.assertTrue(self.exercise(application, held))
+        application.coordinator = self.coordinator(
+            {"terminal_classification": "OWNER_DECISION_REQUIRED"}, no_run=True)
+        application._trip_on_failed_terminal(held.task_id, "OWNER_DECISION_REQUIRED")
+        self.assertEqual(1, len(self.audit()))
+        # Not proven (an unreadable aggregate, or any other hold): it trips.
+        application.coordinator = self.coordinator(aggregate_unreadable=True)
+        application._trip_on_failed_terminal(held.task_id, "OWNER_DECISION_REQUIRED")
+        self.assertEqual(2, len(self.audit()))
+
+    def test_a_grant_that_expires_during_the_scans_authorizes_no_send(self):
+        """The clock is re-read after the history and prior-task scans."""
+
+        import director_orchestrator.primary_default as module
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        start = datetime(2099, 1, 1, tzinfo=timezone.utc) - timedelta(seconds=30)
+        later = start + timedelta(seconds=60)
+        calls = []
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                calls.append(tz)
+                return start if len(calls) == 1 else later
+
+        with patch.object(module, "datetime", Clock):
+            self.assertEqual("small_task_pre_authorization_revoked", small_pre_authorization_refusal(
+                record, self.settings, self.ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+        self.assertEqual(2, len(calls))
+        # And a deadline spent by the scans refuses too.
+        import time as time_module
+        real = module._failed_pre_authorized_task
+
+        def slow(*args, **kwargs):
+            result = real(*args, **kwargs)
+            time_module.sleep(0.3)
+            return result
+
+        with patch.object(module, "_failed_pre_authorized_task", side_effect=slow):
+            self.assertEqual("small_task_pre_authorization_unaudited", small_pre_authorization_refusal(
+                record, self.settings, self.ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None),
+                deadline=time_module.monotonic() + 0.2))
+        self.assertIsNone(small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+
+    def test_the_audit_commit_waits_only_for_what_is_left_of_the_deadline(self):
+        """Verify and the anchor advance spend most of the deadline; a reader
+        holding the file then must not let the commit wait the full busy
+        timeout set when the connection opened. The anchor already advanced,
+        so a commit that cannot finish is the ambiguous anchor failure."""
+
+        import sqlite3
+        import time as time_module
+        from director_orchestrator.store import DelegationAuditAnchorUnavailable
+
+        ledger = audit_ledger(self.directory)
+        readers = []
+        real_advance = ledger._audit_anchor.compare_and_set
+
+        def slow_advance(expected, updated, **kwargs):
+            real_advance(expected, updated, **kwargs)
+            reader = sqlite3.connect(ledger.path, isolation_level=None)
+            reader.execute("BEGIN")
+            reader.execute("SELECT count(*) FROM delegated_decision_audit").fetchone()
+            readers.append(reader)
+            time_module.sleep(0.7)
+
+        ledger._audit_anchor.compare_and_set = slow_advance
+        now = datetime.now(timezone.utc)
+        record = DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=None, grant_snapshot=None,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK, candidate_sha=SHA,
+            acting_agent="director-langgraph:DIR-LG-COMMIT", verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL, now),), recorded_at=now)
+        started = time_module.monotonic()
+        try:
+            with self.assertRaises(DelegationAuditAnchorUnavailable):
+                ledger.append_delegation_audit_record(record, deadline=started + 1.0)
+        finally:
+            for reader in readers:
+                reader.rollback()
+                reader.close()
+        self.assertLess(time_module.monotonic() - started, 1.5)
+
+    def test_lock_busy_wait_and_anchor_advance_spend_the_same_deadline(self):
+        """A contended or slow ledger refuses at the deadline and writes nothing."""
+
+        import threading
+        import time as time_module
+        from director_orchestrator import store as store_module
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        application = self.application()
+        self.assertTrue(self.exercise(application, self.record()))
+        [entry] = self.audit()
+        record = DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=entry.grant_id, grant_snapshot=entry.grant_snapshot,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA, acting_agent="director-langgraph:DIR-LG-BOUND", verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL, entry.recorded_at),),
+            recorded_at=entry.recorded_at)
+        # The in-process lock, held by another thread past the deadline.
+        held, release = threading.Event(), threading.Event()
+
+        def hold():
+            with self.ledger._lock:
+                held.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=hold)
+        worker.start()
+        held.wait(5)
+        try:
+            started = time_module.monotonic()
+            with self.assertRaises(DelegationAuditDeadlineExceeded):
+                self.ledger.append_delegation_audit_record(
+                    record, deadline=time_module.monotonic() + 0.2)
+            with self.assertRaises(DelegationAuditDeadlineExceeded):
+                self.ledger.delegation_audit_records(
+                    limit=10, deadline=time_module.monotonic() + 0.2)
+            self.assertLess(time_module.monotonic() - started, 3)
+        finally:
+            release.set()
+            worker.join()
+        # Verification finishes, but the deadline passes before the anchor
+        # would advance: the anchor is never touched and nothing is written.
+        real = self.ledger._verified_audit_snapshot
+
+        def slow(*args, **kwargs):
+            result = real(*args, **kwargs)
+            time_module.sleep(0.3)
+            return result
+
+        with patch.object(self.ledger, "_verified_audit_snapshot", side_effect=slow), \
+                patch.object(self.ledger._audit_anchor, "compare_and_set",
+                             side_effect=AssertionError("anchor advanced")), \
+                self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.append_delegation_audit_record(
+                record, deadline=time_module.monotonic() + 0.2)
+        self.assertEqual(1, len(self.audit()))
+        # SQLite's busy wait is the remainder too: a writer holding the file.
+        blocker = store_module.sqlite3.connect(self.ledger.path)
+        blocker.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaises(DelegationAuditDeadlineExceeded):
+                self.ledger.append_delegation_audit_record(
+                    record, deadline=time_module.monotonic() + 0.3)
+        finally:
+            blocker.rollback()
+            blocker.close()
+        self.assertEqual(1, len(self.audit()))
+
+    def test_the_final_decision_uses_a_fresh_clock(self):
+        """A grant that expires during the history scan does not pre-authorize."""
+
+        import director_orchestrator.primary_default as module
+
+        start = datetime(2099, 1, 1, tzinfo=timezone.utc) - timedelta(seconds=30)
+        later = start + timedelta(seconds=60)
+        calls = []
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                calls.append(tz)
+                return start if len(calls) == 1 else later
+
+        with patch.object(module, "datetime", Clock):
+            self.assertFalse(self.exercise(self.application(), self.record()))
+        [entry] = self.audit()
+        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+        self.assertEqual(later, entry.recorded_at)
+        self.assertEqual({later}, {item.evaluated_at for item in entry.gate_results})
+        self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+
+    def test_a_slow_anchor_gets_only_the_remaining_deadline(self):
+        """Every anchor call is bounded by what is left; a read that runs out
+        refuses cleanly, an advance that runs out is an anchor failure."""
+
+        import time as time_module
+        from director_orchestrator.store import (
+            DelegationAuditAnchorUnavailable,
+            DelegationAuditDeadlineExceeded,
+        )
+
+        record = lambda agent: DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=None, grant_snapshot=None,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA, acting_agent=agent, verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL,
+                                     datetime.now(timezone.utc)),),
+            recorded_at=datetime.now(timezone.utc))
+        anchor = _SlowAuditAnchor(latency=2.0)
+        ledger = TaskStore(str(Path(self.directory) / "slow.sqlite3"),
+                           delegation_audit_anchor=anchor)
+        started = time_module.monotonic()
+        with self.assertRaises(DelegationAuditDeadlineExceeded):
+            ledger.delegation_audit_records(limit=10, deadline=started + 0.3)
+        self.assertLess(time_module.monotonic() - started, 1.5)
+        self.assertLess(anchor.timeouts[-1], 0.31)
+        # The advance itself runs out: never a clean refusal.
+        anchor.latency = 0.0
+        ledger.append_delegation_audit_record(record("director-langgraph:DIR-LG-A"))
+        anchor.latency, anchor.timeouts = 2.0, []
+        original_read = anchor.read_head
+        anchor.read_head = lambda *, timeout=None: (anchor.head)  # the verifying read is fast
+        with self.assertRaises(DelegationAuditAnchorUnavailable):
+            ledger.append_delegation_audit_record(
+                record("director-langgraph:DIR-LG-B"), deadline=time_module.monotonic() + 0.3)
+        self.assertTrue(anchor.timeouts and anchor.timeouts[0] < 0.31)
+        anchor.read_head = original_read
+        # Unbounded callers keep the old call shape: no timeout is passed.
+        anchor.latency, anchor.timeouts = 0.0, []
+        ledger.delegation_audit_records(limit=10)
+        self.assertEqual([None], anchor.timeouts)
+
+    def test_recovery_needs_the_pre_authorized_commit(self):
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        refuse = lambda packet: small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None), packet=packet)
+        self.assertIsNone(refuse({"starting_ref": SHA}))
+        self.assertEqual("small_task_pre_authorization_commit_changed",
+                         refuse({"starting_ref": "d" * 40}))
+
+    def test_a_slow_prior_task_scan_refuses_without_tripping(self):
+        import time as time_module
+        from director_orchestrator import primary_default as module
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+
+        def slow(task_id, *, deadline=None):
+            time_module.sleep(0.3)
+            raise TimeoutError("read ran out")
+
+        slow_coordinator = SimpleNamespace(get_projection=slow, parallel_aggregate=slow)
+        with patch.object(module, "_AUDIT_HISTORY_MAX_SECONDS", 0.2):
+            self.assertEqual("small_task_pre_authorization_unaudited",
+                             small_pre_authorization_refusal(
+                                 record, self.settings, self.ledger, approval_free=True,
+                                 compact_view_lanes=SMALL_LANES, coordinator=slow_coordinator))
+            application = self.application()
+            application.coordinator = slow_coordinator
+            self.assertFalse(self.exercise(application, self.record()))
+        self.assertFalse(any("delegation_trip" in gate_statuses(entry) for entry in self.audit()))
+        # A read that fails in time still counts the task as failed.
+        failing = SimpleNamespace(get_projection=lambda task_id, **_: (_ for _ in ()).throw(
+            OSError("down")), parallel_aggregate=lambda task_id, **_: None)
+        self.assertEqual("small_task_pre_authorization_tripped", small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=failing))
+
+    def test_the_recheck_spends_the_shared_dispatch_deadline(self):
+        """Nothing left refuses before any read; what is left is passed on."""
+
+        import time as time_module
+        from director_orchestrator import primary_default as module
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        reads = []
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=AssertionError("ledger read")):
+            self.assertEqual("small_task_pre_authorization_unaudited",
+                             small_pre_authorization_refusal(
+                                 record, self.settings, self.ledger, approval_free=True,
+                                 compact_view_lanes=SMALL_LANES,
+                                 coordinator=self.coordinator(None),
+                                 deadline=time_module.monotonic() - 1))
+        shared = time_module.monotonic() + 30
+        real_history, real_failed = module._bounded_audit_history, module._failed_pre_authorized_task
+
+        def history(ledger, *, deadline=None):
+            reads.append(("history", deadline))
+            return real_history(ledger, deadline=deadline)
+
+        def failed(coordinator, records, *, deadline=None):
+            reads.append(("tasks", deadline))
+            return real_failed(coordinator, records, deadline=deadline)
+
+        with patch.object(module, "_bounded_audit_history", history), \
+                patch.object(module, "_failed_pre_authorized_task", failed):
+            self.assertIsNone(small_pre_authorization_refusal(
+                record, self.settings, self.ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None),
+                deadline=shared))
+        # Both reads spend exactly the shared deadline, never a fresh window.
+        self.assertEqual([("history", shared), ("tasks", shared)], reads)
+
+    def test_the_append_verification_is_bounded_too(self):
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        application = self.application()
+        self.assertTrue(self.exercise(application, self.record()))
+        [entry] = self.audit()
+        record = DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=entry.grant_id, grant_snapshot=entry.grant_snapshot,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA, acting_agent="director-langgraph:DIR-LG-LATE", verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL, entry.recorded_at),),
+            recorded_at=entry.recorded_at)
+        with self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.append_delegation_audit_record(record, deadline=0.0)
+        self.assertEqual(1, len(self.audit()))
+        # Every exercise append carries a deadline; one it reaches keeps the
+        # button, writes nothing and does not latch the process attended.
+        calls = []
+        real = self.ledger.append_delegation_audit_record
+
+        def late(record, **kwargs):
+            calls.append(kwargs)
+            raise DelegationAuditDeadlineExceeded("audit append reached its deadline")
+
+        with patch.object(self.ledger, "append_delegation_audit_record", side_effect=late):
+            self.assertFalse(self.exercise(application, self.record()))
+            self.assertFalse(self.exercise(application, self.record(user="UOTHER")))
+        self.assertTrue(all(isinstance(item.get("deadline"), float) for item in calls))
+        self.assertEqual(2, len(calls))
+        self.assertFalse(application._delegation_tripped)
+        self.assertEqual(1, len(self.audit()))
+        self.assertIsNotNone(real)
+
+    def test_the_audit_deadline_stops_the_ledger_scan_itself(self):
+        """The deadline is enforced inside the verifying traversal, mid-scan."""
+
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        application = self.application()
+        self.assertTrue(self.exercise(application, self.record()))
+        self.assertTrue(self.exercise(application, self.record()))
+        with self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.delegation_audit_records(limit=10, deadline=0.0)
+        self.assertEqual(2, len(self.ledger.delegation_audit_records(
+            limit=10, deadline=float("inf"))))
+        # An exercise whose read reaches the deadline keeps the button, writes
+        # no record and does not latch the process attended.
+        with patch("director_orchestrator.primary_default._AUDIT_HISTORY_MAX_SECONDS", -1.0):
+            self.assertFalse(self.exercise(application, self.record()))
+        self.assertFalse(application._delegation_tripped)
+        self.assertEqual(2, len(self.audit()))
+
+    def test_a_paid_off_deployment_never_exercises_a_grant(self):
+        application = self.application(
+            dispatcher=False,
+            langgraph_primary_offline_simulation_enabled=False,
+            langgraph_primary_live_provider_dispatch_enabled=False,
+        )
+        self.assertFalse(self.exercise(application, self.record()))
+        self.assertEqual([], self.audit())
+
+    @staticmethod
+    def coordinator(projection=None, *, ambiguous=0, unreadable=False, aggregate_unreadable=False,
+                    failed_aggregate=False, no_run=False):
+        def get_projection(task_id, **_):
+            if unreadable:
+                raise OSError("projection unavailable")
+            return None if projection is None else SimpleNamespace(projection=projection)
+
+        def parallel_aggregate(task_id, **_):
+            if aggregate_unreadable:
+                raise OSError("aggregate unavailable")
+            return SimpleNamespace(ambiguous_slot_count=ambiguous,
+                                   terminal=failed_aggregate or no_run, succeeded=False,
+                                   proven_no_run=no_run)
+
+        return SimpleNamespace(get_projection=get_projection,
+                               parallel_aggregate=parallel_aggregate)
+
+    def test_trips_are_derived_from_durable_task_state_on_every_path(self):
+        """Callback-settled, ambiguous and crash-after-terminal tasks all trip."""
+
+        tripping = {
+            # Settled by a provider callback, or its process stopped after the
+            # terminal was persisted: either way only the durable state remains.
+            "failed_terminal": self.coordinator({"terminal_classification": "FAILED"}),
+            "owner_decision": self.coordinator(
+                {"terminal_classification": "OWNER_DECISION_REQUIRED"}),
+            "ambiguous_slot": self.coordinator(RUNNING, ambiguous=1),
+            # Its aggregate ended failed, but the graph was never resumed.
+            "failed_aggregate_unclassified": self.coordinator(RUNNING, failed_aggregate=True),
+            "unreadable": self.coordinator(unreadable=True),
+            "aggregate_unreadable": self.coordinator(RUNNING, aggregate_unreadable=True),
+        }
+        for name, state in tripping.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                first = self.application(ledger)
+                first.coordinator = state
+                self.assertTrue(self.exercise(first, self.record()))
+                earlier = self.audit(ledger)[0].acting_agent
+                # A fresh process: nothing in memory carries the failure.
+                second = self.application(ledger)
+                second.coordinator = state
+                self.assertFalse(self.exercise(second, self.record()))
+                pre, trip, refused = self.audit(ledger)
+                self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+                self.assertEqual({"delegation_trip": GateStatus.FAIL}, gate_statuses(trip))
+                self.assertEqual(earlier, trip.acting_agent)
+                self.assertIs(GateStatus.FAIL, gate_statuses(refused)["authorization"])
+                self.assertFalse(second._delegation_tripped)
+                # The trip is durable: a healthy state no longer re-arms it.
+                third = self.application(ledger)
+                third.coordinator = self.coordinator({"terminal_classification": "SUCCEEDED"})
+                self.assertFalse(self.exercise(third, self.record()))
+                self.assertEqual(1, sum(
+                    "delegation_trip" in gate_statuses(item) for item in self.audit(ledger)))
+
+    def test_succeeded_running_or_never_started_tasks_do_not_trip(self):
+        for name, state in {
+            "succeeded": self.coordinator({"terminal_classification": "SUCCEEDED"}),
+            # Stopped for the owner having sent nothing: every admitted
+            # attempt settled refused before I/O.
+            "proven_no_run": self.coordinator(
+                {"terminal_classification": "OWNER_DECISION_REQUIRED",
+                 "parallel_plan_digest": digest("parallel-plan")}, no_run=True),
+            "running": self.coordinator(RUNNING),
+            # Created, its parallel plan not registered yet: nothing dispatched.
+            "registering": self.coordinator(
+                {"terminal_classification": None}, aggregate_unreadable=True),
+            # Its intake failed after the audit record: it spent an exercise
+            # and ran nothing.
+            "never_started": self.coordinator(None),
+        }.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                application = self.application(ledger)
+                application.coordinator = state
+                self.assertTrue(self.exercise(application, self.record()))
+                self.assertTrue(self.exercise(application, self.record()))
+                self.assertEqual(
+                    [RecordedOutcome.PRE_AUTHORIZED] * 2,
+                    [item.outcome for item in self.audit(ledger)])
+
+    def test_a_concurrent_writer_cannot_overspend_the_last_exercise(self):
+        """Count-then-append is conditional on the history that was counted."""
+
+        grant = small_grant(max_exercises=1)
+        path, anchor = str(Path(self.directory) / "shared.sqlite3"), _MemoryAuditAnchor()
+        mine = TaskStore(path, delegation_audit_anchor=anchor)
+        theirs = TaskStore(path, delegation_audit_anchor=anchor)
+        other = self.application(theirs, delegation_grant_json=grant)
+        other.coordinator = self.coordinator(None)
+        read = mine.delegation_audit_records
+        raced = []
+
+        def read_then_race(**kwargs):
+            page = read(**kwargs)
+            if not raced:
+                raced.append(True)
+                # Another process spends the last exercise after this one counted.
+                self.assertTrue(self.exercise(other, self.record()))
+            return page
+
+        application = self.application(mine, delegation_grant_json=grant)
+        application.coordinator = self.coordinator(None)
+        with patch.object(mine, "delegation_audit_records", side_effect=read_then_race):
+            self.assertFalse(self.exercise(application, self.record()))
+        self.assertEqual([RecordedOutcome.PRE_AUTHORIZED],
+                         [item.outcome for item in theirs.delegation_audit_records()])
+        # A lost race refuses this one intake; it does not latch the process.
+        self.assertFalse(application._delegation_tripped)
+
+    def test_main_intake_schedules_recover_only_via_callback(self):
+        import importlib
+        from fastapi import BackgroundTasks
+
+        main = importlib.import_module("director_orchestrator.main")
+        seen = {}
+
+        class FakeApplication:
+            def create_intake(self, payload, *, intake_authentication,
+                              authenticated_replay_identity, on_dispatch_ready):
+                seen["authentication"] = intake_authentication
+                on_dispatch_ready("DIR-LG-1")
+                return "created"
+
+            def recover(self, task_id):
+                raise AssertionError("recover runs only as a scheduled background task")
+
+        application = FakeApplication()
+        background = BackgroundTasks()
+        payload = SlackIntake(
+            source_event_id="event-main", channel_id="CDIRECTOR",
+            thread_ts="1720000000.000001", user_id="UOWNER", text=SMALL_TEXT,
+        )
+        with patch.object(main, "primary_default_activation",
+                          SimpleNamespace(application=application)), \
+             patch.object(main, "settings", replace(
+                 main.settings, langgraph_primary_new_intake_enabled=True,
+                 allow_paid_runs=False)):
+            self.assertEqual("created", main.intake(
+                payload, background, intake_issued_at=None, intake_nonce=None,
+                intake_signature=None))
+        self.assertIs(IntakeAuthentication.BEARER_DRY_RUN, seen["authentication"])
+        [task] = background.tasks
+        self.assertEqual(application.recover, task.func)
+        self.assertEqual(("DIR-LG-1",), task.args)
 
 
 class ProviderAttemptRosterTests(unittest.TestCase):
@@ -250,6 +1894,33 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(2, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+    def test_a_refused_retry_reserves_nothing_more(self) -> None:
+        """A small task's reviewer is never retried after an unmeasured failure."""
+
+        roster = (("json", "responses-api"), ("text", "native-cli"))
+        reserved: list[int] = []
+
+        def reserve(ordinal: int) -> ProviderAttemptReservation:
+            reserved.append(ordinal)
+            return ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai",
+                *roster[(ordinal - 1) % len(roster)],
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            )
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            raise ProviderTransientDispatchError("temporary transport outage")
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=roster, reserve_attempt=reserve,
+            record_attempt=lambda *_args: None, dispatch_attempt=dispatch,
+            retry_allowed=lambda: False,
+        )
+        self.assertEqual([1], reserved)
+        self.assertIs(ParallelAssignmentStatus.FAILED, status)
+        self.assertIsNone(result)
+        self.assertEqual("small_task_review_tokens_exhausted", reason)
 
     def test_third_attempt_requires_a_different_transport_on_single_format_roster(
         self,
@@ -474,9 +2145,49 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                                           "openai", "test-deployment", digest("reservation"))
         writer = SimpleNamespace(engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
                                  lease_live=True, fencing_generation=4)
-        handle.claim_store.current_task_writer = lambda _task: writer
-        handle.claim_store.record_work_packet_artifact = lambda **kwargs: SimpleNamespace(
-            document_digest=document_digest(kwargs["packet"]))
+        # Dispatch reads the writer, persists the artifact and re-reads the
+        # wave's cancellation row inside the bound its own readiness
+        # established, so each double records the bound it was handed.
+        from contextlib import contextmanager
+        bounds = []
+
+        class BatchRow:
+            """The existing `director_primary_parallel_batch` kill switch.
+
+            Answers the same statements the real connection does: the
+            transaction's recorded bound (none yet, on a fresh transaction)
+            and the wave's kill switch.
+            """
+
+            info = SimpleNamespace(server_version=170000)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exception):
+                return False
+
+            @contextmanager
+            def transaction(self):
+                # The bounded read path opens one explicit transaction, so the
+                # LOCAL timeouts it sets still apply to the statement after.
+                yield self
+
+            def execute(self, statement, *_args, **_kwargs):
+                row = ({"bound": None} if "director.transaction_deadline" in statement
+                       else {"kill_switch": False})
+                return SimpleNamespace(fetchone=lambda: row)
+
+        def batch_connection(*_args, **kwargs):
+            bounds.append(("cancellation", kwargs.get("timeout")))
+            return BatchRow()
+
+        handle.pool.connection = batch_connection
+        handle.claim_store.current_task_writer = lambda _task, *, deadline=None: (
+            bounds.append(("writer", deadline)) or writer)
+        handle.claim_store.record_work_packet_artifact = lambda **kwargs: (
+            bounds.append(("artifact", kwargs.get("deadline"))) or SimpleNamespace(
+                document_digest=document_digest(kwargs["packet"])))
         attempt = ProviderAttemptReservation(record.task_id, assignment_id, 1, "openai", "api", "api",
                                              digest("key"), digest("attempt"), digest("budget"),
                                              total_token_limit=731)
@@ -530,6 +2241,44 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         self.assertEqual(731, contexts[0].total_token_limit)
         self.assertEqual(attempt.attempt_digest, contexts[0].idempotency_key)
         self.assertEqual(4, contexts[0].fencing_generation)
+        # The same readiness bound reaches the writer read, the artifact write,
+        # the pre-I/O cancellation read and the provider call itself.
+        self.assertEqual({"writer", "artifact", "cancellation"},
+                          {stage for stage, _bound in bounds})
+        self.assertTrue(all(bound is not None and bound > 0 for _stage, bound in bounds), bounds)
+        self.assertIsNotNone(contexts[0].deadline)
+        # A task approved as simulation or paid-off is never dispatched live,
+        # even when this live composition recovers it after a mode switch.
+        from director_orchestrator.primary_parallel import PaidSetupHold
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        # Only an exact ``live`` label is eligible: unknown, missing and
+        # malformed labels are held like the other modes.
+        for label in ("offline_simulation", "paid_off", "unknown", None, "LIVE", "live ", ""):
+            with self.subTest(execution_mode=label):
+                activation.services._execution_modes.pop(record.task_id, None)
+                if label is not None:
+                    activation.services._execution_modes[record.task_id] = label
+                with self.assertRaises(PaidSetupHold):
+                    activation.application._parallel_dispatcher.preflight(
+                        reservation, writer=writer, connection=connection(), wave_budget_usage={})
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "task_not_approved_for_live_dispatch"):
+                    activation.application._parallel_dispatcher(reservation)
+                self.assertEqual(1, len(contexts))
+        # Hydration keeps a recovered label exactly: an explicit empty or blank
+        # label is never defaulted to this live composition's ``live``.
+        missing = object()
+        services = activation.services
+        for recovered, stored in (("", ""), ("  ", "  "), (None, "unknown"), (7, "unknown"),
+                                  (missing, "unknown"), ("live", "live")):
+            with self.subTest(recovered=recovered):
+                while services.occupied(record.task_id):
+                    services.discard(record.task_id)
+                application = {"task_record": record.model_dump(mode="json"), "effect_grant": None}
+                if recovered is not missing:
+                    application["execution_mode"] = recovered
+                self.assertTrue(services.try_hydrate_recovery(SimpleNamespace(projection={"application": application})))
+                self.assertEqual(services._execution_modes[record.task_id], stored)
+                self.assertEqual(services.paid_dispatch_allowed(record.task_id), stored == "live")
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -642,7 +2391,7 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         activation.application = SimpleNamespace(
             recover=lambda _task_id: (_ for _ in ()).throw(RuntimeError("boom"))
         )
-        activation.services = object()
+        activation.services = SimpleNamespace(occupied=lambda _task_id: False)
         projection = SimpleNamespace(
             task_id="task-freshness",
             projection={"terminal_classification": None},
@@ -1212,6 +2961,164 @@ class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
             )
 
 
+class DefaultPrimarySplitProjectAuthorityTests(unittest.TestCase):
+    @staticmethod
+    def _init_repo(path: Path, remote: str) -> None:
+        subprocess.run(("git", "init", "-b", "main"), cwd=path, check=True, capture_output=True)
+        subprocess.run(
+            ("git", "config", "user.email", "split-authority@example.test"),
+            cwd=path,
+            check=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.name", "Split Authority Test"),
+            cwd=path,
+            check=True,
+        )
+        (path / "README.md").write_text(f"{remote}\n", encoding="utf-8")
+        subprocess.run(("git", "add", "README.md"), cwd=path, check=True)
+        subprocess.run(("git", "commit", "-m", "init"), cwd=path, check=True)
+        subprocess.run(
+            ("git", "remote", "add", "origin", f"https://github.com/{remote}.git"),
+            cwd=path,
+            check=True,
+        )
+
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        base = Path(self.temporary_directory.name)
+        self.director_root = base / "director"
+        self.project_root = base / "project"
+        self.director_root.mkdir()
+        self.project_root.mkdir()
+        self._init_repo(self.director_root, "owner/director")
+        self._init_repo(self.project_root, "owner/edge-project")
+        (self.project_root / "edge.txt").write_text("edge\n", encoding="utf-8")
+        subprocess.run(("git", "add", "edge.txt"), cwd=self.project_root, check=True)
+        subprocess.run(("git", "commit", "-m", "edge"), cwd=self.project_root, check=True)
+        self.director_commit = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.director_root, text=True
+        ).strip()
+        self.director_tree = subprocess.check_output(
+            ("git", "rev-parse", "HEAD^{tree}"), cwd=self.director_root, text=True
+        ).strip()
+        self.project_commit = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.project_root, text=True
+        ).strip()
+        self.project_tree = subprocess.check_output(
+            ("git", "rev-parse", "HEAD^{tree}"), cwd=self.project_root, text=True
+        ).strip()
+
+    def split_settings(self, **updates) -> Settings:
+        values = {
+            "repository_snapshot_root": str(self.project_root),
+            "repository_allowlist": ("owner/edge-project",),
+            "allowed_starting_refs": ("main",),
+            "langgraph_primary_pinned_commit_sha": self.director_commit,
+            "langgraph_primary_pinned_tree_sha": self.director_tree,
+            "langgraph_primary_project_execution_pinned_commit_sha": self.project_commit,
+            "langgraph_primary_project_execution_pinned_tree_sha": self.project_tree,
+        }
+        values.update(updates)
+        return replace(Settings(), **values)
+
+    def test_split_project_execution_authority_accepts_edge_snapshot(self) -> None:
+        authority = resolve_default_primary_authority(self.split_settings())
+        self.assertEqual(self.project_commit, authority.starting_sha)
+
+    def test_split_intake_plan_reaches_packet_router_with_project_pins(self) -> None:
+        from director_orchestrator.policy import execution_policy_errors
+
+        settings = self.split_settings()
+        for preplanned in (True, False):
+            with self.subTest(preplanned=preplanned):
+                services = DefaultDryRunServices(settings)
+                record = TaskRecord(
+                    task_id="DIR-SPLIT-PLAN",
+                    status=TaskStatus.QUEUED,
+                    intake=SlackIntake(
+                        source_event_id="event-split-plan",
+                        channel_id="CSPLIT",
+                        thread_ts="1720000000.000003",
+                        user_id="UOWNER",
+                        text="Project: default\nImplement the pinned project change.",
+                    ),
+                    intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+                )
+                if preplanned:
+                    record.plan = preview_plan(record.intake.text, settings)
+                services.register(record)
+                context = HandlerContext(
+                    task_id=record.task_id,
+                    source_event_id=record.intake.source_event_id,
+                    correlation_id="corr-split-plan",
+                    intake_digest=digest("intake"),
+                    scope_digest=digest("scope"),
+                    authority_snapshot_digest=digest("authority"),
+                    work_packet_digest=None,
+                    idempotency_key_digest=digest("idempotency"),
+                    starting_sha=self.project_commit,
+                    candidate_sha=self.project_commit,
+                    plan_digest=None,
+                    scheduled_producer_id=None,
+                    provider_attempt_digest=None,
+                    provider_dispatch_status="NOT_STARTED",
+                    provider_result_digest=None,
+                    producer_id=None,
+                    reviewer_id=None,
+                    revision_count=0,
+                    budget_limit_units=10,
+                    budget_used_units=0,
+                    effect_key_digest=None,
+                    effect_attempt_digest=None,
+                    writer_owner_id="langgraph",
+                )
+                result = services.plan(context)
+                planned = services._record(record.task_id).plan
+                self.assertTrue(result.work_packet_digest.startswith("sha256:"))
+                self.assertIsNotNone(planned)
+                self.assertIsNotNone(planned.prestage)
+                self.assertEqual(self.project_commit, planned.prestage.base_sha)
+                self.assertEqual(self.project_commit, planned.prestage.branch)
+                self.assertTrue(all(
+                    item.starting_ref == self.project_commit for item in planned.assignments
+                ))
+                self.assertFalse([
+                    error for error in execution_policy_errors(planned, settings)
+                    if "digest" in error
+                ])
+
+    def test_service_pins_without_project_execution_reject_foreign_snapshot(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
+            resolve_default_primary_authority(
+                self.split_settings(
+                    langgraph_primary_project_execution_pinned_commit_sha="",
+                    langgraph_primary_project_execution_pinned_tree_sha="",
+                )
+            )
+
+    def test_split_authority_preserves_repository_tree_and_clean_checks(self) -> None:
+        for updates, message in (
+            ({"repository_allowlist": ("other/project",)}, "remote does not match"),
+            ({"langgraph_primary_project_execution_pinned_tree_sha": self.director_tree}, "tree"),
+        ):
+            with self.subTest(updates=updates), self.assertRaisesRegex(RuntimeError, message):
+                resolve_default_primary_authority(self.split_settings(**updates))
+        (self.project_root / "README.md").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "clean"):
+            resolve_default_primary_authority(self.split_settings())
+
+    def test_swapped_project_execution_pins_reject_snapshot(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
+            resolve_default_primary_authority(
+                self.split_settings(
+                    langgraph_primary_project_execution_pinned_commit_sha=self.director_commit,
+                    langgraph_primary_project_execution_pinned_tree_sha=self.director_tree,
+                )
+            )
+
+
 class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1626,7 +3533,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             )
         )
 
-    def use_parallel_graph_completion_services(self, dispatcher):
+    def use_parallel_graph_completion_services(self, dispatcher, *, delegation_ledger=None):
         settings = replace(
             self.settings, langgraph_primary_offline_simulation_enabled=True
         )
@@ -1647,11 +3554,251 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             services,
             DefaultPrimaryAuthority(SHA, digest("authority")),
             parallel_dispatcher=dispatcher,
+            delegation_ledger=delegation_ledger,
+            compact_view_lanes=SMALL_LANES,
         )
         self.settings = settings
         self.services = services
         self.coordinator = coordinator
         self.application = application
+
+    def use_standing_grant(self, dispatcher):
+        """Owner UOWNER in CDEFAULT, and a live grant for the small class."""
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        ledger = audit_ledger(directory.name)
+        self.settings = replace(
+            self.settings,
+            slack_owner_user_id="UOWNER",
+            slack_channel_id="CDEFAULT",
+            delegation_enabled=True,
+            delegation_grant_json=small_grant(),
+        )
+        self.use_parallel_graph_completion_services(dispatcher, delegation_ledger=ledger)
+        use_fixture_blobs(self)
+        return ledger
+
+    def attested_intake(self, event, *, text=SMALL_TEXT, on_dispatch_ready=None):
+        identity = (
+            hashlib.sha256(f"nonce-{event}".encode()).hexdigest(),
+            hashlib.sha256(f"payload-{event}".encode()).hexdigest(),
+        )
+        return self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": event, "text": text}),
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+            authenticated_replay_identity=identity,
+            on_dispatch_ready=on_dispatch_ready,
+        )
+
+    @staticmethod
+    def succeeding(dispatched):
+        def dispatch(reservation):
+            dispatched.append(reservation.sequence)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"granted-result-{reservation.task_id}-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+        return dispatch
+
+    def test_standing_grant_skips_execution_approval_and_audits(self):
+        dispatched: list[int] = []
+        ledger = self.use_standing_grant(self.succeeding(dispatched))
+
+        record = self.attested_intake("granted-small")
+
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertIsNone(projection.projection.get("pending_approval"))
+        self.assertEqual([1, 2], sorted(dispatched))
+        self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
+        self.assertEqual(TaskStatus.DONE, record.status)
+        self.assertIn("exact_sha_review", projection.projection["visited_nodes"])
+        self.assertIn("ci_security_completion", projection.projection["visited_nodes"])
+        self.assertIs(
+            False,
+            self.coordinator._runtime.compact_state(record.task_id)[
+                "execution_approval_required"],
+        )
+        # The dispatcher's reading matches the persisted graph flag.
+        self.assertIs(False, projection.projection["application"]["execution_approval_required"])
+        [entry] = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, entry.outcome)
+        self.assertTrue(entry.acting_agent.endswith(record.task_id))
+
+    def test_ineligible_task_under_live_grant_still_prompts(self):
+        dispatched: list[int] = []
+        ledger = self.use_standing_grant(self.succeeding(dispatched))
+        ready: list[str] = []
+
+        record = self.attested_intake(
+            "ineligible-small",
+            text="Project: default\nCreate a bounded implementation plan.",
+            on_dispatch_ready=ready.append,
+        )
+
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertEqual("execution", projection.projection["pending_approval"]["kind"])
+        # An ordinary graph persists the button, and the dispatcher reads the
+        # same, so no pre-authorization refusal can ever apply to it.
+        self.assertIs(
+            True,
+            self.coordinator._runtime.compact_state(record.task_id)[
+                "execution_approval_required"],
+        )
+        self.assertIs(True, projection.projection["application"]["execution_approval_required"])
+        self.assertEqual([], ready)
+        self.assertEqual([], dispatched)
+        [entry] = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+
+    def test_granted_intake_hands_dispatch_to_the_callback(self):
+        dispatched: list[int] = []
+        self.use_standing_grant(self.succeeding(dispatched))
+        ready: list[str] = []
+
+        record = self.attested_intake("callback-small", on_dispatch_ready=ready.append)
+
+        self.assertEqual([record.task_id], ready)
+        self.assertEqual([], dispatched)
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertIsNone(projection.projection.get("pending_approval"))
+        self.assertNotEqual("NOT_STARTED", projection.projection["provider_dispatch_status"])
+        recovered = self.application.recover(record.task_id)
+        self.assertEqual([1, 2], sorted(dispatched))
+        self.assertEqual(TaskStatus.DONE, recovered.status)
+
+    def test_replayed_attested_intake_does_not_exercise_twice(self):
+        dispatched: list[int] = []
+        ledger = self.use_standing_grant(self.succeeding(dispatched))
+
+        first = self.attested_intake("replayed-small")
+        second = self.attested_intake("replayed-small")
+
+        self.assertEqual(first.task_id, second.task_id)
+        self.assertEqual([1, 2], sorted(dispatched))
+        self.assertEqual(1, len(ledger.delegation_audit_records(limit=10)))
+
+    def test_failed_granted_task_trips_the_grant(self):
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED, None, "provider_result_failed"
+            )
+
+        ledger = self.use_standing_grant(dispatch)
+
+        failed = self.attested_intake("tripped-small-1")
+        projection = self.coordinator.get_projection(failed.task_id)
+        assert projection is not None
+        self.assertNotIn(
+            projection.projection["terminal_classification"], (None, "SUCCEEDED")
+        )
+        self.assert_next_exercise_trips_on(failed.task_id, ledger, "tripped-small-2")
+
+    def assert_next_exercise_trips_on(self, failed_task_id, ledger, event):
+        after = self.attested_intake(event)
+        projection = self.coordinator.get_projection(after.task_id)
+        assert projection is not None
+        self.assertEqual("execution", projection.projection["pending_approval"]["kind"])
+        pre, trip, refused = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+        self.assertEqual(["delegation_trip"], [item.gate for item in trip.gate_results])
+        self.assertTrue(trip.acting_agent.endswith(failed_task_id))
+        self.assertIs(RecordedOutcome.REFUSED, refused.outcome)
+        self.assertTrue(refused.acting_agent.endswith(after.task_id))
+
+    def test_a_failed_granted_terminal_trips_before_any_later_intake(self):
+        """The trip is recorded when the failed terminal is persisted."""
+
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED, None, "provider_result_failed")
+
+        ledger = self.use_standing_grant(dispatch)
+        failed = self.attested_intake("tripped-at-terminal")
+        pre, trip = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+        self.assertEqual(["delegation_trip"], [item.gate for item in trip.gate_results])
+        self.assertTrue(trip.acting_agent.endswith(failed.task_id))
+
+    def test_a_failed_aggregate_left_unclassified_trips_the_grant(self):
+        """resume_parallel_aggregate raised, so the graph never classified it."""
+
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED, None, "provider_result_failed")
+
+        ledger = self.use_standing_grant(dispatch)
+        with patch.object(self.coordinator, "resume_parallel_aggregate",
+                          side_effect=RuntimeError("resume failed")):
+            try:
+                self.attested_intake("unclassified-small")
+            except RuntimeError:
+                pass
+        [pre] = ledger.delegation_audit_records(limit=10)
+        failed_task_id = pre.acting_agent.removeprefix("director-langgraph:")
+        projection = self.coordinator.get_projection(failed_task_id)
+        assert projection is not None
+        self.assertIsNone(projection.projection["terminal_classification"])
+        aggregate = self.coordinator.parallel_aggregate(failed_task_id)
+        self.assertTrue(aggregate.terminal)
+        self.assertFalse(aggregate.succeeded)
+        self.assert_next_exercise_trips_on(failed_task_id, ledger, "unclassified-next")
+
+    def test_a_callback_settled_failure_trips_the_grant(self):
+        """No drive loop runs: the task fails through record_provider_callback."""
+
+        ledger = self.use_standing_grant(self.succeeding([]))
+        ready: list[str] = []
+        granted = self.attested_intake("callback-failed-small", on_dispatch_ready=ready.append)
+        self.assertEqual([granted.task_id], ready)
+        [first] = self.coordinator.reserve_parallel_ready(
+            task_id=granted.task_id, policy=self.application._parallel_policy())
+        attempt = self.coordinator.reserve_provider_attempt(
+            reservation=first,
+            attempt_ordinal=1,
+            format_roster=(("json", "callback"),),
+            idempotency_key_digest=digest("granted-callback-key"),
+            budget_evidence_digest=digest("granted-callback-budget"),
+        )
+        self.application.record_provider_callback(
+            task_id=granted.task_id,
+            assignment_id=first.assignment_id,
+            provider_id=first.provider_id,
+            provider_run_id="run-granted-callback",
+            command=ProviderSubgraphResult(
+                provider_attempt_digest=attempt.attempt_digest,
+                idempotency_key_digest=attempt.idempotency_key_digest,
+                authority_snapshot_digest=digest("granted-callback-authority"),
+                producer_id=first.provider_id,
+                disposition=ProviderDisposition.FAILED,
+                result_digest=None,
+                candidate_sha=None,
+                reason_code="callback_failed",
+            ),
+        )
+        projection = self.coordinator.get_projection(granted.task_id)
+        assert projection is not None
+        self.assertNotIn(
+            projection.projection["terminal_classification"], (None, "SUCCEEDED"))
+        self.assert_next_exercise_trips_on(granted.task_id, ledger, "callback-failed-next")
+
+    def test_an_ambiguous_granted_task_trips_the_grant(self):
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.AMBIGUOUS, None, "provider_outcome_unknown")
+
+        ledger = self.use_standing_grant(dispatch)
+        granted = self.attested_intake("ambiguous-small")
+        projection = self.coordinator.get_projection(granted.task_id)
+        assert projection is not None
+        # Never terminal, so no drive-loop or callback hook would ever see it.
+        self.assertIsNone(projection.projection["terminal_classification"])
+        self.assertEqual(1, self.coordinator.parallel_aggregate(granted.task_id).ambiguous_slot_count)
+        self.assert_next_exercise_trips_on(granted.task_id, ledger, "ambiguous-next")
 
     def same_lane_review_plan(self):
         """A plan whose review barrier reuses the first-wave producer's lane."""
@@ -1907,6 +4054,128 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "ci_security_completion", projection.projection["visited_nodes"]
         )
         self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
+
+    def _contended_wave(self, contend, *, wave_seconds=2.0):
+        """Drive one real wave that contends for a row `contend` locks.
+
+        The contended lock is taken from inside the dispatcher, so readiness
+        and admission are already done: what waits is the foreground
+        completion path the real coordinator runs after execution, with
+        `executor.map` still holding the wave open.
+        """
+        from contextlib import ExitStack
+        from time import monotonic
+
+        held = ExitStack()
+        self.addCleanup(held.close)
+        blocked = []
+
+        def dispatch(reservation):
+            if not blocked:
+                blocked.append(reservation.assignment_id)
+                connection = held.enter_context(self.handle.pool.connection())
+                held.enter_context(connection.transaction())
+                contend(connection, reservation)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"parallel-result-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+
+        dispatch.readiness_deadline = lambda: monotonic() + wave_seconds
+        self.use_parallel_graph_completion_services(dispatch)
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake(),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        started = monotonic()
+        raised: Exception | None = None
+        try:
+            try:
+                self.approve(self.application, self.coordinator, pending.task_id)
+            except Exception as error:  # returned to the caller, never swallowed
+                raised = error
+            elapsed = monotonic() - started
+        finally:
+            # Released here, not in cleanup: the schema drop in tearDown would
+            # otherwise wait on this same lock.
+            held.close()
+        return SimpleNamespace(task_id=pending.task_id, elapsed=elapsed, raised=raised,
+                                blocked=blocked[0] if blocked else None)
+
+    def _assert_completion_bound(self, wave, *, wave_seconds=2.0):
+        from director_orchestrator.primary_parallel import COMPLETION_ALLOWANCE_SECONDS
+
+        self.assertIsNotNone(wave.blocked, "the wave never dispatched")
+        self.assertIsNotNone(wave.raised,
+                             "the contended completion write must not have succeeded")
+        self.assertGreater(wave.elapsed, 1.0,
+                            "it must have actually waited on the contended lock")
+        self.assertLess(wave.elapsed, wave_seconds + COMPLETION_ALLOWANCE_SECONDS + 5.0,
+                        "the completion allowance is a bound, not a licence to wait")
+
+    def test_result_settlement_lock_is_bounded_by_the_completion_allowance(self):
+        """`record_result`, called while `executor.map` still waits, is bounded.
+
+        The wave's own bound is two seconds. Settling what already happened may
+        spend the one completion allowance beyond it and nothing more, and an
+        unsettled slot keeps its ACTIVE reservation rather than being released
+        or guessed at.
+        """
+        wave = self._contended_wave(lambda connection, reservation: connection.execute(
+            f"SELECT 1 FROM {self.schema}.director_primary_parallel_assignment "
+            "WHERE task_id=%s AND assignment_id=%s FOR UPDATE",
+            (reservation.task_id, reservation.assignment_id)))
+        self._assert_completion_bound(wave)
+        with self.handle.pool.connection() as connection:
+            statuses = {row["assignment_id"]: row["status"] for row in connection.execute(
+                f"SELECT assignment_id, status FROM {self.schema}"
+                ".director_primary_parallel_assignment WHERE task_id=%s",
+                (wave.task_id,)).fetchall()}
+        self.assertEqual("ACTIVE", statuses[wave.blocked],
+                          "an unsettled slot is retained for reconciliation")
+
+    def test_outcome_projection_write_is_bounded_by_the_completion_allowance(self):
+        """The same allowance covers publishing the wave's outcome projection."""
+
+        wave = self._contended_wave(lambda connection, reservation: connection.execute(
+            f"SELECT 1 FROM {self.schema}.director_primary_task_projection "
+            "WHERE task_id=%s FOR UPDATE", (reservation.task_id,)))
+        self._assert_completion_bound(wave)
+        with self.handle.pool.connection() as connection:
+            settled = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s", (wave.task_id,)).fetchall()]
+        self.assertIn("SUCCEEDED", settled,
+                      "the ledger keeps what it settled before the projection write")
+
+    def test_checkpoint_completion_write_is_bounded_by_the_completion_allowance(self):
+        """The checkpointer's own storage is bounded by the same cutoff.
+
+        `record_parallel_aggregate` reads the snapshot, updates the state and
+        reads the outcome on connections it acquires itself, so the cutoff is
+        published for that call rather than passed to LangGraph.
+        """
+        wave = self._contended_wave(lambda connection, _reservation: connection.execute(
+            f"LOCK TABLE {self.schema}.checkpoints IN ACCESS EXCLUSIVE MODE"))
+        self._assert_completion_bound(wave)
+        # Persistence that could not be confirmed is classified conservatively:
+        # the call fails, nothing claims a completed wave, and the durable
+        # ledger rows stay exactly as they were for reconciliation.
+        projection = self.coordinator.get_projection(wave.task_id)
+        self.assertNotEqual("SUCCEEDED",
+                            (projection.projection.get("terminal_classification")
+                             if projection is not None else None),
+                            f"raised={wave.raised!r}")
+        with self.handle.pool.connection() as connection:
+            settled = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s", (wave.task_id,)).fetchall()]
+        self.assertTrue(settled, "the ledger rows survive an unconfirmed checkpoint")
 
     def test_paid_setup_hold_preserves_approved_pause_and_recovers_ready_waves(self):
         from director_orchestrator.primary_parallel import PaidSetupHold
@@ -2585,6 +4854,104 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(before.projection_digest, recovered.projection_digest)
         self.assertEqual(1, restarted_coordinator.readiness().graph_task_count)
 
+    def test_in_flight_planning_survives_concurrent_recovery_and_cleanup(self) -> None:
+        planning_entered = threading.Event()
+        recovery_finished = threading.Event()
+        captured: dict[str, object] = {}
+        errors: list[BaseException] = []
+        original_record = self.services._record
+
+        def gated_record(task_id: str):
+            record = original_record(task_id)
+            if sys._getframe(1).f_code.co_name == "plan" and not planning_entered.is_set():
+                captured["task_id"] = task_id
+                planning_entered.set()
+                if not recovery_finished.wait(timeout=10):
+                    raise TimeoutError("concurrent recovery did not finish during planning")
+            return record
+
+        def run_recovery() -> None:
+            try:
+                if not planning_entered.wait(timeout=10):
+                    raise TimeoutError("planning did not reach the shared record read")
+                task_id = str(captured["task_id"])
+                self.assertTrue(self.services.occupied(task_id))
+                captured["recovered"] = self.application.recover(task_id)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                recovery_finished.set()
+
+        self.services._record = gated_record
+        worker = threading.Thread(target=run_recovery)
+        worker.start()
+        try:
+            record = self.application.create_intake(
+                self.intake().model_copy(
+                    update={"source_event_id": "event-default-lifetime"}
+                ),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        finally:
+            self.services._record = original_record
+            worker.join(timeout=10)
+
+        self.assertFalse(worker.is_alive(), "recovery worker did not finish")
+        self.assertFalse(errors, errors)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, record.status)
+        self.assertGreaterEqual(record.plan_generation, 1)
+        assert record.plan is not None
+        assignment = min(record.plan.assignments, key=lambda item: item.sequence)
+        expected_packet = self.services._packet_router.work_packet(record, assignment)
+        graph_state = self.coordinator._runtime.compact_state(record.task_id)
+        self.assertEqual(
+            document_digest(expected_packet), graph_state["work_packet_digest"]
+        )
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertNotEqual(
+            "plan_handler_error", projection.projection.get("reason_code")
+        )
+        self.assertEqual(
+            "execution_approval_required", projection.projection["reason_code"]
+        )
+        self.assertEqual(
+            record.plan_generation,
+            projection.projection["application"]["task_record"]["plan_generation"],
+        )
+        self.assertNotIn(record.task_id, self.services._records)
+
+        recovered = self.application.recover(record.task_id)
+        self.assertEqual(record.task_id, recovered.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, recovered.status)
+        self.assertEqual(record.plan_generation, recovered.plan_generation)
+        self.assertEqual(
+            document_digest(expected_packet),
+            self.coordinator._runtime.compact_state(record.task_id)["work_packet_digest"],
+        )
+
+        cancelled = self.application.cancel(record.task_id)
+        self.assertEqual(TaskStatus.FAILED, cancelled.status)
+        cancelled_projection = self.coordinator.get_projection(record.task_id)
+        assert cancelled_projection is not None
+        self.assertEqual(
+            "CANCELLED", cancelled_projection.projection["terminal_classification"]
+        )
+        self.assertNotIn(record.task_id, self.services._records)
+
+        later = self.application.create_intake(
+            self.intake().model_copy(
+                update={"source_event_id": "event-default-lifetime-later"}
+            ),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        self.assertNotEqual(record.task_id, later.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, later.status)
+        self.assertNotIn(later.task_id, self.services._records)
+        later_recovered = self.application.recover(later.task_id)
+        self.assertEqual(later.task_id, later_recovered.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, later_recovered.status)
+
     def test_offline_simulation_traverses_full_graph_once(self):
         settings = replace(
             self.settings,
@@ -2784,6 +5151,37 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertFalse(aggregate.succeeded, aggregate)
         self.assertNotEqual(TaskStatus.DONE, completed.status)
 
+    def test_offline_dispatcher_refuses_a_task_not_approved_for_simulation(self):
+        """A live-approved (or unlabelled) task is never settled by a double."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        provider = sorted(settings.langgraph_primary_required_providers)[0]
+        for label in ("live", "unknown", None):
+            with self.subTest(execution_mode=label):
+                services._execution_modes.pop("DIR-LG-LIVE-APPROVED", None)
+                if label is not None:
+                    services._execution_modes["DIR-LG-LIVE-APPROVED"] = label
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "live_task_requires_live_dispatch"):
+                    dispatch(
+                        ParallelReservation(
+                            task_id="DIR-LG-LIVE-APPROVED",
+                            assignment_id="assignment-live",
+                            sequence=1,
+                            provider_id=provider,
+                            deployment_id="deployment-test",
+                            reservation_digest=digest("reservation:live"),
+                        )
+                    )
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+
     def test_unconfigured_lane_settles_failed_without_calling_a_double(self):
         """An unconfigured lane must settle FAILED, never AMBIGUOUS.
 
@@ -2800,6 +5198,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             settings, packet_router=packet_router(settings)
         )
         dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        # Labelled as simulation so only the missing double decides the outcome.
+        services._execution_modes["DIR-LG-UNCONFIGURED"] = "offline_simulation"
         outcome = dispatch(
             ParallelReservation(
                 task_id="DIR-LG-UNCONFIGURED",
@@ -2921,6 +5321,502 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "reason_code": projected.get("reason_code"),
             "provider_dispatch_status": projected.get("provider_dispatch_status"),
         }
+
+    # Tables a read-only qualification readback must never touch.
+    READBACK_MUTATION_WITNESS_TABLES = (
+        "director_primary_task_projection", "director_primary_task_writer", "director_primary_claim",
+        "director_primary_budget", "director_primary_effect_reservation", "director_primary_effect_execution",
+        "director_primary_remote_binding", "director_primary_terminal_evidence",
+        "director_primary_reconciliation_event", "director_primary_slack_delivery",
+        "director_primary_slack_status_receipt", "director_primary_parallel_assignment",
+        "director_primary_provider_attempt", "director_primary_command_receipt", "director_primary_audit_event",
+    )
+
+    def mutation_witness(self) -> dict:
+        import psycopg
+        from psycopg import sql
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        counts = {}
+        with psycopg.connect(dsn, connect_timeout=5, autocommit=True) as connection:
+            for table in self.READBACK_MUTATION_WITNESS_TABLES:
+                counts[table] = connection.execute(sql.SQL("SELECT count(*) FROM {}.{}").format(
+                    sql.Identifier(self.schema), sql.Identifier(table))).fetchone()[0]
+            counts["writer_leases"] = connection.execute(sql.SQL(
+                "SELECT coalesce(string_agg(task_id || ':' || fencing_generation::text, ',' ORDER BY task_id), '') "
+                "FROM {}.director_primary_task_writer").format(sql.Identifier(self.schema))).fetchone()[0]
+        return counts
+
+    def test_opt_in_qualification_readback_is_typed_bounded_read_only_and_keeps_default_get_unchanged(self):
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        from director_orchestrator.models import QualificationEvidenceReadback, TaskRecord
+
+        settings = replace(self.settings, shared_secret="standalone-qa-synthetic-secret",
+                           langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        headers = {"Authorization": "Bearer standalone-qa-synthetic-secret"}
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                default = client.get(f"/v1/tasks/{record.task_id}", headers=headers)
+                self.assertEqual(200, default.status_code, default.text)
+                self.assertNotIn("qualification_evidence", default.json())
+                self.assertNotIn("X-Primary-Qualification-Readback", default.headers)
+                # The strict persisted contract still parses the default response exactly.
+                self.assertEqual(record.task_id, TaskRecord.model_validate(default.json()).task_id)
+                before = self.mutation_witness()
+                opted = client.get(f"/v1/tasks/{record.task_id}", headers=headers,
+                                   params={"include_qualification_evidence": "true"})
+                self.assertEqual(200, opted.status_code, opted.text)
+                self.assertEqual(before, self.mutation_witness())
+                body = opted.json()
+                evidence = body.pop("qualification_evidence")
+                self.assertEqual(set(default.json()), set(body))
+                for key in ("task_id", "status", "intake", "intake_authentication", "plan_generation", "provider_runs"):
+                    self.assertEqual(default.json()[key], body[key])
+                # The ordinary TaskRecord contract forbids the readback field: it is response-only.
+                with self.assertRaises(Exception):
+                    TaskRecord.model_validate({**body, "qualification_evidence": evidence})
+                typed = QualificationEvidenceReadback.model_validate(evidence)
+                self.assertEqual(record.task_id, typed.task_id)
+                self.assertEqual("langgraph", typed.engine_owner)
+                self.assertEqual(default.headers["X-Primary-Projection-Digest"], typed.projection_digest)
+                self.assertEqual(int(default.headers["X-Primary-Projection-Version"]), typed.projection_version)
+                self.assertEqual(record.intake.source_event_id, typed.source_event_id)
+                self.assertEqual("complete", opted.headers["X-Primary-Qualification-Readback"])
+                self.assertTrue(typed.complete)
+                self.assertEqual([], typed.truncated)
+                self.assertIn(typed.absent, ([], ["provider_usage"]))  # usage tables are optional here
+                self.assertEqual(200, typed.bounds.row_limit)
+                self.assertEqual(262144, typed.bounds.byte_limit)
+                self.assertLess(typed.bounds.elapsed_seconds, typed.bounds.wall_seconds)
+                # A fresh intake has no attempts, effects, deliveries or status receipts yet.
+                self.assertEqual(([], [], [], [], []), (typed.provider_attempts, typed.effects,
+                    typed.reconciliation_events, typed.status_receipts, typed.provider_usage))
+                self.assertEqual("langgraph", opted.headers["X-Task-Engine-Owner"])
+                missing = client.get("/v1/tasks/DIR-LG-0000000000", headers=headers,
+                                     params={"include_qualification_evidence": "true"})
+                self.assertEqual(404, missing.status_code)
+                self.assertEqual(401, client.get(f"/v1/tasks/{record.task_id}",
+                                                 params={"include_qualification_evidence": "true"}).status_code)
+            finally:
+                client.close()
+
+    def test_qualification_readback_store_query_is_read_only_bounded_and_pinned(self):
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        for kwargs in ({"row_limit": 0}, {"row_limit": 1001}, {"byte_limit": 10}, {"wall_seconds": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                store.read_primary_qualification_evidence(record.task_id, **kwargs)
+        self.assertIsNone(store.read_primary_qualification_evidence("DIR-LG-0000000000"))
+        before = self.mutation_witness()
+        document = store.read_primary_qualification_evidence(record.task_id)
+        self.assertEqual(before, self.mutation_witness())
+        self.assertEqual(record.task_id, document["task_id"])
+        self.assertTrue(document["complete"])
+        # Deliveries for this task are pinned; enqueueing one makes it visible and
+        # a one-row limit reports truncation instead of a silently partial list.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""INSERT INTO {self.schema}.director_primary_slack_delivery
+                    (task_id, notification_key, projection_digest, payload, client_msg_id, state)
+                    VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED'),
+                           (%s, 'hold:synthetic', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')""",
+                (record.task_id, document["projection_digest"], "synthetic-" + record.task_id + "-a",
+                 record.task_id, document["projection_digest"], "synthetic-" + record.task_id + "-b"))
+        full = store.read_primary_qualification_evidence(record.task_id)
+        self.assertEqual({"terminal", "hold:synthetic"}, {row["notification_key"] for row in full["slack_deliveries"]})
+        self.assertTrue(all(row["state"] == "SUPPRESSED" for row in full["slack_deliveries"]))
+        bounded = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
+        self.assertFalse(bounded["complete"])
+        # The planned assignments of a fresh intake may also exceed one row.
+        self.assertIn("slack_deliveries", bounded["truncated"])
+        self.assertTrue(set(bounded["truncated"]) <= {"assignments", "slack_deliveries"}, bounded["truncated"])
+        self.assertEqual(1, len(bounded["slack_deliveries"]))
+        self.assertLessEqual(len(bounded["assignments"]), 1)
+        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=1024)
+        self.assertFalse(tiny["complete"])
+        self.assertIn("response_bytes", tiny["truncated"])
+        self.assertEqual([], tiny["slack_deliveries"])
+        other = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-other-task"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        self.assertEqual([], store.read_primary_qualification_evidence(other.task_id)["slack_deliveries"])
+        # The snapshot's own projection is returned so callers derive the task
+        # record from the same REPEATABLE READ view instead of a second read.
+        self.assertEqual(record.task_id, document["projection"].task_id)
+        self.assertEqual(document["projection_digest"], document["projection"].projection_digest)
+        self.assertEqual({"isolation": "REPEATABLE READ", "read_only": True,
+                          "single_transaction": True, "covers_task_record": True}, document["snapshot"])
+
+    def test_qualification_readback_is_bounded_by_one_deadline_across_pool_wait_and_blocked_sql(self):
+        import time as clock
+        import psycopg
+        from psycopg import sql
+        from psycopg_pool import PoolTimeout
+        from director_orchestrator.langgraph_postgres import (
+            DeadlineExpired, bounded_connection, require_deadline_remaining)
+
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        # An already-spent bound is refused before any connection or row is touched.
+        with self.assertRaises(DeadlineExpired):
+            require_deadline_remaining(clock.monotonic() - 1, "probe")
+        with self.assertRaises(DeadlineExpired):
+            bounded_connection(self.handle.pool, clock.monotonic() - 1)
+        # Blocked pool acquisition: every pooled connection is held elsewhere, so
+        # the readback must give up within its bound instead of queueing.
+        held = []
+        try:
+            while True:
+                try:
+                    manager = self.handle.pool.connection(timeout=0.5)
+                    manager.__enter__()
+                    held.append(manager)
+                except PoolTimeout:
+                    break
+            started = clock.monotonic()
+            with self.assertRaises(PoolTimeout):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.5)
+            self.assertLess(clock.monotonic() - started, 2.0)
+        finally:
+            for manager in held:
+                manager.__exit__(None, None, None)
+        # Blocked SQL after earlier queries succeeded: a later table is locked by
+        # another session, so the remaining time (not a fresh allowance) bounds
+        # the wait and the whole read fails instead of finishing late.
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        with psycopg.connect(dsn, connect_timeout=5) as blocker:
+            blocker.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
+                            .format(sql.Identifier(self.schema)))
+            started = clock.monotonic()
+            with self.assertRaises(psycopg.Error):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.6)
+            self.assertLess(clock.monotonic() - started, 2.0)
+            blocker.rollback()
+        # QA control for the cumulative bound (a test gap closed here; no product
+        # boundary changed): two ACCESS EXCLUSIVE locks, one on the projection
+        # table the read touches first and one on the delivery table it touches
+        # later, released in stages so that each wait alone fits the allowance
+        # while their sum exceeds it. The real read must refuse before the later
+        # lock is released; a per-stage allowance would instead finish late once
+        # the second lock cleared. Both waits, the join and the cleanup are
+        # bounded, and the blockers are released in `finally`.
+        allowance, first_release, second_release = 4.0, 1.2, 4.8
+        self.assertTrue(first_release < allowance and second_release - first_release < allowance < second_release)
+        released, waiting, worker_errors = {}, {}, []
+        stop, releaser = threading.Event(), None
+        with (
+            psycopg.connect(dsn, connect_timeout=5) as early,
+            psycopg.connect(dsn, connect_timeout=5) as later,
+            psycopg.connect(dsn, connect_timeout=5, autocommit=True,
+                            options="-c statement_timeout=500") as observer,
+        ):
+            early.execute(sql.SQL("LOCK TABLE {}.director_primary_task_projection IN ACCESS EXCLUSIVE MODE")
+                          .format(sql.Identifier(self.schema)))
+            later.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
+                          .format(sql.Identifier(self.schema)))
+            origin = clock.monotonic()
+
+            def stage_releases():
+                try:
+                    for name, blocker, at, table in (
+                        ("early", early, first_release, "director_primary_task_projection"),
+                        ("later", later, second_release, "director_primary_slack_delivery"),
+                    ):
+                        # Observe the actual blocked reader, not just the release
+                        # schedule: an unrelated database error must not pass.
+                        while not stop.is_set() and clock.monotonic() < origin + at:
+                            row = observer.execute(
+                                "SELECT pid FROM pg_locks WHERE locktype='relation' "
+                                "AND relation=%s::regclass AND NOT granted "
+                                "AND %s=ANY(pg_blocking_pids(pid))",
+                                (sql.Identifier(self.schema, table).as_string(observer),
+                                 blocker.info.backend_pid),
+                            ).fetchone()
+                            if row is not None:
+                                waiting[name] = row[0]
+                                break
+                            stop.wait(0.02)
+                        if stop.wait(max(0.0, origin + at - clock.monotonic())):
+                            return
+                        blocker.rollback()
+                        released[name] = clock.monotonic() - origin
+                except Exception as error:
+                    worker_errors.append(error)
+
+            releaser = threading.Thread(target=stage_releases, name="qa-staged-lock-release", daemon=True)
+            releaser.start()
+            try:
+                with self.assertRaises((psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable,
+                                        psycopg.errors.TransactionTimeout, DeadlineExpired)):
+                    store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
+                refused_at = clock.monotonic() - origin
+                releaser.join(timeout=second_release + 5.0)
+                self.assertFalse(releaser.is_alive())
+                self.assertEqual([], worker_errors)
+                self.assertEqual({"early", "later"}, set(waiting))
+                self.assertEqual(waiting["early"], waiting["later"])
+                self.assertLess(released["early"], refused_at)
+                self.assertLess(refused_at, released["later"])
+                self.assertLess(refused_at, allowance + 0.75)
+            finally:
+                stop.set()
+                releaser.join(timeout=10.0)
+                self.assertFalse(releaser.is_alive())
+        # The lane is intact afterwards and a normal read still completes.
+        after = store.read_primary_qualification_evidence(record.task_id)
+        self.assertTrue(after["complete"])
+        self.assertLess(after["bounds"]["elapsed_seconds"], after["bounds"]["wall_seconds"])
+
+    def test_qualification_readback_joins_populated_attempts_receipts_and_deliveries_by_real_keys(self):
+        from psycopg import sql
+        from director_orchestrator.models import QualificationEvidenceReadback
+
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        base = store.read_primary_qualification_evidence(record.task_id)
+        self.assertGreaterEqual(len(base["assignments"]), 1)
+        assignment = base["assignments"][0]
+        digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+        with self.handle.pool.connection() as connection:
+            for event, status in ((1, "STARTED"), (2, "SUCCEEDED")):
+                connection.execute(sql.SQL("""
+                    INSERT INTO {}.director_primary_provider_attempt
+                        (task_id, assignment_id, attempt_ordinal, event_sequence, provider_id, format_id,
+                         transport_id, idempotency_key_digest, attempt_digest, provider_run_id_digest,
+                         status, result_digest, outcome_evidence_digest, reason_code, budget_evidence_digest)
+                    VALUES (%s, %s, 1, %s, %s, 'v1', 'synthetic-transport', %s, %s, %s, %s, %s, %s, %s, %s)
+                    """).format(sql.Identifier(self.schema)),
+                    (record.task_id, assignment["assignment_id"], event, assignment["provider_id"],
+                     digest("idem:" + record.task_id), digest("attempt:" + record.task_id),
+                     digest("run:" + record.task_id) if event == 2 else None, status,
+                     digest("result:" + record.task_id) if event == 2 else None,
+                     digest("outcome:" + record.task_id) if event == 2 else None,
+                     "attempt_started" if event == 1 else "attempt_succeeded", digest("budget:" + record.task_id)))
+            connection.execute(sql.SQL("""
+                INSERT INTO {}.director_primary_slack_delivery
+                    (task_id, notification_key, projection_digest, payload, client_msg_id, state)
+                VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')
+                """).format(sql.Identifier(self.schema)),
+                (record.task_id, base["projection_digest"], "synthetic-delivery-" + record.task_id))
+        # A producer-shaped approval delivery row through the real delivery
+        # producer (PrimarySlackDelivery.enqueue builds the 152-character
+        # approval:<request digest>:<projection digest> key and the uuid5
+        # client_msg_id) and a real owner decision bound to a real command
+        # receipt (record_owner_decision). Seam: the dry-run intake is not
+        # gateway-attested, so the producer renders no payload and stores the
+        # row SUPPRESSED; the key, identity and decision columns are the
+        # producer's own. Slack transport is never constructed (transport=None,
+        # no run_once).
+        from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
+        projection = self.coordinator.get_projection(record.task_id)
+        pending = projection.projection["pending_approval"]
+        approval_key = "approval:" + pending["request_digest"] + ":" + projection.projection_digest
+        self.assertEqual(152, len(approval_key))
+        delivery_settings = replace(self.settings, langgraph_primary_postgres_schema=self.schema,
+                                    slack_channel_id="CDEFAULT", slack_owner_user_id="UOWNER",
+                                    slack_bot_token="synthetic-slack-test-token")
+        producer = PrimarySlackDelivery(SimpleNamespace(handle=self.handle, coordinator=self.coordinator,
+                                                        application=self.application), delivery_settings,
+                                        transport=None)
+        self.coordinator.renew_new_intake()
+        self.assertEqual(1, producer.enqueue())
+        command = SimpleNamespace(task_id=record.task_id, decision="approve", command_id="qa-command-" + record.task_id,
+                                  command_digest=digest("command:" + record.task_id),
+                                  request_digest=pending["request_digest"],
+                                  expected_projection_digest=projection.projection_digest)
+        self.coordinator.record_command_receipt(task_id=record.task_id, operation="approval_resume",
+                                                command_id=command.command_id, command_digest=command.command_digest,
+                                                projection=projection)
+        producer.record_owner_decision(command)
+        produced = [row for row in producer.receipts(record.task_id) if row["notification_key"] == approval_key]
+        self.assertEqual(1, len(produced))
+        self.assertEqual(("SUPPRESSED", "approve", command.command_id),
+                         (produced[0]["state"], produced[0]["owner_decision"], produced[0]["owner_command_id"]))
+        self.assertIsNotNone(produced[0]["owner_decision_at"])
+        approval_identity = produced[0]["client_msg_id"]
+        receipt_id, created, _ = store.record_primary_slack_status_receipt(
+            source_event_id="status-event-" + record.task_id, receipt_id="receipt-" + record.task_id,
+            task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
+            user_id=record.intake.user_id, text_digest=digest("status text"))
+        self.assertTrue(created)  # the store reports creation; the API maps it to deduplicated=False
+        # A real generic external effect through the production store producers
+        # (claim -> reservation -> execution marker -> remote binding -> terminal
+        # evidence), fenced by the task's actual writer lease.
+        from director_orchestrator.langgraph_primary import ClaimRequest
+        writer = store.current_task_writer(record.task_id)
+        with self.handle.pool.connection() as connection:
+            budget_row = connection.execute(sql.SQL(
+                "SELECT budget_limit_units FROM {}.director_primary_budget WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (record.task_id,)).fetchone()
+        budget_limit = int(budget_row["budget_limit_units"]) if budget_row else 8
+        store.register_task_budget(record.task_id, budget_limit_units=budget_limit)
+        claim_key, effect_key = digest("effect-claim:" + record.task_id), digest("effect-key:" + record.task_id)
+        effect_attempt, reservation_key = digest("effect-attempt:" + record.task_id), digest("effect-reservation:" + record.task_id)
+        granted = store.claim(ClaimRequest(claim_key=claim_key, task_id=record.task_id, field="effect_status",
+                                           expected_state="CLAIMED", target_state="EXECUTING",
+                                           attempt_digest=effect_attempt, owner_token=writer.owner_token))
+        self.assertTrue(granted.granted)
+        store.reserve_effect_intent(reservation_key=reservation_key, claim_key=claim_key, task_id=record.task_id,
+                                    owner_token=writer.owner_token, effect_key_digest=effect_key,
+                                    effect_attempt_digest=effect_attempt, writer_owner_id=writer.engine_owner,
+                                    reserved_units=1)
+        self.assertTrue(store.claim_effect_execution(reservation_key=reservation_key, owner_token=writer.owner_token))
+        store.bind_remote_effect(reservation_key=reservation_key, owner_token=writer.owner_token,
+                                 remote_system="slack", remote_identifier="1787450010." + record.task_id[-6:].lower())
+        store.record_terminal_evidence(claim_key=claim_key, owner_token=writer.owner_token, disposition="COMPLETED",
+                                       evidence_digest=digest("terminal:" + record.task_id))
+        # Authenticated spend/usage rows joined to the settled attempt digest. The
+        # production meter mints these under a signed grant; the disposable lane has
+        # no grant, so the rows are inserted synthetically under the real DDL/FKs.
+        with self.handle.pool.connection() as connection:
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_budget (authority_digest, document)
+                VALUES (%s, '{{"synthetic": true}}'::jsonb) ON CONFLICT DO NOTHING
+                """).format(sql.Identifier(self.schema)), (digest("budget:" + record.task_id),))
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_spend
+                    (attempt_digest, grant_digest, provider_id, project_id, task_id, budget_day, reserved_microusd, token_limit)
+                VALUES (%s, %s, %s, 'synthetic-project', %s, CURRENT_DATE, 50000, 4000)
+                """).format(sql.Identifier(self.schema)),
+                (digest("attempt:" + record.task_id), digest("budget:" + record.task_id), assignment["provider_id"], record.task_id))
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_usage (attempt_digest, document, actual_microusd, observed_tokens)
+                VALUES (%s, '{{"synthetic": true}}'::jsonb, 12500, 900)
+                """).format(sql.Identifier(self.schema)), (digest("attempt:" + record.task_id),))
+        document = store.read_primary_qualification_evidence(record.task_id)
+        document.pop("projection")
+        typed = QualificationEvidenceReadback.model_validate(document)  # strict typed serialization
+        self.assertEqual(1, len(typed.effects))
+        self.assertEqual((effect_key, effect_attempt, "COMPLETED"), (typed.effects[0].effect_key_digest,
+                         typed.effects[0].effect_attempt_digest, typed.effects[0].terminal_disposition))
+        self.assertEqual([], typed.absent)
+        self.assertEqual([(digest("attempt:" + record.task_id), 12500, 900, 50000)],
+                         [(row.attempt_digest, row.actual_microusd, row.observed_tokens, row.reserved_microusd)
+                          for row in typed.provider_usage])
+        attempts = typed.provider_attempts
+        self.assertEqual([1, 2], [row.event_sequence for row in attempts])
+        self.assertTrue(all(row.assignment_id == assignment["assignment_id"]
+                            and row.assignment_sequence == assignment["sequence"]
+                            and row.attempt_digest == digest("attempt:" + record.task_id)
+                            and row.transport_id == "synthetic-transport" for row in attempts))
+        self.assertEqual(["STARTED", "SUCCEEDED"], [row.status for row in attempts])
+        self.assertEqual(digest("run:" + record.task_id), attempts[1].provider_run_id_digest)
+        self.assertEqual(digest("result:" + record.task_id), attempts[1].result_digest)
+        self.assertEqual([receipt_id], [row.receipt_id for row in typed.status_receipts])
+        self.assertEqual("status-event-" + record.task_id, typed.status_receipts[0].source_event_id)
+        self.assertEqual({"synthetic-delivery-" + record.task_id, approval_identity},
+                         {row.client_msg_id for row in typed.slack_deliveries})
+        # The full producer key survives the typed model and the API serialization.
+        produced_row = next(row for row in typed.slack_deliveries if row.client_msg_id == approval_identity)
+        self.assertEqual((approval_key, "approve", command.command_id),
+                         (produced_row.notification_key, produced_row.owner_decision, produced_row.owner_command_id))
+        self.assertEqual(1, typed.task_scope_counters.effect_reservations)
+        self.assertEqual(1, typed.task_scope_counters.attempt_ordinals)
+        self.assertTrue(typed.complete)
+        # Rows are pinned to the task: another task sees none of them.
+        other = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-populated-other"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        foreign = store.read_primary_qualification_evidence(other.task_id)
+        self.assertEqual(([], [], []), (foreign["provider_attempts"], foreign["status_receipts"], foreign["slack_deliveries"]))
+        self.assertEqual(2, typed.task_scope_counters.provider_attempts)
+        self.assertEqual(1, typed.task_scope_counters.started_attempts)
+        self.assertEqual(1, typed.task_scope_counters.status_receipts)
+        self.assertGreaterEqual(typed.task_scope_counters.thread_tasks, 1)
+        # Composition: the real serialized opt-in API response goes through the
+        # collector and the strict observation schema (no handwritten shape).
+        import importlib.util
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        spec = importlib.util.spec_from_file_location(
+            "offline_slack_trial_collector_composition",
+            Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        settings = replace(self.settings, shared_secret="standalone-qa-synthetic-secret",
+                           langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                response = client.get(f"/v1/tasks/{record.task_id}",
+                                      headers={"Authorization": "Bearer standalone-qa-synthetic-secret"},
+                                      params={"include_qualification_evidence": "true"})
+            finally:
+                client.close()
+        self.assertEqual(200, response.status_code, response.text)
+        row = collector.summarize(record.intake.thread_ts, record.task_id, response.json(), [], [], True,
+                                  record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        evidence = row["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
+        self.assertEqual([digest("attempt:" + record.task_id)], evidence["chain"]["attempt_ids"])
+        self.assertEqual(sorted(row["assignment_id"] for row in base["assignments"]), evidence["chain"]["assignment_ids"])
+        self.assertIn(assignment["assignment_id"], evidence["chain"]["assignment_ids"])
+        self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
+        self.assertEqual(sorted(["synthetic-delivery-" + record.task_id, approval_identity]), evidence["chain"]["delivery_ids"])
+        # The 152-character approval key joins this task's snapshot as its own family.
+        self.assertEqual([approval_key], evidence["chain"]["approval_delivery_keys"])
+        self.assertEqual(response.json()["qualification_evidence"]["projection_digest"],
+                         next(row for row in response.json()["qualification_evidence"]["slack_deliveries"]
+                              if row["notification_key"] == approval_key)["projection_digest"])
+        self.assertEqual([digest("result:" + record.task_id)], evidence["chain"]["provider_result_digests"])
+        self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
+        self.assertEqual("EXTERNAL_EFFECT_TERMINAL:COMPLETED", evidence["external_effect_state"])
+        self.assertEqual([effect_key], evidence["chain"]["effect_ids"])
+        self.assertEqual("PROVIDER_EFFECT_RECORDED", evidence["effect_state"])
+        self.assertEqual("synthetic-transport", evidence["lineage"]["transport"])
+        self.assertEqual("authenticated_usage_table", evidence["usage"]["cost_basis"])
+        self.assertEqual(0.0125, evidence["usage"]["actual_cost_usd"])
+        self.assertEqual(50000, evidence["usage"]["actual_usage"]["reserved_budget_microusd"])
+        self.assertEqual(1, evidence["status_receipts"]["durable_receipt_rows"])
+        self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])
+        self.assertEqual(response.headers["X-Primary-Projection-Digest"], evidence["readback"]["projection_digest"])
+        # Negative composition: a foreign task id in the same real response is refused;
+        # a truncated real readback derives nothing.
+        foreign_response = dict(response.json())
+        foreign_response["qualification_evidence"] = {**foreign_response["qualification_evidence"], "task_id": other.task_id}
+        refused = collector.summarize(record.intake.thread_ts, record.task_id, foreign_response, [], [], True,
+                                      record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        self.assertEqual("rejected", refused["qualification_evidence"]["readback"]["state"])
+        self.assertEqual([], refused["qualification_evidence"]["chain"]["attempt_ids"])
+        truncated_document = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
+        truncated_document.pop("projection")
+        # Serialized exactly as the API serializes the typed model (no str() datetimes).
+        truncated_response = {**response.json(), "qualification_evidence":
+                              QualificationEvidenceReadback.model_validate(truncated_document).model_dump(mode="json")}
+        partial = collector.summarize(record.intake.thread_ts, record.task_id, truncated_response, [], [], True,
+                                      record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        self.assertEqual("incomplete", partial["qualification_evidence"]["readback"]["state"])
+        self.assertEqual("UNKNOWN", partial["qualification_evidence"]["usage"]["cost_basis"])
+        self.assertIsNone(partial["qualification_evidence"]["effect_state"])
+        # Neither a rejected nor a truncated real readback promotes any delivery,
+        # key, route or sequence into the qualification chain.
+        for derived in (refused["qualification_evidence"], partial["qualification_evidence"]):
+            self.assertEqual(([], [], [], []), (derived["chain"]["delivery_ids"], derived["chain"]["approval_delivery_keys"],
+                                                derived["chain"]["assignment_sequences"], derived["lineage"]["provider_routes"]))
+            self.assertEqual("ordinary task-record/deliveries context; not the validated snapshot join",
+                             derived["unjoined_context"]["note"])
+        collector.validate_observations({"schema": "director-slack-trial-observations/v1",
+            "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
+            "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
+                "runtime_head": "b" * 40, "started_at": None, "offline_configured": True, "paid_configured": False},
+            "collection_runtime_after": None, "runtime_collection_binding_stable": None,
+            "runtime_health_at_collection": {"paid_runs_enabled": None, "ambiguous_effect_count": None,
+                "reconciliation_hold_reason": None, "primary_runtime_active": None},
+            "collector_sha256": None, "read_only": True, "slack_writes": 0, "provider_dispatches": 0,
+            "scorecard_mutations": 0, "qualified_run_count": None, "ten_consecutive_runs_verified": False,
+            "native_source_reads": [], "trials": [{**row, "input_rubric_sha256": None,
+                "rubric_evaluation": collector.evaluate_rubric(row, {"declared_at": "2020-01-01T00:00:00+00:00"}, "0" * 64),
+                "source_errors": [], "runtime_collection_binding_stable": None}], "limitations": []})
 
     def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
         import psycopg
@@ -3222,3 +6118,46 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:53 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
+
+# [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

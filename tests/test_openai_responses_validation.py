@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
@@ -21,6 +26,7 @@ from director_orchestrator.openai_responses_validation import (
     OpenAIResponsesValidationRoute,
     normalize_openai_responses_capture,
     responses_route_from_file,
+    responses_runtime_binding,
     responses_validation_configuration_digest,
 )
 from director_orchestrator.provider_validation import (
@@ -213,6 +219,7 @@ class ResponsesRouteTests(unittest.TestCase):
             meter_enrollment_digest="f" * 64,
             total_token_limit=128,
             maximum_timeout_seconds=180,
+            runtime_binding="a" * 64,
         )
         self.assertEqual(len(d1), 64)
         d2 = responses_validation_configuration_digest(
@@ -224,8 +231,78 @@ class ResponsesRouteTests(unittest.TestCase):
             meter_enrollment_digest="f" * 64,
             total_token_limit=128,
             maximum_timeout_seconds=180,
+            runtime_binding="a" * 64,
         )
         self.assertNotEqual(d1, d2)
+
+    def test_configuration_digest_binds_the_executing_runtime(self):
+        """A replaced runtime or a changed proxy/CA name changes the route digest."""
+        import os
+        import shutil
+        from director_orchestrator import openai_responses_validation as module
+        package = Path(module.__file__).resolve().parent
+
+        def transport():
+            return SimpleNamespace(response_meter=SimpleNamespace(enrollments={}), model=MODEL,
+                                   api_url="https://api.openai.com/v1", _api_key="sk-test",
+                                   maximum_timeout_seconds=60)
+
+        route = OpenAIResponsesValidationRoute(transport=transport(), total_token_limit=128,
+                                               expected_model=MODEL, meter_enrollment_digest="d" * 64,
+                                               expected_organization_id="org-1", expected_api_project_id="proj-1")
+        with patch.dict(os.environ, {}, clear=True):
+            baseline, digest_before = responses_runtime_binding(), route.configuration_digest
+            with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.invalid:8080"}):
+                self.assertNotEqual(responses_runtime_binding(), baseline)
+                self.assertNotEqual(route.configuration_digest, digest_before)
+            with tempfile.TemporaryDirectory() as directory:
+                runtime = Path(directory) / ("a" * 64)
+                copy = runtime / "src" / "director_orchestrator"
+                shutil.copytree(package, copy, ignore=shutil.ignore_patterns("__pycache__"))
+                shutil.copytree(package.parents[1] / "docs" / "schemas", runtime / "docs" / "schemas")
+                with patch.object(module, "__file__", str(copy / "openai_responses_validation.py")):
+                    relocated = responses_runtime_binding()
+                    self.assertNotEqual(relocated, baseline)
+                    self.assertNotEqual(route.configuration_digest, digest_before)
+                    # Every package module counts, including ones the route
+                    # reaches only through imports (metering, admission).
+                    for name in ("primary_transports.py", "response_meter.py",
+                                 "entitlement_control_plane.py", "antigravity_team.py"):
+                        before = responses_runtime_binding()
+                        with (copy / name).open("ab") as handle:
+                            handle.write(b"\n# replaced\n")
+                        self.assertNotEqual(responses_runtime_binding(), before, name)
+                    # A schema-only change is a packet-contract change.
+                    before = responses_runtime_binding()
+                    with (runtime / "docs" / "schemas" / "model-work-packet-v1.schema.json").open("ab") as handle:
+                        handle.write(b"\n")
+                    self.assertNotEqual(responses_runtime_binding(), before)
+            # Registry-resolved proxies count even with no proxy variable set.
+            with patch("urllib.request.getproxies", return_value={"https": "http://registry.invalid:8080"}):
+                self.assertNotEqual(responses_runtime_binding(), baseline)
+            # CA trust material is bound by content, not by path.
+            with tempfile.TemporaryDirectory() as directory:
+                bundle = Path(directory) / "ca.pem"
+                bundle.write_bytes(b"first trust anchor")
+                certs = Path(directory) / "certs"
+                certs.mkdir()
+                (certs / "a.pem").write_bytes(b"anchor a")
+                with patch.dict(os.environ, {"SSL_CERT_FILE": str(bundle)}):
+                    first = responses_runtime_binding()
+                    bundle.write_bytes(b"other trust anchor")
+                    self.assertNotEqual(responses_runtime_binding(), first)
+                with patch.dict(os.environ, {"SSL_CERT_DIR": str(certs)}):
+                    first = responses_runtime_binding()
+                    (certs / "a.pem").write_bytes(b"anchor b")
+                    self.assertNotEqual(responses_runtime_binding(), first)
+                    (certs / "b.pem").write_bytes(b"added")
+                    second = responses_runtime_binding()
+                    self.assertNotEqual(second, first)
+                for name, relative in (("SSL_CERT_FILE", "ca.pem"), ("SSL_CERT_DIR", "certs")):
+                    with self.subTest(relative=name), patch.dict(os.environ, {name: relative}):
+                        with self.assertRaisesRegex(ValidationError, "absolute path"):
+                            responses_runtime_binding()
+            self.assertEqual(route.configuration_digest, digest_before)
 
     def test_configuration_digest_binds_the_timeout_ceiling(self):
         """Finding 4: the transport ceiling is part of the identity.
@@ -238,7 +315,7 @@ class ResponsesRouteTests(unittest.TestCase):
         base = dict(model=MODEL, api_url="https://api.openai.com/v1/responses",
                     credential_digest="e" * 64, organization_id="org_fixture",
                     api_project_id="proj_fixture", meter_enrollment_digest="f" * 64,
-                    total_token_limit=128)
+                    total_token_limit=128, runtime_binding="a" * 64)
         d180 = responses_validation_configuration_digest(**base, maximum_timeout_seconds=180)
         d60 = responses_validation_configuration_digest(**base, maximum_timeout_seconds=60)
         self.assertNotEqual(d180, d60)
@@ -449,6 +526,7 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         generation_hex = "c" * 64
         tree_hex = "e" * 40
         store = MagicMock()
+        store.expected_configuration_digest.return_value = config_digest
         reservation = "b" * 64
         admission = {
             "reservation": reservation,
@@ -564,6 +642,7 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         }
         admission.update(admission_overrides or {})
         store = MagicMock()
+        store.expected_configuration_digest.return_value = route.configuration_digest
         store.admit.return_value = admission
         store.settle.return_value = "evidence_digest_xyz"
         service = ValidationBridgeService(
@@ -586,6 +665,20 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         transport.send.assert_not_called()
         store.settle.assert_not_called()
         store.fail.assert_called_once_with(admission["reservation"], remaining_seconds=ANY)
+
+    def test_registered_digest_drift_refuses_before_admission(self):
+        transport, route, admission, store, service = self._mocked_responses_bridge()
+        store.expected_configuration_digest.return_value = "f" * 64
+        with self.assertRaisesRegex(ValidationError, "digest drift"):
+            service._run_openai_responses(
+                ValidationRequest(generation=admission["generation"], provider="openai"),
+                service.owner_token)
+        # Read-only comparison under the shared deadline; nothing is admitted or reserved.
+        store.expected_configuration_digest.assert_called_once_with(
+            admission["generation"], "openai", remaining_seconds=ANY)
+        store.admit.assert_not_called()
+        store.fail.assert_not_called()
+        transport.send.assert_not_called()
 
     def test_expired_whole_operation_deadline_never_reaches_http_or_settlement(self):
         transport, route, admission, store, service = self._mocked_responses_bridge()
@@ -671,3 +764,8 @@ if __name__ == "__main__":
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

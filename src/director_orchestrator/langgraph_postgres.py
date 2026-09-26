@@ -1,3 +1,17 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
@@ -84,14 +98,18 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 import hashlib
 import hmac
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import ceil
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .langgraph_primary import (
@@ -440,6 +458,252 @@ def _advisory_key(*parts: str) -> int:
     return int.from_bytes(raw, "big", signed=True)
 
 
+# ---------------------------------------------------------------------------
+# Absolute-deadline primitives. Exact, unchanged extraction of the
+# Claude-authored definitions in src/director_orchestrator/langgraph_postgres.py
+# at revision f311b1b32ee28eb45f4d71ec9713506d2fb54915 (DEADLINE-REFERENCE);
+# only the definitions the qualification readback needs are carried here, with
+# their standard-library imports, so a later integration can unify them.
+# ---------------------------------------------------------------------------
+
+
+def deadline_remaining_seconds(deadline: float | None) -> float | None:
+    """Seconds left against a `time.monotonic()` bound, or None when unbounded."""
+
+    return None if deadline is None else deadline - monotonic()
+
+
+class DeadlineExpired(RuntimeError):
+    """An absolute bound was already spent before this work could start.
+
+    Raised before acquiring a connection or touching a row, so the caller
+    knows nothing was attempted. Callers that must distinguish a proven
+    pre-I/O refusal from an unknown outcome rely on that.
+    """
+
+
+def require_deadline_remaining(deadline: float | None, what: str) -> float | None:
+    """Refuse an already-expired bound instead of rounding it up to 1ms.
+
+    A bound that has passed is not a small allowance: rounding it up would
+    still let the statement run, take a lock, or renew a lease.
+    """
+
+    remaining = deadline_remaining_seconds(deadline)
+    if remaining is not None and remaining <= 0:
+        raise DeadlineExpired(f"{what} deadline expired before the operation started")
+    return remaining
+
+
+def bounded_connection(pool: Any, deadline: float | None) -> Any:
+    """Acquire from `pool`, bounding the wait itself by the time left.
+
+    An unbounded caller keeps the pool's own configured acquisition behaviour
+    exactly as before; a bounded one can never queue for a connection past its
+    deadline, and an already-expired one never acquires at all.
+    """
+
+    remaining = require_deadline_remaining(deadline, "connection acquisition")
+    if remaining is None:
+        return pool.connection()
+    return pool.connection(timeout=remaining)
+
+
+def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
+    """Bound this transaction's *total* time, its statements and its lock waits.
+
+    PostgreSQL applies `statement_timeout` to each statement separately and
+    again to COMMIT, so per-statement refreshes alone cannot bound work a
+    deferred constraint trigger performs *during* COMMIT: a transaction can
+    complete successfully well past an absolute deadline that every individual
+    statement respected. `transaction_timeout` (PostgreSQL 17) bounds the whole
+    transaction including that commit-time work.
+
+    Binding is idempotent and tightens only: the earliest absolute deadline
+    bound to this transaction wins, and a later caller's larger bound changes
+    nothing. Tightening is enforced against the running server timer, which
+    does not re-arm on assignment alone; see below.
+
+    All three are set `LOCAL`, so they revert with the transaction and never
+    leak onto a pooled connection. When `transaction_timeout` fires PostgreSQL
+    aborts the transaction and terminates the session; the pool discards that
+    connection, and the caller sees a failure it must classify conservatively
+    rather than a late success.
+    """
+
+    remaining = require_deadline_remaining(deadline, "transaction")
+    if remaining is None:
+        return
+    # The earliest bound already placed on *this* transaction, if any. It is
+    # kept in a transaction-local setting, so it reverts with the transaction
+    # and a pooled connection reused for a later transaction starts clean.
+    row = connection.execute(
+        "SELECT current_setting('director.transaction_deadline',true) AS bound"
+    ).fetchone()
+    existing = None
+    if row is not None:
+        recorded = row.get("bound") if hasattr(row, "get") else row[0]
+        if recorded:
+            existing = float(recorded)
+    # Tighten only. A later caller's larger bound is observed and discarded,
+    # never applied, so no call can extend the earliest deadline in force.
+    effective = deadline if existing is None else min(existing, deadline)
+    remaining = require_deadline_remaining(effective, "transaction")
+    milliseconds = str(max(1, ceil(remaining * 1000)))
+    connection.execute(
+        "SELECT set_config('statement_timeout',%(ms)s,true),"
+        " set_config('lock_timeout',%(ms)s,true),"
+        " set_config('director.transaction_deadline',%(bound)s,true)",
+        {"ms": milliseconds, "bound": repr(float(effective))},
+    )
+    if getattr(connection.info, "server_version", 0) < 170000:
+        return
+    if existing is not None and effective >= existing:
+        return
+    # PostgreSQL 17's `assign_transaction_timeout` hook enables the timer only
+    # while it is *inactive*, so assigning a smaller value to a transaction
+    # already running updates the GUC and leaves the original, longer timer in
+    # force: an independent probe on 17.11 saw `SHOW` report 234ms while the
+    # transaction still committed a durable row at 0.312s against a 0.25s
+    # bound. Assigning zero deactivates the timer; the assignment that follows
+    # re-arms it from now with the tightened window. This runs only when the
+    # effective bound has actually become earlier.
+    connection.execute("SELECT set_config('transaction_timeout','0',true)")
+    connection.execute(
+        "SELECT set_config('transaction_timeout',%s,true)", (milliseconds,)
+    )
+
+
+@contextmanager
+def bounded_transaction(pool: Any, deadline: float | None) -> Any:
+    """Acquire, open one transaction, and bind the deadline *inside* it.
+
+    The pool's connections are autocommit, so `SET LOCAL` outside an explicit
+    transaction lasts only for the statement that sets it: an independent
+    probe on 17.11 read both timeouts back as `0` immediately after binding,
+    and a 0.35s sleep then completed against a 0.20s bound. A pool-acquisition
+    timeout does not bound the SQL that follows either. Read paths that spend
+    a deadline therefore use this, so the bound covers the statements it was
+    taken for. Callers with no deadline still get one explicit transaction and
+    otherwise behave as before: at the default READ COMMITTED isolation each
+    statement takes its own snapshot, so this groups the statements, it does
+    not give them one cross-statement view.
+    """
+
+    with bounded_connection(pool, deadline) as connection:
+        with connection.transaction():
+            bind_transaction_deadline(connection, deadline)
+            yield connection
+
+
+# The checkpointer acquires its own connections from this same pool, so a
+# caller cannot hand a cutoff to `get_state`/`update_state` directly. One
+# absolute cutoff is published for the current context instead, and the pool
+# applies it to every acquisition made inside that scope. No thread, queue or
+# background writer is created: when the block exits, the bound is gone.
+_CHECKPOINT_DEADLINE: ContextVar[float | None] = ContextVar(
+    "director_checkpoint_deadline", default=None
+)
+
+
+@contextmanager
+def checkpoint_deadline(deadline: float | None):
+    """Bound the checkpoint storage this context reaches, for this block only."""
+
+    token = _CHECKPOINT_DEADLINE.set(deadline)
+    try:
+        yield
+    finally:
+        _CHECKPOINT_DEADLINE.reset(token)
+
+
+def _bind_checkpoint_deadline_to_pool(pool: Any) -> Any:
+    """Apply whatever cutoff the current context published to this pool.
+
+    The pool keeps its own type and identity - the checkpointer's own
+    `isinstance` dispatch still recognises it - and only its `connection`
+    accessor is wrapped. Inside the published scope the connection is handed
+    over with one explicit transaction already open and `transaction_timeout`
+    armed on it, so the saver's cumulative blob and checkpoint statements, its
+    pipeline synchronisation and the COMMIT are all inside one absolute
+    deadline rather than a series of independent per-statement allowances. If
+    that deadline passes, PostgreSQL aborts the transaction and nothing of
+    that checkpoint is durable - a late write cannot appear after the caller
+    has already been refused. An already expired cutoff refuses outright.
+    """
+
+    acquire = pool.connection
+
+    @contextmanager
+    def connection(*args: Any, **kwargs: Any) -> Any:
+        deadline = _CHECKPOINT_DEADLINE.get()
+        if deadline is None:
+            with acquire(*args, **kwargs) as bound:
+                yield bound
+            return
+        remaining = require_deadline_remaining(deadline, "checkpoint")
+        supplied = kwargs.get("timeout")
+        kwargs["timeout"] = remaining if supplied is None else min(remaining, supplied)
+        with acquire(*args, **kwargs) as bound:
+            with bound.transaction():
+                bind_transaction_deadline(bound, deadline)
+                yield bound
+
+    pool.connection = connection
+    return pool
+
+
+class _BoundedCheckpointLock:
+    """The saver's own mutex, with its wait bounded by the published cutoff.
+
+    `PostgresSaver._cursor` takes this lock *before* it asks the pool for a
+    connection, so a pool-side bound cannot cover the wait for it. This is the
+    same lock object the saver already uses and the same mutual exclusion; it
+    simply refuses to wait past the cutoff the current context published. No
+    worker, queue or deferred write is introduced: a caller that cannot take
+    the lock in time has done nothing at all.
+    """
+
+    __slots__ = ("_lock",)
+
+    def __init__(self, lock: Any) -> None:
+        self._lock = lock
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        deadline = _CHECKPOINT_DEADLINE.get()
+        if deadline is None or not blocking:
+            return self._lock.acquire(blocking, timeout)
+        remaining = require_deadline_remaining(deadline, "checkpoint mutex")
+        if timeout is not None and timeout >= 0:
+            remaining = min(remaining, timeout)
+        if not self._lock.acquire(True, remaining):
+            raise DeadlineExpired(
+                "checkpoint mutex deadline expired before the operation started"
+            )
+        return True
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *_exception: object) -> None:
+        self.release()
+
+
+def _bind_checkpoint_deadline_to_saver(saver: Any) -> Any:
+    """Bound the saver's own serialisation mutex with the published cutoff."""
+
+    lock = getattr(saver, "lock", None)
+    if lock is not None and not isinstance(lock, _BoundedCheckpointLock):
+        saver.lock = _BoundedCheckpointLock(lock)
+    return saver
+
+
 def _build_strict_serializer(serializer_type: type[Any]) -> Any:
     try:
         return serializer_type(
@@ -466,6 +730,7 @@ _APPEND_ONLY_TABLES = (
     "director_primary_cancelled_plan_adjudication",
     "director_primary_workload_assignment",
     "director_primary_intake_auth_claim",
+    "director_primary_slack_status_receipt",
     "director_primary_intake_dedup",
     "director_primary_command_receipt",
     "director_primary_command_authorization",
@@ -760,6 +1025,32 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                 authentication_class = 'slack_gateway_attested'
             ),
             created_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_slack_status_receipt (
+            source_event_id text PRIMARY KEY,
+            receipt_id text NOT NULL UNIQUE,
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            channel_id text NOT NULL,
+            thread_ts text NOT NULL,
+            user_id text NOT NULL,
+            text_digest text NOT NULL CHECK (
+                text_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            created_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_slack_status_receipt_thread_idx
+        ON {schema}.director_primary_slack_status_receipt (channel_id, thread_ts)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_task_projection_slack_thread_idx
+        ON {schema}.director_primary_task_projection (
+            (projection->'application'->'task_record'->'intake'->>'channel_id'),
+            (projection->'application'->'task_record'->'intake'->>'thread_ts')
         )
         """,
         f"""
@@ -2104,6 +2395,153 @@ class PostgresConditionalClaimStore:
                 )
                 return str(row["task_id"]), True
 
+    def resolve_primary_slack_thread_binding(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+    ) -> tuple[str, ...]:
+        """Return every task whose persisted intake binding matches one thread."""
+
+        _require_id(channel_id, "channel_id")
+        _require_id(thread_ts, "thread_ts")
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT task_id
+                    FROM {schema}.director_primary_task_projection
+                    WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
+                          = %(channel_id)s
+                      AND projection->'application'->'task_record'->'intake'->>'thread_ts'
+                          = %(thread_ts)s
+                    ORDER BY created_at, task_id
+                    """,
+                    {"channel_id": channel_id, "thread_ts": thread_ts},
+                )
+                rows = cursor.fetchall()
+        return tuple(str(row["task_id"]) for row in rows)
+
+    def record_primary_slack_status_receipt(
+        self,
+        *,
+        source_event_id: str,
+        receipt_id: str,
+        task_id: str,
+        channel_id: str,
+        thread_ts: str,
+        user_id: str,
+        text_digest: str,
+    ) -> tuple[str, bool, datetime]:
+        """Persist one digest-only status receipt idempotently by source event."""
+
+        _require_id(source_event_id, "source_event_id")
+        _require_id(receipt_id, "receipt_id")
+        _require_id(task_id, "task_id")
+        _require_id(channel_id, "channel_id")
+        _require_id(thread_ts, "thread_ts")
+        _require_id(user_id, "user_id")
+        _require_digest(text_digest, "text_digest")
+        schema = self._schema
+        binding_query = f"""
+                    SELECT task_id
+                    FROM {schema}.director_primary_task_projection
+                    WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
+                          = %(channel_id)s
+                      AND projection->'application'->'task_record'->'intake'->>'thread_ts'
+                          = %(thread_ts)s
+                    ORDER BY created_at, task_id
+                    """
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "status-receipt", schema, source_event_id
+                        )
+                    },
+                )
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "status-receipt-thread",
+                            schema,
+                            channel_id,
+                            thread_ts,
+                        )
+                    },
+                )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT source_event_id, receipt_id, task_id, channel_id,
+                           thread_ts, user_id, text_digest, created_at
+                    FROM {schema}.director_primary_slack_status_receipt
+                    WHERE source_event_id = %(source_event_id)s
+                    """,
+                    {"source_event_id": source_event_id},
+                )
+                if existing is not None:
+                    if (
+                        str(existing["receipt_id"]) != receipt_id
+                        or str(existing["task_id"]) != task_id
+                        or str(existing["channel_id"]) != channel_id
+                        or str(existing["thread_ts"]) != thread_ts
+                        or str(existing["user_id"]) != user_id
+                        or str(existing["text_digest"]) != text_digest
+                    ):
+                        raise PostgresControlPlaneError(
+                            "status receipt source event was replayed with conflicting payload"
+                        )
+                    return (
+                        str(existing["receipt_id"]),
+                        False,
+                        existing["created_at"],
+                    )
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        binding_query,
+                        {"channel_id": channel_id, "thread_ts": thread_ts},
+                    )
+                    binding_rows = cursor.fetchall()
+                if not binding_rows:
+                    raise PostgresControlPlaneError("unknown slack thread binding")
+                if len(binding_rows) != 1:
+                    raise PostgresControlPlaneError("ambiguous slack thread binding")
+                if str(binding_rows[0]["task_id"]) != task_id:
+                    raise PostgresControlPlaneError(
+                        "slack status receipt task binding mismatch"
+                    )
+                row = self._one_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_slack_status_receipt (
+                        source_event_id, receipt_id, task_id, channel_id,
+                        thread_ts, user_id, text_digest
+                    ) VALUES (
+                        %(source_event_id)s, %(receipt_id)s, %(task_id)s,
+                        %(channel_id)s, %(thread_ts)s, %(user_id)s,
+                        %(text_digest)s
+                    ) RETURNING receipt_id, created_at
+                    """,
+                    {
+                        "source_event_id": source_event_id,
+                        "receipt_id": receipt_id,
+                        "task_id": task_id,
+                        "channel_id": channel_id,
+                        "thread_ts": thread_ts,
+                        "user_id": user_id,
+                        "text_digest": text_digest,
+                    },
+                    missing="status receipt was not recorded",
+                )
+                return str(row["receipt_id"]), True, row["created_at"]
+
     def create_primary_task_projection(
         self,
         *,
@@ -2259,8 +2697,13 @@ class PostgresConditionalClaimStore:
         owner_token: str,
         fencing_generation: int,
         projection: Mapping[str, Any],
+        deadline: float | None = None,
     ) -> PrimaryTaskProjection:
-        """Advance the projection once under the task's current writer fence."""
+        """Advance the projection once under the task's current writer fence.
+
+        `deadline` bounds the foreground completion write; callers with no
+        bound (legacy, background reconciliation) keep the previous behaviour.
+        """
 
         _require_id(task_id, "task_id")
         _require_id(owner_token, "owner_token")
@@ -2269,8 +2712,9 @@ class PostgresConditionalClaimStore:
         )
         encoded, digest = _projection_payload(projection)
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 row = self._optional_row(
                     connection,
                     f"""
@@ -2308,10 +2752,10 @@ class PostgresConditionalClaimStore:
         return _projection_from_row(row)
 
     def read_primary_task_projection(
-        self, task_id: str
+        self, task_id: str, *, deadline: float | None = None
     ) -> PrimaryTaskProjection | None:
         _require_id(task_id, "task_id")
-        with self._pool.connection() as connection:
+        with bounded_transaction(self._pool, deadline) as connection:
             row = self._optional_row(
                 connection,
                 f"""
@@ -2324,6 +2768,252 @@ class PostgresConditionalClaimStore:
                 {"task_id": task_id},
             )
         return None if row is None else _projection_from_row(row)
+
+    # Bounded, read-only qualification readback (opt-in GET projection).
+    QUALIFICATION_READBACK_ROW_LIMIT = 200
+    QUALIFICATION_READBACK_BYTE_LIMIT = 262144
+    QUALIFICATION_READBACK_WALL_SECONDS = 5.0
+
+    def read_primary_qualification_evidence(
+        self,
+        task_id: str,
+        *,
+        row_limit: int = QUALIFICATION_READBACK_ROW_LIMIT,
+        byte_limit: int = QUALIFICATION_READBACK_BYTE_LIMIT,
+        wall_seconds: float = QUALIFICATION_READBACK_WALL_SECONDS,
+    ) -> dict[str, Any] | None:
+        """Read one task's persisted qualification evidence without any write.
+
+        One absolute monotonic deadline (``wall_seconds`` from entry) covers the
+        pool wait (`bounded_connection`), the transaction's total time,
+        statements and lock waits (`bind_transaction_deadline`, PostgreSQL 17
+        ``transaction_timeout``), every query, and document construction and
+        size validation; no stage receives a fresh full allowance and an
+        expired bound raises :class:`DeadlineExpired` instead of returning a
+        late or partial result.  The transaction is ``REPEATABLE READ`` and
+        ``READ ONLY`` before any SELECT, so every section and the projection
+        itself come from one coherent snapshot and no DDL, writer lease,
+        reservation, receipt, effect or row write can happen here even by
+        mistake.  Every query pins rows to ``task_id`` and follows the
+        persisted joins (assignment -> attempt, reservation ->
+        execution/binding/terminal evidence, spend -> usage).  Each section is
+        capped at ``row_limit`` rows and the whole document at ``byte_limit``
+        bytes; exceeding either yields an explicit ``truncated`` entry instead
+        of a silently partial claim, and an absent optional table is reported
+        under ``absent``.  Returns ``None`` when the task projection does not
+        exist.  The returned ``projection`` is the snapshot's own
+        :class:`PrimaryTaskProjection`, so a caller can derive the ordinary
+        task record from the same snapshot instead of a second read.
+        """
+
+        _require_id(task_id, "task_id")
+        if type(row_limit) is not int or not 1 <= row_limit <= 1000:
+            raise ValueError("row_limit must be between 1 and 1000")
+        if type(byte_limit) is not int or not 1024 <= byte_limit <= 4 * 1024 * 1024:
+            raise ValueError("byte_limit must be between 1 KiB and 4 MiB")
+        if type(wall_seconds) not in {int, float} or not 0.1 <= float(wall_seconds) <= 30:
+            raise ValueError("wall_seconds must be between 0.1 and 30 seconds")
+        schema = self._schema
+        started = time.monotonic()
+        deadline = started + float(wall_seconds)
+        sections: dict[str, list[dict[str, Any]]] = {}
+        truncated: list[str] = []
+        absent: list[str] = []
+
+        def rows(cursor, name: str, query: str) -> list[dict[str, Any]]:
+            require_deadline_remaining(deadline, "qualification readback " + name)
+            cursor.execute(query, {"task_id": task_id, "limit": row_limit + 1})
+            fetched = [dict(row) for row in cursor.fetchall()]
+            if len(fetched) > row_limit:
+                truncated.append(name)
+                fetched = fetched[:row_limit]
+            sections[name] = fetched
+            return fetched
+
+        with bounded_connection(self._pool, deadline) as connection:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    # Isolation must precede the binder's own SELECT: it is the
+                    # first statement of this transaction.
+                    cursor.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                    )
+                    bind_transaction_deadline(connection, deadline)
+                    require_deadline_remaining(deadline, "qualification readback projection")
+                    cursor.execute(
+                        f"""
+                        SELECT task_id, engine_owner, input_digest,
+                               intake_fencing_generation, projection_version,
+                               projection_digest, projection, created_at, updated_at,
+                               projection->'application'->'task_record'->'intake'->>'source_event_id'
+                                   AS source_event_id,
+                               projection->'application'->>'execution_mode' AS execution_mode,
+                               projection->>'terminal_classification' AS terminal_classification,
+                               projection->>'reason_code' AS reason_code
+                        FROM {schema}.director_primary_task_projection
+                        WHERE task_id = %(task_id)s
+                        """,
+                        {"task_id": task_id},
+                    )
+                    head = cursor.fetchone()
+                    if head is None:
+                        return None
+                    rows(cursor, "assignments", f"""
+                        SELECT assignment_id, sequence, provider_id, deployment_id, status,
+                               reservation_digest, result_digest, reason_code, reserved_at, completed_at
+                        FROM {schema}.director_primary_parallel_assignment
+                        WHERE task_id = %(task_id)s
+                        ORDER BY sequence, assignment_id LIMIT %(limit)s
+                        """)
+                    rows(cursor, "provider_attempts", f"""
+                        SELECT a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
+                               a.event_sequence, a.provider_id, a.format_id, a.transport_id,
+                               a.idempotency_key_digest, a.attempt_digest, a.provider_run_id_digest,
+                               a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
+                               a.budget_evidence_digest, a.recorded_at
+                        FROM {schema}.director_primary_provider_attempt a
+                        JOIN {schema}.director_primary_parallel_assignment p
+                          ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id
+                        WHERE a.task_id = %(task_id)s
+                        ORDER BY p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence
+                        LIMIT %(limit)s
+                        """)
+                    rows(cursor, "effects", f"""
+                        SELECT r.reservation_key, r.claim_key, r.effect_key_digest,
+                               r.effect_attempt_digest, r.writer_owner_id, r.fencing_generation,
+                               r.reserved_units, r.reserved_at,
+                               e.started_at AS execution_started_at,
+                               b.remote_system, b.remote_identifier, b.bound_at,
+                               t.disposition AS terminal_disposition,
+                               t.evidence_digest AS terminal_evidence_digest,
+                               t.recorded_at AS terminal_recorded_at
+                        FROM {schema}.director_primary_effect_reservation r
+                        LEFT JOIN {schema}.director_primary_effect_execution e
+                          ON e.reservation_key = r.reservation_key AND e.task_id = r.task_id
+                        LEFT JOIN {schema}.director_primary_remote_binding b
+                          ON b.reservation_key = r.reservation_key AND b.task_id = r.task_id
+                        LEFT JOIN {schema}.director_primary_terminal_evidence t
+                          ON t.claim_key = r.claim_key AND t.task_id = r.task_id
+                        WHERE r.task_id = %(task_id)s
+                        ORDER BY r.reserved_at, r.reservation_key LIMIT %(limit)s
+                        """)
+                    rows(cursor, "reconciliation_events", f"""
+                        SELECT event_id, claim_key, state, evidence_digest, recorded_at
+                        FROM {schema}.director_primary_reconciliation_event
+                        WHERE task_id = %(task_id)s
+                        ORDER BY event_id LIMIT %(limit)s
+                        """)
+                    rows(cursor, "slack_deliveries", f"""
+                        SELECT notification_key, projection_digest, client_msg_id, state,
+                               created_at, claimed_at, acknowledged_at, delivered_at, slack_ts,
+                               readback_attempts, last_error, owner_decision, owner_decision_at,
+                               owner_command_id
+                        FROM {schema}.director_primary_slack_delivery
+                        WHERE task_id = %(task_id)s
+                        ORDER BY created_at, notification_key LIMIT %(limit)s
+                        """)
+                    rows(cursor, "status_receipts", f"""
+                        SELECT receipt_id, source_event_id, created_at
+                        FROM {schema}.director_primary_slack_status_receipt
+                        WHERE task_id = %(task_id)s
+                        ORDER BY created_at, receipt_id LIMIT %(limit)s
+                        """)
+                    # Task-and-thread-local counters for prospective status-only
+                    # proof, from the same snapshot and deadline. They are not
+                    # a global work count: thread_tasks counts tasks bound to
+                    # this task's Slack thread; the rest are this task's rows.
+                    require_deadline_remaining(deadline, "qualification readback counters")
+                    raw_projection = head["projection"]
+                    projection_value = (json.loads(raw_projection) if isinstance(raw_projection, str)
+                                        else dict(raw_projection))
+                    intake_binding = (projection_value.get("application", {}) or {}).get("task_record", {}) or {}
+                    intake_binding = intake_binding.get("intake", {}) or {}
+                    cursor.execute(
+                        f"""
+                        SELECT transaction_timestamp() AS captured_at,
+                            (SELECT count(*) FROM {schema}.director_primary_task_projection t
+                             WHERE t.projection->'application'->'task_record'->'intake'->>'channel_id'
+                                   = %(channel_id)s
+                               AND t.projection->'application'->'task_record'->'intake'->>'thread_ts'
+                                   = %(thread_ts)s) AS thread_tasks,
+                            (SELECT count(*) FROM {schema}.director_primary_parallel_assignment
+                             WHERE task_id = %(task_id)s) AS assignments,
+                            (SELECT count(*) FROM {schema}.director_primary_provider_attempt
+                             WHERE task_id = %(task_id)s) AS provider_attempts,
+                            (SELECT count(DISTINCT (assignment_id, attempt_ordinal))
+                             FROM {schema}.director_primary_provider_attempt
+                             WHERE task_id = %(task_id)s) AS attempt_ordinals,
+                            (SELECT count(*) FROM {schema}.director_primary_provider_attempt
+                             WHERE task_id = %(task_id)s AND status = 'STARTED') AS started_attempts,
+                            (SELECT count(*) FROM {schema}.director_primary_slack_status_receipt
+                             WHERE task_id = %(task_id)s) AS status_receipts,
+                            (SELECT count(*) FROM {schema}.director_primary_effect_reservation
+                             WHERE task_id = %(task_id)s) AS effect_reservations
+                        """,
+                        {"task_id": task_id,
+                         "channel_id": intake_binding.get("channel_id"),
+                         "thread_ts": intake_binding.get("thread_ts")},
+                    )
+                    counters = dict(cursor.fetchone())
+                    captured_at = counters.pop("captured_at")
+                    cursor.execute(
+                        "SELECT to_regclass(%(spend)s) AS spend, to_regclass(%(usage)s) AS usage",
+                        {"spend": f"{schema}.director_primary_provider_spend",
+                         "usage": f"{schema}.director_primary_provider_usage"},
+                    )
+                    usage_tables = cursor.fetchone()
+                    if usage_tables["spend"] is None or usage_tables["usage"] is None:
+                        absent.append("provider_usage")
+                        sections["provider_usage"] = []
+                    else:
+                        rows(cursor, "provider_usage", f"""
+                            SELECT u.attempt_digest, s.provider_id, s.reserved_microusd,
+                                   s.token_limit, u.actual_microusd, u.observed_tokens
+                            FROM {schema}.director_primary_provider_usage u
+                            JOIN {schema}.director_primary_provider_spend s
+                              ON s.attempt_digest = u.attempt_digest
+                            WHERE s.task_id = %(task_id)s
+                            ORDER BY u.attempt_digest LIMIT %(limit)s
+                            """)
+        # Construction and size validation spend the same deadline; a late
+        # document is refused rather than returned after the bound.
+        require_deadline_remaining(deadline, "qualification readback document")
+        projection = _projection_from_row(head)
+        document: dict[str, Any] = {
+            "schema_version": "director-qualification-readback/v1",
+            "task_id": str(head["task_id"]),
+            "engine_owner": str(head["engine_owner"]),
+            "projection_version": int(head["projection_version"]),
+            "projection_digest": str(head["projection_digest"]),
+            "source_event_id": head["source_event_id"],
+            "execution_mode": head["execution_mode"],
+            "terminal_classification": head["terminal_classification"],
+            "terminal_reason_code": head["reason_code"],
+            "task_created_at": head["created_at"],
+            "task_updated_at": head["updated_at"],
+            "captured_at": captured_at,
+            "task_scope_counters": {key: int(value) for key, value in counters.items()},
+            "snapshot": {"isolation": "REPEATABLE READ", "read_only": True,
+                         "single_transaction": True, "covers_task_record": True},
+            "bounds": {"row_limit": row_limit, "byte_limit": byte_limit,
+                       "wall_seconds": float(wall_seconds), "elapsed_seconds": 0.0},
+            "truncated": sorted(truncated),
+            "absent": sorted(absent),
+            "complete": not truncated,
+            **sections,
+        }
+        encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > byte_limit:
+            document = {key: value for key, value in document.items() if key not in sections}
+            document.update(
+                {name: [] for name in sections},
+                truncated=sorted({*truncated, "response_bytes"}),
+                complete=False,
+            )
+        require_deadline_remaining(deadline, "qualification readback completion")
+        document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+        document["projection"] = projection
+        return document
 
     def read_primary_command_receipt(
         self, *, task_id: str, operation: str, command_id: str
@@ -3154,6 +3844,7 @@ class PostgresConditionalClaimStore:
         owner_token: str,
         expected_generation: int,
         lease_seconds: float = DEFAULT_LEASE_SECONDS,
+        deadline: float | None = None,
     ) -> TaskWriterLease:
         """Compare-and-swap the writer lease for one task.
 
@@ -3173,8 +3864,9 @@ class PostgresConditionalClaimStore:
         )
         lease = _require_lease_seconds(lease_seconds)
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 # Serializes a first acquisition, where there is no row to lock.
                 self._optional_row(
                     connection,
@@ -3267,6 +3959,7 @@ class PostgresConditionalClaimStore:
         owner_token: str,
         fencing_generation: int,
         lease_seconds: float = DEFAULT_LEASE_SECONDS,
+        deadline: float | None = None,
     ) -> TaskWriterLease:
         """Extend an unexpired lease *without* moving the fencing generation.
 
@@ -3281,8 +3974,9 @@ class PostgresConditionalClaimStore:
             fencing_generation, "fencing_generation", minimum=1
         )
         lease = _require_lease_seconds(lease_seconds)
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 row = self._optional_row(
                     connection,
                     f"""
@@ -3311,16 +4005,19 @@ class PostgresConditionalClaimStore:
             )
         return _lease_from_row(row)
 
-    def current_task_writer(self, task_id: str) -> TaskWriterLease | None:
+    def current_task_writer(
+        self, task_id: str, *, deadline: float | None = None
+    ) -> TaskWriterLease | None:
         """Return the recorded writer row, expired or not, for reconciliation."""
 
         _require_id(task_id, "task_id")
-        with self._pool.connection() as connection:
+        with bounded_transaction(self._pool, deadline) as connection:
             row = self._optional_row(
                 connection,
                 f"""
                 SELECT task_id, engine_owner, owner_token, fencing_generation,
-                       lease_expires_at, lease_expires_at > now() AS lease_live
+                       lease_expires_at,
+                       lease_expires_at > clock_timestamp() AS lease_live
                 FROM {self._schema}.director_primary_task_writer
                 WHERE task_id = %(task_id)s
                 """,
@@ -3336,6 +4033,7 @@ class PostgresConditionalClaimStore:
         packet: Mapping[str, Any],
         owner_token: str,
         fencing_generation: int,
+        deadline: float | None = None,
     ) -> PrimaryWorkPacketArtifact:
         """Append or verify one immutable validated work-packet artifact.
 
@@ -3365,8 +4063,9 @@ class PostgresConditionalClaimStore:
             "owner_token": owner_token,
             "generation": generation,
         }
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._optional_row(
                     connection,
                     "SELECT pg_advisory_xact_lock(%(key)s)",
@@ -3473,8 +4172,13 @@ class PostgresConditionalClaimStore:
         packet: Mapping[str, Any],
         owner_token: str,
         fencing_generation: int,
+        deadline: float | None = None,
     ) -> PrimaryResultPacketArtifact:
-        """Append one validated result packet under the current writer fence."""
+        """Append one validated result packet under the current writer fence.
+
+        `deadline` bounds this foreground completion write, including its
+        advisory-lock wait. Callers with no bound are unchanged.
+        """
 
         _require_id(task_id, "task_id")
         _require_id(assignment_id, "assignment_id")
@@ -3497,8 +4201,9 @@ class PostgresConditionalClaimStore:
             "owner_token": owner_token,
             "generation": generation,
         }
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._optional_row(
                     connection,
                     "SELECT pg_advisory_xact_lock(%(key)s)",
@@ -5233,6 +5938,7 @@ def open_postgres_control_plane(
             "options": search_path_option,
         },
     )
+    _bind_checkpoint_deadline_to_pool(pool)
     try:
         pool.open(wait=True, timeout=limits.connect_timeout_seconds)
         database_instance_id = _setup_control_plane(
@@ -5242,6 +5948,7 @@ def open_postgres_control_plane(
         )
         saver = dependencies.saver_type(pool, serde=serializer)
         saver.setup()
+        _bind_checkpoint_deadline_to_saver(saver)
         claim_store = PostgresConditionalClaimStore(
             _pool=pool,
             _schema=schema,
@@ -5318,3 +6025,18 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

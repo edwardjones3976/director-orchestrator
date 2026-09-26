@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Dedicated synthetic canary through the actual pinned SSH engineering worker."""
 from __future__ import annotations
@@ -54,6 +57,8 @@ class TeamValidationRoute:
             prepared=prepared,authorized_commands=[])
 
     def run(self,service,request,owner_token):
+        service.refuse_configuration_drift(request,self.configuration_digest(),
+            "team validation binding or generation mismatch")
         admission=service.store.admit(request,owner_token)
         worker=None
         try:
@@ -94,6 +99,8 @@ class TeamValidationRoute:
             if len(calls)!=1:
                 raise ValidationError("worker did not obtain immediate execution admission")
             service.store.verify_fence(fence)
+            from .provider_validation import rehash_runtime_scope
+            rehash_runtime_scope()
             if self.configuration_digest()!=admission["configuration_digest"]:
                 raise ValidationError("team configuration changed during execution")
             raw=canonical_json_bytes(dict(prepared=prepared,capture=capture,challenge=challenge,attempt_digest=attempt))
@@ -134,7 +141,9 @@ def team_route_from_environment():
             "grant_file","owner_key_file","worker_key_file","ssh","identity_file","known_hosts")}
         files.update({name:digest(Path(__file__).with_name(name).read_bytes()) for name in (
             "provider_validation_team.py","antigravity_team_worker.py","antigravity_team_transport.py")})
-        return digest(canonical_json_bytes({"config":config,"config_file":digest(config_path.read_bytes()),"files":files}))
+        from .provider_validation import runtime_package_digest
+        return digest(canonical_json_bytes({"config":config,"config_file":digest(config_path.read_bytes()),"files":files,
+            "runtime":runtime_package_digest()}))
     def factory(g):
         return PinnedSshTeamWorker(ssh=Path(config["ssh"]),ssh_sha256=config["ssh_sha256"],
             host=config["host"],user=config["user"],identity_file=Path(config["identity_file"]),
@@ -142,3 +151,6 @@ def team_route_from_environment():
     return TeamValidationRoute(grant=grant,owner_secret=owner,worker_secret=worker_key,
         worker_factory=factory,configuration_digest=fingerprint)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

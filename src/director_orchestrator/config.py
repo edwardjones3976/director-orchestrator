@@ -1,4 +1,16 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
@@ -73,6 +85,7 @@ import math
 import os
 import re
 import time
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -261,6 +274,10 @@ class Settings:
     delegation_enabled: bool = _bool("DELEGATION_ENABLED", False)
     delegation_suspended: bool = _bool("DELEGATION_SUSPENDED", False)
     delegation_grant_json: str = os.getenv("DELEGATION_GRANT_JSON", "")
+    # Deterministic ceilings for the independent reviewer of a small read-only
+    # task (policy.small_read_only_eligible). They only ever narrow a review.
+    small_task_review_max_usd: float = _positive_float("SMALL_TASK_REVIEW_MAX_USD", 0.50)
+    small_task_review_max_tokens: int = _int("SMALL_TASK_REVIEW_MAX_TOKENS", 40_000)
     max_agent_hops: int = _int("MAX_AGENT_HOPS", 6)
     max_revisions: int = _int("MAX_REVISIONS", 2)
     max_task_budget_usd: float = _float("MAX_TASK_BUDGET_USD", 2.0)
@@ -349,6 +366,14 @@ class Settings:
             "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "{}"
         ).strip()
     )
+    # Owner-configured per-attempt USD ceilings; {} preserves equal allocation.
+    # A nonempty map must cover every selected lane; the three-attempt ceiling
+    # binds its pre-approval assignment budget, within MAX_TASK_BUDGET_USD.
+    langgraph_primary_provider_attempt_budgets_usd_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON", "{}"
+        ).strip()
+    )
     # Optional immutable canary authority. Both values are required together;
     # ordinary deployments retain origin-tracking branch verification.
     # Explicit provider-v3-two-party selection also requires signed owner adoption; default unchanged.
@@ -356,6 +381,14 @@ class Settings:
     langgraph_primary_acceptance_registry_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", ""))
     langgraph_primary_acceptance_registry_sha256: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", ""))
     langgraph_primary_acceptance_journal_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH", ""))
+    langgraph_primary_local_evidence_adoption_path: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH", "").strip()
+    )
+    langgraph_primary_local_evidence_adoption_sha256: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256", ""
+        ).strip().lower()
+    )
 
     langgraph_primary_pinned_commit_sha: str = field(
         default_factory=lambda: os.getenv(
@@ -366,6 +399,24 @@ class Settings:
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PINNED_TREE_SHA", ""
         ).strip().lower()
+    )
+    # Optional split authority for a registered project repository that differs
+    # from the accepted Director service candidate. Both values are required
+    # together; when unset, repository snapshot checks reuse the service pins.
+    langgraph_primary_project_execution_pinned_commit_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA", ""
+        ).strip().lower()
+    )
+    langgraph_primary_project_execution_pinned_tree_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA", ""
+        ).strip().lower()
+    )
+    langgraph_primary_service_repository: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_SERVICE_REPOSITORY", ""
+        ).strip()
     )
     langgraph_primary_snapshot_max_files: int = field(
         default_factory=lambda: _int("LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES", 512)
@@ -427,6 +478,27 @@ class Settings:
             "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", ""
         )
     )
+    # {"lane": "sha256:<argv digest>"}: the only bridge argv the owner has
+    # pinned as read-only for the small class. Empty admits no bridge lane.
+    langgraph_primary_host_bridge_attested_argv_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON", ""
+        ).strip()
+    )
+
+    def host_bridge_attested_argv(self) -> dict[str, str]:
+        """The pinned per-lane argv digests; malformed or absent pins none."""
+
+        try:
+            pins = json.loads(self.langgraph_primary_host_bridge_attested_argv_json or "{}")
+        except ValueError:
+            return {}
+        if not isinstance(pins, dict) or not all(
+                isinstance(lane, str) and isinstance(value, str)
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", value)
+                for lane, value in pins.items()):
+            return {}
+        return dict(pins)
     langgraph_primary_allow_insecure_local_postgres: bool = field(
         default_factory=lambda: _bool(
             "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES", False
@@ -1086,14 +1158,20 @@ class Settings:
             "perplexity": readiness["perplexity"],
         }
 
-    def delegation_readiness(self, *, moment=None) -> dict:
+    def delegation_readiness(
+        self, *, moment=None, pre_execution_capable: bool = False
+    ) -> dict:
         """Report the human-out-of-the-loop state as readiness booleans.
 
-        Phase 1 only. This reports configuration; it resolves nothing, and the
-        payload says so explicitly so an operator does not have to infer it.
-        Grant contents are never reported: /health returns readiness booleans
-        and never secret or allowlist values, and a grant names real
-        repositories and providers.
+        This reports configuration and resolves nothing itself. The payload
+        says whether the phase-4S pre-execution path is armed, which needs a
+        primary application able to pre-authorize a task (an audit ledger, a
+        grant in scope for the deployment's plan, two compact-view lanes that
+        grant names from different provider families, an executing
+        deployment), so an operator does not
+        have to infer it. Grant contents are never reported: /health
+        returns readiness booleans and never secret or allowlist values, and a
+        grant names real repositories and providers.
         """
 
         from datetime import datetime, timezone
@@ -1105,6 +1183,7 @@ class Settings:
             suspended=self.delegation_suspended,
             grant_document=self.delegation_grant_json,
             moment=moment or datetime.now(timezone.utc),
+            pre_execution_capable=pre_execution_capable,
         )
 
     def workload_policy_readiness(
@@ -1178,6 +1257,39 @@ class Settings:
             "ready_specialist_ranks_complete": bool(ready_specialists)
             and ready_specialists.issubset(cost_ranks),
         }
+
+    def primary_provider_attempt_budgets_usd(self) -> dict[str, Decimal]:
+        """Trusted deployment limits, never model-authored estimates or grants."""
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("primary provider budget names must be unique")
+                result[key] = value
+            return result
+
+        try:
+            payload = json.loads(
+                self.langgraph_primary_provider_attempt_budgets_usd_json,
+                parse_float=Decimal, parse_int=Decimal, object_pairs_hook=unique,
+            )
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("primary provider budgets must be a JSON object") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("primary provider budgets must be a JSON object")
+        allowed = {"openai", "claude", "cursor", "grok", "antigravity",
+                   "perplexity", "firecrawl", "github-copilot"}
+        for provider, amount in payload.items():
+            if provider not in allowed:
+                raise ValueError("primary provider budget names must be canonical lanes")
+            if not isinstance(amount, Decimal) or not amount.is_finite() or amount <= 0:
+                raise ValueError("primary provider budgets require positive whole micro-USD")
+            try:
+                if amount != amount.quantize(Decimal("0.000001")):
+                    raise ValueError("primary provider budgets require positive whole micro-USD")
+            except InvalidOperation as exc:
+                raise ValueError("primary provider budget is outside monetary precision") from exc
+        return payload
 
     def trusted_provider_cost_ranks(self) -> dict[str, int]:
         """Parse explicit operator-controlled comparable cost ranks.
@@ -1685,6 +1797,16 @@ class Settings:
             re.fullmatch(r"[0-9a-fA-F]{40}", pinned_commit)
             and re.fullmatch(r"[0-9a-fA-F]{40}", pinned_tree)
         )
+        project_commit = self.langgraph_primary_project_execution_pinned_commit_sha.strip()
+        project_tree = self.langgraph_primary_project_execution_pinned_tree_sha.strip()
+        project_execution_pins_valid = (not project_commit and not project_tree) or bool(
+            re.fullmatch(r"[0-9a-fA-F]{40}", project_commit)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", project_tree)
+        )
+        service_repository = self.langgraph_primary_service_repository.strip()
+        service_repository_valid = (not service_repository) or bool(
+            re.fullmatch(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", service_repository)
+        )
         snapshot_max_files_valid = (
             isinstance(self.langgraph_primary_snapshot_max_files, int)
             and not isinstance(self.langgraph_primary_snapshot_max_files, bool)
@@ -1712,6 +1834,8 @@ class Settings:
             and single_repository_configured
             and single_starting_ref_configured
             and authority_pins_valid
+            and project_execution_pins_valid
+            and service_repository_valid
             and snapshot_max_files_valid
         )
         return {
@@ -1738,6 +1862,8 @@ class Settings:
             "single_repository_configured": single_repository_configured,
             "single_starting_ref_configured": single_starting_ref_configured,
             "authority_pins_valid": authority_pins_valid,
+            "project_execution_pins_valid": project_execution_pins_valid,
+            "service_repository_valid": service_repository_valid,
             "snapshot_max_files_valid": snapshot_max_files_valid,
             "required_providers_valid": required_providers_valid,
             "provider_activation_bindings_configured": (
@@ -1758,6 +1884,30 @@ class Settings:
             "primary_runtime_active": False,
             "legacy_new_intake_disabled": False,
         }
+
+    def project_execution_authority_pins(self) -> tuple[str, str]:
+        """Return commit and tree pins for the allowlisted snapshot worktree."""
+
+        service_commit = self.langgraph_primary_pinned_commit_sha.strip().lower()
+        service_tree = self.langgraph_primary_pinned_tree_sha.strip().lower()
+        project_commit = self.langgraph_primary_project_execution_pinned_commit_sha.strip().lower()
+        project_tree = self.langgraph_primary_project_execution_pinned_tree_sha.strip().lower()
+        if bool(project_commit) != bool(project_tree):
+            raise ValueError(
+                "Project execution commit and tree pins must be supplied "
+                "together as 40-character hexadecimal values"
+            )
+        if project_commit:
+            if any(
+                re.fullmatch(r"[0-9a-f]{40}", item) is None
+                for item in (project_commit, project_tree)
+            ):
+                raise ValueError(
+                    "Project execution commit and tree pins must be supplied "
+                    "together as 40-character hexadecimal values"
+                )
+            return project_commit, project_tree
+        return service_commit, service_tree
 
     def validate_langgraph_primary_configuration(self) -> None:
         """Reject incomplete primary activation before opening PostgreSQL."""
@@ -1879,6 +2029,28 @@ class Settings:
                 "LANGGRAPH_PRIMARY_PINNED_TREE_SHA must be supplied together "
                 "as 40-character hexadecimal values"
             )
+        if not readiness["project_execution_pins_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA and "
+                "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA must be "
+                "supplied together as 40-character hexadecimal values"
+            )
+        if not readiness["service_repository_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_SERVICE_REPOSITORY must be an exact owner/name identity"
+            )
+        if self.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
+            pin = self.langgraph_primary_local_evidence_adoption_sha256
+            if not self.langgraph_primary_local_evidence_adoption_path.strip():
+                problems.append(
+                    "owner-local-evidence-v1 requires "
+                    "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH"
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", pin or ""):
+                problems.append(
+                    "owner-local-evidence-v1 requires "
+                    "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256"
+                )
         if problems:
             raise ValueError(
                 "Invalid enabled LangGraph primary configuration: "
@@ -2397,3 +2569,15 @@ class Settings:
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

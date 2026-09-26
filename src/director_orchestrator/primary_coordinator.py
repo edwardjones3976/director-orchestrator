@@ -1,3 +1,17 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
@@ -22,6 +36,7 @@
 from __future__ import annotations
 
 import hmac
+from datetime import datetime
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable, Mapping
 
@@ -56,6 +71,7 @@ from .primary_parallel import (
     ParallelReservation,
     ProviderAttemptReservation,
     PostgresParallelDispatch,
+    completion_deadline,
 )
 from .primary_effects import DeterministicExternalEffectExecutor
 from .primary_completion import CompletionEvidence
@@ -230,14 +246,27 @@ class PrimaryTaskCoordinator:
             )
         return generation
 
-    def _task_writer(self, task_id: str) -> TaskWriterLease:
-        current = self._store.current_task_writer(task_id)
+    def _task_writer(
+        self, task_id: str, *, deadline: float | None = None
+    ) -> TaskWriterLease:
+        """Resolve the current writer, optionally inside a caller's bound.
+
+        Reading, renewing and reacquiring are each real database work that can
+        wait on the writer row or its advisory lock. A caller that already has
+        an absolute deadline passes it here so those waits are inside it; a
+        caller without one keeps the previous unbounded behaviour exactly.
+        """
+
+        # An unbounded caller calls the store exactly as it always did.
+        bound = {} if deadline is None else {"deadline": deadline}
+        current = self._store.current_task_writer(task_id, **bound)
         if current is None:
             writer = self._store.acquire_task_writer(
                 task_id,
                 engine_owner="langgraph",
                 owner_token=self._owner_token,
                 expected_generation=INITIAL_FENCING_GENERATION,
+                **bound,
             )
             self._mark_active_task(task_id)
             return writer
@@ -252,6 +281,7 @@ class PrimaryTaskCoordinator:
                 task_id,
                 owner_token=self._owner_token,
                 fencing_generation=current.fencing_generation,
+                **bound,
             )
             self._mark_active_task(task_id)
             return writer
@@ -263,6 +293,7 @@ class PrimaryTaskCoordinator:
             engine_owner="langgraph",
             owner_token=self._owner_token,
             expected_generation=current.fencing_generation,
+            **bound,
         )
         self._mark_active_task(task_id)
         return writer
@@ -305,11 +336,19 @@ class PrimaryTaskCoordinator:
             on_renewal_outcome(not failed)
         return renewed
 
+    # Told (task_id, classification) after a terminal other than SUCCEEDED is
+    # persisted; the Default application records a standing grant's trip.
+    terminal_observer: Callable[[str, str], None] | None = None
+
     def _persist_outcome(
-        self, outcome: PrimaryOutcome, writer: TaskWriterLease
+        self, outcome: PrimaryOutcome, writer: TaskWriterLease,
+        *, deadline: float | None = None,
     ) -> PrimaryTaskProjection:
+        """Publish one outcome projection, optionally under a completion cutoff."""
+
         payload = _outcome_projection(outcome)
-        current = self._store.read_primary_task_projection(outcome.task_id)
+        current = self._store.read_primary_task_projection(
+            outcome.task_id, deadline=deadline)
         application = (
             self._application_projection_provider(outcome.task_id)
             if self._application_projection_provider is not None
@@ -324,12 +363,33 @@ class PrimaryTaskCoordinator:
             and current.projection.get("state_digest") == outcome.state_digest
         ):
             return current
-        return self._store.update_primary_task_projection(
+        persisted = self._store.update_primary_task_projection(
             task_id=outcome.task_id,
             owner_token=self._owner_token,
             fencing_generation=writer.fencing_generation,
             projection=payload,
+            deadline=deadline,
         )
+        classification = payload.get("terminal_classification")
+        application = payload.get("application")
+        attended = (isinstance(application, Mapping)
+                    and application.get("execution_approval_required") is True)
+        if (self.terminal_observer is not None and classification not in (None, "SUCCEEDED")
+                and not attended):
+            # A task whose graph kept the execution button was never
+            # pre-authorized: no ledger read. Otherwise one absolute bound
+            # for everything the observer does, no later than the caller's.
+            from time import monotonic
+            bound = monotonic() + 5.0
+            observer_deadline = bound if deadline is None else min(deadline, bound)
+            try:
+                self.terminal_observer(
+                    outcome.task_id, classification, deadline=observer_deadline)
+            except Exception:
+                # Never fails the persisted outcome; the durable derivation
+                # at the next exercise and at recovery remains.
+                pass
+        return persisted
 
     def create_intake(self, command: PrimaryRequest) -> PrimaryTaskProjection:
         """Create or replay one new LangGraph-owned task without dual intake."""
@@ -395,6 +455,39 @@ class PrimaryTaskCoordinator:
             idempotency_key_digest=idempotency_key_digest,
             payload_digest=payload_digest,
             task_id=task_id,
+        )
+
+    def resolve_slack_thread_binding(
+        self, *, channel_id: str, thread_ts: str
+    ) -> tuple[str, ...]:
+        """Resolve task identity from the persisted intake binding only."""
+
+        return self._store.resolve_primary_slack_thread_binding(
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+        )
+
+    def record_slack_status_receipt(
+        self,
+        *,
+        source_event_id: str,
+        receipt_id: str,
+        task_id: str,
+        channel_id: str,
+        thread_ts: str,
+        user_id: str,
+        text_digest: str,
+    ) -> tuple[str, bool, datetime]:
+        """Record one digest-only status receipt without graph side effects."""
+
+        return self._store.record_primary_slack_status_receipt(
+            source_event_id=source_event_id,
+            receipt_id=receipt_id,
+            task_id=task_id,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            user_id=user_id,
+            text_digest=text_digest,
         )
 
     def resume_approval(self, command: ApprovalResume) -> PrimaryTaskProjection:
@@ -521,10 +614,12 @@ class PrimaryTaskCoordinator:
         writer = self._task_writer(task_id)
         return self.parallel.reserve_ready(task_id=task_id, writer=writer, policy=policy)
 
-    def parallel_aggregate(self, task_id: str) -> ParallelAggregate:
+    def parallel_aggregate(
+        self, task_id: str, *, deadline: float | None = None,
+    ) -> ParallelAggregate:
         """Read the deterministic all-assignment aggregate without mutation."""
 
-        return self.parallel.aggregate(task_id)
+        return self.parallel.aggregate(task_id, deadline=deadline)
 
     def reserve_provider_attempt(
         self,
@@ -537,10 +632,30 @@ class PrimaryTaskCoordinator:
         team_admission=None,
         budget_admission=None,
         budget_limits=None,
+        deadline: float | None = None,
+        expected_authority_digest: str | None = None,
+        expected_writer_generation: int | None = None,
+        revalidate_selection=None,
     ) -> ProviderAttemptReservation:
+        # Resolving the writer can itself read, renew or reacquire a lease;
+        # that work belongs inside the same bound as the admission it is
+        # for, not ahead of it.
+        writer = self._task_writer(reservation.task_id, deadline=deadline)
+        if (expected_writer_generation is not None
+                and writer.fencing_generation != expected_writer_generation):
+            # The writer this admission would actually run under is not the
+            # one the caller's readiness selection was checked under: the
+            # lease was reacquired or taken over between that check and this
+            # resolution. A new fencing generation is a different selection,
+            # not a renewal, and the writer dispatch read when it began proves
+            # nothing about the one resolved here. Refused before the
+            # admission transaction, so no monetary, workload or STARTED row
+            # is attempted and no provider call can follow.
+            from .primary_workload import WorkloadAdmissionHold
+            raise WorkloadAdmissionHold("readiness_writer_changed_before_admission")
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
-            writer=self._task_writer(reservation.task_id),
+            writer=writer,
             attempt_ordinal=attempt_ordinal,
             format_roster=format_roster,
             idempotency_key_digest=idempotency_key_digest,
@@ -548,6 +663,9 @@ class PrimaryTaskCoordinator:
             team_admission=team_admission,
             budget_admission=budget_admission,
             budget_limits=budget_limits,
+            deadline=deadline,
+            expected_authority_digest=expected_authority_digest,
+            revalidate_selection=revalidate_selection,
         )
 
     def record_provider_attempt(
@@ -557,13 +675,21 @@ class PrimaryTaskCoordinator:
         status: ParallelAssignmentStatus,
         result_digest: str | None,
         reason_code: str,
+        deadline: float | None = None,
     ) -> None:
+        """Record one attempt's outcome under the caller's completion cutoff.
+
+        Resolving the writer can itself read, renew or reacquire a lease, so it
+        is inside the same bound as the write it is for.
+        """
+
         self.parallel.record_provider_attempt(
             attempt=attempt,
-            writer=self._task_writer(attempt.task_id),
+            writer=self._task_writer(attempt.task_id, deadline=deadline),
             status=status,
             result_digest=result_digest,
             reason_code=reason_code,
+            deadline=deadline,
         )
 
     def record_parallel_result(
@@ -649,16 +775,32 @@ class PrimaryTaskCoordinator:
         policy: ParallelDispatchPolicy,
         dispatcher: Callable[[ParallelReservation], ParallelDispatchOutcome],
     ) -> ParallelAggregate:
-        """Run one dependency-ready wave concurrently, then checkpoint once."""
+        """Run one dependency-ready wave concurrently, then checkpoint once.
 
-        writer = self._task_writer(task_id)
+        The dispatcher's published bound is read once, here, before this
+        wave's *first* writer acquisition, and the same absolute value is then
+        used by that acquisition, by readiness and by everything downstream.
+        Nothing later derives a second one from a clock that has already moved
+        through those waits.
+        """
+
+        published = getattr(dispatcher, "readiness_deadline", None)
+        deadline = published() if callable(published) else None
+        writer = self._task_writer(task_id, deadline=deadline)
         self.parallel.execute_ready(
             task_id=task_id,
             writer=writer,
             policy=policy,
             dispatcher=dispatcher,
+            deadline=deadline,
         )
-        aggregate = self.parallel.aggregate(task_id)
+        # Execution is over here, in either direction. Aggregating what the
+        # wave did, checkpointing it and publishing the projection are
+        # recording work, so they draw on this operation's single completion
+        # allowance - computed once from the same absolute deadline - instead
+        # of running unbounded or minting a fresh window.
+        completion = completion_deadline(deadline)
+        aggregate = self.parallel.aggregate(task_id, deadline=completion)
         self._persist_outcome(
             self._runtime.record_parallel_aggregate(
                 task_id,
@@ -668,8 +810,10 @@ class PrimaryTaskCoordinator:
                 succeeded=aggregate.succeeded,
                 ambiguous_slot_count=aggregate.ambiguous_slot_count,
                 setup_hold_reasons=aggregate.setup_hold_reasons,
+                deadline=completion,
             ),
             writer,
+            deadline=completion,
         )
         return aggregate
 
@@ -789,8 +933,15 @@ class PrimaryTaskCoordinator:
             )
         return self._persist_outcome(self._runtime.recover(task_id), writer)
 
-    def get_projection(self, task_id: str) -> PrimaryTaskProjection | None:
-        return self._store.read_primary_task_projection(task_id)
+    def get_projection(
+        self, task_id: str, *, deadline: float | None = None,
+    ) -> PrimaryTaskProjection | None:
+        return self._store.read_primary_task_projection(task_id, deadline=deadline)
+
+    def read_qualification_evidence(self, task_id: str) -> dict | None:
+        """Forward one bounded READ ONLY qualification readback; no graph, lease or write."""
+
+        return self._store.read_primary_qualification_evidence(task_id)
 
     def read_command_receipt(
         self, *, task_id: str, operation: str, command_id: str
@@ -966,3 +1117,18 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
