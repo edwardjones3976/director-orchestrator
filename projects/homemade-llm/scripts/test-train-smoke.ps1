@@ -18,9 +18,13 @@ $oldPath = $env:PATH
 try {
     Set-Content (Join-Path $shim 'docker.cmd') '@ping -n 600 127.0.0.1 >nul'
     $env:PATH = "$shim;$oldPath"
+    # Every test that can leave a marker uses a private path and catches the throw, so a failing check reports a FAIL
+    # instead of crashing the run or poisoning the real machine-wide marker.
+    $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'hung-marker.txt'
     $t = [Diagnostics.Stopwatch]::StartNew()
-    $r = @(Invoke-Bounded 'docker' @('stop', 'x') 3)
+    $r = @('__EXIT__threw'); try { $r = @(Invoke-Bounded 'docker' @('stop', 'x') 3) } catch { }
     $t.Stop()
+    $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
     Start-Sleep 1
     $orphans = (Get-ShimPing).Count
     $fail = @()
@@ -36,18 +40,18 @@ try {
     $rs.Stop(); $rs.Dispose()
     Start-Sleep 1
     if ((Get-ShimPing).Count) { $fail += "cancelled wait: child process still running after PowerShell.Stop()" }
-    # A CIM failure during tree discovery must not skip the kill, and must fail closed (throw), never look clean.
-    $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'cim-marker.txt'
-    function Get-DescendantProcess([int]$Root) { throw 'simulated CIM failure' }
+    # A tree the job still counts as running after the kill must fail closed (throw), never look clean.
+    $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'survivor-marker.txt'
+    function Get-BoundedJobActive([IntPtr]$Job) { 1 }   # a survivor the kill did not reach
     $threw = $false
     try { $null = Invoke-Bounded 'docker' @('stop', 'z') 3 } catch { $threw = $true }
     Start-Sleep 1
-    if (-not $threw) { $fail += 'CIM failure: Invoke-Bounded returned instead of failing closed' }
-    if ((Get-ShimPing).Count) { $fail += 'CIM failure: the command was left running (kill skipped)' }
+    if (-not $threw) { $fail += 'unconfirmed kill: Invoke-Bounded returned instead of failing closed' }
+    if ((Get-ShimPing).Count) { $fail += 'unconfirmed kill: the command was left running (kill skipped)' }
     # ...and it persists the machine-wide guard itself, so a caller unwinding through finally cannot release the lock
     # unguarded. (A private marker path: the test never touches the real one.)
-    if (-not ((Test-Path -LiteralPath $GpuMarker) -and ((Get-Content -LiteralPath $GpuMarker -Raw) -match 'could not be confirmed stopped'))) { $fail += 'CIM failure: no machine-wide marker was written before the throw' }
-    elseif (-not $BoundedUnconfirmed) { $fail += 'CIM failure: BoundedUnconfirmed was not set' }
+    if (-not ((Test-Path -LiteralPath $GpuMarker) -and ((Get-Content -LiteralPath $GpuMarker -Raw) -match 'could not be confirmed stopped'))) { $fail += 'unconfirmed kill: no machine-wide marker was written before the throw' }
+    elseif (-not $BoundedUnconfirmed) { $fail += 'unconfirmed kill: BoundedUnconfirmed was not set' }
     $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
     # Marker-write failure: with no guard at all (an uncreatable marker path) the callers are told to keep the lock;
     # with a guard already present (written by the scripts before any bounded command) a failed append is harmless.
@@ -74,16 +78,16 @@ try {
     $orphanLeft = @(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" | Where-Object CommandLine -match '-n 600 127\.0\.0\.2')
     if ($r[-1] -ne '__EXIT__timeout') { $fail += "orphaned grandchild: expected __EXIT__timeout, got '$($r[-1])'" }
     if ($orphanLeft.Count) { $fail += 'orphaned grandchild: still running after the timeout'; $orphanLeft | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
-    # A job object that cannot be created leaves the tree unverifiable: the command is still killed, and the call
-    # fails closed and persists the marker (a private path here).
+    # No job, no launch: a job object that cannot be created throws before anything runs, so there is nothing to
+    # kill and nothing to mark.
     $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'job-marker.txt'
     function New-BoundedJob { throw 'simulated job object failure' }
     $threw = $false
     try { $null = Invoke-Bounded 'docker' @('stop', 'j') 3 } catch { $threw = $true }
     Start-Sleep 1
-    if (-not $threw) { $fail += 'job object failure: Invoke-Bounded returned instead of failing closed' }
-    if ((Get-ShimPing).Count) { $fail += 'job object failure: the command was left running' }
-    if (-not (Test-Path -LiteralPath $GpuMarker)) { $fail += 'job object failure: no marker was written' }
+    if (-not $threw) { $fail += 'job object failure: Invoke-Bounded ran the command without a job' }
+    if ((Get-ShimPing).Count) { $fail += 'job object failure: the command was launched anyway' }
+    if (Test-Path -LiteralPath $GpuMarker) { $fail += 'job object failure: a marker was written although nothing ran' }
     $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
     . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # restore the real functions
     # Output shape: one line, several lines, and none must all end in a separate exit marker.
@@ -92,6 +96,9 @@ try {
     $two = @(Invoke-Bounded 'cmd' @('/c', 'echo a& echo b') 10)
     if (($two -join '|') -ne 'a|b|__EXIT__0') { $fail += "two-line output: got $($two -join '|')" }
     $none = @(Invoke-Bounded 'cmd' @('/c', 'exit 3') 10)
+    Set-Content (Join-Path $shim 'argv.ps1') '$args | ForEach-Object { "<$_>" }'
+    $argv = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $shim 'argv.ps1'), 'a b', 'q"t', 'tail\', '') 60)
+    if (($argv -join '|') -ne '<a b>|<q"t>|<tail\>|<>|__EXIT__0') { $fail += "argument quoting: got $($argv -join '|')" }
     if (($none -join '|') -ne '__EXIT__3') { $fail += "no output, exit 3: got $($none -join '|')" }
 } finally {
     $env:PATH = $oldPath
@@ -173,7 +180,7 @@ foreach ($f in 'train-smoke.ps1', 'serve-smoke.ps1') {
 
 # Grok post-merge findings on #275 (structural: an unkillable process or unremovable container cannot be simulated here).
 $ib = Get-Content -Raw (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
-if ($ib -notmatch '(?s)finally \{.*if \(-not \$completed\) \{\s*if \(\$supervised\) \{.*Terminate\(\$job\).*Active\(\$job\) -gt 0\) \{ \$unverified = \$true \}.*\} else \{.*\$unverified = \$true.*if \(-not \$gone -or \$unverified\) \{.*Add-Content -LiteralPath \$GpuMarker.*throw \$msg') { $fail += 'invoke-bounded: the whole tree must be verified gone through the job, or it throws' }
+if ($ib -notmatch '(?s)finally \{.*if \(-not \$completed -and \$h -ne \[IntPtr\]::Zero\) \{.*Terminate\(\$job\).*if \(\(Get-BoundedJobActive \$job\) -gt 0\) \{ \$unverified = \$true \}.*if \(-not \$gone -or \$unverified\) \{.*Add-Content -LiteralPath \$GpuMarker.*throw \$msg') { $fail += 'invoke-bounded: the whole tree must be verified gone through the job, or it throws' }
 $ts = Get-Content -Raw (Join-Path $PSScriptRoot 'train-smoke.ps1')
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
     $gs = Get-Content -Raw (Join-Path $PSScriptRoot $g)
@@ -183,7 +190,7 @@ foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
 $iMark = $ts.IndexOf('launch in flight since'); $iStart = $ts.IndexOf('$job = Start-Job')
 if (-not ($iMark -ge 0 -and $iStart -gt $iMark)) { $fail += 'train-smoke: the in-flight marker must be written before Start-Job' }
 if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# No container was left unconfirmed.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
-if (-not $ib.Contains('[math]::Abs(($h.StartTime - $c.CreationDate).TotalMilliseconds) -lt 1')) { $fail += 'invoke-bounded: the pre-assignment sweep must match the exact start time' }
+if ($ib -notmatch '(?s)CREATE_SUSPENDED \| CREATE_NO_WINDOW.*AssignProcessToJobObject\(job, pi\.hProcess\).*ResumeThread\(pi\.hThread\)') { $fail += 'invoke-bounded: the command must be created suspended and join its job before it resumes' }
 if ($ts -notmatch '(?s)\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a missing marker for an unconfirmed container must keep the lock' }
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('GPU is poisoned')) { $fail += "$g`: must refuse to start while the GPU is poisoned" } }
 # The normal path confirms absence with a daemon check. The only direct true is a synchronous Start-Job failure,
@@ -192,7 +199,7 @@ if ($ts.Contains('$containerGone = $true')) { $fail += 'train-smoke: containerGo
 if ($ts -match 'catch \{[^}]*containerGone') { $fail += 'train-smoke: a Start-Job failure must keep the guard (no catch may clear containerGone)' }
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('LM Studio: lms ps')) { $fail += "$g`: the recovery text must cover LM Studio and other commands, not only containers" } }
 if ($ib -match 'Get-SurvivingProcess|Stop-Process') { $fail += 'invoke-bounded: survivors are killed and counted by the job object, never per PID' }
-if (([regex]::Matches($ib, 'Get-CimInstance')).Count -ne 1 -or $ib -notmatch 'Get-CimInstance[^\n]*-OperationTimeoutSec') { $fail += 'invoke-bounded: the one CIM snapshot must be bounded' }
+if ($ib -match 'Get-CimInstance|Diagnostics\.Process\]::Start') { $fail += 'invoke-bounded: no process snapshots and no unsuspended start; the job is the only record of the tree' }
 if ($ib -match 'KILL_ON_JOB_CLOSE|0x2000') { $fail += 'invoke-bounded: the job must not kill on close (a normal exit may leave a process running on purpose)' }
 foreach ($pair in @(@('train-smoke.ps1', "Invoke-Bounded 'pwsh'"), @('serve-smoke.ps1', "Invoke-Lms @('server', 'start')"))) {
     $gs = Get-Content -Raw (Join-Path $PSScriptRoot $pair[0]); $iG = $gs.IndexOf('GPU job in progress since'); $iFirst = $gs.IndexOf($pair[1])
@@ -212,12 +219,12 @@ Write-Output 'ok  bounded command tree verified gone through its job object or i
 Write-Output 'ok  GPU lock held by another process refused'
 Write-Output 'ok  machine-wide poison marker refuses training (from any -HotRoot)'
 Write-Output 'ok  in-flight marker before launch; cleared only when the container is confirmed gone'
-Write-Output 'ok  CIM failure during tree discovery still kills the command, fails closed, and persists the machine-wide marker'
+Write-Output 'ok  a tree the job still counts after the kill fails closed and persists the machine-wide marker'
 Write-Output 'ok  marker-write failure: guard missing keeps the lock; failed append with a guard present is harmless'
 Write-Output 'ok  durable job guard written before the first bounded command; a Start-Job failure keeps it'
-Write-Output 'ok  job object kills an orphaned grandchild on timeout; a job object failure fails closed; recovery text covers LM Studio'
+Write-Output 'ok  suspended start joins the job first; an orphaned grandchild is killed on timeout; no job means no launch; recovery text covers LM Studio'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
-Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
+Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code; arguments reach argv exactly'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
