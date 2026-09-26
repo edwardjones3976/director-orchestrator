@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
@@ -629,8 +630,34 @@ _ASSIGNMENT_UNSET = {"PENDING": ("reserved_at", "completed_at"), "ACTIVE": ("com
                      "AMBIGUOUS": ("completed_at",)}  # OWNER_DECISION_REQUIRED always has both (required_moments)
 
 
+# last_error exactly as PrimarySlackDelivery writes it (review 4111082596): never before a claim, and cleared by
+# the DELIVERED settlement; REFUSED always names the refusal (Slack's ok:false or its 429); AMBIGUOUS always names
+# the missing or invalid acknowledgement, and after a readback attempt may instead name that readback's failure;
+# ACKNOWLEDGED carries none until a readback attempt fails. A crash between a readback's claim and its error write
+# leaves the earlier value.
+_RATE_LIMITED = re.compile(r"slack_rate_limited:retry_after=[0-9]{1,9}\Z")
+_READBACK_ERRORS = ("readback_unverified",)
+
+
+def delivery_error_contract(row):
+    state, error, reads = row.get("state"), row.get("last_error"), row.get("readback_attempts")
+    rate_limited = isinstance(error, str) and bool(_RATE_LIMITED.fullmatch(error))
+    read_back = type(reads) is int and reads > 0 and (error in _READBACK_ERRORS or rate_limited)
+    if state in ("PENDING", "SUPPRESSED", "SUPERSEDED", "POSTING", "DELIVERED"):
+        return error is None
+    if state == "REFUSED":
+        return error == "slack_refused" or rate_limited
+    if state == "AMBIGUOUS":
+        return error in ("post_ack_missing", "post_ack_invalid") or read_back
+    if state == "ACKNOWLEDGED":
+        return error is None or read_back
+    return False
+
+
 def delivery_contract(row):
-    """A delivery row carries exactly its state's fields, its present moments in order."""
+    """A delivery row carries exactly its state's fields (last_error included), its present moments in order."""
+    if not delivery_error_contract(row):
+        return False
     if row.get("state") == "DELIVERED":
         return delivery_settled(row)
     contract = DELIVERY_CONTRACT.get(row.get("state"))
@@ -1459,3 +1486,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]

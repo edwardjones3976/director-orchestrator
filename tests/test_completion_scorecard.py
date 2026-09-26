@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
@@ -171,7 +172,8 @@ def health():
 
 def accounting(**values):
     """One provider's usage-monitor daily accounting, in the producer's key set (usage.py _daily_accounting)."""
-    row = {"request_count": 0, "retry_count": 0, "quota_failure_count": 0, "total_tokens": 0,
+    row = {"request_count": 0, "usage_check_count": 0, "provider_request_count": None,
+           "retry_count": 0, "quota_failure_count": 0, "total_tokens": 0,
            "reported_cost_usd": 0.0, "cost_visibility_complete": True, "daily_request_limit": None,
            "daily_budget_usd": None, "reserved_cost_usd": None}
     row.update(values)
@@ -2456,7 +2458,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         unresolved = self.world()
         terminal = unresolved.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
         # PrimarySlackDelivery's AMBIGUOUS row: claimed, never acknowledged, no Slack ts (4110241987).
-        terminal.update(state="AMBIGUOUS", readback_attempts=2, acknowledged_at=None, delivered_at=None, slack_ts=None)
+        terminal.update(state="AMBIGUOUS", readback_attempts=2, acknowledged_at=None, delivered_at=None, slack_ts=None,
+                        last_error="readback_unverified")  # both readbacks spent, as readback() records
         self.assertEqual(unresolved.state("09"), "FAIL")
         acknowledged = self.world()
         acked = acknowledged.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
@@ -2660,20 +2663,28 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_probed_providers_are_capped_by_their_signed_budget_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
-        # Review 4110798529: a positive request count is an attempt before the cap and price tests; with no monitor
-        # budget, no signed enrolled budget and unknown cost the provider is uncapped and unpriced, never neither.
+        # The monitor's own usage-check probes are never attempts, whatever they cost (usage.py reports them apart).
         probed = self.world()
-        probed.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4)
+        probed.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
+            request_count=4, usage_check_count=4, reported_cost_usd=0.5, cost_visibility_complete=False)
         probed.payload["usage_monitor"]["providers"].append("openai")
-        self.assertEqual(probed.state("15"), "UNKNOWN")
-        idle = self.world()
-        idle.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=0)
-        idle.payload["usage_monitor"]["providers"].append("openai")
-        self.assertEqual(idle.state("15"), "PASS")
-        # Real spend on a provider with neither a monitor budget nor a signed enrolled budget is uncapped.
+        self.assertEqual(probed.state("15"), "PASS")
+        # Review 4110798529: a real provider request is an attempt before the cap and price tests; with no monitor
+        # budget, no signed enrolled budget and unknown cost the provider is uncapped and unpriced, never neither.
+        requested = self.world()
+        requested.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
+            request_count=4, usage_check_count=2, provider_request_count=2, cost_visibility_complete=False)
+        requested.payload["usage_monitor"]["providers"].append("openai")
+        self.assertEqual(requested.state("15"), "UNKNOWN")
+        # A monitor that does not report its probes apart is not monitored accounting.
+        unseparated = self.world()
+        for value in unseparated.payload["usage_monitor"]["daily_accounting"].values():
+            value.pop("provider_request_count")
+        self.assertNotEqual(unseparated.state("15"), "PASS")
+        # Real requests on a provider with neither a monitor budget nor a signed enrolled budget are uncapped.
         spent = self.world()
-        spent.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4,
-                                                                                    reported_cost_usd=0.5)
+        spent.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
+            request_count=4, provider_request_count=1, reported_cost_usd=0.5)
         spent.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(spent.state("15"), "UNKNOWN")
 
@@ -3518,13 +3529,19 @@ class ScorecardCollectorTests(unittest.TestCase):
                      "readback_attempts": 0}
         claimed = {**unclaimed, "claimed_at": delivered["claimed_at"]}
         conforming = {"PENDING": unclaimed, "SUPPRESSED": unclaimed, "SUPERSEDED": unclaimed, "POSTING": claimed,
-                      "REFUSED": claimed, "AMBIGUOUS": {**claimed, "readback_attempts": 2},
+                      "REFUSED": {**claimed, "last_error": "slack_refused"},
+                      "AMBIGUOUS": {**claimed, "readback_attempts": 2, "last_error": "readback_unverified"},
                       "ACKNOWLEDGED": {**claimed, "acknowledged_at": delivered["acknowledged_at"],
                                        "slack_ts": delivered["slack_ts"], "readback_attempts": 1}}
         breaking = {"PENDING": {"readback_attempts": 1}, "SUPPRESSED": {"slack_ts": delivered["slack_ts"]},
                     "SUPERSEDED": {"acknowledged_at": delivered["acknowledged_at"]},
                     "POSTING": {"claimed_at": None}, "REFUSED": {"claimed_at": None},
                     "AMBIGUOUS": {"slack_ts": delivered["slack_ts"]}, "ACKNOWLEDGED": {"slack_ts": None}}
+        # 4111082596: last_error per state, from the producer's fixed set.
+        error_breaking = {"PENDING": {"last_error": "slack_refused"}, "SUPPRESSED": {"last_error": "x"},
+                          "SUPERSEDED": {"last_error": "post_ack_missing"}, "POSTING": {"last_error": "slack_refused"},
+                          "REFUSED": {"last_error": None}, "AMBIGUOUS": {"last_error": "slack_refused"},
+                          "ACKNOWLEDGED": {"last_error": "readback_unverified", "readback_attempts": 0}}
         for index, (state, fields) in enumerate(conforming.items()):
             def with_row(extra):
                 readback = copy.deepcopy(base)
@@ -3535,6 +3552,15 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(state=state):
                 self.assertEqual(with_row({}), {})
                 self.assertIn("lifecycle", with_row(breaking[state]))
+                self.assertIn("lifecycle", with_row(error_breaking[state]))
+        from director_orchestrator.primary_scorecard_evidence import delivery_error_contract
+        self.assertTrue(delivery_error_contract({"state": "REFUSED", "last_error": "slack_rate_limited:retry_after=30",
+                                                 "readback_attempts": 0}))
+        self.assertTrue(delivery_error_contract({"state": "AMBIGUOUS", "last_error": "post_ack_invalid",
+                                                 "readback_attempts": 0}))
+        self.assertFalse(delivery_error_contract({"state": "AMBIGUOUS", "last_error": "readback_unverified",
+                                                  "readback_attempts": 0}))
+        self.assertFalse(delivery_error_contract({**delivered, "last_error": "readback_unverified"}))  # DELIVERED
         effect = base["effects"][0]
         for recorded, broken in ((effect["terminal_recorded_at"], False), ("2026-09-12T10:00:50+00:00", True),
                                  ("2026-09-12T10:00:01+00:00", True)):  # at, after the terminal row; before reservation
@@ -4092,9 +4118,9 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.assertEqual(case.state("15"), "UNKNOWN")
         uncapped = self.world()
-        # Spend on a provider with no monitor budget and no signed enrolled budget (probes alone are not spend).
-        uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=2,
-                                                                                    reported_cost_usd=0.4)
+        # Real requests on a provider with no monitor budget and no signed enrolled budget (probes alone never are).
+        uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
+            request_count=2, provider_request_count=1, reported_cost_usd=0.4)
         uncapped.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(uncapped.state("15"), "UNKNOWN")
         # Only a re-verified, provider-bound signed budget is an enrolled cap.
@@ -4119,14 +4145,22 @@ class ScorecardCollectorTests(unittest.TestCase):
         # reported_cost_usd sums known costs only: attempts with unknown, unreserved cost are not zero.
         unpriced = self.world()
         unpriced.payload["usage_monitor"]["daily_accounting"]["grok"].update(
-            request_count=3, cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None)
+            request_count=3, provider_request_count=3, cost_visibility_complete=False, reported_cost_usd=0.0,
+            reserved_cost_usd=None)
         report = unpriced.report()
         self.assertEqual(row(report, "15")["status"], "UNKNOWN")
         self.assertIn("grok", row(report, "15")["explanation"])
         idle = self.world()
         idle.payload["usage_monitor"]["daily_accounting"]["grok"].update(
-            request_count=0, cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None)
+            request_count=0, provider_request_count=0, cost_visibility_complete=False, reported_cost_usd=0.0,
+            reserved_cost_usd=None)
         self.assertEqual(idle.state("15"), "PASS")
+        # Probes alone (request_count, no real request) are never unpriced attempts either.
+        probes_only = self.world()
+        probes_only.payload["usage_monitor"]["daily_accounting"]["grok"].update(
+            request_count=3, usage_check_count=3, provider_request_count=0, cost_visibility_complete=False,
+            reported_cost_usd=0.0, reserved_cost_usd=None)
+        self.assertEqual(probes_only.state("15"), "PASS")
         self.assertEqual(self.world().state("15", paid_thread=None, paid_rubric_path=None), "UNKNOWN")
         unavailable = self.world()
         unavailable.consistency = None
@@ -4455,3 +4489,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]

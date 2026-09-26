@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
@@ -2453,6 +2454,9 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     monitored = ready and listed and dated and isinstance(accounting, dict) and set(accounting) == set(providers) and all(
         isinstance(value, dict) and all(value.get(key) is None or _amount(value.get(key))
                                         for key in ("daily_budget_usd", "reported_cost_usd", "reserved_cost_usd"))
+        # A monitor that does not separate its probes from real requests is not monitored accounting.
+        and "provider_request_count" in value
+        and (value["provider_request_count"] is None or _counter(value["provider_request_count"]))
         for value in accounting.values())
     uncapped: list[str] = []
     if monitored:
@@ -2461,10 +2465,11 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
             requests = value.get("request_count")
             # Spend, not request_count: for most providers request_count counts the monitor's own usage-check
             # probes (usage.py _daily_accounting); grok's paid requests carry reserved_cost_usd.
-            # A positive request count is an attempt before any cap or price test (review 4110798529): the usage
-            # check's own requests are provider requests too, and unknown cost is not zero.
-            attempted = ((value.get("reported_cost_usd") or 0) > 0 or (value.get("reserved_cost_usd") or 0) > 0
-                         or (type(requests) is int and requests > 0))
+            # A real provider request is an attempt before any cap or price test (review 4110798529). The monitor's
+            # own usage-check probes never are: usage.py reports them apart (usage_check_count), and
+            # provider_request_count counts only real requests (None: the monitor sees none for that provider).
+            real = value.get("provider_request_count")
+            attempted = type(real) is int and real > 0
             if attempted and type(budget) not in (int, float):
                 uncapped.append(str(provider))  # an attempted provider with no numeric cap has no monetary control
             if type(budget) in (int, float):
@@ -3570,3 +3575,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]

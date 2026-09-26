@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]] -->
@@ -1055,7 +1056,23 @@ retry_limit or allocation_profile, so this recomputation runs only in-image.
 An effect's execution, remote binding and terminal rows join by reservation
 (or claim) alone and carry their own task id; another task's is an effects
 conflict, and `effect_children_cross_task` counts them globally. In check 15
-a positive request count is an attempt before the cap and price tests.
+a real provider request is an attempt before the cap and price tests, and the
+usage monitor's own probes never are. `usage.py` reports them apart in each
+provider's `daily_accounting`: `usage_check_count` (its USAGE_CHECK_PROMPT
+probes) and `provider_request_count` (the spend ledger's reservations for
+the day, excluding the monitor's probe keys `sha256("usage:<cycle>:<provider>")`;
+None for providers the ledger does not account, whose real requests the
+monitor cannot see). `request_count` keeps its old meaning for the monitor's
+own limits. An accounting entry without `provider_request_count` is not
+monitored accounting.
+
+A delivery's `last_error` follows `PrimarySlackDelivery` per state
+(`delivery_error_contract`): none before a claim (PENDING, SUPPRESSED,
+SUPERSEDED, POSTING) and none once DELIVERED; REFUSED always `slack_refused`
+or `slack_rate_limited:retry_after=<seconds>`; AMBIGUOUS always
+`post_ack_missing` or `post_ack_invalid`, or after a readback attempt
+`readback_unverified` or the rate-limit value; ACKNOWLEDGED none until a
+readback attempt fails with one of those.
 
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
@@ -1256,3 +1273,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]] -->

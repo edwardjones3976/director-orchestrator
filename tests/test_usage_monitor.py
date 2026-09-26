@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
@@ -439,6 +440,37 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(records[0].status, UsageCheckStatus.OK)
             self.assertEqual(records[0].total_tokens, 20)
             self.assertEqual(monitor.health()["unsupported_providers"], [])
+
+    async def test_probes_are_reported_apart_from_real_provider_requests(self):
+        """The monitor's own USAGE_CHECK_PROMPT probes are never real provider requests: daily_accounting reports
+        usage_check_count and provider_request_count (the ledger's work reservations, its probe keys excluded)."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            adapter = SuccessfulGrokProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("grok",),
+                grok_enabled=True,
+                grok_api_key="test-xai",
+                grok_allow_review_verdict=False,
+                sqlite_path=database,
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.GROK: adapter})
+            await monitor.run_once(force=True)
+            accounting = monitor.health()["daily_accounting"]["grok"]
+            # One probe: reserved in the shared ledger, counted by request_count, never a provider request.
+            self.assertEqual((accounting["request_count"], accounting["usage_check_count"],
+                              accounting["provider_request_count"]), (1, 1, 0))
+            ProviderDailySpendLedger(database).reserve(
+                provider=ProviderName.GROK, effect_key="b" * 64, estimated_cost_usd=0.01,
+                request_limit=10, budget_usd=1.0)
+            accounting = monitor.health()["daily_accounting"]["grok"]
+            self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
 
     async def test_grok_probe_and_assignment_share_one_atomic_daily_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1112,3 +1144,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]

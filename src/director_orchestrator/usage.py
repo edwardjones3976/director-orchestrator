@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
@@ -227,6 +228,10 @@ class UsageMonitor:
             )
         return {
             "request_count": request_count,
+            # Kept apart (review of check 15): the monitor's own USAGE_CHECK_PROMPT probes, and real provider
+            # (work) requests. request_count stays as it was for the limits above.
+            "usage_check_count": sum(record.attempt_count for record in attempted),
+            "provider_request_count": self._provider_request_count(provider, records, now),
             "retry_count": retry_count,
             "quota_failure_count": quota_failures,
             "total_tokens": total_tokens,
@@ -237,6 +242,20 @@ class UsageMonitor:
             "daily_budget_usd": budget_usd,
             "reserved_cost_usd": reserved_cost_usd,
         }
+
+    def _provider_request_count(self, provider: str, records: list[UsageCheckRecord], now: datetime) -> int | None:
+        """Real provider requests reserved today in the durable spend ledger, excluding this monitor's own probes
+        (their effect key is sha256("usage:<cycle>:<provider>"), one per usage-check cycle). None for a provider
+        the ledger does not account (its real requests are not visible to the monitor)."""
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            return None
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return None
+        probes = {hashlib.sha256(f"usage:{record.cycle_id}:{provider}".encode("utf-8")).hexdigest()
+                  for record in records}
+        return sum(key not in probes for key in self.provider_spend.effect_keys(name, now=now))
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
         if provider not in {"gemini", "grok", "perplexity"}:
@@ -704,3 +723,4 @@ class UsageMonitor:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]

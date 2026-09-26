@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:39 UTC | BEGIN]]
@@ -973,8 +974,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             # a row, so it is its own row.
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_slack_delivery(task_id, notification_key,"
-                f" projection_digest, payload, client_msg_id, state, readback_attempts, claimed_at)"
-                f" VALUES (%s, %s, {current}, '{{}}'::jsonb, %s, 'AMBIGUOUS', 2, now())",
+                f" projection_digest, payload, client_msg_id, state, readback_attempts, claimed_at, last_error)"
+                f" VALUES (%s, %s, {current}, '{{}}'::jsonb, %s, 'AMBIGUOUS', 2, now(), 'readback_unverified')",
                 (task_id, "hold:sha256:" + "6" * 64, task_id, identity("hold:sha256:" + "6" * 64)))
         counts = self.report()["counts"]
         self.assertEqual((counts["slack_deliveries_in_flight"], counts["slack_deliveries_invalid"]), (0, 1))
@@ -1145,3 +1146,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
