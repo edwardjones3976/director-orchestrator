@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -1166,6 +1167,39 @@ class CompactProviderViewTests(unittest.TestCase):
             with self.subTest(ordinary=name):
                 self.assertFalse(holds_identifier_format(value))
 
+    def test_exemptions_only_discard_hits_they_wholly_contain(self) -> None:
+        """Every detector reads the original text; an exempt token never
+        swallows an overlapping protected format."""
+
+        import uuid
+        from director_orchestrator.policy import holds_identifier_format
+
+        for value in ("a12345678", "ab1234567", "a052377", "01.23.45.67.89",
+                      "1234.5678.90", "(415) 555-2671"):
+            with self.subTest(hit=value):
+                self.assertTrue(holds_identifier_format(f"see {value} now"))
+        for value in ("1.2.3", "10.24.117", "(2026-09-17 01:02)", "2026-09-25T17:48:03Z",
+                      str(uuid.uuid4()), "Ran 3524 tests in 1484.041s"):
+            with self.subTest(exempt=value):
+                self.assertFalse(holds_identifier_format(value))
+
+    def test_paths_are_validated_as_written_before_canonicalizing(self) -> None:
+        from director_orchestrator.packet_routing import path_key, small_task_named_contents
+
+        for bad in ("secret.txt ", " secret.txt", "docs /a.md", "docs/ a.md", "docs./a.md",
+                    "a.md.", "a\\b."):
+            with self.subTest(path=bad):
+                self.assertIsNone(path_key(bad))
+        self.assertEqual(("docs", "a.md"), path_key("./docs\\a.md"))
+        self.assertEqual(("docs",), path_key("docs/"))
+        # A tracked "secret.txt " never answers for "secret.txt".
+        work = {"objective": "Summarize secret.txt.", "allowed_tools": ["READ_REPOSITORY"],
+                "allowed_external_effects": [],
+                "authority_snapshot": [{"path": "secret.txt ", "commit_sha": "a" * 40,
+                                        "blob_sha": "b" * 40}]}
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: b"x"):
+            self.assertIsNone(small_task_named_contents(work))
+
     def test_record_identifiers_never_read_as_personal_identifiers(self) -> None:
         """UUIDs and lower-case hex digests: a group such as "c0395302" is not
         a passport number and "de54b14240fa" is not an IBAN."""
@@ -1177,10 +1211,14 @@ class CompactProviderViewTests(unittest.TestCase):
         for _ in range(5_000):
             value = str(uuid.uuid4())
             self.assertFalse(holds_sensitive_value(value), value)
-        for size in (4, 20, 32):
+        for size in (20, 32):
             for _ in range(2_000):
                 value = secrets.token_hex(size)
                 self.assertFalse(holds_sensitive_value(value), value)
+        # A short hex value in the passport shape is a hit (owner ruling:
+        # fail closed); one with three or more letters is not that shape.
+        self.assertTrue(holds_sensitive_value("commit a052377"))
+        self.assertFalse(holds_sensitive_value("commit 5ab3cdf"))
 
     def test_request_text_and_file_text_share_one_value_screen(self) -> None:
         """An unlabeled mixed-case token, an address or a phone in the request
@@ -1651,3 +1689,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
