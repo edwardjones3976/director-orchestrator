@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
@@ -1950,7 +1951,10 @@ _QUALIFICATION_SECTIONS = {
                CASE WHEN e.reservation_key IS NULL THEN NULL
                     ELSE e.owner_token = c.owner_token AND e.owner_token = r.owner_token END AS execution_owner_matches,
                CASE WHEN e.reservation_key IS NULL THEN NULL
-                    ELSE e.fencing_generation = c.fencing_generation END AS execution_fencing_matches""",
+                    ELSE e.fencing_generation = c.fencing_generation END AS execution_fencing_matches,
+               r.task_id = c.task_id AS reservation_task_matches,
+               r.owner_token = c.owner_token AS reservation_owner_matches,
+               r.fencing_generation = c.fencing_generation AS reservation_fencing_matches""",
         # Children join by their reservation (or claim) alone, and carry their own task_id: a child pointing at
         # this reservation from another task is served, then refused, never silently dropped (review 4110798521).
         """{schema}.director_primary_effect_reservation r
@@ -3047,11 +3051,18 @@ class PostgresConditionalClaimStore:
             "complete": not truncated,
             **sections,
         }
-        # Every served value is final before the one measurement that bounds it: the deadline is checked and
-        # elapsed_seconds filled first, and nothing served changes after the size comparison (review 4110671084).
+        # Every served value is final before the one measurement that bounds it, and nothing served changes after
+        # the size comparison (review 4110671084). elapsed_seconds includes serialization (review 4111508060): the
+        # served encoding is timed by an identical prior encoding, and the deadline is checked again after it.
+        def finalize(document: dict[str, Any]) -> str:
+            begun = time.monotonic()
+            json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+            serialization = time.monotonic() - begun
+            document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started + serialization, 6)
+            return json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+
         require_deadline_remaining(deadline, "qualification readback completion")
-        document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
-        encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+        encoded = finalize(document)
         if len(encoded.encode("utf-8")) > byte_limit:
             document = {key: value for key, value in document.items() if key not in sections}
             document.update(
@@ -3061,10 +3072,12 @@ class PostgresConditionalClaimStore:
             )
             # Even the metadata-only document must fit the bound; otherwise the read is refused, never served
             # over its declared limit.
-            encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+            encoded = finalize(document)
             if len(encoded.encode("utf-8")) > byte_limit:
                 raise PostgresControlPlaneError(
                     "qualification readback refused: its metadata alone exceeds the byte limit")
+        # A document finished after its deadline is refused, never served late.
+        require_deadline_remaining(deadline, "qualification readback serialization")
         # The typed projection is internal to the caller (main.get_task pops it before serving), never served.
         document["projection"] = projection
         return document
@@ -6100,3 +6113,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -303,6 +304,12 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         # Owner ruling 2026-09-26: no release descriptor is pinned yet, so a Claude CLI capture is unattested.
         self.assertEqual(report["lanes"]["claude"]["product"], "anthropic-claude-unattested")
         self.assertTrue(report["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"])
+        # Review 4111508065: both activation surfaces must classify as the same attested product.
+        with self.capture_sources(store), \
+                patch.object(evidence, "_capture_product", side_effect=["anthropic-claude", "anthropic-claude-unattested"]), \
+                patch.object(evidence, "_activation_recorded_at", return_value=None):
+            self.assertIsNone(evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64})
+                              ["lanes"]["claude"]["product"])
         with self.capture_sources(store, output=b'{"type":"assistant"}'), \
                 patch.object(evidence, "_activation_recorded_at", return_value=None):
             self.assertIsNone(evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64})
@@ -1154,3 +1161,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

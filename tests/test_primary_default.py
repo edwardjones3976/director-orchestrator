@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | BEGIN]]
@@ -5440,6 +5441,21 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         if size - 64 >= 1024:  # a bound the metadata alone exceeds: refused, never served oversized
             with self.assertRaisesRegex(PostgresControlPlaneError, "metadata alone exceeds"):
                 store.read_primary_qualification_evidence(record.task_id, byte_limit=size - 64)
+        # Review 4111508060: the deadline is checked again after the final serialization; a document that finished
+        # late is refused, never served.
+        import time
+        import director_orchestrator.langgraph_postgres as langgraph_postgres
+        from director_orchestrator.langgraph_postgres import DeadlineExpired
+        real_dumps = langgraph_postgres.json.dumps
+
+        def slow_final(value, *args, **kwargs):
+            if isinstance(value, dict) and "bounds" in value:
+                time.sleep(0.3)
+            return real_dumps(value, *args, **kwargs)
+
+        with patch.object(langgraph_postgres.json, "dumps", side_effect=slow_final), \
+                self.assertRaises(DeadlineExpired):
+            store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.5)
         # Review 4110671084: the bound measures the served document with its final elapsed_seconds. A limit equal to
         # the full document's size with elapsed 0.0 cannot be exceeded once the real elapsed time is filled in.
         def served_size(document):
@@ -6273,3 +6289,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

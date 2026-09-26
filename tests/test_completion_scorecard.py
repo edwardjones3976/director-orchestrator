@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
@@ -318,6 +319,14 @@ def approval_receipt(recorded_at=None):
             "authorization_proof_expires_at": iso(1789210000 + 30300)}
 
 
+def set_product(captures, lane, product):
+    """A lane's product as activation_capture_report reports it: the same on both activation surfaces."""
+    entry = captures["lanes"][lane]
+    entry["product"] = product
+    for surface in entry["surfaces"].values():
+        surface["product"] = product
+
+
 def captures_fixture():
     # primary_scorecard_evidence.activation_capture_report: lanes and surfaces from
     # PrimaryProviderActivationService.capture_attestations (primary_provider_activation.py).
@@ -330,8 +339,10 @@ def captures_fixture():
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
             "observed_at": "2026-09-12T20:00:00+00:00",
             "required_providers": ["claude", "grok", "openai"],
+            # Both activation surfaces classify their own verified capture (review 4111508065).
             "lanes": {lane: {"binding_digest": "b" * 64, "product": product,
-                             "surfaces": {"app": dict(surface), "runtime_adapter": dict(surface)}}
+                             "surfaces": {"app": {**surface, "product": product},
+                                          "runtime_adapter": {**surface, "product": product}}}
                       for lane, product in (("openai", "openai-responses"), ("claude", "anthropic-claude"),
                                             ("grok", "xai-grok-cli"))}}
 
@@ -855,7 +866,8 @@ def ledger_fixture(path, first_bounds=None):
 
 
 TRUSTED_CI = b"name: CI\njobs: {}\n"
-PARENT = "e" * 40  # the candidate's first parent on main
+EVALUATOR = "e" * 40  # the owner-pinned evaluator revision
+EVALUATED = {"version": "director-cli-release-descriptor/v1", "releases": [], "evaluator_sha": EVALUATOR}
 
 
 def workflow_contents(content):
@@ -874,8 +886,6 @@ def gh_runs(jobs_by_run, paths=None, compare=None, size=100, total=None, workflo
         if "/contents/" in args[2]:
             ref = args[2].split("?ref=")[1]
             return workflow_contents((workflows or {}).get(ref, TRUSTED_CI))
-        if "/commits/" in args[2]:  # the candidate's first parent on main: main before it landed
-            return {"parent": PARENT}
         if "/compare/" in args[2]:
             return {"status": (compare or {}).get(args[2].split("/compare/")[1], "ahead")}
         if "/jobs?" in args[-1]:
@@ -1476,15 +1486,14 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
-            if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
+            if "/contents/" in args[-1]:  # ci.yml at the head and at the pinned evaluator: unchanged
                 return workflow_contents(TRUSTED_CI)
-            if len(args) > 2 and "/commits/" in args[2]:  # the candidate's first parent on main
-                return {"parent": PARENT}
             if "/jobs?" in args[-1]:
                 return {"total_count": len(jobs), "jobs": jobs}
             self.assertIn("head_sha=" + SHA, args[-1])
             return {"total_count": 1, "workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
-        with patch.object(sc, "_run_json", side_effect=external_query):
+        with patch.object(sc, "_run_json", side_effect=external_query), \
+                patch.object(sc, "cli_release_descriptor", return_value=EVALUATED):
             observations = sc.collect(SHA, now=NOW, github=True)
             self.assertEqual(sc.score(SHA, observations, now=NOW)["checks"][15]["status"], "PASS")
             self.assertEqual(sc.score(OTHER, observations, now=NOW)["checks"][15]["status"], "UNKNOWN")
@@ -1498,27 +1507,25 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
-            if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
+            if "/contents/" in args[-1]:  # ci.yml at the head and at the pinned evaluator: unchanged
                 return workflow_contents(TRUSTED_CI)
-            if len(args) > 2 and "/commits/" in args[2]:  # the candidate's first parent on main
-                return {"parent": PARENT}
             if "/jobs?" in args[-1]:
                 return {"total_count": len(skipped), "jobs": skipped}
             return {"total_count": 1, "workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
-        with patch.object(sc, "_run_json", side_effect=external_query):
+        with patch.object(sc, "_run_json", side_effect=external_query), \
+                patch.object(sc, "cli_release_descriptor", return_value=EVALUATED):
             self.assertEqual(sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)["checks"][15]["status"], "FAIL")
 
     def test_ci_missing_job_cannot_pass(self):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
-            if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
+            if "/contents/" in args[-1]:  # ci.yml at the head and at the pinned evaluator: unchanged
                 return workflow_contents(TRUSTED_CI)
-            if len(args) > 2 and "/commits/" in args[2]:  # the candidate's first parent on main
-                return {"parent": PARENT}
             return ({"total_count": 0, "jobs": []} if "/jobs?" in args[-1]
                     else {"total_count": 1, "workflow_runs": [{"id": 1, "path": sc.CI_WORKFLOW}]})
-        with patch.object(sc, "_run_json", side_effect=external_query):
+        with patch.object(sc, "_run_json", side_effect=external_query), \
+                patch.object(sc, "cli_release_descriptor", return_value=EVALUATED):
             self.assertEqual(sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)["checks"][15]["status"], "FAIL")
 
     def test_ten_distinct_actual_offline_runs_can_meet_semantic_standard(self):
@@ -1656,7 +1663,7 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((Path(folder) / "completion-scorecard.json").read_text())
             self.assertEqual(report["passed"], 0)
-            # This checkout's HEAD is not the fixture candidate: the trusted-checkout rule refuses to grade.
+            # No evaluator revision is pinned (no release descriptor yet): the operating rule refuses to grade.
             self.assertTrue(all(sc.TRUSTED_CHECKOUT_REFUSAL in item["explanation"] for item in report["checks"]))
             self.assertTrue((Path(folder) / "completion-scorecard.md").is_file())
             self.assertFalse(json.loads(result.stdout)["activation_authorized"])
@@ -3243,6 +3250,23 @@ class ScorecardCollectorTests(unittest.TestCase):
         del undated.payload["usage_monitor"]["accounting_day"]
         self.assertNotEqual(undated.state("15"), "PASS")
 
+    def test_monetary_evidence_stays_inside_its_utc_day_15(self):
+        """4111508070: one UTC day's accounting grades only a collection inside that day. A collection crossing
+        midnight, or one whose final cutoff is on another day, is UNKNOWN; a PASS never outlives the rollover."""
+        from types import SimpleNamespace
+        crossing = SimpleNamespace(health=health(), binding={},
+                                   collected_at=datetime(2026, 9, 12, 23, 59, 50, tzinfo=timezone.utc),
+                                   until=lambda: datetime(2026, 9, 13, 0, 0, 5, tzinfo=timezone.utc))
+        observation = sc._monetary_observation(NOW, crossing, None, None, None)
+        self.assertIsNone(observation.passed)
+        self.assertIn("crosses a UTC midnight", observation.explanation)
+        rollover = datetime(2026, 9, 13, tzinfo=timezone.utc)
+        passing = sc._observation("15", True, "x", "s", {}, NOW, valid_until=rollover - sc.FRESH_FOR)
+        [late] = sc._finalize([passing], rollover + timedelta(seconds=1))
+        self.assertIsNone(late.passed)
+        [early] = sc._finalize([passing], rollover - sc.FRESH_FOR - timedelta(seconds=1))
+        self.assertIs(early.passed, True)
+
     def test_channel_history_needs_an_explicit_last_page_10(self):
         """4100880199: a history page without has_more=false (missing, or true without a cursor) is incomplete."""
         self.assertEqual(self.world().state("10"), "PASS")
@@ -3757,32 +3781,61 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.assertIsNotNone(task_evidence_errors(broken)[1]["effects"])
         self.assertNotIn("owner_token", json.dumps(base["effects"]))
+        # 4111508067: the reservation's task, owner and fence against its claim, booleans only.
+        for key in ("reservation_task_matches", "reservation_owner_matches", "reservation_fencing_matches"):
+            for value in (False, None):
+                broken = copy.deepcopy(base)
+                broken["effects"][0][key] = value
+                with self.subTest(key=key, value=value):
+                    self.assertIsNotNone(task_evidence_errors(broken)[1]["effects"])
 
-    def test_scorecard_grades_only_from_the_trusted_main_checkout(self):
-        """Operating rule added by the author: a clean checkout whose HEAD is on github/main and is the graded
-        candidate (and runtime); otherwise every check is UNKNOWN."""
-        def git(results):
+    def test_scorecard_grades_only_from_the_pinned_evaluator_checkout(self):
+        """Operating rule added by the author (reviews 4111508075 and 4111508073): the scorecard grades only from the
+        owner-pinned evaluator revision, a clean checkout whose HEAD is evaluator_sha, which is on github/main and an
+        ancestor of (or equal to) the candidate graded as data. Otherwise every check is UNKNOWN."""
+        def git(results, calls):
             def run(arguments, timeout=15):
-                key = arguments[3]
-                value = results[key]
+                calls.append(arguments[3:])
+                value = results[(arguments[3], arguments[-1])] if (arguments[3], arguments[-1]) in results \
+                    else results[arguments[3]]
                 if isinstance(value, Exception):
                     raise value
                 return value
             return run
-        clean = {"status": b"", "rev-parse": SHA.encode() + b"\n", "merge-base": b""}
-        with patch.object(sc, "_run_bytes", side_effect=git(clean)):
-            self.assertIsNone(sc.untrusted_checkout(SHA))
-            self.assertIsNone(sc.untrusted_checkout(SHA, SHA))
-            self.assertIn("runtime", sc.untrusted_checkout(SHA, OTHER))
-            self.assertIn("candidate", sc.untrusted_checkout(OTHER))
-        with patch.object(sc, "_run_bytes", side_effect=git({**clean, "status": b" M src/x.py\n"})):
-            self.assertIn("uncommitted", sc.untrusted_checkout(SHA))
-        with patch.object(sc, "_run_bytes", side_effect=git({**clean, "merge-base": ValueError("not an ancestor")})):
-            self.assertIn("github/main", sc.untrusted_checkout(SHA))
-        report = sc.refuse_untrusted(sc.score(SHA, [], now=NOW), "its HEAD is not the graded candidate")
+        clean = {"status": b"", "rev-parse": EVALUATOR.encode() + b"\n", "merge-base": b""}
+        with patch.object(sc, "cli_release_descriptor", return_value=None):
+            self.assertEqual(sc.untrusted_checkout(SHA), "evaluator revision not pinned")
+        with patch.object(sc, "cli_release_descriptor", return_value=EVALUATED):
+            calls = []
+            with patch.object(sc, "_run_bytes", side_effect=git(clean, calls)):
+                self.assertIsNone(sc.untrusted_checkout(SHA))
+            # Both ancestry proofs ran: the evaluator on github/main, and the evaluator before the candidate.
+            self.assertIn(("merge-base", "--is-ancestor", EVALUATOR, "github/main"), [tuple(c) for c in calls])
+            self.assertIn(("merge-base", "--is-ancestor", EVALUATOR, SHA), [tuple(c) for c in calls])
+            with patch.object(sc, "_run_bytes", side_effect=git({**clean, "rev-parse": SHA.encode()}, [])):
+                self.assertIn("pinned evaluator revision", sc.untrusted_checkout(SHA))  # the candidate's own code
+            with patch.object(sc, "_run_bytes", side_effect=git({**clean, "status": b" M src/x.py\n"}, [])):
+                self.assertIn("uncommitted", sc.untrusted_checkout(SHA))
+            with patch.object(sc, "_run_bytes", side_effect=git(
+                    {**clean, ("merge-base", "github/main"): ValueError("not an ancestor")}, [])):
+                self.assertIn("github/main", sc.untrusted_checkout(SHA))
+            with patch.object(sc, "_run_bytes", side_effect=git(
+                    {**clean, ("merge-base", SHA): ValueError("not an ancestor")}, [])):
+                self.assertIn("not an ancestor of the candidate", sc.untrusted_checkout(SHA))
+        report = sc.refuse_untrusted(sc.score(SHA, [], now=NOW), "evaluator revision not pinned")
         self.assertEqual(report["passed"], 0)
         self.assertTrue(all(item["status"] == "UNKNOWN" and item["explanation"].startswith(sc.TRUSTED_CHECKOUT_REFUSAL)
-                            for item in report["checks"]))
+                            and "evaluator revision not pinned" in item["explanation"] for item in report["checks"]))
+
+    def test_both_activation_surfaces_must_classify_as_the_product_11(self):
+        """4111508065: the lane's product counts only when its app and runtime-adapter captures both classify as it."""
+        self.assertEqual(self.world().state("11"), "PASS")
+        split = self.world()
+        split.captures["lanes"]["claude"]["surfaces"]["app"]["product"] = "anthropic-claude-unattested"
+        self.assertNotEqual(split.state("11"), "PASS")
+        missing = self.world()
+        missing.captures["lanes"]["claude"]["surfaces"]["app"].pop("product")
+        self.assertNotEqual(missing.state("11"), "PASS")
 
     def test_work_packets_join_dispatch_and_results(self):
         """4107814584: every dispatched assignment has exactly one revalidated work packet, recorded before its first
@@ -3895,6 +3948,24 @@ class ScorecardCollectorTests(unittest.TestCase):
             sc._run_bytes([sys.executable, "-c", spawn + "; import time; time.sleep(60)"], timeout=1)
         self.assertLess(time.monotonic() - started, 10)
 
+    def test_cleanup_spends_only_what_remains_of_the_command_deadline(self):
+        """4111508057: cleanup never gets a fresh grace past the deadline; with nothing left the tree is killed at
+        once and reaping is abandoned to a daemon thread."""
+        graces = []
+        real = sc.stop_contained_process
+
+        def recording(process, guard, *, grace_seconds=5.0):
+            graces.append(grace_seconds)
+            return real(process, guard, grace_seconds=grace_seconds)
+
+        with patch.object(sc, "stop_contained_process", side_effect=recording):
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                sc._run_bytes([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+            self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(len(graces), 1)
+        self.assertLess(graces[0], 0.5)  # what was left of the 1-second deadline, never a fresh 5 seconds
+
     def test_subprocess_output_is_capped_on_both_pipes_while_running(self):
         import sys
         self.assertEqual(sc._run_bytes([sys.executable, "-c", "print('ok')"]).strip(), b"ok")
@@ -3968,7 +4039,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(
                 json.loads(json.dumps(readback).replace('"claude"', f'"{lane}"')))
             if lane in case.captures["lanes"]:
-                case.captures["lanes"][lane]["product"] = product
+                set_product(case.captures, lane, product)
             with self.subTest(lane=lane):
                 self.assertEqual(case.state("11"), "FAIL")
         # Owner ruling 2026-09-26 ("Bind to pinned release"): grok and Claude CLI captures are held to Codex's
@@ -3978,7 +4049,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
                 json.dumps(case.tasks[PAID_TASK]["qualification_evidence"]).replace('"claude"', f'"{lane}"')
                 .replace('"native-cli"', f'"{transport}"')))
-            case.captures["lanes"][lane]["product"] = product
+            set_product(case.captures, lane, product)
             return case.state("11")
         for lane, product in (("grok", "xai-grok-cli"), ("claude", "anthropic-claude")):
             with self.subTest(lane=lane):
@@ -3995,7 +4066,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             readback = json.dumps(case.tasks[PAID_TASK]["qualification_evidence"])
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
                 readback.replace('"claude"', '"openai"').replace('"native-cli"', f'"{transport}"')))
-            case.captures["lanes"]["openai"]["product"] = product
+            set_product(case.captures, "openai", product)
             return case.state("11")
         # The OpenAI capture must be the product the attempts' transport actually used. Review 4102705154: a Codex
         # stream names no product or model, so a Codex lane is unattested (UNKNOWN), never credited as Codex.
@@ -4074,11 +4145,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         # A capture that no longer verifies reports no product: stale evidence, not a substitution.
         unverified = self.world()
         unverified.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"] = False
-        unverified.captures["lanes"]["claude"]["product"] = None
+        set_product(unverified.captures, "claude", None)
         self.assertEqual(unverified.state("11"), "UNKNOWN")
         # A verified, bound capture that names no product is still a substitution.
         productless = self.world()
-        productless.captures["lanes"]["claude"]["product"] = None
+        set_product(productless.captures, "claude", None)
         self.assertEqual(productless.state("11"), "FAIL")
         report = self.world().report(paid_thread=None, paid_rubric_path=None)
         self.assertEqual(row(report, "11")["status"], "UNKNOWN")
@@ -4227,9 +4298,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         unavailable.consistency = None
         self.assertEqual(unavailable.state("15"), "UNKNOWN")
 
-    def ci_report(self, jobs_by_run, paths=None, size=100, total=None, workflows=None, **options):
+    def ci_report(self, jobs_by_run, paths=None, size=100, total=None, workflows=None, descriptor=EVALUATED,
+                  **options):
         with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run, paths, size=size, total=total,
-                                                               workflows=workflows)):
+                                                               workflows=workflows)), \
+                patch.object(sc, "cli_release_descriptor", return_value=descriptor):
             return sc.score(SHA, sc.collect(SHA, now=NOW, github=True, **options), now=NOW)
 
     def test_ci_runs_prove_nothing_under_a_workflow_the_candidate_rewrote_16(self):
@@ -4238,22 +4311,24 @@ class ScorecardCollectorTests(unittest.TestCase):
         rewritten = b"name: CI\njobs: {noop: {runs-on: ubuntu-latest, steps: [{run: 'true'}]}}\n"
         report = self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten})
         self.assertEqual(row(report, "16")["status"], "UNKNOWN")
-        # 4111357780: the trusted definition is the pre-candidate one (its first parent on main), never current main,
-        # which under the trusted-checkout rule is the candidate itself.
+        # 4111508075/4111508073: the trusted definition is the owner's ci_workflow_sha256, else the ci.yml at the
+        # pinned evaluator revision; never current main or anything else the candidate controls.
         landed = self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten, "main": rewritten})
         self.assertEqual(row(landed, "16")["status"], "UNKNOWN")
-        self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten, PARENT: rewritten}), "16")["status"],
-                         "PASS")
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten, EVALUATOR: rewritten}),
+                             "16")["status"], "PASS")
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}, descriptor=None), "16")["status"], "UNKNOWN")
         self.assertIn("workflow changed by candidate; owner pin required", row(report, "16")["explanation"])
         failed = self.ci_report({1: ci_jobs(failed=("Secret hygiene",))}, workflows={SHA: rewritten})
         self.assertEqual(row(failed, "16")["status"], "UNKNOWN")  # an untrusted workflow's failure proves nothing either
         pin = {"version": "director-cli-release-descriptor/v1", "releases": [],
                "ci_workflow_sha256": hashlib.sha256(rewritten).hexdigest()}
-        with patch.object(sc, "cli_release_descriptor", return_value=pin):
-            self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten}), "16")["status"], "PASS")
-        with patch.object(sc, "cli_release_descriptor", return_value={**pin, "ci_workflow_sha256": "0" * 64}):
-            self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten}), "16")["status"], "UNKNOWN")
-        self.assertEqual(row(self.ci_report({1: ci_jobs()}), "16")["status"], "PASS")  # unchanged: main's ci.yml
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten}, descriptor=pin),
+                             "16")["status"], "PASS")
+        wrong = {**pin, "ci_workflow_sha256": "0" * 64, "evaluator_sha": EVALUATOR}  # a pin, when set, is the rule
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten, EVALUATOR: rewritten},
+                                            descriptor=wrong), "16")["status"], "UNKNOWN")
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}), "16")["status"], "PASS")  # the evaluator's ci.yml
         # The contents API's bytes must be the blob it names.
         forged = workflow_contents(TRUSTED_CI)
         forged["content"] = workflow_contents(rewritten)["content"]
@@ -4559,3 +4634,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

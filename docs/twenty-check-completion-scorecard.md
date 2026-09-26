@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]] -->
@@ -312,9 +313,9 @@ a container ID, never a name.
   `security_base_sha` (the check-11 descriptor shape), else `--security-base`.
   The pin must be a strict ancestor of the candidate (GitHub compare, GET only)
   and the `base..candidate` diff non-empty; no pin is UNKNOWN, "security base
-  not pinned". The merge base is not used: under the trusted-checkout rule the
-  candidate is on `main`, so its merge base is itself and the diff would be
-  empty. The completion plan pins the release acceptance scan to the
+  not pinned". The merge base is not used: it moves with the candidate (once
+  the candidate is on `main` it is the candidate itself and the diff would be
+  empty). The completion plan pins the release acceptance scan to the
   cumulative diff from `5394e64`. Check 16's replica base test (a `main`
   ancestor the candidate descends from) is unaffected.
 - 20: the `--paid-thread` readback, `--paid-rubric` and settled meter rows.
@@ -1041,15 +1042,20 @@ triggered a task inside the thread is not a trial. The qualification readback
 fills `elapsed_seconds` (and every other served value) before its single size
 measurement; nothing served changes afterwards.
 
-Operating rule: the trusted main checkout (added by the author of this
-change). `scripts/director-scorecard.py` grades only when its own checkout
-has no tracked changes, its HEAD is a commit on `github/main`, and that commit
-is the candidate SHA it grades and, once observed, the runtime SHA
-(`completion_scorecard.untrusted_checkout`). Otherwise every check is
-UNKNOWN, "scorecard not run from the trusted main checkout". The scorecard,
-the offline collector it loads and the rubric requirements are then main's
-code, never a candidate's. The live collection is skipped when the checkout
-itself fails the rule.
+Operating rule: the pinned evaluator revision (added by the author of this
+change). The evaluator must never be code the candidate controls. The owner's
+release descriptor (the check-11 shape, `director-cli-release-descriptor/v1`)
+carries `evaluator_sha`, `ci_workflow_sha256`, `security_base_sha` and the
+CLI releases. `scripts/director-scorecard.py` grades only when its own
+checkout is clean and its HEAD is `evaluator_sha`, which is a commit on
+`github/main` and an ancestor of (or equal to) the candidate
+(`completion_scorecard.untrusted_checkout`). The candidate is graded as data
+through `--candidate`; the scorecard, the offline collector it loads, the
+rubric requirements and every predicate come from the evaluator checkout.
+With no `evaluator_sha` pinned every check is UNKNOWN, "evaluator revision
+not pinned"; any other failure is UNKNOWN, "scorecard not run from the
+pinned evaluator checkout". The live collection is skipped when the checkout
+fails the rule.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
 in-image from the batch's assignment rows (assignment_id, sequence,
@@ -1079,9 +1085,24 @@ write lock, and the monitor's own probe gate): each reservation counts at the
 larger of its recorded actual charge (`record_charge`, never lowered; a probe
 the ledger did not reserve is recorded as its own row at a zero reservation)
 and its reservation, so a probe that cost more than its floor leaves no room
-for more work under the cap. Check 16's trusted workflow is the one before the
-candidate: the `ci.yml` at the candidate's first parent on `main`, or the
-owner's `ci_workflow_sha256`. Review actors compare as
+for more work under the cap. Every usage-check probe attempt of a ledger
+provider (gemini, grok, perplexity) is reserved through `reserve()` before
+dispatch, each under its own effect key, so probes count against the caps
+before they run; a refused reservation dispatches nothing, and a failed or
+zero-cost probe keeps its reservations (gemini and perplexity have no
+configured probe floor, so their probe reservations are zero-cost and count
+against the request cap until the charge is recorded). Check 16's trusted
+workflow is the owner's `ci_workflow_sha256` if pinned, otherwise the
+`ci.yml` at the pinned `evaluator_sha`; never the candidate's own history.
+Check 11 credits a lane only when both activation surfaces (app and
+runtime_adapter) classify as the same attested product. Check 15 is UNKNOWN
+when the collection crosses a UTC midnight or its accounting day is not the
+UTC day at the final cutoff, and its PASS is capped at the next rollover.
+Command cleanup spends only what remains of the command deadline. The
+qualification readback checks its deadline again after the final
+serialization, and `elapsed_seconds` includes serialization. Effect
+reservations carry their claim's task, owner and fence (compared in SQL,
+served as booleans only). Review actors compare as
 `unicodedata.normalize("NFKC", s).casefold()`, and an actor that is not
 already NFC is rejected.
 
@@ -1307,3 +1328,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]] -->

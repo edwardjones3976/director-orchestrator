@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
@@ -214,6 +215,9 @@ def readback_fixture():
                      "reserved_at": "2026-09-12T10:00:26+00:00", "execution_started_at": "2026-09-12T10:00:27+00:00",
                      # claim_effect_execution copies its claim's owner and fence (compared in SQL, booleans only)
                      "execution_owner_matches": True, "execution_fencing_matches": True,
+                     # the reservation's task, owner and fence are its claim's (compared in SQL, booleans only)
+                     "reservation_task_matches": True, "reservation_owner_matches": True,
+                     "reservation_fencing_matches": True,
                      "remote_system": "slack", "remote_identifier": FINAL_TS, "bound_at": "2026-09-12T10:00:28+00:00",
                      "terminal_disposition": "COMPLETED", "terminal_evidence_digest": "sha256:" + "c" * 64,
                      "terminal_recorded_at": "2026-09-12T10:00:29+00:00"}],
@@ -1686,3 +1690,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

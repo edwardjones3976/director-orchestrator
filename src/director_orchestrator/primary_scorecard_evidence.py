@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -372,6 +373,10 @@ def validate_effects(effects, task_id=None):
         if task_id is not None and any(row.get(key) not in (None, task_id)
                                        for key in ("execution_task_id", "binding_task_id", "terminal_task_id")):
             return "an effect's execution, binding or terminal row belongs to another task"
+        # Review 4111508067: a reservation carries its claim's task, owner and fence (compared in SQL).
+        if any(row.get(key) is not True for key in ("reservation_task_matches", "reservation_owner_matches",
+                                                     "reservation_fencing_matches")):
+            return "an effect reservation does not carry its claim's task, owner or fence"
         # Review 4111174703: an execution marker carries its claim's owner and fence (compared in SQL).
         if row.get("execution_started_at") and (row.get("execution_owner_matches") is not True
                                                 or row.get("execution_fencing_matches") is not True):
@@ -1313,7 +1318,8 @@ def cli_release_descriptor():
          "releases": [{"provider": "claude", "product": "anthropic-claude",
                        "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...],
          "ci_workflow_sha256": "<optional: 64 lowercase hex, the owner-pinned .github/workflows/ci.yml content>",
-         "security_base_sha": "<optional: 40 lowercase hex, check 18's reviewed security base commit>"}
+         "security_base_sha": "<optional: 40 lowercase hex, check 18's reviewed security base commit>",
+         "evaluator_sha": "<40 lowercase hex: the scorecard revision that grades; required to grade at all>"}
 
     ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
     current main's ci.yml is trusted.
@@ -1326,6 +1332,16 @@ def ci_workflow_pin(descriptor):
     value = descriptor.get("ci_workflow_sha256") if isinstance(descriptor, dict) else None
     if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
             or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)):
+        return None
+    return value
+
+
+def evaluator_pin(descriptor):
+    """The owner-pinned evaluator revision (``evaluator_sha``, 40 lowercase hex): the only checkout the scorecard
+    grades from, so the collector, rubric requirements and every predicate are never the candidate's own code."""
+    value = descriptor.get("evaluator_sha") if isinstance(descriptor, dict) else None
+    if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
+            or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)):
         return None
     return value
 
@@ -1464,9 +1480,11 @@ def activation_capture_report(settings, identity, manifest) -> dict:
                 executable_sha256=None, descriptor=cli_release_descriptor()))
     bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
-        surface = lane["surfaces"].get("runtime_adapter")
-        lane["product"] = surface.get("product") if isinstance(surface, dict) and surface.get("capture_verified") is True \
-            else None
+        # Both activation surfaces must classify as the same attested product (review 4111508065): a lane whose app
+        # capture names another product, or none, has no product.
+        products = [surface.get("product") if isinstance(surface, dict) and surface.get("capture_verified") is True
+                    else None for surface in (lane["surfaces"].get("app"), lane["surfaces"].get("runtime_adapter"))]
+        lane["product"] = products[0] if products[0] is not None and products[0] == products[1] else None
         # The persisted insertion time, not the caller-supplied observed_at, says when each surface gated anything;
         # provider_ready needs both surfaces, so both are reported.
         for name, each in lane["surfaces"].items():
@@ -1515,3 +1533,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
@@ -474,6 +475,55 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 request_limit=10, budget_usd=1.0)
             accounting = monitor.health()["daily_accounting"]["grok"]
             self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
+
+    async def test_every_probe_attempt_is_reserved_before_dispatch(self):
+        """Review 4111508051: every attempt a usage check may make is reserved in the spend ledger, each under its
+        own effect key, through reserve() BEFORE dispatch; a refused reservation dispatches nothing, and a failed
+        or zero-cost probe keeps its reservations."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            ledger = ProviderDailySpendLedger(database)
+            seen = []
+
+            class CountingProbe(QuotaFailingGeminiProbe):
+                async def usage_check(self, prompt: str) -> ProviderRun:
+                    seen.append(ledger.exposure(ProviderName.GEMINI)[0])  # reservations held at dispatch
+                    return await super().usage_check(prompt)
+
+            adapter = CountingProbe()
+            settings = replace(
+                Settings(),
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                gemini_usage_max_attempts=3,
+                gemini_daily_request_limit=4,
+                sqlite_path=database,
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: adapter})
+            records = await monitor.run_once(force=True)
+            self.assertEqual(seen, [3])  # all three attempts reserved before the first dispatch
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], 3)  # a failed probe keeps its reservations
+            self.assertEqual(monitor.health()["daily_accounting"]["gemini"]["provider_request_count"], 0)
+        # A ledger already at its request cap refuses the probe's reservation: nothing is dispatched.
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            full = ProviderDailySpendLedger(database)
+            for index in range(4):
+                full.reserve(provider=ProviderName.GEMINI, effect_key=str(index + 1) * 64, estimated_cost_usd=0.0,
+                             request_limit=4, budget_usd=2.0)
+            adapter = QuotaFailingGeminiProbe()
+            monitor = UsageMonitor(replace(settings, sqlite_path=database), TaskStore(database),
+                                   adapters={ProviderName.GEMINI: adapter})
+            records = await monitor.run_once(force=True)
+            self.assertEqual(adapter.calls, 0)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertIn("ProviderDailyLimitExceeded", records[0].error or "")
 
     async def test_exposure_reconciles_each_reservation_with_its_actual_charge(self):
         """Review 4111174705: a $0.50 probe reserved at a $0.01 floor beside a $0.75 work reservation is $1.25 of
@@ -1193,3 +1243,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

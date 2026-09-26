@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
@@ -21,7 +22,8 @@ _LIVE_ONLY = ("--deployment, --channel, --github, --ledger, --security-scan, --d
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate-sha", required=True, help="Exact candidate; distinct from the running image")
+    parser.add_argument("--candidate", "--candidate-sha", dest="candidate_sha", required=True,
+                        help="Exact candidate commit, graded as data from the pinned evaluator checkout")
     parser.add_argument("--evidence-dir", type=Path, help="Explicit directory of unverified reference files; not recursively scanned")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--live", action="store_true", help="Inspect the selected --deployment once; there is no default stack")
@@ -56,7 +58,7 @@ def main() -> int:
             if not separator or kind in drills:
                 parser.error("--drill-thread takes one KIND=THREAD_TS value per drill kind")
             drills[kind] = thread
-        # Operating rule: grade only from the trusted main checkout (completion_scorecard.untrusted_checkout).
+        # Operating rule: grade only from the pinned evaluator checkout (completion_scorecard.untrusted_checkout).
         refused = untrusted_checkout(args.candidate_sha)
         observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel, github=args.github,
                                ledger_path=args.ledger, gateway=args.gateway, security_scan_id=args.security_scan,
@@ -67,7 +69,6 @@ def main() -> int:
         runtime = next((item for item in observations if item.runtime_sha and item.image_id), None)
         report = score(args.candidate_sha, observations, evidence_dir=args.evidence_dir,
                        runtime_sha=runtime.runtime_sha if runtime else None, image_id=runtime.image_id if runtime else None)
-        refused = refused or (untrusted_checkout(args.candidate_sha, runtime.runtime_sha) if runtime else None)
         if refused:
             report = refuse_untrusted(report, refused)
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -93,3 +94,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

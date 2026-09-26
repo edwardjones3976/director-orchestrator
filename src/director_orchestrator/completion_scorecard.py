@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
@@ -101,7 +102,7 @@ from .process_isolation import ProcessContainmentError, launch_contained_process
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    ci_workflow_pin, cli_release_descriptor, security_base_pin, decision_follows_prompt, delivery_settled as _delivery_settled,
+    ci_workflow_pin, cli_release_descriptor, evaluator_pin, security_base_pin, decision_follows_prompt, delivery_settled as _delivery_settled,
     lifecycle_error, missing_result_packets,
     ordered as _ordered,
     required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
@@ -278,11 +279,14 @@ def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
         except subprocess.TimeoutExpired:
             timed_out = True
     finally:
+        # Cleanup spends only what remains of the command's own deadline (review 4111508057): with nothing left the
+        # tree is killed at once (a zero grace) and reaping is abandoned to a daemon thread, never waited on.
         try:
-            stop_contained_process(process, guard, grace_seconds=5.0)
+            stop_contained_process(process, guard, grace_seconds=min(5.0, max(0.0, _left(end))))
             contained = True
         except ProcessContainmentError:
             contained = False
+            threading.Thread(target=process.wait, daemon=True).start()
         for reader in readers:
             reader.join(timeout=max(0.0, end - time.monotonic()))
         drained = not any(reader.is_alive() for reader in readers)
@@ -1263,7 +1267,11 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
     products, transports, unbound = {}, {}, []
     for lane in used:
         value = lanes.get(lane) if isinstance(lanes.get(lane), dict) else {}
-        products[lane] = value.get("product")
+        # The lane's product only when both activation surfaces classified as it (review 4111508065).
+        classified = [surface.get("product") if isinstance(surface, dict) else None
+                      for surface in ((value.get("surfaces") or {}).get("app"),
+                                      (value.get("surfaces") or {}).get("runtime_adapter"))]
+        products[lane] = value.get("product") if classified == [value.get("product")] * 2 else None
         times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
         transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
         # provider_ready needs both the app and the runtime-adapter surface: each must have verified, been
@@ -2520,6 +2528,12 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                 raise ValueError("malformed enrolled budget row")
             if row["day_held_microusd"] > row["daily_limit_microusd"]:
                 over.append("enrolled daily budget")
+    # Review 4111508070: accounting for one UTC day grades only a collection inside that day. A collection that
+    # crosses midnight, or whose final cutoff is on another day, is UNKNOWN; a PASS never outlives the rollover.
+    started_at, cutoff = runtime.collected_at, runtime.until() or at
+    same_day = (dated and started_at is not None and started_at.astimezone(timezone.utc).date().isoformat() == day
+                and cutoff.astimezone(timezone.utc).date().isoformat() == day)
+    rollover = (datetime.fromisoformat(day).replace(tzinfo=timezone.utc) + timedelta(days=1)) if dated else None
     facts = {"usage_monitor_providers": sorted(accounting) if monitored else None, "over_cap": over,
              "accounting_day": day if dated else None,
              "unknown_cost_providers": unpriced,
@@ -2541,9 +2555,13 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         return _observation("15", None, "A budget row is unsigned, fails the owner-signed budget contract, or a charged "
                             "attempt does not join the signed budget of its own grant and provider.",
                             source, facts, at, **runtime.binding)
+    if not same_day:
+        return _observation("15", None, "The collection crosses a UTC midnight, or its accounting day is not the UTC "
+                            "day at the final cutoff.", source, facts, at, **runtime.binding)
     if monitored and isinstance(budgets, list) and budgets and cost is not None:
         return _observation("15", True, "Enrolled signed daily caps hold, usage-monitor accounting is within budget and the "
-                            "paid task's actual charges are settled request-correlated meter rows.", source, facts, at, **runtime.binding)
+                            "paid task's actual charges are settled request-correlated meter rows.", source, facts, at, **runtime.binding,
+                            valid_until=rollover - FRESH_FOR)
     return _observation("15", None, "Requires the paid task's enrolled budgets, usage-monitor accounting and settled "
                         "request-correlated meter rows; unknown cost is not zero.", source, facts, at, **runtime.binding)
 
@@ -2861,27 +2879,23 @@ def _workflow_blob(ref: str) -> bytes:
     return content
 
 
-def _first_parent(sha: str) -> str:
-    """The commit's first parent (GitHub, GET only): for a candidate on main, main before it landed."""
-    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/commits/{sha}", "--jq", "{parent: .parents[0].sha}"])
-    parent = value.get("parent") if isinstance(value, dict) else None
-    return _sha(parent)
-
-
 def _ci_workflow_trust(candidate_sha: str) -> tuple[bool, dict[str, Any]]:
     """Check 16's jobs prove anything only if the workflow that ran them is trusted: the ci.yml at the candidate
     (runs are listed at that exact head_sha) must equal the ci.yml on current main, or match the owner's pin
     (release descriptor ``ci_workflow_sha256``). A candidate that rewrote ci.yml into no-op jobs with the required
     names would otherwise pass."""
-    # Under the trusted-checkout rule the candidate IS main, so comparing with current main proves nothing (review
-    # 4111357780): the trusted definition is the one before the candidate, at its first parent on main.
+    # The trusted definition is the owner's ci_workflow_sha256, else the ci.yml at the pinned evaluator revision
+    # (review 4111508075/4111508073), never anything the candidate chose.
     ran = _workflow_blob(candidate_sha)
     digest = hashlib.sha256(ran).hexdigest()
-    pin = ci_workflow_pin(cli_release_descriptor())
-    pinned = pin is not None and hmac.compare_digest(pin, digest)
-    unchanged = ran == _workflow_blob(_first_parent(candidate_sha))
-    return unchanged or pinned, {"ci_workflow_sha256": digest, "matches_first_parent": unchanged,
-                                 "owner_pin_matches": pinned}
+    descriptor = cli_release_descriptor()
+    pin = ci_workflow_pin(descriptor)
+    evaluator = evaluator_pin(descriptor)
+    if pin is not None:
+        trusted = hmac.compare_digest(pin, digest)
+    else:
+        trusted = evaluator is not None and ran == _workflow_blob(evaluator)
+    return trusted, {"ci_workflow_sha256": digest, "owner_pin": pin is not None, "evaluator_sha": evaluator}
 
 
 def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | None = None) -> Observation:
@@ -2937,7 +2951,7 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
     trusted, workflow = _ci_workflow_trust(candidate_sha)
     if not trusted:
         return _observation("16", None, "workflow changed by candidate; owner pin required: the ci.yml at this head "
-                            "is not main's and matches no owner-pinned ci_workflow_sha256.",
+                            "is neither the owner-pinned ci_workflow_sha256 nor the pinned evaluator revision's.",
                             source, {"workflow": workflow}, at, candidate_sha=candidate_sha)
     if row.status == WitnessStatus.MATCH:
         return _observation("16", True, "Existing Witness Ledger CI oracle: every required ci.yml job executed steps at this "
@@ -3235,7 +3249,9 @@ def _finalize(observations: list[Observation], finished: datetime, *, live: bool
     for item in observations:
         stamp = min(item._made, finished) if live and isinstance(item._made, datetime) else finished
         item = replace(item, observed_at=stamp, expires_at=stamp + FRESH_FOR)
-        if item.passed is True and item.valid_until is not None and stamp > item.valid_until:
+        # Time-limited evidence must hold through the collection's FINAL cutoff (not only its own stamp): check 12's
+        # capture expiries, check 15's UTC-day rollover.
+        if item.passed is True and item.valid_until is not None and max(stamp, finished) > item.valid_until:
             item = replace(item, passed=None, explanation="Time-limited evidence does not stay valid FRESH_FOR past "
                            "the collection's final cutoff: " + item.explanation)
         out.append(item)
@@ -3478,13 +3494,18 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
 
-TRUSTED_CHECKOUT_REFUSAL = "scorecard not run from the trusted main checkout"
+TRUSTED_CHECKOUT_REFUSAL = "scorecard not run from the pinned evaluator checkout"
 
 
-def untrusted_checkout(candidate_sha: str, runtime_sha: str | None = None, root: Path | None = None) -> str | None:
-    """The operating rule (added by the author, not an owner ruling) that makes the scorecard's own code a trusted
-    evaluator: its checkout has no tracked changes, its HEAD is a commit on github/main, and that commit is the
-    candidate (and, when one is observed, the runtime) it grades. None when it holds, else why not."""
+def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | None:
+    """The operating rule (added by the author of this change, not an owner ruling) that makes the scorecard a
+    trusted evaluator: it grades only from the OWNER-PINNED evaluator revision (the release descriptor's
+    ``evaluator_sha``), never from code the candidate controls. Its checkout has no tracked changes and its HEAD is
+    that revision, which is a commit on github/main and an ancestor of (or equal to) the candidate graded as data.
+    None when it holds, else why not."""
+    pinned = evaluator_pin(cli_release_descriptor())
+    if pinned is None:
+        return "evaluator revision not pinned"
     root = root or Path(__file__).resolve().parents[2]
 
     def git(*arguments: str) -> str:
@@ -3493,13 +3514,15 @@ def untrusted_checkout(candidate_sha: str, runtime_sha: str | None = None, root:
         if git("status", "--porcelain", "--untracked-files=no"):
             return "its checkout has uncommitted changes"
         head = git("rev-parse", "HEAD")
-        git("merge-base", "--is-ancestor", head, "github/main")  # a nonzero exit raises: HEAD is not on main
+        if head != pinned:
+            return "its HEAD is not the pinned evaluator revision"
+        git("merge-base", "--is-ancestor", pinned, "github/main")  # a nonzero exit raises: not on main
     except (OSError, ValueError, subprocess.SubprocessError):
-        return "its checkout could not be verified as a commit on github/main"
-    if head != candidate_sha:
-        return "its HEAD is not the graded candidate"
-    if runtime_sha is not None and head != runtime_sha:
-        return "its HEAD is not the graded runtime"
+        return "its checkout could not be verified as the pinned evaluator revision on github/main"
+    try:
+        git("merge-base", "--is-ancestor", pinned, candidate_sha)  # an ancestor of, or equal to, the candidate
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "the pinned evaluator revision is not an ancestor of the candidate"
     return None
 
 
@@ -3601,3 +3624,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]

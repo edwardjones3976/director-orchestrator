@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
@@ -145,9 +146,15 @@ def normalize_reported_cost(usage: dict[str, Any]) -> float | None:
     return None
 
 
-def _probe_key(cycle_id: str, provider: str) -> str:
-    """The spend-ledger effect key of one usage-check cycle's probe (run_once reserves it for grok)."""
-    return hashlib.sha256(f"usage:{cycle_id}:{provider}".encode("utf-8")).hexdigest()
+# The most attempts one usage check may make (GeminiAdapter.usage_check bounds its own at five).
+_PROBE_ATTEMPTS_MAX = 5
+
+
+def _probe_key(cycle_id: str, provider: str, attempt: int = 1) -> str:
+    """The spend-ledger effect key of one usage-check probe attempt (run_once reserves every attempt before
+    dispatch). The first attempt keeps the original per-cycle key."""
+    suffix = "" if attempt == 1 else f":{attempt}"
+    return hashlib.sha256(f"usage:{cycle_id}:{provider}{suffix}".encode("utf-8")).hexdigest()
 
 
 class UsageMonitor:
@@ -261,7 +268,8 @@ class UsageMonitor:
             return None
         if name not in ProviderDailySpendLedger._SUPPORTED:
             return None
-        probes = {_probe_key(record.cycle_id, provider) for record in records}
+        probes = {_probe_key(record.cycle_id, provider, attempt)
+                  for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
         return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now))
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
@@ -280,6 +288,37 @@ class UsageMonitor:
         keys = {key for key, _ in self.provider_spend.reservations(name, now=now)}
         _, exposure = self.provider_spend.exposure(name, now=now)
         return round(exposure + sum(cost for key, cost in actual.items() if key not in keys), 8)
+
+    def _reserve_probe_attempts(self, cycle_id: str, provider: str, now: datetime) -> int | None:
+        """Reserve every attempt this usage check may make, each under its own effect key, through the ledger's
+        atomic reserve() BEFORE any dispatch (review 4111508051): the probe counts against the request and cost caps
+        before it runs. A refused reservation raises, so nothing is dispatched; reservations already made are kept
+        (never released, like every reservation). Returns the attempt bound handed to the adapter, or None for a
+        provider the ledger does not account (no cap exists for it)."""
+        limits = {
+            "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd, 0.0),
+            "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd,
+                     self.settings.grok_request_cost_floor_usd),
+            "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd, 0.0),
+        }
+        if provider not in limits:
+            return None
+        request_limit, budget_usd, floor_usd = limits[provider]
+        attempts = 1
+        if provider == "gemini":
+            remaining = self._supplemental_remaining_requests(provider, now)
+            attempts = max(1, min(self.settings.gemini_usage_max_attempts, _PROBE_ATTEMPTS_MAX,
+                                  remaining if isinstance(remaining, int) else _PROBE_ATTEMPTS_MAX))
+        for attempt in range(1, attempts + 1):
+            self.provider_spend.reserve(
+                provider=ProviderName(provider),
+                effect_key=_probe_key(cycle_id, provider, attempt),
+                estimated_cost_usd=floor_usd,
+                request_limit=request_limit,
+                budget_usd=budget_usd,
+                now=now,
+            )
+        return attempts
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
         if provider not in {"gemini", "grok", "perplexity"}:
@@ -612,22 +651,8 @@ class UsageMonitor:
                         )
                     else:
                         try:
-                            if provider == "grok":
-                                effect_key = _probe_key(cycle_id, provider)
-                                self.provider_spend.reserve(
-                                    provider=ProviderName.GROK,
-                                    effect_key=effect_key,
-                                    estimated_cost_usd=self.settings.grok_request_cost_floor_usd,
-                                    request_limit=self.settings.grok_daily_request_limit,
-                                    budget_usd=self.settings.grok_daily_budget_usd,
-                                    now=now,
-                                )
-                            run = await self._prompt(
-                                provider,
-                                remaining_requests=self._supplemental_remaining_requests(
-                                    provider, now
-                                ),
-                            )
+                            attempts = self._reserve_probe_attempts(cycle_id, provider, now)
+                            run = await self._prompt(provider, remaining_requests=attempts)
                             record = self._record_from_run(cycle_id, provider, run)
                         except Exception as exc:
                             record = UsageCheckRecord(
@@ -755,3 +780,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
