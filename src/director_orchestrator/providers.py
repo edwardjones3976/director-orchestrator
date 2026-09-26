@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
@@ -204,19 +205,19 @@ class ProviderDailySpendLedger:
             ).fetchone()
         return int(count), float(reserved)
 
-    def effect_keys(self, provider: ProviderName, *, now: datetime | None = None) -> list[str]:
-        """The day's reservation effect keys (work and usage-check probes alike), for telling them apart."""
+    def reservations(self, provider: ProviderName, *, now: datetime | None = None) -> list[tuple[str, float]]:
+        """The day's reservations as (effect key, estimated cost), work and usage-check probes alike."""
 
         if provider not in self._SUPPORTED:
-            raise ValueError("daily spend keys apply only to supplemental providers")
+            raise ValueError("daily spend reservations apply only to supplemental providers")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT effect_key FROM provider_daily_spend_reservations
+                """SELECT effect_key, estimated_cost_usd FROM provider_daily_spend_reservations
                 WHERE provider = ? AND utc_day = ?""",
                 (provider.value, observed_at.date().isoformat()),
             ).fetchall()
-        return [str(row[0]) for row in rows]
+        return [(str(row[0]), float(row[1])) for row in rows]
 
 
 def _response_error_blob(response: httpx.Response) -> str:
@@ -1576,3 +1577,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

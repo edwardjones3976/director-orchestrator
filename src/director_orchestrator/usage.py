@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
@@ -143,6 +144,11 @@ def normalize_reported_cost(usage: dict[str, Any]) -> float | None:
     return None
 
 
+def _probe_key(cycle_id: str, provider: str) -> str:
+    """The spend-ledger effect key of one usage-check cycle's probe (run_once reserves it for grok)."""
+    return hashlib.sha256(f"usage:{cycle_id}:{provider}".encode("utf-8")).hexdigest()
+
+
 class UsageMonitor:
     def __init__(
         self,
@@ -232,6 +238,7 @@ class UsageMonitor:
             # (work) requests. request_count stays as it was for the limits above.
             "usage_check_count": sum(record.attempt_count for record in attempted),
             "provider_request_count": self._provider_request_count(provider, records, now),
+            "exposure_usd": self._exposure_usd(provider, attempted, now),
             "retry_count": retry_count,
             "quota_failure_count": quota_failures,
             "total_tokens": total_tokens,
@@ -253,9 +260,25 @@ class UsageMonitor:
             return None
         if name not in ProviderDailySpendLedger._SUPPORTED:
             return None
-        probes = {hashlib.sha256(f"usage:{record.cycle_id}:{provider}".encode("utf-8")).hexdigest()
-                  for record in records}
-        return sum(key not in probes for key in self.provider_spend.effect_keys(name, now=now))
+        probes = {_probe_key(record.cycle_id, provider) for record in records}
+        return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now))
+
+    def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
+        """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts
+        at the larger of its actual charge (a probe's reported cost) and its reservation; a work reservation with no
+        actual charge yet counts at its reservation; a probe the ledger does not reserve counts at its reported cost.
+        max(total reported, total reserved) would understate a probe that cost more than its floor beside work."""
+        actual = {_probe_key(record.cycle_id, provider): record.reported_cost_usd or 0.0 for record in attempted}
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            name = None
+        reserved = (self.provider_spend.reservations(name, now=now)
+                    if name in ProviderDailySpendLedger._SUPPORTED else [])
+        keys = {key for key, _ in reserved}
+        total = sum(max(actual.get(key, 0.0), cost) for key, cost in reserved)
+        total += sum(cost for key, cost in actual.items() if key not in keys)
+        return round(total, 8)
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
         if provider not in {"gemini", "grok", "perplexity"}:
@@ -592,9 +615,7 @@ class UsageMonitor:
                     else:
                         try:
                             if provider == "grok":
-                                effect_key = hashlib.sha256(
-                                    f"usage:{cycle_id}:{provider}".encode("utf-8")
-                                ).hexdigest()
+                                effect_key = _probe_key(cycle_id, provider)
                                 self.provider_spend.reserve(
                                     provider=ProviderName.GROK,
                                     effect_key=effect_key,
@@ -724,3 +745,4 @@ class UsageMonitor:
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

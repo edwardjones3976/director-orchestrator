@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -1945,7 +1946,11 @@ _QUALIFICATION_SECTIONS = {
                t.evidence_digest AS terminal_evidence_digest,
                t.recorded_at AS terminal_recorded_at,
                e.task_id AS execution_task_id, b.task_id AS binding_task_id,
-               t.task_id AS terminal_task_id""",
+               t.task_id AS terminal_task_id,
+               CASE WHEN e.reservation_key IS NULL THEN NULL
+                    ELSE e.owner_token = c.owner_token AND e.owner_token = r.owner_token END AS execution_owner_matches,
+               CASE WHEN e.reservation_key IS NULL THEN NULL
+                    ELSE e.fencing_generation = c.fencing_generation END AS execution_fencing_matches""",
         # Children join by their reservation (or claim) alone, and carry their own task_id: a child pointing at
         # this reservation from another task is served, then refused, never silently dropped (review 4110798521).
         """{schema}.director_primary_effect_reservation r
@@ -1954,7 +1959,9 @@ _QUALIFICATION_SECTIONS = {
         LEFT JOIN {schema}.director_primary_remote_binding b
           ON b.reservation_key = r.reservation_key
         LEFT JOIN {schema}.director_primary_terminal_evidence t
-          ON t.claim_key = r.claim_key""",
+          ON t.claim_key = r.claim_key
+        LEFT JOIN {schema}.director_primary_claim c
+          ON c.claim_key = r.claim_key""",
         "r.task_id", "r.reserved_at, r.reservation_key"),
     "slack_deliveries": (
         """notification_key, projection_digest, client_msg_id, state,
@@ -6092,3 +6099,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

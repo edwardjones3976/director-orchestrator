@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]] -->
@@ -306,10 +307,15 @@ a container ID, never a name.
   an incomplete listing is UNKNOWN, so the receipt is never admitted on a
   partial read.
 - 18: the native Security index for `--security-scan`. The sealed scan's base
-  must equal the candidate's merge base with `main` (GitHub compare, GET only);
-  any other base, or an unreadable merge base, is UNKNOWN, because a convenient
-  base can drop the candidate's own changes from the covered diff. A candidate
-  whose merge base moves (for example after merging `main`) needs a new scan.
+  must equal the pinned reviewed base: the owner release descriptor's
+  `security_base_sha` (the check-11 descriptor shape), else `--security-base`.
+  The pin must be a strict ancestor of the candidate (GitHub compare, GET only)
+  and the `base..candidate` diff non-empty; no pin is UNKNOWN, "security base
+  not pinned". The merge base is not used: under the trusted-checkout rule the
+  candidate is on `main`, so its merge base is itself and the diff would be
+  empty. The completion plan pins the release acceptance scan to the
+  cumulative diff from `5394e64`. Check 16's replica base test (a `main`
+  ancestor the candidate descends from) is unaffected.
 - 20: the `--paid-thread` readback, `--paid-rubric` and settled meter rows.
 
 ### Drill-thread kinds
@@ -1066,6 +1072,18 @@ monitor cannot see). `request_count` keeps its old meaning for the monitor's
 own limits. An accounting entry without `provider_request_count` is not
 monitored accounting.
 
+Check 15 compares each monitor cap with `exposure_usd`, which `usage.py`
+reconciles per reservation: each spend-ledger reservation at the larger of
+its actual charge (a probe's reported cost) and its reservation, work
+reservations with no actual charge at their reservation, and unreserved
+probes at their reported cost (a $0.50 probe at a $0.01 floor beside $0.75
+of work is $1.25). An effect's execution marker must carry its claim's owner
+and fence and the reservation's owner, compared in SQL and served only as
+`execution_owner_matches` and `execution_fencing_matches` (the token is never
+served). Terminal evidence for a claim no effect reservation holds is
+counted (`terminal_evidence_without_reservation`, 07) and in the task's
+consistency entry (20).
+
 A delivery's `last_error` follows `PrimarySlackDelivery` per state
 (`delivery_error_contract`): none before a claim (PENDING, SUPPRESSED,
 SUPERSEDED, POSTING) and none once DELIVERED; REFUSED always `slack_refused`
@@ -1274,3 +1292,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]] -->

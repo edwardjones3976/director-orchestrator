@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
@@ -30,6 +31,7 @@ def main() -> int:
     parser.add_argument("--github", action="store_true", help="Also verify CI through authenticated gh; no provider calls")
     parser.add_argument("--ledger", type=Path, help="Reopen the actual workload journal read-only; requires --live")
     parser.add_argument("--security-scan", help="Verify this scan ID through the native Security workbench index; requires --live")
+    parser.add_argument("--security-base", help="Reviewed base commit for check 18 when the release descriptor pins none")
     parser.add_argument("--drill-thread", action="append", default=[], metavar="KIND=THREAD_TS",
                         help="Drill thread for checks 03/09: refusal-4xx, reserved-5xx, transport-failure, duplicate-input or "
                              "ambiguous-post; repeat per kind")
@@ -58,6 +60,7 @@ def main() -> int:
         refused = untrusted_checkout(args.candidate_sha)
         observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel, github=args.github,
                                ledger_path=args.ledger, gateway=args.gateway, security_scan_id=args.security_scan,
+                               security_base=args.security_base,
                                drill_threads=drills, approval_task=args.approval_task, trials=args.trial or None,
                                rubric_path=args.rubric, paid_thread=args.paid_thread, paid_rubric_path=args.paid_rubric,
                                ci_replica_receipt=args.ci_replica_receipt) if args.live else []
@@ -89,3 +92,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

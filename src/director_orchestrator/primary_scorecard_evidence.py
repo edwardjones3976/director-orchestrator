@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
@@ -63,7 +64,7 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
                "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
-               "batches_without_assignments", "effect_children_cross_task")
+               "batches_without_assignments", "effect_children_cross_task", "terminal_evidence_without_reservation")
 
 # A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
 # with a pending approval (the predicate Slack delivery enqueues approvals by):
@@ -140,7 +141,11 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
   + (SELECT count(*) FROM {s}.director_primary_remote_binding b JOIN {s}.director_primary_effect_reservation r
      USING (reservation_key) WHERE b.task_id<>r.task_id)
   + (SELECT count(*) FROM {s}.director_primary_terminal_evidence t JOIN {s}.director_primary_effect_reservation r
-     ON r.claim_key=t.claim_key WHERE t.task_id<>r.task_id)) AS effect_children_cross_task"""
+     ON r.claim_key=t.claim_key WHERE t.task_id<>r.task_id)) AS effect_children_cross_task,
+ -- Terminal evidence for a claim no effect reservation holds (the effects section's join would drop it).
+ (SELECT count(*) FROM {s}.director_primary_terminal_evidence t WHERE NOT EXISTS
+    (SELECT 1 FROM {s}.director_primary_effect_reservation r WHERE r.claim_key=t.claim_key))
+    AS terminal_evidence_without_reservation"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.grant_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,u.observed_tokens,u.document AS usage_document,
@@ -367,6 +372,10 @@ def validate_effects(effects, task_id=None):
         if task_id is not None and any(row.get(key) not in (None, task_id)
                                        for key in ("execution_task_id", "binding_task_id", "terminal_task_id")):
             return "an effect's execution, binding or terminal row belongs to another task"
+        # Review 4111174703: an execution marker carries its claim's owner and fence (compared in SQL).
+        if row.get("execution_started_at") and (row.get("execution_owner_matches") is not True
+                                                or row.get("execution_fencing_matches") is not True):
+            return "an effect's execution marker does not carry its claim's owner or fence"
         if (not _DIGEST.fullmatch(str(row.get("reservation_key", ""))) or not _DIGEST.fullmatch(str(row.get("claim_key", "")))
                 or not _DIGEST.fullmatch(str(row.get("effect_key_digest", "")))
                 or not _DIGEST.fullmatch(str(row.get("effect_attempt_digest", "")))
@@ -1223,6 +1232,11 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 work_packets = packet_rows(connection, schema, "work", tasks=tasks)
                 registered = {row["task_id"]: registered_plan_error(row)
                               for row in plan_rows(connection, schema, tasks=tasks)}
+                orphan_terminals = {row["task_id"]: int(row["n"]) for row in connection.execute(
+                    f"SELECT t.task_id, count(*) AS n FROM {schema}.director_primary_terminal_evidence t"
+                    f" WHERE t.task_id = ANY(%(tasks)s) AND NOT EXISTS (SELECT 1 FROM"
+                    f" {schema}.director_primary_effect_reservation r WHERE r.claim_key = t.claim_key)"
+                    " GROUP BY t.task_id", {"tasks": tasks}).fetchall()}
                 # Which effect each external-effect approval authorized (the graph's effect approval binding).
                 approval_bindings = [_row(r) for r in connection.execute(
                     f"SELECT task_id, effect_key_digest, approval_request_digest FROM "
@@ -1241,6 +1255,8 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                                          # None when the plan recomputes, else the disagreement; absent: no batch.
                                          "registered_plan": ({"error": registered[task_id]}
                                                              if task_id in registered else None),
+                                         # Terminal evidence whose claim no reservation holds (review 4111174699).
+                                         "terminal_evidence_without_reservation": orphan_terminals.get(task_id, 0),
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
                                          "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
@@ -1296,7 +1312,8 @@ def cli_release_descriptor():
         {"version": "director-cli-release-descriptor/v1",
          "releases": [{"provider": "claude", "product": "anthropic-claude",
                        "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...],
-         "ci_workflow_sha256": "<optional: 64 lowercase hex, the owner-pinned .github/workflows/ci.yml content>"}
+         "ci_workflow_sha256": "<optional: 64 lowercase hex, the owner-pinned .github/workflows/ci.yml content>",
+         "security_base_sha": "<optional: 40 lowercase hex, check 18's reviewed security base commit>"}
 
     ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
     current main's ci.yml is trusted.
@@ -1309,6 +1326,16 @@ def ci_workflow_pin(descriptor):
     value = descriptor.get("ci_workflow_sha256") if isinstance(descriptor, dict) else None
     if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
             or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)):
+        return None
+    return value
+
+
+def security_base_pin(descriptor):
+    """The owner-pinned reviewed base commit for check 18's cumulative security diff (``security_base_sha``, 40
+    lowercase hex), or None."""
+    value = descriptor.get("security_base_sha") if isinstance(descriptor, dict) else None
+    if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
+            or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)):
         return None
     return value
 
@@ -1487,3 +1514,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

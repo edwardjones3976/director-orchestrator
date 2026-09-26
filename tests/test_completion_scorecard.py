@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
@@ -177,6 +178,8 @@ def accounting(**values):
            "reported_cost_usd": 0.0, "cost_visibility_complete": True, "daily_request_limit": None,
            "daily_budget_usd": None, "reserved_cost_usd": None}
     row.update(values)
+    # usage.py _exposure_usd reconciles per reservation; for one reservation (or none) it is the larger total.
+    row.setdefault("exposure_usd", max(row["reported_cost_usd"] or 0, row["reserved_cost_usd"] or 0))
     return row
 
 
@@ -300,7 +303,8 @@ def consistency_fixture():
                                                     "document_digest": "sha256:" + "c" * 64, "verified": True,
                                                     "recorded_at": iso(1789210000 + 20000 + 6.5)}],
                                   # registered_plan_error: the batch digest recomputed from the assignment rows.
-                                  "registered_plan": {"error": None}},
+                                  "registered_plan": {"error": None},
+                                  "terminal_evidence_without_reservation": 0},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
                                       "approval_receipts": [approval_receipt()]}}}
 
@@ -1056,16 +1060,26 @@ class CompletionScorecardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             scan_id, index, root = native_security_fixture(folder)
             with patch.object(sc, "_native_security_index", return_value=index), patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
-                    patch.object(sc, "_merge_base", return_value=OTHER):
-                observation = sc._security_observation(scan_id, SHA, NOW)
+                    patch.object(sc, "_compare_status", return_value="ahead"):
+                observation = sc._security_observation(scan_id, SHA, NOW, OTHER)
                 self.assertEqual(sc.score(SHA, [observation], now=NOW)["checks"][17]["status"], "PASS")
-                # A base other than the candidate's merge base with main can omit its changes.
-                with patch.object(sc, "_merge_base", return_value="c" * 40):
-                    moved = sc._security_observation(scan_id, SHA, NOW)
+                # Review 4111174707: the reviewed base is pinned (the descriptor's security_base_sha, else
+                # --security-base), never the merge base (the candidate itself once it is on main).
+                moved = sc._security_observation(scan_id, SHA, NOW, "c" * 40)  # the scan's base is not the pin
                 self.assertEqual(sc.score(SHA, [moved], now=NOW)["checks"][17]["status"], "UNKNOWN")
-                with patch.object(sc, "_merge_base", return_value=None):
-                    unreadable = sc._security_observation(scan_id, SHA, NOW)
-                self.assertEqual(sc.score(SHA, [unreadable], now=NOW)["checks"][17]["status"], "UNKNOWN")
+                unpinned = sc._security_observation(scan_id, SHA, NOW)
+                self.assertEqual(sc.score(SHA, [unpinned], now=NOW)["checks"][17]["status"], "UNKNOWN")
+                self.assertIn("security base not pinned", unpinned.explanation)
+                descriptor = {"version": "director-cli-release-descriptor/v1", "releases": [], "security_base_sha": OTHER}
+                with patch.object(sc, "cli_release_descriptor", return_value=descriptor):
+                    pinned = sc._security_observation(scan_id, SHA, NOW)
+                self.assertEqual(sc.score(SHA, [pinned], now=NOW)["checks"][17]["status"], "PASS")
+                with patch.object(sc, "_compare_status", return_value="identical"):  # not a strict ancestor
+                    same = sc._security_observation(scan_id, SHA, NOW, OTHER)
+                self.assertEqual(sc.score(SHA, [same], now=NOW)["checks"][17]["status"], "UNKNOWN")
+                with patch.object(sc, "_run_bytes", return_value=b""):  # an empty base..candidate diff
+                    empty = sc._security_observation(scan_id, SHA, NOW, OTHER)
+                self.assertNotEqual(sc.score(SHA, [empty], now=NOW)["checks"][17]["status"], "PASS")
                 self.assertEqual(sc.score(OTHER, [observation], now=NOW)["checks"][17]["status"], "UNKNOWN")
                 (root / "coverage.json").write_text('{"completeness":"complete","verified":true}')
                 with self.assertRaisesRegex(ValueError, "digest mismatch"):
@@ -1091,8 +1105,8 @@ class CompletionScorecardTests(unittest.TestCase):
                 db.commit()
             with patch.object(sc, "_native_security_index", return_value=index), \
                     patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
-                    patch.object(sc, "_merge_base", return_value=OTHER), self.assertRaises(ValueError):
-                sc._security_observation(scan_id, SHA, NOW)
+                    patch.object(sc, "_compare_status", return_value="ahead"), self.assertRaises(ValueError):
+                sc._security_observation(scan_id, SHA, NOW, OTHER)
 
     def test_native_seal_follows_the_scan_completion_18(self):
         """Sweep (durable-timestamp class): the seal closes a completed scan, so a seal before completion is refused."""
@@ -1100,17 +1114,17 @@ class CompletionScorecardTests(unittest.TestCase):
             scan_id, index, _ = native_security_fixture(folder, completed=(NOW - timedelta(minutes=20)).isoformat())
             with patch.object(sc, "_native_security_index", return_value=index), \
                     patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
-                    patch.object(sc, "_merge_base", return_value=OTHER), \
+                    patch.object(sc, "_compare_status", return_value="ahead"), \
                     self.assertRaisesRegex(ValueError, "precedes the scan's completion"):
-                sc._security_observation(scan_id, SHA, NOW)
+                sc._security_observation(scan_id, SHA, NOW, OTHER)
 
     def test_native_security_missing_changed_file_coverage_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             scan_id, index, _ = native_security_fixture(folder)
             with patch.object(sc, "_native_security_index", return_value=index), \
                     patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0src/unreviewed.py\0"), \
-                    patch.object(sc, "_merge_base", return_value=OTHER):
-                observation = sc._security_observation(scan_id, SHA, NOW)
+                    patch.object(sc, "_compare_status", return_value="ahead"):
+                observation = sc._security_observation(scan_id, SHA, NOW, OTHER)
                 self.assertEqual(sc.score(SHA, [observation], now=NOW)["checks"][17]["status"], "FAIL")
 
     def test_exactly_twenty_unique_fixed_checks_and_missing_is_unknown(self):
@@ -3719,6 +3733,21 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIsNotNone(task_evidence_errors(foreign)[1]["effects"])
 
+    def test_execution_markers_carry_their_claims_owner_and_fence(self):
+        """4111174703: the execution marker's owner and fence are compared with its claim's in SQL and served only as
+        booleans; a mismatch (or no comparison at all) is an effects conflict."""
+        import copy
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+        base = tf.readback_fixture()
+        self.assertIsNone(task_evidence_errors(base)[1]["effects"])
+        for change in ({"execution_owner_matches": False}, {"execution_fencing_matches": False},
+                       {"execution_owner_matches": None}):
+            broken = copy.deepcopy(base)
+            broken["effects"][0].update(change)
+            with self.subTest(change=change):
+                self.assertIsNotNone(task_evidence_errors(broken)[1]["effects"])
+        self.assertNotIn("owner_token", json.dumps(base["effects"]))
+
     def test_scorecard_grades_only_from_the_trusted_main_checkout(self):
         """Operating rule added by the author: a clean checkout whose HEAD is on github/main and is the graded
         candidate (and runtime); otherwise every check is UNKNOWN."""
@@ -3773,6 +3802,9 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIsNotNone(work_packet_error({**sections, **change}))
         self.assertEqual(self.world().state("20"), "PASS")
+        orphaned = self.world()  # 4111174699: terminal evidence whose claim no reservation holds
+        orphaned.consistency["tasks"][PAID_TASK]["terminal_evidence_without_reservation"] = 1
+        self.assertEqual(orphaned.state("20"), "FAIL")
         missing = self.world()
         missing.consistency["tasks"][PAID_TASK]["work_packets"] = []
         self.assertEqual(missing.state("20"), "FAIL")
@@ -4105,7 +4137,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         over_budget.consistency["tasks"][PAID_TASK]["budgets"][0]["day_held_microusd"] = 5000001
         self.assertEqual(over_budget.state("15"), "FAIL")
         over_monitor = self.world()
-        over_monitor.payload["usage_monitor"]["daily_accounting"]["grok"]["reserved_cost_usd"] = 5.5
+        over_monitor.payload["usage_monitor"]["daily_accounting"]["grok"].update(reserved_cost_usd=5.5, exposure_usd=5.5)
+        # Review 4111174705: exposure is reconciled per reservation by the monitor ($0.50 probe over its $0.01 floor
+        # plus a $0.75 work reservation is $1.25), never max(reported, reserved) = $0.76.
+        reconciled = self.world()
+        reconciled.payload["usage_monitor"]["daily_accounting"]["grok"].update(
+            daily_budget_usd=1.0, reported_cost_usd=0.5, reserved_cost_usd=0.76, exposure_usd=1.25)
+        self.assertEqual(reconciled.state("15"), "FAIL")
         self.assertEqual(over_monitor.state("15"), "FAIL")
         unsettled = self.world()
         unsettled.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = None
@@ -4490,3 +4528,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

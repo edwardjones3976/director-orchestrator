@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
@@ -648,6 +649,10 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     f" SELECT %s, %s, 'default-director-owner', 1, 'COMPLETED', 't', max(recorded_at) {offset}"
                     f" FROM {s}.director_primary_reconciliation_event WHERE claim_key = %s", (claim, task_id, claim))
         self.assertEqual(self.report()["counts"]["unresolved_reconciliation"], 1)
+        # Review 4111174699: terminal evidence for a claim no effect reservation holds (reconcile-1 and reconcile-2),
+        # counted globally and in the task's entry, never dropped by the effects join.
+        self.assertEqual(self.report()["counts"]["terminal_evidence_without_reservation"], 2)
+        self.assertEqual(self.report(tasks=[task_id])["tasks"][task_id]["terminal_evidence_without_reservation"], 2)
 
     def test_snapshot_connection_refuses_writes(self):
         import psycopg
@@ -732,6 +737,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                                              "approval_receipts": [], "application": None, "result_artifacts": [],
                                              "work_packets": [], "effect_approval_bindings": [],
                                              "registered_plan": None,  # no batch: nothing registered to recompute
+                                             "terminal_evidence_without_reservation": 0,
                                              "verifier_secrets": {"route_verifier": False, "owner_authority": False}})
         # The persisted application record comes back for the scorecard's re-rendering.
         with self.handle.pool.connection() as connection:
@@ -1147,3 +1153,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]

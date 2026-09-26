@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
@@ -99,7 +100,7 @@ from .process_isolation import ProcessContainmentError, launch_contained_process
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    ci_workflow_pin, cli_release_descriptor, decision_follows_prompt, delivery_settled as _delivery_settled,
+    ci_workflow_pin, cli_release_descriptor, security_base_pin, decision_follows_prompt, delivery_settled as _delivery_settled,
     lifecycle_error, missing_result_packets,
     ordered as _ordered,
     required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
@@ -1101,7 +1102,7 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
                 "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "work_packets_invalid",
                 "projection_digest_mismatches", "batches_without_assignments", "effect_children_cross_task",
-                "registered_plan_mismatches",
+                "registered_plan_mismatches", "terminal_evidence_without_reservation",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -2293,9 +2294,10 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
         return None
     # The registered plan recomputed from the durable assignment rows and task record (review 4110798537).
     registered = entry.get("registered_plan")
-    if not isinstance(registered, dict):
+    orphans = entry.get("terminal_evidence_without_reservation")
+    if not isinstance(registered, dict) or not _counter(orphans):
         return None
-    if registered.get("error") is not None:
+    if registered.get("error") is not None or orphans:
         return False
     if work_packet_error({"assignments": assignments, "provider_attempts": readback.get("provider_attempts") or [],
                           "result_artifacts": artifacts, "work_packets": work_packets}) is not None:
@@ -2457,6 +2459,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         # A monitor that does not separate its probes from real requests is not monitored accounting.
         and "provider_request_count" in value
         and (value["provider_request_count"] is None or _counter(value["provider_request_count"]))
+        and _amount(value.get("exposure_usd"))
         for value in accounting.values())
     uncapped: list[str] = []
     if monitored:
@@ -2473,7 +2476,8 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
             if attempted and type(budget) not in (int, float):
                 uncapped.append(str(provider))  # an attempted provider with no numeric cap has no monetary control
             if type(budget) in (int, float):
-                used = max(value.get("reported_cost_usd") or 0, value.get("reserved_cost_usd") or 0)
+                # The monitor's per-reservation reconciliation (usage.py _exposure_usd), never max of two totals.
+                used = value["exposure_usd"]
                 if used > budget:
                     over.append("usage monitor " + str(provider))
             if (attempted and value.get("cost_visibility_complete") is not True
@@ -2735,7 +2739,7 @@ def _read_bounded_file(root: Path, relative: str) -> bytes:
     return raw
 
 
-def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Observation:
+def _security_observation(scan_id: str, candidate_sha: str, at: datetime, security_base: str | None = None) -> Observation:
     if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", scan_id):
         raise ValueError("native Security scan ID must be a UUID")
     index = _native_security_index()
@@ -2795,13 +2799,21 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     coverage, findings = contents["coverage.json"], contents["findings.json"]
     if coverage.get("scanId") != scan_id or findings.get("scanId") != scan_id:
         raise ValueError("canonical evidence belongs to another scan")
-    # A convenient base (a descendant, or any commit other than the candidate's merge
-    # base with main) can drop the candidate's own changes from the diff it covers.
-    authoritative = _merge_base(candidate_sha)
-    if base != authoritative:
-        return _observation("18", None, "The sealed scan's base is not the candidate's merge base with main, so its "
-                            "changed-path coverage may omit the candidate's changes.", str(root / "scan-manifest.json"),
-                            {"scan_id": scan_id, "scan_base": base, "merge_base_with_main": authoritative},
+    # The reviewed base is pinned (review 4111174707): once the candidate is on main (the trusted-checkout rule), its
+    # merge base is itself and a base..candidate diff would be empty. The owner's release descriptor names it
+    # (security_base_sha), else the operator's --security-base; it must be a strict ancestor of the candidate and the
+    # scan's recorded base. A convenient base could otherwise drop the candidate's own changes from the diff.
+    pinned = security_base_pin(cli_release_descriptor()) or security_base
+    if pinned is None:
+        return _observation("18", None, "security base not pinned: neither the release descriptor's security_base_sha "
+                            "nor --security-base names the reviewed base.", str(root / "scan-manifest.json"),
+                            {"scan_id": scan_id, "scan_base": base}, at, candidate_sha=candidate_sha)
+    _sha(pinned)
+    if base != pinned or _compare_status(pinned, candidate_sha) != "ahead":
+        return _observation("18", None, "The sealed scan's base is not the pinned reviewed base, or that base is not a "
+                            "strict ancestor of the candidate, so its changed-path coverage may omit the candidate's "
+                            "changes.", str(root / "scan-manifest.json"),
+                            {"scan_id": scan_id, "scan_base": base, "pinned_base": pinned},
                             at, candidate_sha=candidate_sha)
     changed = set(_run_bytes(["git", "-C", indexed["target_path"], "diff", "--name-only", "-z", base, candidate_sha, "--"]).decode().rstrip("\0").split("\0"))
     surfaces = coverage.get("surfaces", [])
@@ -3009,14 +3021,6 @@ def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Obs
                         str(source.resolve()), facts, at, candidate_sha=candidate)
 
 
-def _merge_base(head: str) -> str | None:
-    """GitHub's merge base of main and head (GET only)."""
-    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/compare/main...{head}", "--jq",
-                       "{merge_base: .merge_base_commit.sha}"])
-    sha = value.get("merge_base") if isinstance(value, dict) else None
-    return sha if isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha) else None
-
-
 def _commit_tree(sha: str) -> str | None:
     """GitHub's tree for a commit (GET only); None when unreadable."""
     try:
@@ -3115,6 +3119,7 @@ def collect(candidate_sha: str, **options: Any) -> list[Observation]:
 def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str | None = None,
             now: datetime | None = None, github: bool = False, ledger_path: Path | None = None,
             gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
+            security_base: str | None = None,
             drill_threads: dict[str, str] | None = None, approval_task: str | None = None,
             trials: list[str] | None = None, rubric_path: Path | None = None, paid_thread: str | None = None,
             paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None,
@@ -3195,7 +3200,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
     if security_scan_id is not None:
         try:
             started = datetime.now(timezone.utc)
-            result.extend(since(started, [_security_observation(security_scan_id, candidate_sha, collection_end())]))
+            result.extend(since(started, [_security_observation(security_scan_id, candidate_sha, collection_end(),
+                                                                security_base)]))
         except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
@@ -3576,3 +3582,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
