@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
@@ -250,10 +251,11 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "M1 base shootout: owner confirms held-out set A; the scorer fail-closed fix (#281) lands through its own review; Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo 12B are scored on both held-out sets with schema-constrained decoding. Owner gate still open: the WEBUI_URL runbook step (D-016)"
+  action: "M1 base shootout: set B's replacement (pr-reconstructed-v2) passes an independent review (set A's set-a-json-v2 is accepted); the scorer fail-closed fix (#281) lands through its own review; the four pinned base weight sets are downloaded one at a time under the owner's download approval (O-034) and its storage guards; then Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo 12B are scored on both held-out sets with schema-constrained decoding. Any further download needs its own owner approval. Owner gate still open: the WEBUI_URL runbook step (D-016)"
   responsible_party: "owner (set A, WEBUI_URL), then Director with providers per O-003"
   expected_evidence: "per-base scorer output on both held-out sets and a decision-log row naming the M1 winner"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]]

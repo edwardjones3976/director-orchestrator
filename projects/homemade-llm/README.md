@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
@@ -104,9 +105,9 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 | [`project-profile.yaml`](project-profile.yaml) | Living project profile (`director-project-profile/v1`) |
 | [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Project-local provider boundaries (`director-provider-roles/v1`), with the Director deviation recorded |
 | [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; analysis-only, all Slack identities pending |
-| [`workstream-plan.md`](workstream-plan.md) | Current phase (M0) assignments, providers, acceptance, stops |
+| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); the M1 plan is not written yet, so M1 follows `project-profile.yaml` `next` |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
-| [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (latest: M0 gate, 2026-09-25) |
+| [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (latest: M0 gate closed, reconciled 2026-09-26) |
 
 ## Milestones
 
@@ -123,3 +124,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]] -->

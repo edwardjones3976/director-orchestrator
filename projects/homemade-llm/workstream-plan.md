@@ -1,7 +1,10 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
-# Workstream plan — homemade-llm, phase M0 "Foundation"
+# Workstream plan — homemade-llm, phase M0 "Foundation" (closed)
+
+> **M0 is closed** (decision O-031, 2026-09-26). This file is the record of the M0 phase, not the current plan. The M1 workstream plan is not written yet; until it is, M1 work follows `project-profile.yaml` `next` and `project-state-report.md` "Next bounded action". Do not resume M0 tasks from this file.
 
 Do not place secrets, credentials, tokens, or raw private source in this plan.
 Workflow skills are procedure overlays, not permission grants. Canonical provider
@@ -11,7 +14,7 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 ## Phase frame
 
 - **Project:** `homemade-llm` — Homemade LLM
-- **Current state:** building; M0 gate report filed in PR #277; M0.9 and M0.11 in PR #276; #275 merged (f0a7752e, 23:31 UTC)
+- **Final state:** M0 closed (O-031). #275, #276 (one-time exception, D-015) and #277 merged; the record was reconciled in the M0 record PR
 - **Phase outcome:** storage laid out; the Unsloth container trains on the GPU; LM Studio serves a merged GGUF over `/v1`; Open WebUI reaches it over Tailscale; paid-spend metering on; gitleaks available for datasets
 - **Stopping point:** M0 gate — `project-state-report.md` with every number [verified]; target 2026-10-01
 - **Total phase budget/time:** USD 25; ~1 week; max 3 dispatches in flight
@@ -91,12 +94,13 @@ With no Slack surface, events are recorded as PR comments and in the state repor
 | --- | --- | --- |
 | HS-0, M0.1, M0.2, HS-1, M0.3, M0.4, M0.6, M0.7, M0.8, M0.10 | done | PRs #266-#273; numbers in `project-state-report.md` |
 | M0.3/M0.4 hardening (#275) | merged at ed317a81 (f0a7752e, 23:31 UTC) | main |
-| M0.5 | containers up on 127.0.0.1:3000 and :8088; tailnet publish is an owner click | `compose/RUNBOOK.md` section 2 |
-| M0.9, M0.11 | in PR #276 (peer Director session), awaiting a non-author review | #276 |
-| M0.12 | this report | PR #277 |
+| M0.5 | done: tailnet phone chat with web search accepted; the `WEBUI_URL` runbook step is open as an owner gate (D-016) | `compose/RUNBOOK.md` section 2 |
+| M0.9, M0.11 | merged in #276 (`58fb485`) under the one-time exception (D-015) | main |
+| M0.12 | merged in #277 (`79e538f`); reconciled in the M0 record PR | main |
 
 Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]] -->

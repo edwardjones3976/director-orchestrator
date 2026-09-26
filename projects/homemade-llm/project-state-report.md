@@ -46,13 +46,13 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 - The first 13 M0 receipts reproduce the independent audit's USD 1.22778956 exactly ([#277 comment 5842706191](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842706191)). The three #279 reviews add USD 0.20493.
 - This supersedes the USD 0.55 stamped at 2026-09-26 00:01 UTC, which missed the PR #266 review, the post-merge #275 review and the #279 reviews.
-- The M0 lower bound is well inside the USD 25 envelope.
+- The M0 lower bound is well inside the USD 25 envelope. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), gives an **M0 charged total of USD 2.31480556**. That is still a lower bound (D-017).
 - Codex, Cursor and Claude subscription usage carries no per-call USD cost and is not in this ledger.
 
 ### After the gate (not M0 spend)
 
 - **M1 before the gate:** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
-- **M0 hardening after the gate:**
+- **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
   - #291 carries the job-object supervision fix that landed on #283's branch after its merge. It is open.
   - Their xAI reviews cost USD 0.882086 over 8 receipts, including the 18:14 UTC review of #291 `[verified]`.
@@ -69,8 +69,13 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 - **GPU headroom for the shootout:** the 0.6B smoke peaked at 0.79 GB reserved. 8B and 14B QLoRA numbers are not yet measured on this card; Unsloth's published floors are 6 GB (8B) and 8.5 GB (14B) `[relayed, research brief]`.
 - **Turnaround:** one 20-step smoke run including GGUF export is under 5 minutes wall clock, and GGUF export dominates (150–190 s) `[verified from the run reports]`.
 - **Held-out sets (local only, never committed):**
-  - Set A: 22 real-history items plus `INDEX.md` at `C:\llm\datasets\heldout\set-a`, awaiting the owner's confirmation (top-up and oversized items).
-  - Set B: 50 PR-reconstructed packets, each with its metadata file, plus `INDEX.md` at `C:\llm\datasets\heldout\pr-reconstructed`, schema-valid and gitleaks-clean.
+  - Set A: 22 real-history packets at `C:\llm\datasets\heldout\set-a`, unchanged.
+    - The owner chose the 19 concise items for M1 (`set-a\M1-SELECTION.md`), excluding EW-20260912-0014, 0015 and 0016 for size.
+    - Their JSON references are in `set-a-json-v2\`: authored by OpenAI Codex, with a Grok ACCEPT on all 19 (receipt `xai/20260926T193234Z.json`).
+    - An earlier Cursor conversion (`set-a-json\`) failed three independent reviews and is kept only as evidence.
+  - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review on 2026-09-26 (50 substantive findings) and are kept only as evidence.
+    - A fresh Codex-authored replacement (`pr-reconstructed-v2\`) is in progress.
+    - It is not usable until independently accepted, and its xAI review needs a specific owner approval.
   - `[verified 2026-09-26 18:16 UTC, file counts]`
 - **Concurrency:** several Director sessions work this project. Deconfliction is in the decision log (D-011) `[verified]`. This record's authorship was reassigned by the owner (O-033) `[relayed]`.
 
@@ -83,17 +88,17 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 ### Owner gates
 
 - `WEBUI_URL`: set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` §2 step 3), or decide to keep `http://127.0.0.1:3000`.
-- Held-out set A: confirm the 22 items (top-up and oversized items).
+- Held-out set B: approve the independent review of `pr-reconstructed-v2` once it is ready. That review sends the private PR bodies to xAI.
 - Merges: this reconciliation PR once reviewed and green; #281 has its own ready and merge decision (O-031).
 
 ### Next bounded action
 
 M1, base shootout on the held-out sets:
-1. The owner confirms set A.
+1. Set B's replacement passes an independent review (set A's references are already accepted).
 2. The scorer's fail-closed fix (#281) lands through its own review.
-3. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo 12B (the control) are scored with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated.
+3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo 12B (the control) are then scored with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated.
 
-- **Responsible:** the owner for step 1; the Director for steps 2 and 3, with providers authoring code and runs per O-003.
+- **Responsible:** the Director for all three steps, with providers authoring data, code and runs per O-003. The owner approves the set B review route.
 - **Expected evidence:** per-base scorer output on both held-out sets, and a decision-log row naming the winner.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
