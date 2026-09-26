@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | BEGIN]]
 # Unit checks for serve-smoke.ps1's decision functions, loaded from its syntax tree (no LM Studio, no Docker).
@@ -92,6 +93,10 @@ Assert-Equal $unloadsBeforeProbe.Count 2 'cleanup: failed load and failed TTL ch
 $lockAt = $ast.Extent.Text.IndexOf("Mutex]::new(`$false, 'Global\homemade-llm-gpu')")
 Assert-Equal ([bool]($lockAt -ge 0 -and $lockAt -lt $start)) $true 'lock: shared GPU mutex taken before lms server start'
 
+# A failed listener-ownership check stops the server before failing (#275 post-merge finding).
+$ownerIf = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match 'Test-LmStudioOwner' }, $true) | Select-Object -First 1
+Assert-Equal ([bool]($ownerIf -and $ownerIf.Clauses[0].Item2.Extent.Text -match "Invoke-Lms @\('server', 'stop'\)")) $true 'owner: failed ownership check stops the server'
+
 # Every docker and lms call goes through Invoke-Bounded, so none can hang the run while it holds the GPU lock.
 $bare = @($cmds | Where-Object { $_.GetCommandName() -in 'docker', 'lms' })
 Assert-Equal $bare.Count 0 'bounded: no top-level docker or lms call bypasses Invoke-Bounded'
@@ -111,3 +116,4 @@ Write-Output 'test-serve-smoke: all cases passed'
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]

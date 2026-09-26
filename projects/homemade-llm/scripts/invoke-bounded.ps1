@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | BEGIN]]
 # Shared by train-smoke.ps1 and serve-smoke.ps1 (dot-sourced): run a native command with a host-side deadline.
@@ -27,9 +28,15 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         @(if ($text) { $text -split "`r?`n" }) + "__EXIT__$($p.ExitCode)"
     } finally {
         # Timeout, Ctrl+C or a stopped pipeline: never leave the command running after we stop waiting for it.
-        if (-not $p.HasExited) { try { $p.Kill($true); $null = $p.WaitForExit(5000) } catch { } }
+        # If it cannot be confirmed dead, fail loudly: a silent 'timeout' would let callers release the GPU lock
+        # while the command (possibly a GPU container operation) is still running.
+        if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
+        $gone = $p.HasExited -or $p.WaitForExit(5000)
+        $id = $p.Id
         $p.Dispose()
+        if (-not $gone) { throw "Invoke-Bounded: $Exe (pid $id) could not be stopped and may still be running" }
     }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]

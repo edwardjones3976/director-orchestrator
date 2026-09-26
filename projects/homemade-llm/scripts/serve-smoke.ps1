@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | BEGIN]]
 # M0.4: serve the M0.3 smoke GGUF through LM Studio and prove /v1 works from Windows and from a container.
@@ -81,6 +82,7 @@ try {
     }
     $owners = @($preLoad | ForEach-Object { Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue })
     if (-not (Test-LmStudioOwner $owners)) {
+        Invoke-Lms @('server', 'stop') | Out-Null   # do not leave an unconfirmed server up after the lock is released
         Write-Error "port 1234 is not served by LM Studio (listener process: $(($owners.ProcessName | Sort-Object -Unique) -join ', ')); nothing loaded"
     }
     $known = ((Invoke-Lms @('ls', '--json')) -join "`n" | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
@@ -181,3 +183,4 @@ try {
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]

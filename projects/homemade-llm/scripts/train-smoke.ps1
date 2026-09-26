@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 # M0.3: run train/smoke_train.py inside the pinned Unsloth image.
@@ -92,6 +93,7 @@ try {
     # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them).
     # Stop-Smoke returns the container's final state.
     function Stop-Smoke {
+      try {
         if (@(Invoke-Bounded 'docker' @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded 'docker' @('kill', $name) 20 | Out-Null }
         if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
         Remove-Job $job -Force
@@ -99,27 +101,38 @@ try {
         if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
         elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
         else { 'stopped and removed' }
+      } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
+    # From here until the container is confirmed gone, the GPU may be in use: the lock is kept unless it is.
+    $containerGone = $false
     $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
             $done = $true   # set first: if cleanup itself throws, finally must not run it a second time
             $state = Stop-Smoke
+            $containerGone = $state -eq 'stopped and removed'
             Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
         }
         $done = $true
+        $containerGone = $true   # docker run --rm returned: the container has exited and been removed
     } finally {
         # Reached without $done only when the wait was interrupted (Ctrl+C or a stopped pipeline): disconnecting
         # the docker client does not stop the daemon-side container, so stop it here too.
-        if (-not $done) { Write-Warning "interrupted; container $name $(Stop-Smoke)" }
+        if (-not $done) { $state = Stop-Smoke; $containerGone = $state -eq 'stopped and removed'; Write-Warning "interrupted; container $name $state" }
     }
     $out = @(Receive-Job $job); Remove-Job $job
     $out | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
     $exitLine = $out | Where-Object { $_ -match '^__EXIT__' } | Select-Object -Last 1
     exit $(if ($exitLine) { [int]($exitLine -replace '^__EXIT__', '') } else { 1 })
 } finally {
-    $gpuLock.ReleaseMutex(); $gpuLock.Dispose()
+    if ($containerGone -ne $false) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
+    else {
+        # Keep the lock (and its handle: disposing the last handle would delete the mutex) while a container may
+        # still hold the GPU. It is released when this PowerShell process exits.
+        Write-Warning "GPU lock kept: container $name was not confirmed stopped; it is released when this PowerShell process exits"
+    }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
