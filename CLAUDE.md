@@ -27,6 +27,21 @@ Keep all exact-SHA, CI, security, authorship, workload, and spending controls.
 Never claim a leadership handoff, green CI, a staged adapter, or a paid-off
 simulation proves live provider execution.
 
+## Contribution attribution
+
+No contribution tags are written into file contents any more. Every commit
+carries `Contributed-by: <Assistant or Tool> | <Complete Model or System>`,
+one trailer per contributor; keep existing `Co-Authored-By` trailers.
+Every PR description carries exactly one header line:
+`Sole author: <assistant> (<model>)`, followed on that line by
+`; assistance: <id>[, <id>...]` when others assisted. Follow the 52% sole-author
+rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
+this policy does not redefine it.
+Existing in-file tags are historical; a later mechanical PR removes them.
+Attribution records acknowledge actual contributions only and never imply
+inherited authorship. They never authenticate provider identity, grant authority,
+or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
+
 This file changes project instructions. It does not change your actual model,
 grant credentials, authorize self-acceptance, or start a deployment.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->

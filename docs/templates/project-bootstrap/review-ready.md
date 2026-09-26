@@ -13,7 +13,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Assignment:** <producer assignment ID>
 - **Logical producer:** <provider>
 - **Material authors:** <all providers/people that materially shaped the artifact>
-- **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
+- **Contribution attribution:** <Contributed-by trailers on every commit; one Sole author PR header, assistance when applicable, per PR #284; preserve Co-Authored-By trailers>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>
 - **Base SHA:** <exact 40-hex SHA>
@@ -72,7 +72,7 @@ change access, or infer authority from this request.
 - **Current CI/security evidence:** <exact status or pending>
 - **Next responsible party:** <producer, deterministic gate, Director, or owner>
 
-Contribution tags are provenance labels, not authenticated review evidence.
+Attribution records are provenance labels, not authenticated review evidence. Write no new in-file tags; existing tags are historical pending mechanical cleanup.
 The authenticated run/session, exact candidate, independent verdict, current
 CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
