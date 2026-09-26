@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]] -->
@@ -14,7 +15,7 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 
 ## EVIDENCE
 
-**Homemade LLM** has closed its M0 gate and entered M1. Ed approved closing M0 and entering M1 once this record was reconciled ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. This report and decision-log rows O-031 to O-034 and D-015 to D-018 are that reconciliation. Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
+**Homemade LLM** has closed its M0 gate and entered M1. Ed approved closing M0 and entering M1 once this record was reconciled ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. This report and decision-log rows O-031 to O-036 and D-015 to D-019 are that reconciliation. Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
 
 - **Project ID:** `homemade-llm`
 - **Assignment IDs:** HS-0, M0.1 to M0.12, RV-275
@@ -115,10 +116,10 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 | 11 | Pre-stage packet, workload size, writer lease, reviewer reservation | **Unavailable:** M0 ran analysis-only (`rollout-packet.md`) without pre-stage packets or writer leases. Reviewers are named per PR. |
 | 12 | Status-check, duplicate-validation, action and wave counts | **Unavailable:** not measured in M0. |
 | 13 | Avoidable-commit baseline | **Unavailable:** not measured in M0. |
-| 14 | Scope or authority changes, owner authorization | No authority change. Owner authorizations: O-029 to O-034. |
+| 14 | Scope or authority changes, owner authorization | No authority change. Owner authorizations: O-029 to O-036. |
 | 15 | Recovery state and rollback | Nightly mirror and restore drill (M0.7). Rollback is a revert of the merged PRs. Receipts and reports are on disk under `C:\llm\reports` and the provider-dispatch receipts. |
 | 16 | Next gate and responsible party | "Next bounded action" below |
-| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-034 |
+| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-036; open crossings awaiting disposition: D-018, D-019 |
 | 18 | Not done and unverified | "Not done, and what remains unverified" below |
 
 ### Per-PR validation evidence (charter item 8)
@@ -166,8 +167,8 @@ M1 runs only under an owner-approved M1 workstream plan with pre-stage packets. 
 
 No further work under those items runs before the plan is approved.
 
-- **Responsible:** Ed for the D-018 disposition and the M1 plan approval; then the Director under that plan.
-- **Expected evidence:** Ed's recorded D-018 disposition and M1 plan approval, and this PR's six required CI jobs green at its reviewed head.
+- **Responsible:** Ed for the D-018 and D-019 dispositions and the M1 plan approval; then the Director under that plan.
+- **Expected evidence:** Ed's recorded D-018 and D-019 dispositions and M1 plan approval, and this PR's six required CI jobs green at its reviewed head.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
@@ -178,3 +179,4 @@ No further work under those items runs before the plan is approved.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | END]] -->
