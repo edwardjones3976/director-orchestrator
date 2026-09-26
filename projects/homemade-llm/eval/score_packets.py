@@ -1,3 +1,4 @@
+# [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | BEGIN]]
@@ -181,6 +182,8 @@ def packet_accepted_as_is(
     for row in grades:
         if row.get("id") != packet_id:
             continue
+        if "accepted" in row and not isinstance(row["accepted"], bool):
+            return False
         if _grade_row_missing_or_invalid_grader(row):
             return False
         field = row.get("field")
@@ -371,3 +374,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | END]]
+# [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | BEGIN]]
@@ -263,6 +264,30 @@ class ScorePacketsTests(unittest.TestCase):
         _, _, packets = self._run_score({"p1": ref}, {"p1": cand}, grades)
         self.assertEqual(packets[0]["accepted_as_is"], "false")
 
+    def test_nonboolean_accepted_on_unselected_field_rejects_packet(self):
+        fields = ("objective",)
+        grades = [
+            {"id": "p1", "grader": "g1", "field": "objective", "accepted": True},
+            {"id": "p1", "grader": "g2", "field": "objective", "accepted": True},
+            {"id": "p1", "grader": "g1", "field": "zzz", "accepted": "yes"},
+        ]
+        self.assertEqual(score_packets.count_malformed_grade_rows(grades), 1)
+        self.assertFalse(score_packets.packet_accepted_as_is("p1", fields, grades))
+
+        ref = _minimal_ref()
+        cand = json.dumps(ref)
+        full_fields = list(score_packets.DEFAULT_FIELDS)
+        full_grades = [
+            {"id": "p1", "grader": "g1", "field": f, "accepted": True} for f in full_fields
+        ] + [
+            {"id": "p1", "grader": "g2", "field": f, "accepted": True} for f in full_fields
+        ] + [
+            {"id": "p1", "grader": "g1", "field": "zzz", "accepted": "yes"},
+        ]
+        summary, _, packets = self._run_score({"p1": ref}, {"p1": cand}, full_grades)
+        self.assertEqual(packets[0]["accepted_as_is"], "false")
+        self.assertEqual(summary["malformed_grade_rows"], 1)
+
     def test_string_false_not_accepted_and_malformed(self):
         ref = _minimal_ref()
         cand = json.dumps(ref)
@@ -376,3 +401,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | END]]
+# [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | END]]
