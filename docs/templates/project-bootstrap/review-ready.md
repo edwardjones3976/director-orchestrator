@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
@@ -57,10 +58,16 @@ Review exact candidate: <repository>
 Base SHA: <exact 40-hex SHA>
 Head SHA: <exact 40-hex SHA or artifact digest>
 Producer/material authors: <names>
+PR URL: <pull-request URL>
+Sole author: <identity at 52 % or more>
+Contributor shares: <each contributor's identity and percentage>
+Share evidence: <receipt or authenticated PR-record reference for each share>
 Scope: <changed files or artifact scope>
 Acceptance evidence: <concise exact evidence>
 Known limitations/security context: <concise details>
-Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
+Return no verdict if the sole author has under 52 % or the authenticated
+authorship record is missing.
+Otherwise return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
 Do not review a candidate whose sole author is you or shares your provider
 family. An assisting contributor may review under the owner rule, subject to
@@ -87,3 +94,4 @@ CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->

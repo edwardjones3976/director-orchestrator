@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
@@ -114,13 +115,15 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
 - **Assistance and the exact 52 % / 48 % case.** A contributor below 48 %
   assisted; records name them as "assisted by <identity> (<share> %)". Two
   contributors are co-authors only when one holds 52 % and the other the
-  remaining 48 %. Contribution tags continue to credit actual contributions.
+  remaining 48 %. Exactly 48 % is a co-author, not below 48 %.
+  Contribution tags continue to credit actual contributions.
 - **Review eligibility follows the owner rule now.** Only the sole author and
   its provider family are excluded from reviewing on authorship grounds. An
   assisting contributor may review in Director-routed and manual reviews.
-  Any contributor with counted lines, whether sole author or assisting, may never merge that PR, and this bar never lifts.
-  When an assisting contributor gives the accepting review, the merge must be
-  carried out by a non-contributing reviewer that has thoroughly reviewed the work.
+  Any contributor with counted lines, whatever their label, may never merge that PR, and this bar never lifts.
+  Any eligible reviewer with counted lines, including an assisting contributor
+  or the exactly-48 % co-author, hands the merge to a non-contributing reviewer
+  that has thoroughly reviewed the work.
   For runtime-dispatched reviews, `review_handoff.py::bind_review_handoff`
   currently binds the assignment producer and every transitive dependency
   outcome provider as material authors and rejects those contributors and their
@@ -199,3 +202,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->
