@@ -708,7 +708,12 @@ Owner ruling, 2026-09-26. The owner's request, verbatim: "add this role to the
 Director in the Director-Orchestrator project; including in all md files and
 docs relevant." Scope answer, verbatim: "Every Director". Timing answer,
 verbatim: "New work only", later changed by the owner, verbatim: "Change this
-to all work and immediately".
+to all work and immediately". Authorship correction, verbatim: "There is no
+such thing as a co-author unless they wrote the other 48% of the work. If
+shorter than that, than the 52% author is the sole owner of the publication."
+And: "This goes for all platforms. It should be a universal rule in this
+project/product." Channel correction, verbatim: "No I did not, I didn't place
+any limits at all! And I don't want any currently!"
 
 This section is the canonical statement of the rule; other documents point here.
 It refines the delegation duty in the authorship boundary above: maintenance
@@ -717,18 +722,21 @@ goes to Codex, and other authoring is still routed by capability as before.
 - **Maintenance goes to OpenAI Codex.** Maintenance means fixing review
   findings, record and document inconsistencies, CI fixes, and provider
   connection or plumbing problems.
-- **Route it through the Codex CLI** (`codex exec`, or the provider-dispatch
-  `codex` route) with a written packet, one job per packet. Never route it
-  through the ChatGPT operator chat; that chat is for status updates and owner
-  decisions only.
+- **Either channel works.** Hand it over through the Codex CLI (`codex exec`,
+  or the provider-dispatch `codex` route, with a written packet) or through the
+  ChatGPT/Codex Director thread. The owner placed no limits on either channel.
 - **The Director still verifies and pushes.** It runs the contribution-tag
   checker, the tests, and any YAML/JSON parse checks, pushes the result, and
   replies on the review threads.
-- **Authorship limits still apply.** Codex's edits count as a co-author's share
-  of the PR, so a PR Codex worked on needs a reviewer outside the
-  OpenAI/Codex/ChatGPT family: Cursor by default, Grok when funded. OpenAI,
-  ChatGPT, and Codex are one identity for independence purposes. Claude may
-  review only PRs it did not author. The one-author,
+- **Maintenance is assistance, not authorship.** Codex's maintenance edits do
+  not change authorship. The PR's sole author is whoever wrote at least 52% of
+  it, under the sole-author rule in
+  [`docs/contribution-attribution-policy.md`](contribution-attribution-policy.md)
+  (PR #284). Reviewer eligibility excludes only that sole author and its
+  provider family; OpenAI, ChatGPT, and Codex count as one family. When the sole
+  author is in that family, the default reviewer is Cursor, or Grok when funded.
+  Records say "Sole author: <X>; maintenance assistance: OpenAI Codex", never
+  "co-author". Claude may review only PRs it did not author. The one-author,
   one-non-author-reviewer-who-merges protocol is unchanged.
 - **It applies to every Director:** the ChatGPT/Codex Director, Claude when
   acting as second in command, and any project Director such as

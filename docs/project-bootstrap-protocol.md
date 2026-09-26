@@ -200,9 +200,11 @@ Each row summarizes the canonical role definitions in
 
 Whichever lane directs a project, maintenance (review-finding fixes, record and
 document inconsistencies, CI fixes, provider connection or plumbing problems)
-goes to OpenAI Codex through the Codex CLI under the charter's
+goes to OpenAI Codex, through the Codex CLI or the ChatGPT/Codex Director
+thread, under the charter's
 [Director maintenance routing](team-operating-charter.md#director-maintenance-routing),
-and a candidate Codex worked on is reviewed outside the OpenAI/Codex/ChatGPT family.
+and Codex's edits are assistance that leaves the PR's sole author unchanged
+(the sole-author rule, PR #284).
 
 Select and freeze an [approved allocation profile](provider-allocation-profiles.md)
 before approval; Engineering is the default. All nine lanes have explicit targets;

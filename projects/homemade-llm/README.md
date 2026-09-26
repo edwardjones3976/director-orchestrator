@@ -85,17 +85,18 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    (Grok CLI first, Codex fallback). The reviewer's exact-SHA `ACCEPT` is relayed
    to the PR; the owner runs the merge. Every candidate change invalidates prior
    review evidence.
-   Maintenance (review-finding fixes, record and document inconsistencies, CI
-   fixes, provider plumbing) goes to Codex through `dispatch.py codex` under the
-   charter's [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
-   a PR Codex worked on cannot take the Codex fallback reviewer and goes to
-   Cursor, or Grok when funded.
 
 6. **Hard stops.** The Director halts and reports at every milestone gate,
    before any provider call that would exceed the milestone's USD 25 envelope,
    and before any fan-out of more than three concurrent agents or dispatches.
    Downloads, configuration changes, deletions, messages to other Directors, and
    merges wait for the owner's explicit "Go".
+   Maintenance (review-finding fixes, record and document inconsistencies, CI
+   fixes, provider plumbing) goes to Codex under the charter's
+   [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
+   `dispatch.py codex` is the usual route from this project.
+   Codex's edits are assistance and leave the PR's sole author unchanged (the
+   sole-author rule, PR #284).
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a

@@ -187,10 +187,13 @@ merge.
   execution.
 - Every Director routes maintenance (review-finding fixes, record and document
   inconsistencies, CI fixes, provider connection or plumbing problems) to
-  OpenAI Codex through the Codex CLI, one written packet per job, never the
-  ChatGPT operator chat; it still verifies, pushes, and replies on review
-  threads. A PR Codex worked on needs a reviewer outside OpenAI/Codex/ChatGPT
-  (Cursor by default, Grok when funded). This applies to all maintenance from
+  OpenAI Codex, through the Codex CLI (`codex exec` with a written packet) or
+  the ChatGPT/Codex Director thread, with no limit on either channel; it still
+  verifies, pushes, and replies on review
+  threads. Codex's edits are maintenance assistance and do not change
+  authorship; the PR's sole author is whoever wrote at least 52% of it (the
+  sole-author rule, PR #284, `docs/contribution-attribution-policy.md`), and only
+  that author's provider family is excluded from review. This applies to all maintenance from
   2026-09-26, including work in flight, and changes neither rule 3 nor rule 4.
   Canonical text: the charter's
   [Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing).

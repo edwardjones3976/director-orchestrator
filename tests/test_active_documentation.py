@@ -67,8 +67,9 @@ class ActiveDocumentationTests(unittest.TestCase):
         section = " ".join(charter.split("## Director maintenance routing", 1)[1].split("\n## ", 1)[0].split())
         for clause in (
             "Maintenance goes to OpenAI Codex.",
-            "Never route it through the ChatGPT operator chat",
-            "Cursor by default, Grok when funded",
+            "The owner placed no limits on either channel.",
+            "Maintenance is assistance, not authorship.",
+            "maintenance assistance: OpenAI Codex",
             "It applies to every Director:",
             "all maintenance from 2026-09-26 onward, including work already in flight",
             "It adds no authority and removes no gate.",
@@ -76,6 +77,8 @@ class ActiveDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(clause, section)
         self.assertNotIn("new work only", section.lower().replace('"new work only"', ""))
+        self.assertNotIn("co-author's share", section)
+        self.assertNotIn("status updates and owner decisions only", section)
         for relative in (
             "AGENTS.md", "CLAUDE.md", "README.md", "docs/project-leadership.md",
             "docs/director-user-guide.md", "docs/project-bootstrap-protocol.md",

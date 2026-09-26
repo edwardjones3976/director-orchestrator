@@ -680,9 +680,9 @@ explicit sign-off on the pull request that adds it.
   author eligible under them.
 - **The charter's Director maintenance routing changes nothing here.** It
   sends maintenance to OpenAI Codex, adds no authority, and removes no gate.
-  Codex's edits make OpenAI a material author, so OpenAI, ChatGPT, and Codex
-  cannot supply the non-author verdict for that candidate under evidence-bar
-  item 5.
+  Codex's maintenance edits are assistance, not authorship: they do not make
+  OpenAI the candidate's producer or sole author for evidence-bar items 3, 4,
+  and 5 (the sole-author rule, PR #284).
 
 ## How the existing gates are satisfied, not substituted
 
