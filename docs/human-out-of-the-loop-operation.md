@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
@@ -43,9 +44,11 @@
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
 # Human-out-of-the-loop operation
 
-**Status:** Documented authority only. Default off. No delegated decision is
+**Status:** Documented authority only for deployment-granted classes. Default off. No delegated decision is
 executable until the implementation phases below are separately built, gated,
 and accepted by the owner. The presence of this document grants nothing.
+The separately recorded standing owner merge authority below is the sole
+exception to the per-deployment grant requirement; it does not activate a route.
 
 **Schema authority:** `director-delegated-authority/v1`
 
@@ -90,9 +93,9 @@ Exactly one state is in force per deployment profile at any time.
 
 | State | Meaning |
 | --- | --- |
-| `ATTENDED` | Default. Every `OWNER_DECISION_REQUIRED` waits for the owner. No delegation exists. |
+| `ATTENDED` | Default. Every non-merge `OWNER_DECISION_REQUIRED` waits for the owner. Only the standing owner merge authority below can authorize merge execution after its full evidence bar. |
 | `DELEGATED` | A live grant may resolve an enumerated tier-1 decision class when the full evidence bar holds, or start the one pre-execution class when its pre-execution bar holds. Everything else still waits. |
-| `SUSPENDED` | Entered automatically on any trip condition. Behaves exactly as `ATTENDED` until the owner clears it explicitly. |
+| `SUSPENDED` | Entered automatically on any trip condition. Holds merge execution too until the owner clears it explicitly. |
 
 A deployment starts in `ATTENDED` and returns to it whenever configuration is
 absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
@@ -110,9 +113,10 @@ the class.
 
 ## Decision classes
 
-### Tier 1 - delegable, only under a live grant that names the class
+### Tier 1 - closed classes with explicitly bounded authority
 
 - Executing an eligible merge of a pull request into a non-protected branch.
+- Executing an eligible merge of a pull request into a protected branch.
 - Marking a pull request ready for review.
 - Posting to the project's own designated Slack channel.
 - Executing a small read-only task that `policy.small_read_only_eligible()` admits.
@@ -121,6 +125,10 @@ Tier 1 is exhaustive and every entry names a specific act. There is no
 residual or catch-all delegable class, and none may be added by describing a
 decision as routine: a category whose membership is a judgement call is not a
 closed enumeration, and it would silently reopen the fail-closed rule below.
+Only the two merge-execution entries use standing owner authority. Every other
+tier-1 entry remains default-off, only while a live grant names it; `ATTENDED`
+blocks those entries. Standing merge authority cannot mark a draft ready,
+publish, deploy, or supply any other decision.
 
 ### Tier 0 - never delegable, under any configuration
 
@@ -130,13 +138,51 @@ closed enumeration, and it would silently reopen the fail-closed rule below.
 - Deletion of data, force-push, or history rewrite.
 - Purchases, billing changes, or raising a budget ceiling.
 - Credential, secret, token, or access-scope changes.
-- Merging into a protected branch.
 - Editing this document, a grant, an allowlist, or any deterministic gate.
 - Anything AGENTS.md rule 10 names that is not explicitly listed in tier 1.
 
 Tier 0 is enumerated, and the enumeration fails closed: a decision that is not
 plainly a listed tier-1 class is tier 0. A novel decision class is tier 0 until
 the owner adds it deliberately, which is itself a tier-0 act.
+
+## Standing owner authority for pull-request merge execution
+
+Owner law, 2026-09-26 approximately 21:53 UTC, verbatim:
+
+> "Any provider that has reviewed the work thoroughly can merge it. The owner/sole-author (other ME), can never merge their own work; only correct work reviewed by the reviewer/ other providers. That should be law in Director-Orchestrator and everywhere it touches."
+
+This is standing owner authority for pull-request merge execution only, into
+protected and non-protected branches, identified as
+`owner-merge-law-2026-09-26`. It requires no per-deployment grant and remains in
+force until the owner explicitly revokes it. Suspension holds it; missing,
+ambiguous or unreadable authority evidence also holds execution. Protection
+status alone is not a prohibition and never permits bypassing protections or
+rulesets. Every other tier-0 item, including framework edits, remains unchanged.
+
+The merging identity must have supplied its own thorough exact-head `ACCEPT`
+and be neither the producer nor any material contributor, even with no counted
+lines. Complete authenticated provenance, required trusted CI and independent
+security evidence must bind the same head. Repository and path scope, budget,
+attempt and hop bounds, cancellation, and durable pre-execution audit remain
+mandatory. Branch protections and rulesets must be satisfied with no bypass,
+including implicit administrator bypass. The transport uses an expected-head
+guard and revalidates the candidate and all evidence immediately before merging.
+Changed evidence holds; an ambiguous mutation is reserved for reconciliation,
+never automatically replayed.
+
+`hotl_execution.MergeExecutionBoundary` extends the existing
+`MergeEvidenceBundle`: a trusted observer authenticates complete source records
+and signs the full observation, including identity bindings, authority status,
+protection/ruleset readback and numeric ledgers. Request callers cannot supply
+passing booleans. Trusted application wiring supplies the observer key and an
+identity-bound transport that cannot bypass protections; absent wiring holds.
+The durable append-only reservation precedes the final revalidation and blocks
+duplicate attempts across processes, crashes and ambiguous outcomes. This phase
+does not provision credentials, activate Oracle, or widen sandbox/project scope.
+
+This framework PR cannot authorize its own merge. The joint transition decision
+(consult 3, S2) assigns Cursor, after its own thorough review and green CI at the
+exact head, to perform this one merge under the owner law and delegation.
 
 ## The evidence bar
 
@@ -157,8 +203,10 @@ weighting, no majority, and no discretion.
    of its `prohibited_paths`.
 7. No tier-0 class is implicated, directly or as a consequence.
 8. Budget, attempt, and hop ledgers are all within their configured bounds.
-9. A grant is live, unexpired, unrevoked, and scoped to this repository, this
-   branch, this decision class, and this assignment.
+9. For merge execution, the standing owner merge authority is verified active
+   and unsuspended, with repository, branch and assignment scope enforced.
+   Every other class requires a grant that is live, unexpired, unrevoked, and
+   scoped to this repository, this branch, this decision class, and this assignment.
 10. The audit record for the decision has been durably written before the
     decision is executed.
 
@@ -176,7 +224,8 @@ which evaluates items 6 to 10 in their pre-execution form and never records
 items 1 to 5 as passing. Items 1 to 5 are not waived: the task's own exact-SHA
 review and CI/security gates must still hold, exactly as for an attended task,
 and the class authorizes no merge, publication, or other effect. This is the
-only carve-out.
+only pre-execution carve-out. The merge-only authority substitution in item 9
+waives no evidence item.
 
 ## Why one independent verdict
 
@@ -193,6 +242,9 @@ model are not distinct for this purpose, and neither are two runs of the same
 provider. Independence is a property of the failure mode, not of the label.
 
 ## Grants
+
+This section applies to deployment-granted classes. The two merge-execution
+classes use the standing owner authority above instead of a deployment grant.
 
 A grant is the exact form the charter's "owner may explicitly authorize a
 designated agent" takes. It is data, written by the owner, and it is bounded on
@@ -237,7 +289,7 @@ framework exists to prevent.
 ## Audit record
 
 Every delegated decision, and every refusal to make one, writes an immutable
-record containing the grant identifier, the decision class, the exact candidate
+record containing the grant identifier (or standing merge authority identifier), the decision class, the exact candidate
 commit, each verdict with its provider and run identifier, every gate result
 consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
 before the action, not after it. For the pre-execution class, a refusal made
@@ -663,7 +715,8 @@ explicit sign-off on the pull request that adds it.
   Delegation never makes a producer its own merger; it supplies a different
   agent, and evidence-bar item 5 enforces the separation.
 - **AGENTS.md rule 10 is unchanged as the default.** It still stops for every
-  tier-0 class, and for every tier-1 class where no live grant applies.
+  tier-0 class, and for every non-merge tier-1 class where no live grant applies.
+  The standing owner merge law resolves only the merge-execution owner decision.
 - **The deterministic gates in `policy.py` are unchanged and remain
   authoritative.** Model output may add approval requirements and may never
   remove them. That includes output from a delegated reviewer.
@@ -702,7 +755,7 @@ form**, not an authorization substituting for it.
 
 What delegation changes is narrower than it first appears. Previously the gate
 could be satisfied while the *merge decision that follows it* still waited for
-the owner. Under a live grant, that following decision may proceed, and only
+the owner. Under the verified standing owner merge authority, that following decision may proceed, and only
 then, and only when every other item on the evidence bar also holds. The
 framework requires the same one non-author provider verdict the charter
 requires, so a delegated decision clears the same review bar as an attended
@@ -884,3 +937,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]] -->

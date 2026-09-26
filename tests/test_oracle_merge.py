@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -1123,19 +1125,88 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.reasons, [])
         self.assertEqual(result.serious_safety_reasons, [])
 
-    def test_protection_must_be_verified_unprotected(self):
+    def test_protected_merge_requires_the_standing_evidence_boundary(self):
         for protected in (None, True):
             with self.subTest(protected=protected):
                 github = FakeGitHub(self.snapshot(base_protected=protected))
-                result = self.service(github).process(self.artifact())
+                result = self.service(github).process(
+                    self.artifact(artifact_id=f"review-protected-{protected}"))
                 self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
                 self.assertEqual(github.merge_calls, 0)
-                self.assertIn("base branch protection is protected or unverified", result.reasons)
+                reason = ("base branch protection is unverified" if protected is None
+                          else "standing merge evidence boundary is not configured")
+                self.assertIn(reason, result.reasons)
+
+    def test_protected_project_branch_is_not_a_blanket_policy_prohibition(self):
+        result = OracleMergePolicy(self.settings).evaluate(
+            self.artifact(), self.snapshot(base_protected=True))
+        self.assertEqual(result.status, OracleMergeStatus.ELIGIBLE)
+
+    def test_protected_project_merge_uses_authenticated_boundary(self):
+        import hashlib
+        import hmac
+        from director_orchestrator.hotl_execution import (
+            MergeExecutionBoundary, MergeObservation, STANDING_MERGE_AUTHORITY,
+        )
+        from tests.test_merge_eligibility import bundle, policy, review, check, digest
+
+        artifact = self.artifact()
+        github = FakeGitHub(self.snapshot(base_protected=True))
+        key = b"test-only-standing-observer-key!!"
+        now = datetime.now(timezone.utc)
+        reviewer = replace(review("claude", "standing"), verdict="ACCEPT")
+        security = review("security", "security-standing")
+        checks = (check("ci"), check("security"))
+        evidence = bundle(
+            repository=artifact.repository, base_ref=artifact.base_ref, head_ref=artifact.head_ref,
+            changed_paths=("oracle/calibration.py",), material_author_principals=frozenset({"cursor"}),
+            assignment_status={"scope": "assignment", "assignment_id": artifact.assignment_id,
+                               "assignment_acceptance_authorized": True, "gate_evidence_complete": True},
+            independent_reviews=(reviewer,), security_reviews=(security,), checks=checks,
+            authenticated_record_digests=frozenset({
+                reviewer.authentication_record_digest, reviewer.record_digest,
+                security.authentication_record_digest, security.record_digest,
+                *(item.response_digest for item in checks), digest("owner"),
+            }),
+        )
+
+        def observe(action, pull, challenge):
+            observation = MergeObservation(
+                bundle=evidence, pull_number=pull, base_sha=BASE_SHA, environment="test",
+                observed_at=now, challenge=challenge, authority_id=STANDING_MERGE_AUTHORITY,
+                authority_status="ACTIVE", operating_state="ATTENDED", producer_principal="cursor",
+                merging_principal="claude", provenance_status="COMPLETE", protection_status="SATISFIED",
+                ruleset_status="SATISFIED", bypass_status="DISABLED", cancellation_status="RUNNING",
+                tier_zero_status="CLEAR", budget_used=0, budget_limit=1,
+                attempts_used=0, attempt_limit=1, hops_used=0, hop_limit=1, base_protected=True,
+            )
+            return observation, hmac.new(key, observation.payload(), hashlib.sha256).hexdigest()
+
+        calls = []
+        def transport(**kwargs):
+            calls.append(kwargs)
+            return "f" * 40
+
+        boundary = MergeExecutionBoundary(
+            repository=artifact.repository, environment="test", assignment_id=artifact.assignment_id,
+            policy=policy(allowed_base_refs=(artifact.base_ref,), allowed_path_globs=("oracle/*",),
+                          required_check_names=("ci", "security"), required_branch_prefix="oracle/"),
+            prohibited_paths=(), observer_key=key, observe=observe, merge=transport,
+            audit_path=self.database + ".standing", clock=lambda: now,
+        )
+        service = self.service(github)
+        service._standing_merge_boundary = boundary
+        result = service.process(artifact)
+        self.assertEqual(result.status, OracleMergeStatus.MERGED, result.reasons)
+        self.assertEqual(result.merge_commit_sha, "f" * 40)
+        self.assertEqual(result.actor, "claude")
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(calls[0]["allow_bypass"])
+        self.assertEqual(calls[0]["expected_head_sha"], SHA)
+        self.assertEqual(github.merge_calls, 0)
 
     def test_base_ref_must_be_a_configured_per_project_ref(self):
-        """Tier 0 forbids merging into a protected branch and nothing in this
-        runtime can tell that a ref is protected, so the shared trunk names and
-        an unset variable both refuse instead of defaulting to one."""
+        """Standing merge law does not widen Oracle's project-specific scope."""
 
         accepted = OracleMergePolicy(self.settings).evaluate(
             self.artifact(), self.snapshot()
@@ -2146,3 +2217,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | END]]
