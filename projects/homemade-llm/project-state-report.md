@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]] -->
@@ -16,13 +17,13 @@
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | BEGIN]] -->
-# Project state report — homemade-llm, M0 "Foundation" gate (closure pending)
+# Project state report — homemade-llm, M0 "Foundation" gate (M0 closed; record reconciliation pending)
 
 Evidence-first. `[verified]` = read or measured by the Director session that wrote this line on the date given; `[relayed]` = a provider's or a person's claim; `[owner-reported]` = the owner's own account; `[stale]` = true at the stated time. No draft, simulation, or predicted-position label applies: every provider result below has a receipt.
 
 ## EVIDENCE
 
-**Homemade LLM:** Ed approved closing M0 (O-031), conditional on this reconciliation ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. **M0 closure is pending** with these open gates: owner disposition of the completed Set B batch 1 rerun (ACCEPT, 24 OK and pr-45 MINOR; receipt xai/20260926T215607Z-666045-34b3.json omits the provider response ID; file SHA-256 is only in purpose) [verified 2026-09-26 21:56 UTC, receipt], including receipt authentication and whether to fix pr-45; Set B remains excluded from M1 scoring; one final independent full-diff review of #293 at exact head and base; all six CI checks green at that head. After final ACCEPT and the gates, the non-author reviewer merges; neither contributor may merge. This report and decision-log rows O-031 to O-036, O-040/O-041 and D-015 to D-022 record the reconciliation, ratified D-019 to D-022 exceptions and separate unresolved D-018 crossing. This record does not authorize M1 dispatch or rely on the separate M1 plan PR (#294, O-038). Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
+**Homemade LLM:** Ed approved closing M0 (O-031), conditional on this reconciliation ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. **M0 closed; record reconciliation pending** with these open gates: owner disposition of the completed Set B batch 1 rerun (ACCEPT, 24 OK and pr-45 MINOR; receipt xai/20260926T215607Z-666045-34b3.json omits the provider response ID; file SHA-256 is only in purpose) [verified 2026-09-26 21:56 UTC, receipt], including receipt authentication and whether to fix pr-45; Set B remains excluded from M1 scoring; one final independent full-diff review of #293 at exact head and base; all six CI checks green at that head. After final ACCEPT and the gates, the non-author reviewer merges; neither contributor may merge. This report and decision-log rows O-031 to O-036, O-040/O-041 and D-015 to D-022 record the reconciliation, ratified D-019 to D-022 exceptions and separate unresolved D-018 crossing. This record does not authorize M1 dispatch or rely on the separate M1 plan PR (#294, O-038). Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
 
 - **Project ID:** `homemade-llm`
 - **Assignment IDs:** HS-0, M0.1 to M0.12, RV-275
@@ -200,7 +201,7 @@ CI is the six required jobs at each PR's merged or pending head, read with `gh p
 ### Next bounded action
 
 1. Obtain the owner decision on accepting the completed batch 1 receipt as authentication or requiring a rerun after the wrapper records provider response IDs, and on whether to fix pr-45 (changing the pinned manifest). Set B stays out of M1 scoring until the owner accepts this receipt as batch 1 authentication or requires a rerun after the wrapper records provider response IDs. The owner also decides whether pr-45 needs a fix, which would change the pinned manifest.
-2. After the Director commits MX-011, obtain the one final Grok full-diff review bound to the exact head and base, and all six CI checks at that head. If more changes are required, stop for a new owner disposition.
+2. MX-011 is committed at `da214e27754f2b7513ac844b0d5c5bec38d8e3a6`; after the owner-approved bounded correction (PR comment 5850436634), obtain the one fresh Grok full-diff review bound to the exact head and base, and all six CI checks at that head. If more changes are required, stop for a new owner disposition.
 3. After final ACCEPT and the required gates, the non-author reviewer merges #293. No contributor may review or merge; Grok unavailability means review waits.
 
 **Historical pre-plan work is retained.** Set A v2 (Grok ACCEPT 19/19) and Set B v2 were produced before approved pre-stage packets (D-019), now ratified as documented exceptions; Set A's ACCEPT remains valid under the scoring rule above, and Set B stays excluded from M1 scoring pending batch 1 authentication.
@@ -228,3 +229,4 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | END]] -->
