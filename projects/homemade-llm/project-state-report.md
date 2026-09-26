@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | BEGIN]] -->
@@ -93,7 +94,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
     - Their JSON references are in `set-a-json-v2\`: authored by OpenAI Codex, with a Grok ACCEPT on all 19 (receipt `xai/20260926T193234Z.json`) `[verified 2026-09-26 19:32 UTC, receipt]`.
     - An earlier Cursor conversion (`set-a-json\`) failed three independent reviews and is kept only as evidence `[verified, receipts heldout/codex-20260926T190120Z, …190641Z, …191448Z]`.
   - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review (50 substantive findings) and are kept only as evidence `[verified 2026-09-26 19:36 UTC, receipt heldout/codex-20260926T193640Z.setb-review]`.
-    - Its replacement, `pr-reconstructed-v2\` (authored by OpenAI Codex), passed the owner-approved (O-035) Grok review with ACCEPT 25/25 on both batches `[verified 2026-09-26 20:37 UTC]`.
+    - Its replacement, `pr-reconstructed-v2\` (authored by OpenAI Codex), has an owner-approved (O-035) Grok review with ACCEPT 25/25 on batch 2 `[verified 2026-09-26 20:37 UTC, receipt xai/20260926T203729Z.json]`; batch 1 has ACCEPT 25/25 `[unverified: original receipt lost; saved verdict and self-reconstructed receipt only]`.
     - Verdicts are saved at `C:\llm\datasets\heldout\REVIEW-SET-B-V2-GROK-BATCH1.md` and `…BATCH2.md`; batch 2's receipt is `xai/20260926T203729Z.json`.
     - Batch 1's receipt was lost to a same-second receipt-name collision. Its evidence is the saved verdict plus a reconstruction receipt written by Claude Code from captured output. Neither authenticates the reviewer or the reviewed inputs.
     - **Set B stays incomplete for M1 scoring** until batch 1 is authenticated, either by an independent re-review of batch 1 with its own receipt or by a matching provider-side usage record. Only batch 2 (25 of 50) is backed by an authenticated receipt `[verified]`.
@@ -118,7 +119,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 | 12 | Status-check, duplicate-validation, action and wave counts | **Unavailable:** not measured in M0. |
 | 13 | Avoidable-commit baseline | **Unavailable:** not measured in M0. |
 | 14 | Scope or authority changes, owner authorization | No authority change. Owner authorizations: O-029 to O-036. |
-| 15 | Recovery state and rollback | Nightly mirror and restore drill (M0.7). Rollback is a revert of the merged PRs. Receipts and reports are on disk under `C:\llm\reports` and the provider-dispatch receipts. |
+| 15 | Recovery state and rollback | Nightly mirror and restore drill (M0.7). Repository rollback is a revert of the merged PRs. **Host rollback: documentation only, not executed.** Stop Open WebUI + SearXNG from `projects/homemade-llm/compose/` with `docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env down`, never `-v` (`compose/RUNBOOK.md` §4 "Diagnostics"). Owner stops Tailscale Serve with the documented `tailscale serve --https=443 off`, then confirms nothing is served using `tailscale serve status` (`compose/RUNBOOK.md` §2 "Phone access with Tailscale Serve (never Funnel)", step 5). Remove Scheduled Task `homemade-llm-mirror` (name recorded in M0.7 above): **no documented procedure; owner action** (`scripts/mirror.ps1`, opening usage comments; `workstream-plan.md`, "Workstreams", M0.7, and "Owner and deterministic gates"). Restore the removed live Ollama blobs from the content-verified `E:\llm-archive\ollama-2026-09\models\blobs` to `xo-fleet\ollama\models\blobs`: **no documented procedure; owner action** (`decision-log.md` D-014; `workstream-plan.md`, "Workstreams", M0.6). Receipts and reports are on disk under `C:\llm\reports` and the provider-dispatch receipts. |
 | 16 | Next gate and responsible party | "Next bounded action" below |
 | 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-036; open crossings awaiting disposition: D-018, D-019 |
 | 18 | Not done and unverified | "Not done, and what remains unverified" below |
@@ -127,7 +128,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 CI is the six required jobs at each PR's merged head, read with `gh pr view` on 2026-09-26 `[verified]`. Review receipts are located in the provider-dispatch receipt folders. Their verdict text was **not** re-read for this reconciliation, so it is marked unverified here, except where a verdict is cited elsewhere in this record.
 
-| PR | Merged head | CI at head | Independent review evidence |
+| PR | Merged or pending head | CI at head | Independent review evidence |
 |---|---|---|---|
 | #266 | `0e2b72e` | 6/6 success | Grok CLI review, receipt `homemade-llm/grok-20260924T080222Z` (verdict unverified here) |
 | #267 | `e61dad0` | 6/6 success | Codex receipts in `hl-m0-preflight/` (verdict unverified here) |
@@ -139,6 +140,8 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 | #276 | `b0a4f59` | 6/6 success | Reviews in `hl-m0-close/`; merged by the owner under the one-time exception (D-015) |
 | #277 | `45a144f` | **3 success, 3 cancelled**: merged without a full green run. Disposition: the reconciled tree, which contains #277's content, is validated by this reconciliation PR's own six required CI jobs at its reviewed head. Until those are green, M0's CI evidence is incomplete (owner gate below). | Eight xAI reviews of the report (receipts in the M0 paid spend table; final one `xai/20260926T000816Z.json`) |
 | #279 | `224b4f0` | 6/6 success | xAI reviews `xai/20260926T001634Z.json`, `…003909Z.json`, `…013141Z.json` |
+| #283 | MERGED 2026-09-26 16:40:15 UTC as `052553f4bc900ccb587bcb3bfc60f7b5088aa298`, at head `d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88` `[relayed, Director verification in MX-002]` | 6/6 SUCCESS: Contribution attribution, Python 3.12 ubuntu, Python 3.12 windows, Compose and container build, Secret hygiene, Cross-process recovery probe `[relayed]` | OpenAI Codex source re-review ACCEPT at `d6a6d55` against base `58fb485` (#283 PR comment, 2026-09-26 04:58:59 UTC). Earlier Grok ACCEPTs at `cf0623d` and `7b9ea60`, receipts `xai/20260926T040053Z.json` and `xai/20260926T044605Z.json` `[relayed, Director verification in MX-002]` |
+| #291 | OPEN at `409d9bb`; **pending, outside the completed M0 milestone** `[relayed, Director verification in MX-002]` | Not yet complete at the time of writing; pending `[relayed]` | Independent ACCEPT at `409d9bb` `[relayed, Director verification in MX-002]` |
 
 ### Not done, and what remains unverified
 
@@ -182,3 +185,4 @@ No further work under those items runs before the plan is approved.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | END]] -->

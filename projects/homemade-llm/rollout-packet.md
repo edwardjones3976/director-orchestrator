@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:33 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
@@ -25,7 +27,11 @@ are borrowed from another deployment. No secret values appear here.
 - **Repository allowlist:** `edwardjones3976/director-orchestrator`, path `projects/homemade-llm/` only
 - **Starting-ref allowlist:** `1892b841a78580b2664236b16dcc61094bdce9c8`
 - **Data classification:** mixed — public model weights and public-domain corpora; private owner-authored material for COMPANION stays on the host
-- **External effects:** analysis_only; PRs to this repository under the one-author/one-reviewer protocol; provider dispatch through the owner's provider-dispatch skill only
+- **External effects:** explicitly_scoped
+  - **Allowed:** Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)
+  - **Allowed:** Independent reviews through the owner-approved provider routes, including the owner-approved xAI review of the set B v2 packets with private values redacted (done)
+  - **Allowed:** Any further external effect only after its own owner approval, recorded in decision-log.md
+  - **Prohibited:** Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)
 - **Paid execution:** owner-authorized and gated — USD 25 per milestone ledger; a call that would breach it stops
 - **Automerge/deployment/publication:** disabled; merge is the owner's gate
 
@@ -89,11 +95,14 @@ used as a fallback.
 
 ## Disposition
 
-- **Current state:** analysis_only
+- **Current state:** explicitly_scoped
 - **Blocking fields:** none for the M0 gate; every Slack identity is pending by design until M3
-- **Next responsible party:** owner (merge #277; #276 after its authorship split; run `tailscale serve --bg 3000` per compose/RUNBOOK.md section 2)
-- **Next bounded action:** close the M0 gate, then build the M1 held-out sets
+- **Next responsible party:** owner (D-018 and D-019 dispositions; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan
+- **Next bounded action:** Ed disposes of D-018 (#280 merged before M0 closed) and D-019 (held-out sets A and B produced before pre-staging, quarantined for M1 scoring), and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before the plan is approved, and no M1 scoring on sets A or B before D-019 is disposed of. Set B also stays incomplete until its batch 1 review is authenticated. The pre-plan work has stopped; the O-034 downloads are done and verified.
+- **Expected evidence:** the recorded D-018 and D-019 dispositions and M1 plan approval; this PR's six required CI jobs green at its reviewed head
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:33 UTC | END]] -->
