@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
@@ -297,15 +298,22 @@ class UsageMonitor:
         sent, never ahead (review 4111996174): a probe that succeeds first time holds one slot, and a refused
         reservation raises before its request, so nothing unreserved is dispatched and no reservation outlives a
         request that was not sent. Returns (None, None) for a provider the ledger does not account (it has no cap)."""
+        # Every paid probe reserves a nonzero monetary bound before it is sent (review 4112206668): the configured
+        # probe cost ceiling (grok: its per-request floor). With no bound configured the probe is refused, never
+        # reserved at $0; record_charge later raises a reservation to its actual charge, never below the bound.
         limits = {
-            "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd, 0.0),
+            "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd,
+                       self.settings.gemini_usage_probe_cost_ceiling_usd),
             "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd,
                      self.settings.grok_request_cost_floor_usd),
-            "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd, 0.0),
+            "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd,
+                           self.settings.perplexity_usage_probe_cost_ceiling_usd),
         }
         if provider not in limits:
             return None, None
         request_limit, budget_usd, floor_usd = limits[provider]
+        if not isinstance(floor_usd, (int, float)) or isinstance(floor_usd, bool) or not floor_usd > 0:
+            raise ProviderDailyLimitExceeded(f"{provider} usage probes have no configured cost ceiling")
         attempts = 1
         if provider == "gemini":
             remaining = self._supplemental_remaining_requests(provider, now)
@@ -321,7 +329,8 @@ class UsageMonitor:
                 estimated_cost_usd=floor_usd,
                 request_limit=request_limit,
                 budget_usd=budget_usd,
-                now=now,
+                # The accounting day of THIS request, read immediately before it (review 4112206672).
+                now=datetime.now(timezone.utc),
             )
 
         return attempts, reserve
@@ -690,7 +699,7 @@ class UsageMonitor:
                             provider=ProviderName(provider),
                             effect_key=_probe_key(cycle_id, provider),
                             actual_cost_usd=record.reported_cost_usd,
-                            now=now,
+                            now=datetime.now(timezone.utc),
                         )
                     records.append(record)
                     if index < len(providers) - 1:
@@ -794,3 +803,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -26,20 +27,56 @@ import subprocess  # noqa: E402
 from pathlib import Path  # noqa: E402
 sys.path[:] = _SEARCH_PATH
 
-# No evaluator module is imported at load time: the checkout is verified first (untracked_importables), because an
-# untracked or ignored file under src/ or scripts/ (a planted src/httpx.py, say) would be imported ahead of the
-# pinned evaluator's own code. Only the standard library runs before that check.
+# No repository Python runs before the whole trust check below passes: it uses the standard library alone, with the
+# checkout's own directories off sys.path (above), because any module the checkout carries - modified, staged,
+# untracked or ignored - could otherwise redefine the very check that is meant to reject it.
 ROOT = Path(__file__).resolve().parents[1]
+# The owner-installed release descriptor (primary_scorecard_evidence.RELEASE_DESCRIPTOR), read here with json alone.
+RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
+DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 
 
-def untracked_importables(root: Path = ROOT) -> list[str]:
-    """Untracked or ignored paths under src/ and scripts/ of the evaluator checkout (review 4111996182), except
-    __pycache__ entries Python writes for tracked modules. It runs before any evaluator import, so it cannot reuse
-    completion_scorecard.untracked_evaluator_files (the same rule, re-applied there once the import is safe)."""
-    listing = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all", "--ignored",
-                              "--", "src", "scripts"], capture_output=True, timeout=30, check=True, stdin=subprocess.DEVNULL)
-    return [line[3:] for line in listing.stdout.decode("utf-8", "replace").splitlines()
-            if line[:2] in ("??", "!!") and "__pycache__/" not in line[3:].replace("\\", "/")]
+def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+    """The descriptor's evaluator_sha (40 lowercase hex), or None: absent, a link, oversized, malformed, another
+    version or no pin."""
+    try:
+        if descriptor.is_symlink() or not descriptor.is_file() or descriptor.stat().st_size > 1_048_576:
+            return None
+        value = json.loads(descriptor.read_bytes())
+    except (OSError, ValueError):
+        return None
+    pin = value.get("evaluator_sha") if isinstance(value, dict) and value.get("version") == DESCRIPTOR_VERSION else None
+    return pin if isinstance(pin, str) and len(pin) == 40 and all(c in "0123456789abcdef" for c in pin) else None
+
+
+def checkout_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+    """The stdlib-only trust bootstrap (review 4112206675): None when the checkout may be imported, else why not.
+    Any entry under src/ or scripts/ in ``git status --porcelain --untracked-files=all --ignored`` (modified,
+    staged, untracked or ignored; only __pycache__ is tolerated) refuses; HEAD must be the release descriptor's
+    evaluator_sha, and that commit must be on github/main."""
+    def git(*arguments: str) -> str:
+        return subprocess.run(["git", "-C", str(root), *arguments], capture_output=True, timeout=30, check=True,
+                              stdin=subprocess.DEVNULL).stdout.decode("utf-8", "replace")
+    pinned = pinned_evaluator(descriptor)
+    if pinned is None:
+        return "evaluator revision not pinned"
+    try:
+        listing = git("status", "--porcelain", "--untracked-files=all", "--ignored", "--", "src", "scripts")
+        dirty = [line[3:] for line in listing.splitlines()
+                 if line.strip() and "__pycache__/" not in line[3:].replace("\\", "/")]
+        if dirty:
+            return ("modified, staged, untracked or ignored files under src/ or scripts/ would be importable: "
+                    + ", ".join(sorted(dirty)[:10]))
+        if git("rev-parse", "HEAD").strip() != pinned:
+            return "its HEAD is not the pinned evaluator revision"
+    except (OSError, subprocess.SubprocessError):
+        return "its checkout could not be verified"
+    try:
+        git("merge-base", "--is-ancestor", pinned, "github/main")
+    except (OSError, subprocess.SubprocessError):
+        return "the pinned evaluator revision is not on github/main"
+    return None
+
 
 _LIVE_ONLY = ("--deployment, --channel, --github, --ledger, --security-scan, --drill-thread, --approval-task, --trial, "
               "--rubric, --paid-thread, --paid-rubric, --ci-replica-receipt and --gateway require --live")
@@ -71,31 +108,27 @@ def main() -> int:
     parser.add_argument("--paid-rubric", type=Path, help="Paid answer rubric the --paid-thread input committed to")
     parser.add_argument("--ci-replica-receipt", type=Path, help="Owner-signed local-replica receipt for check 16; requires --github")
     args = parser.parse_args()
-    # Before any evaluator import: refuse a checkout that carries untracked or ignored files where Python imports.
-    try:
-        planted = untracked_importables()
-    except (OSError, subprocess.SubprocessError) as error:
-        parser.error(f"scorecard not run from the pinned evaluator checkout: its files could not be verified ({error})")
-    if planted:
-        parser.error("scorecard not run from the pinned evaluator checkout: untracked or ignored files under src/ or "
-                     "scripts/ would be importable: " + ", ".join(sorted(planted)[:10]))
+    selected = (args.deployment, args.channel, args.github, args.ledger, args.security_scan, args.drill_thread,
+                args.approval_task, args.trial, args.rubric, args.paid_thread, args.paid_rubric,
+                args.ci_replica_receipt, args.gateway)
+    if any(selected) and not args.live:
+        parser.error(_LIVE_ONLY)
+    if args.live and not args.deployment:
+        parser.error("--live requires --deployment <compose project>")
+    drills = {}
+    for value in args.drill_thread:
+        kind, separator, thread = value.partition("=")
+        if not separator or kind in drills:
+            parser.error("--drill-thread takes one KIND=THREAD_TS value per drill kind")
+        drills[kind] = thread
+    # The whole trust check, standard library only, before any repository module is imported.
+    refusal = checkout_refusal()
+    if refusal is not None:
+        parser.error("scorecard not run from the pinned evaluator checkout: " + refusal)
     from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
                                                            untrusted_checkout)
     try:
-        selected = (args.deployment, args.channel, args.github, args.ledger, args.security_scan, args.drill_thread,
-                    args.approval_task, args.trial, args.rubric, args.paid_thread, args.paid_rubric,
-                    args.ci_replica_receipt, args.gateway)
-        if any(selected) and not args.live:
-            parser.error(_LIVE_ONLY)
-        if args.live and not args.deployment:
-            parser.error("--live requires --deployment <compose project>")
-        drills = {}
-        for value in args.drill_thread:
-            kind, separator, thread = value.partition("=")
-            if not separator or kind in drills:
-                parser.error("--drill-thread takes one KIND=THREAD_TS value per drill kind")
-            drills[kind] = thread
-        # Operating rule: grade only from the pinned evaluator checkout (completion_scorecard.untrusted_checkout).
+        # Second line, now that the evaluator is trusted: the same rule, and the candidate's ancestry.
         refused = untrusted_checkout(args.candidate_sha)
         observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel,
                                                   owner=args.owner, github=args.github,
@@ -135,3 +168,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]

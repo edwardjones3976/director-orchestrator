@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -153,6 +154,7 @@ budgets_and_limits:
   variables:
     - { variable: "GEMINI_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "gemini_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "gemini_daily_request_limit", default: 50, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_USAGE_PROBE_COST_CEILING_USD", kind: "per_request_cost_floor_usd", settings_field: "gemini_usage_probe_cost_ceiling_usd", default: null, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_MAX_TOTAL_TOKENS", kind: "token_ceiling", settings_field: "gemini_max_total_tokens", default: 20000, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_USAGE_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "gemini_usage_max_attempts", default: 3, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS", kind: "retry_delay_seconds", settings_field: "gemini_usage_max_retry_delay_seconds", default: 8, documented_in_env_example: true, values_recorded: false }
@@ -331,3 +333,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:23 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -140,6 +141,7 @@ Strengths:
 | --- | --- | --- | --- | --- | --- |
 | `PERPLEXITY_DAILY_BUDGET_USD` | daily_budget_usd | `perplexity_daily_budget_usd` | `2.0` | yes | no |
 | `PERPLEXITY_DAILY_REQUEST_LIMIT` | daily_request_limit | `perplexity_daily_request_limit` | `100` | yes | no |
+| `PERPLEXITY_USAGE_PROBE_COST_CEILING_USD` | per_request_cost_floor_usd | `perplexity_usage_probe_cost_ceiling_usd` | - | yes | no |
 | `PERPLEXITY_MAX_RESULTS` | max_results | `perplexity_max_results` | `10` | yes | no |
 | `PERPLEXITY_TIMEOUT_SECONDS` | timeout_seconds | `perplexity_timeout_seconds` | `180` | yes | no |
 | `PERPLEXITY_SEARCH_CONTEXT_SIZE` | search_context_size | `perplexity_search_context_size` | `high` | yes | no |
@@ -303,3 +305,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | END]] -->

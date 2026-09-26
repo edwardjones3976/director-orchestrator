@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -53,6 +54,7 @@ import os
 import re
 import uuid
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 _PIN = "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"
@@ -1363,6 +1365,9 @@ CLI_RELEASE_DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 UNATTESTED = "-unattested"
 
 
+RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
+
+
 def cli_release_descriptor():
     """The owner-pinned CLI release descriptor, or None while none is provisioned (every CLI capture is then
     unattested). Its exact shape, which cli_release_product enforces:
@@ -1376,8 +1381,19 @@ def cli_release_descriptor():
 
     ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
     current main's ci.yml is trusted.
+
+    It is the owner-installed file RELEASE_DESCRIPTOR (fixed, no override, the stance of the replica signer key);
+    absent, a link, oversized, malformed or of another version, there is none. scripts/director-scorecard.py reads
+    the same file with the standard library alone before any repository module is imported.
     """
-    return None  # ponytail: inert until A2/R1 pins a descriptor here and captures record the executable digest
+    try:
+        if RELEASE_DESCRIPTOR.is_symlink() or not RELEASE_DESCRIPTOR.is_file() \
+                or RELEASE_DESCRIPTOR.stat().st_size > 1_048_576:
+            return None
+        value = json.loads(RELEASE_DESCRIPTOR.read_bytes())
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) and value.get("version") == CLI_RELEASE_DESCRIPTOR_VERSION else None
 
 
 def ci_workflow_pin(descriptor):
@@ -1588,3 +1604,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]

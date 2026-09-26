@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -186,6 +187,7 @@ Strengths:
 | --- | --- | --- | --- | --- | --- |
 | `GEMINI_DAILY_BUDGET_USD` | daily_budget_usd | `gemini_daily_budget_usd` | `2.0` | yes | no |
 | `GEMINI_DAILY_REQUEST_LIMIT` | daily_request_limit | `gemini_daily_request_limit` | `50` | yes | no |
+| `GEMINI_USAGE_PROBE_COST_CEILING_USD` | per_request_cost_floor_usd | `gemini_usage_probe_cost_ceiling_usd` | - | yes | no |
 | `GEMINI_MAX_TOTAL_TOKENS` | token_ceiling | `gemini_max_total_tokens` | `20000` | yes | no |
 | `GEMINI_USAGE_MAX_ATTEMPTS` | max_attempts | `gemini_usage_max_attempts` | `3` | yes | no |
 | `GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS` | retry_delay_seconds | `gemini_usage_max_retry_delay_seconds` | `8` | yes | no |
@@ -368,3 +370,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | END]] -->

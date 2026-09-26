@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
@@ -41,6 +42,12 @@ from director_orchestrator.usage import (
     normalize_reported_cost,
     normalize_usage,
 )
+
+
+# Gemini and perplexity probes now reserve a configured nonzero cost ceiling before each request, and are refused
+# without one (review 4112206668): every fixture here configures the bound.
+BOUNDED_SETTINGS = replace(Settings(), gemini_usage_probe_cost_ceiling_usd=0.01,
+                           perplexity_usage_probe_cost_ceiling_usd=0.01)
 
 
 class SuccessfulCursorProbe:
@@ -207,7 +214,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                         {"id": "resp", "status": []}, []):
             with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
                 settings = replace(
-                    Settings(), allow_paid_runs=True, usage_check_enabled=True,
+                    BOUNDED_SETTINGS, allow_paid_runs=True, usage_check_enabled=True,
                     usage_check_provider_delay_seconds=0,
                     usage_check_providers=("openai",), openai_api_key="test-openai",
                     slack_bot_token="", sqlite_path=str(Path(directory) / "tasks.sqlite3"),
@@ -236,7 +243,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -276,7 +283,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -317,7 +324,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -336,7 +343,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -357,7 +364,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -387,7 +394,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -424,7 +431,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulGrokProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -454,7 +461,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(database)
             adapter = SuccessfulGrokProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -477,6 +484,54 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             accounting = monitor.health()["daily_accounting"]["grok"]
             self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
 
+    async def test_every_paid_probe_reserves_a_nonzero_bound_or_is_refused(self):
+        """Review 4112206668: a gemini or perplexity probe reserves its configured cost ceiling before it is sent;
+        with no ceiling configured it is refused and nothing is dispatched. A lower reported charge never lowers
+        the reservation."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(database)
+            adapter = QuotaFailingGeminiProbe()
+            unbounded = replace(BOUNDED_SETTINGS, gemini_usage_probe_cost_ceiling_usd=None, usage_check_enabled=True,
+                                allow_paid_runs=True, usage_check_provider_delay_seconds=0,
+                                usage_check_providers=("gemini",), gemini_api_key="test-gemini",
+                                sqlite_path=database, slack_bot_token="")
+            records = await UsageMonitor(unbounded, TaskStore(database),
+                                         adapters={ProviderName.GEMINI: adapter}).run_once(force=True)
+            self.assertEqual(adapter.calls, 0)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertIn("no configured cost ceiling", records[0].error or "")
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (0, 0.0))
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(database)
+            bounded = replace(unbounded, gemini_usage_probe_cost_ceiling_usd=0.05, sqlite_path=database)
+            await UsageMonitor(bounded, TaskStore(database),
+                               adapters={ProviderName.GEMINI: QuotaFailingGeminiProbe()}).run_once(force=True)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.05))  # no reported cost: the bound holds
+            [(key, _)] = ledger.reservations(ProviderName.GEMINI)
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.01)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.05))  # never below the bound
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.2)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.2))
+
+    async def test_each_reservation_counts_on_the_utc_day_it_is_made(self):
+        """Review 4112206672: a probe reserved after UTC midnight counts toward the new day, whatever day its
+        usage-check cycle started on."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(database)
+            settings = replace(BOUNDED_SETTINGS, sqlite_path=database, slack_bot_token="")
+            monitor = UsageMonitor(settings, TaskStore(database))
+            started = datetime(2026, 9, 26, 23, 59, 59, tzinfo=timezone.utc)
+            after_midnight = datetime(2026, 9, 27, 0, 0, 1, tzinfo=timezone.utc)
+            _, reserve = monitor._probe_reserver("cycle-1", "grok", started)
+            with patch("director_orchestrator.usage.datetime") as usage_datetime:
+                usage_datetime.now.return_value = after_midnight
+                reserve(1)
+            self.assertEqual(ledger.exposure(ProviderName.GROK, now=after_midnight)[0], 1)
+            self.assertEqual(ledger.exposure(ProviderName.GROK, now=started)[0], 0)
+
     async def test_each_gemini_retry_is_reserved_immediately_before_it_is_sent(self):
         """Review 4111996174: each retry is reserved through reserve() immediately before its request, never ahead.
         A probe that succeeds first time holds one slot; one that is retried holds one per request actually sent."""
@@ -485,7 +540,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 database = str(Path(directory) / "tasks.sqlite3")
                 ledger = ProviderDailySpendLedger(database)
                 settings = replace(
-                    Settings(), allow_paid_runs=True, usage_check_enabled=True,
+                    BOUNDED_SETTINGS, allow_paid_runs=True, usage_check_enabled=True,
                     usage_check_provider_delay_seconds=0, usage_check_providers=("gemini",),
                     gemini_api_key="test-gemini", gemini_usage_max_attempts=3, gemini_daily_request_limit=10,
                     sqlite_path=database, slack_bot_token="")
@@ -526,7 +581,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
 
             adapter = CountingProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -571,7 +626,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             database = str(Path(directory) / "tasks.sqlite3")
             store = TaskStore(database)
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -615,7 +670,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             adapter = SuccessfulGrokProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -646,7 +701,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = QuotaFailingGeminiProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -687,7 +742,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulPerplexityProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -736,7 +791,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -797,7 +852,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -869,7 +924,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             monitor = UsageMonitor(
                 replace(
-                    Settings(),
+                    BOUNDED_SETTINGS,
                     allow_paid_runs=True,
                     usage_check_enabled=True,
                     usage_check_providers=("claude", "cursor"),
@@ -891,7 +946,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             monitor = UsageMonitor(
-                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                replace(BOUNDED_SETTINGS, sqlite_path=str(Path(directory) / "tasks.sqlite3")),
                 store,
                 adapters={},
             )
@@ -911,7 +966,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             monitor = UsageMonitor(
-                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                replace(BOUNDED_SETTINGS, sqlite_path=str(Path(directory) / "tasks.sqlite3")),
                 store,
                 adapters={},
             )
@@ -930,7 +985,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=False,
                 usage_check_enabled=True,
                 usage_check_providers=("cursor",),
@@ -948,7 +1003,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_interval_minutes=360,
@@ -978,7 +1033,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1001,7 +1056,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1022,7 +1077,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1046,7 +1101,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1073,7 +1128,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1097,7 +1152,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1127,7 +1182,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1155,7 +1210,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1189,7 +1244,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_providers=("cursor",),
@@ -1211,7 +1266,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_providers=("cursor",),
@@ -1242,7 +1297,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1278,3 +1333,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
@@ -122,6 +123,17 @@ def _float(name: str, default: float) -> float:
 
 def _positive_float(name: str, default: float) -> float:
     value = _float(name, default)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
+    return value
+
+
+def _optional_positive_float(name: str) -> float | None:
+    """A finite positive amount, or None when the variable is unset (a caller then refuses fail-closed)."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    value = float(raw)
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value
@@ -859,6 +871,9 @@ class Settings:
     gemini_max_total_tokens: int = _int("GEMINI_MAX_TOTAL_TOKENS", 20_000)
     gemini_daily_budget_usd: float = _float("GEMINI_DAILY_BUDGET_USD", 2.0)
     gemini_daily_request_limit: int = _int("GEMINI_DAILY_REQUEST_LIMIT", 50)
+    # The most one usage-check probe request may cost: every probe attempt reserves it before it is sent. Unset,
+    # the monitor refuses gemini probes rather than reserve nothing.
+    gemini_usage_probe_cost_ceiling_usd: float | None = _optional_positive_float("GEMINI_USAGE_PROBE_COST_CEILING_USD")
     gemini_mode: str = os.getenv(
         "GEMINI_MODE", "antigravity_subordinate"
     ).strip().lower()
@@ -907,6 +922,10 @@ class Settings:
     perplexity_daily_budget_usd: float = _float("PERPLEXITY_DAILY_BUDGET_USD", 2.0)
     perplexity_daily_request_limit: int = _int(
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
+    )
+    # As gemini_usage_probe_cost_ceiling_usd, for perplexity usage-check probes.
+    perplexity_usage_probe_cost_ceiling_usd: float | None = _optional_positive_float(
+        "PERPLEXITY_USAGE_PROBE_COST_CEILING_USD"
     )
 
     # Z.ai GLM Coding Plan: a trial-only, fail-closed contact lane (owner
@@ -2581,3 +2600,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]

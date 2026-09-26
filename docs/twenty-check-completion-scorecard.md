@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]] -->
@@ -1057,12 +1058,19 @@ rubric requirements and every predicate come from the evaluator checkout.
 With no `evaluator_sha` pinned every check is UNKNOWN, "evaluator revision
 not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
-fails the rule. Before importing any evaluator module, the CLI refuses a
-checkout with untracked or ignored files under `src/` or `scripts/` (other
-than `__pycache__`), which Python would import ahead of the pinned code (a
-planted `src/httpx.py`); its own standard-library imports run with the
-checkout's directories off `sys.path` while it checks. The same rule runs
-again inside `untrusted_checkout`.
+fails the rule. The descriptor is the owner-installed file
+`~/.director-scorecard/release-descriptor.json` (no override; absent, a link,
+over 1 MB, malformed or another version means none). The whole rule first runs
+as a standard-library-only bootstrap in `scripts/director-scorecard.py`,
+before any repository module is imported and with the checkout's directories
+off `sys.path`: it reads `evaluator_sha` from the descriptor with `json`
+(missing: refused), refuses any entry under `src/` or `scripts/` in
+`git status --porcelain --untracked-files=all --ignored` (modified, staged,
+untracked or ignored; only `__pycache__` is tolerated), requires HEAD to be
+`evaluator_sha` and `evaluator_sha` to be an ancestor of `github/main`
+(`git merge-base --is-ancestor`). A modified tracked module or a planted
+`src/httpx.py` therefore never runs. Only then does it import the evaluator,
+and `untrusted_checkout` repeats the rule as a second line.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
 in-image from the batch's assignment rows (assignment_id, sequence,
@@ -1096,10 +1104,15 @@ for more work under the cap. Every usage-check probe attempt of a ledger
 provider (gemini, grok, perplexity) is reserved through `reserve()`
 immediately before its request is sent, never ahead (gemini reserves each
 retry inside its own retry loop), each under its own effect key, so probes count against the caps
-before they run; a refused reservation dispatches nothing, and a failed or
-zero-cost probe keeps its reservations (gemini and perplexity have no
-configured probe floor, so their probe reservations are zero-cost and count
-against the request cap until the charge is recorded). Check 16's trusted
+before they run; a refused reservation dispatches nothing, and a failed probe
+keeps its reservations. Every probe reserves a nonzero bound: grok its
+`GROK_REQUEST_COST_FLOOR_USD`, gemini `GEMINI_USAGE_PROBE_COST_CEILING_USD`,
+perplexity `PERPLEXITY_USAGE_PROBE_COST_CEILING_USD`; with no positive bound
+configured the probe is refused, never reserved at $0. `record_charge` raises
+a reservation to its actual charge and never lowers it. Each reservation and
+its matching charge take their accounting timestamp immediately before they
+are written, so a cycle that crosses UTC midnight counts each request on its
+own day. Check 16's trusted
 workflow is the owner's `ci_workflow_sha256` if pinned, otherwise the
 `ci.yml` at the pinned `evaluator_sha`; never the candidate's own history.
 Check 11 credits a lane only when both activation surfaces (app and
@@ -1167,8 +1180,8 @@ descriptor's exact shape:
 Each entry has exactly those three keys; a digest pinned twice, pinned to
 another provider or product, a malformed entry, another version, or a capture
 without the digest attests nothing. The descriptor and the executable digest
-on the capture are A2/R1 work and do not exist yet: `cli_release_descriptor()`
-returns None and no capture records the digest, so every CLI capture is
+on the capture are A2/R1 work: `cli_release_descriptor()` returns None until
+the owner installs the descriptor file, and no capture records the digest yet, so every CLI capture is
 `<product>-unattested` and check 11 cannot PASS on a CLI lane until A2 wires
 both.
 
@@ -1353,3 +1366,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]] -->
