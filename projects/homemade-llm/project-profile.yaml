@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]]
@@ -105,7 +106,7 @@ surfaces:
     allowed:
       - "Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)"
       - "Independent reviews through the owner-approved provider routes, including the owner-approved xAI review of the set B v2 packets with private values redacted (done)"
-      - "Any further external effect only after its own owner approval, recorded in decision-log.md"
+    # Any new external effect requires a profile revision first (fallbacks.changed_scope: reshape_profile_before_dependent_work).
     prohibited:
       - "Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)"
 
@@ -215,7 +216,7 @@ controls:
 
 review_chain:
   producer: "claude"
-  material_authors: ["claude"]
+  material_authors: ["claude", "openai codex"]
   eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
   candidate:
     repository: "edwardjones3976/director-orchestrator"
@@ -259,9 +260,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Under the approved M1 plan (O-038) and method (O-039), the Director runs its bounded packets: scripts M1-C1 (convert_bases.ps1), M1-G1 (generate_candidates.py) and M1-I1 (build_inputs.py), each with its specified independent review and CI before use. D-018 is disposed of (O-037). Still open: Ed disposes of D-019 (held-out sets A and B quarantined for M1 scoring), and set B batch 1 needs authentication; no M1 scoring on sets A or B before both."
-  responsible_party: "Director for the M1 packets; owner for the D-019 disposition, set B batch 1 authentication approval, WEBUI_URL and merges"
-  expected_evidence: "each M1 script's independent review ACCEPT at its exact head and green CI; the recorded D-019 disposition; M1 receipts within the USD 25 ceiling"
+  action: "Under the approved M1 plan (O-038) and method (O-039), the Director runs the bounded packets M1-C1 (convert_bases.ps1), M1-G1 (generate_candidates.py) and M1-I1 (build_inputs.py), each with its specified independent review and CI before use. D-018 is disposed of (O-037). Still open, awaiting owner disposition: D-019 (held-out sets A and B quarantined for M1 scoring), D-020 (authorship on #293), D-021 (M0 pre-staging) and D-022 (#293 revision limit; #293's review loop is stopped). Set B batch 1 needs authentication. There is no M1 scoring on sets A or B before D-019 is disposed of and batch 1 is authenticated."
+  responsible_party: "Director for the M1 packets; owner for the D-019 to D-022 dispositions, the set B batch 1 authentication approval, WEBUI_URL and merges"
+  expected_evidence: "each M1 script's independent review ACCEPT at its exact head and green CI; the recorded D-019 to D-022 dispositions; M1 receipts within the USD 25 ceiling"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
@@ -271,4 +272,5 @@ next:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
