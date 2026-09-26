@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | BEGIN]] -->
@@ -59,7 +60,11 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
-- **M1 after the audit cutoff:** the set A v2 Grok review (USD 0.1881, `xai/20260926T193234Z.json`, 19:32 UTC) is M1 spend. Later M1 spend is summed from receipts in the M1 workstream plan once it is written and approved. A draft is proposed separately, and this record does not rely on it.
+- **M1 after the audit cutoff, charged against the USD 25 M1 envelope:**
+  - Set A v2 Grok review: USD 0.1881 (`xai/20260926T193234Z.json`, 19:32 UTC) `[verified, receipt]`.
+  - Set B v2 Grok review, batch 2: USD 0.141568 (`xai/20260926T203729Z.json`) `[verified, receipt]`.
+  - Set B v2 Grok review, batch 1: USD 0.1494, charged as spent. Its original receipt was overwritten. The figure comes from the wrapper's captured output, and `xai/20260926T203729Z-reconstructed-batch1.json` was written by Claude Code from that output, so it is `[unverified, not provider-authenticated]`.
+  - With the pre-gate USD 0.280142 below, **M1 has charged USD 0.75921 so far**, before any further paid call. Later M1 spend is summed from receipts under the M1 workstream plan.
 - **M1 before the gate (a hard-stop crossing, D-018):** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`, before O-031 closed M0. It awaits Ed's explicit disposition. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
@@ -74,7 +79,10 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 ### Numbers that govern M1
 
-- **C: free:** 371.13 GiB (floor 150 GB) `[relayed, read-only check 2026-09-26 18:11 UTC]`.
+- **Storage after the four O-034 downloads** `[verified 2026-09-26 20:52 UTC, download receipts]`:
+  - C: free is 274.3 GiB, against the 150 GiB floor.
+  - `C:\llm` is 104.07 GiB against its 120 GiB cap, which leaves **about 15.9 GiB of hot-tier headroom**.
+  - The 371.13 GiB read at 18:11 UTC predates the downloads and is superseded.
 - **GPU headroom for the shootout:** the 0.6B smoke peaked at 0.79 GB reserved. 8B and 14B QLoRA numbers are not yet measured on this card; Unsloth's published floors are 6 GB (8B) and 8.5 GB (14B) `[relayed, research brief]`.
 - **Turnaround:** one 20-step smoke run including GGUF export is under 5 minutes wall clock, and GGUF export dominates (150–190 s) `[verified from the run reports]`.
 - **Held-out sets (local only, never committed):**
@@ -85,7 +93,8 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
   - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review (50 substantive findings) and are kept only as evidence `[verified 2026-09-26 19:36 UTC, receipt heldout/codex-20260926T193640Z.setb-review]`.
     - Its replacement, `pr-reconstructed-v2\` (authored by OpenAI Codex), passed the owner-approved (O-035) Grok review with ACCEPT 25/25 on both batches `[verified 2026-09-26 20:37 UTC]`.
     - Verdicts are saved at `C:\llm\datasets\heldout\REVIEW-SET-B-V2-GROK-BATCH1.md` and `…BATCH2.md`; batch 2's receipt is `xai/20260926T203729Z.json`.
-    - Batch 1's receipt was lost to a same-second receipt-name collision. Its output survives in the saved verdict, and a reconstruction receipt is pending.
+    - Batch 1's receipt was lost to a same-second receipt-name collision. Its evidence is the saved verdict plus a reconstruction receipt written by Claude Code from captured output. Neither authenticates the reviewer or the reviewed inputs.
+    - **Set B stays incomplete for M1 scoring** until batch 1 is authenticated, either by an independent re-review of batch 1 with its own receipt or by a matching provider-side usage record. Only batch 2 (25 of 50) is backed by an authenticated receipt `[verified]`.
   - The set A file counts and the 22 unchanged originals are `[verified 2026-09-26 18:16 UTC, file counts]`; each later fact carries its own grade above.
 - **Concurrency:** several Director sessions work this project. Deconfliction is in the decision log (D-011) `[verified]`. This record's authorship was reassigned by the owner (O-033) `[relayed]`.
 
@@ -139,6 +148,7 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 
 - M0 CI evidence: #277 merged with 3 of 6 required jobs cancelled. This PR's six jobs at its reviewed head must be green before M0's closure evidence is complete, and the owner merges only then.
 - Pre-gate M1 work (D-018): ratify #280, which merged before M0 closed, or have it reverted and redone under M1.
+- Pre-staging crossing (D-019): ratify the quarantined held-out sets A and B, or have them redone under approved packets.
 - M1 plan: approve the M1 workstream plan and its pre-stage packets once written. No new M1 provider dispatch happens before that.
 - `WEBUI_URL`: set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` §2 step 3), or decide to keep `http://127.0.0.1:3000`.
 - Merges: this reconciliation PR once reviewed and green; #281 has its own ready and merge decision (O-031).
@@ -147,10 +157,11 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 
 M1 runs only under an owner-approved M1 workstream plan with pre-stage packets. The draft is proposed separately, and this record does not rely on it.
 0. Ed disposes of D-018 (#280, merged before M0 closed): ratify, or revert and redo. Work that depends on the scorer waits for it.
+0. Ed disposes of D-019 (held-out sets produced before pre-staging): ratify as a documented exception, or redo under approved packets. M1 scoring waits for it.
 1. Ed approves the M1 plan (packet bounds, methodology, dataset pinning). **No M1 provider dispatch happens before that.**
 
-**Nothing is in flight.** The pre-plan work has finished and stopped:
-- held-out set A (`set-a-json-v2`, Grok ACCEPT 19/19) and set B (`pr-reconstructed-v2`, owner-approved Grok ACCEPT 25/25 on both batches) are done;
+**The pre-plan work has finished and stopped.** Later M1 work is recorded under the M1 plan, not here.
+- **Held-out sets:** production and review of set A (`set-a-json-v2`, Grok ACCEPT 19/19) and set B (`pr-reconstructed-v2`) are finished. They ran before any approved pre-stage packet, which is a hard-stop crossing (D-019). **Both sets are quarantined for M1 scoring** until Ed disposes of D-019. Set B is also pending batch 1's authentication (above).
 - the four O-034 downloads are done and hash-verified `[verified 2026-09-26 20:52 UTC]`: receipts `C:\llm\reports\m1-download-Qwen3-8B-20260926T195311Z.json`, `…Qwen3-14B-20260926T195536Z.json`, `…phi-4-20260926T201502Z.json` and `…Mistral-Nemo-Base-2407-20260926T203319Z.json`. Afterwards C: had 274.3 GiB free and `C:\llm` was 104.07 GiB.
 
 No further work under those items runs before the plan is approved.
@@ -166,3 +177,4 @@ No further work under those items runs before the plan is approved.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | END]] -->
