@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:06 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | BEGIN]] -->
 # Project state report — homemade-llm, M0 "Foundation" gate
 
 Evidence-first. `[verified]` = read or measured by the Director session that wrote this line on the date given; `[relayed]` = a provider's or a person's claim; `[stale]` = true at the stated time. No draft, simulation, or predicted-position label applies: every provider result below has a receipt.
@@ -53,5 +53,5 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 
 ### Next bounded action
 
-Finish M0 before any M1 work: (1) owner merges #277 when CI is green at its reviewed head; (2) #276 is split into single-author candidates, each reviewed by a non-author and merged; (3) owner publishes Open WebUI with `tailscale serve --bg 3000` and completes the phone acceptance (a chat with web search over the tailnet). Then the Director records the gate decision as a decision-log row and the profile moves to the M1 phase. Responsible: owner for (1) and (3), the peer Director session for (2). Expected evidence: `main` contains this report and the M0.9/M0.11 artifacts; `tailscale serve status` shows the tailnet URL; a decision-log row "M0 gate closed" with the final ledger figure. M1 (base shootout, held-out sets first; raw material already at `C:\llm\datasets\heldoutaw`) starts only after that row exists.
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:06 UTC | END]] -->
+Finish M0 before any M1 work: (1) owner merges #277 when CI is green at its reviewed head; (2) #276 is split into single-author candidates, each reviewed by a non-author and merged; (3) owner publishes Open WebUI with `tailscale serve --bg 3000` and completes the phone acceptance (a chat with web search over the tailnet). Then the Director records the gate decision as a decision-log row and the profile moves to the M1 phase. Responsible: owner for (1) and (3), the peer Director session for (2). Expected evidence: `main` contains this report and the M0.9/M0.11 artifacts; `tailscale serve status` shows the tailnet URL; a decision-log row "M0 gate closed" with the final ledger figure. M1 (base shootout, held-out sets first; raw material already at `C:\llm\datasets\heldout\raw`) starts only after that row exists.
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
