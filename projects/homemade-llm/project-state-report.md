@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | BEGIN]] -->
 # Project state report — homemade-llm, M0 "Foundation" gate
 
 Evidence-first. `[verified]` = read or measured by the Director session that wrote this line on the date given; `[relayed]` = a provider's or a person's claim; `[stale]` = true at the stated time. No draft, simulation, or predicted-position label applies: every provider result below has a receipt.
@@ -43,7 +43,7 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 
 1. Phone access over the tailnet (`tailscale serve --bg 3000`, then `WEBUI_URL=https://blackbox.taile9e808.ts.net` and a container recreate) — owner's click; acceptance is a chat with web search from the phone.
 2. #275 merged at 2026-09-25T23:31:37Z as `f0a7752e` `[verified]`. PRs #276 and #277 are not merged; the M0 gate closes when both are on `main`, each with one non-author ACCEPT at its head. #276 currently has two material authors (Cursor for `scan-dataset.ps1` and its test; the peer Claude session for `research/base-models-20260925.md`), which the one-author, one-reviewer protocol (AGENTS.md rule 3) does not allow; it must be split into single-author candidates, or its attribution corrected, before it is merge-eligible. Noted on #276.
-3. The 4-week paid-spend baseline required by the L1 checklist starts from the first real metered call; as of this report the project ledger holds six calls, all reviews or research, none yet from DIRECTOR-style production.
+3. The 4-week paid-spend baseline required by the L1 checklist starts from the first real metered call; as of this report every call in the project ledger is a review or a research call, none from DIRECTOR-style production; the count and total are those in row M0.10 at its stamp, and each further review of this PR adds one receipt.
 
 ### Owner gates
 
@@ -54,4 +54,4 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 ### Next bounded action
 
 M1 base shootout (PLAN.md §3, week 2 → 10-08): build the two held-out sets first (real-history answer key ~30 items; ~50 PR-reconstructed packets; raw material already at `C:\llm\datasets\heldout\raw`), then download the four bases and run schema-constrained decoding. Responsible: Director (sets), providers (grading). Expected evidence: `research/m1-shootout-<date>.md` with field-level acceptance per base and the license check.
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]] -->
