@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | BEGIN]] -->
@@ -93,9 +94,12 @@ Contribution tags acknowledge actual contributions only and never imply
 inherited authorship. Never rewrite a provider's identity or provenance into the
 Director's, and never record a contributor that did not contribute. A Director
 tag on a coordination message makes the Director neither the logical producer
-nor a material author of the candidate. The Director may accept only when
-eligible under the sole-author review rule below and may never merge a pull
-request to which it contributed counted lines.
+nor a material author of the candidate. Current runtime enforcement: The Director
+still may not independently accept or merge code it actually materially authored.
+Under the sole-author policy below, an assisting contributor may review and
+accept when otherwise eligible; runtime-dispatched reviews retain the stricter
+exclusion until a separately authorized alignment. The Director may never merge
+a pull request to which it contributed counted lines.
 
 ## Sole author rule
 
@@ -164,7 +168,13 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   exact-SHA `ACCEPT` from an eligible reviewer; provider-family identity (OpenAI,
   ChatGPT, and Codex are one identity; the xAI API, Grok CLI, and Grok Bot are
   one family), so the reviewer may not share the sole author's family; project
-  reviewer rosters; and the Antigravity review ban.
+  reviewer rosters; and Antigravity's mode- and admission-specific restrictions.
+  Antigravity is not an eligible reviewer through the default restricted contact.
+  It is eligible when the enrolled team-mode or owner-authorized exact-SHA route
+  applies, subject to that route's admission, independence, roster, and
+  deterministic gates. See the "Antigravity review and acceptance authority"
+  record in the [charter's admission and accounting section](team-operating-charter.md#admission-and-accounting);
+  that authority record does not activate a route or bypass current enforcement.
 
 ## Local validation
 
@@ -188,3 +198,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:30 UTC | END]] -->

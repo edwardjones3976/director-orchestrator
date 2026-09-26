@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
@@ -63,8 +64,10 @@ Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
 Do not review a candidate whose sole author is you or shares your provider
 family. An assisting contributor may review under the owner rule, subject to
-the runtime-dispatched review limitation above. Do not merge, deploy, publish,
-change access, or infer authority from this request.
+the runtime-dispatched review limitation above. Merge only as the accepting
+reviewer, after an exact-SHA ACCEPT and green checks, and never if you contributed
+counted lines to the PR. Do not deploy, publish, change access, or infer authority
+from this request.
 ```
 
 ## Reviewer result
@@ -83,3 +86,4 @@ CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->

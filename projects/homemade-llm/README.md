@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
@@ -39,9 +40,10 @@ capability.** The deviation from the template default is recorded in
 [`provider-roles-contract.yaml`](provider-roles-contract.yaml) under
 `project_local_bindings.deviations`. Every repository rule still binds: one
 author (at most one sole author, at least 52 % of the PR; see the
-[sole author rule](../../docs/contribution-attribution-policy.md#sole-author-rule)) and one non-author reviewer per PR, no self-merge, merge is an owner gate
-while the human-out-of-the-loop framework is `ATTENDED`, contribution tags on
-every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 10.
+[sole author rule](../../docs/contribution-attribution-policy.md#sole-author-rule)) and one non-author reviewer per PR, no contributor with counted lines merges;
+the non-contributing reviewer that has thoroughly reviewed the work performs the
+merge (owner merge law, 2026-09-26), contribution tags on every submission, and
+`OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 10.
 
 ## How to run the project from here
 
@@ -83,16 +85,26 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    one identity; the xAI API, Grok CLI, and Grok Bot are one family.
 
 5. **Review and merge.** The Director assigns a non-author reviewer of record
-   (Grok CLI first, Codex fallback). Until the runtime alignment for the sole author
-   rule merges, the reviewer must not have contributed to the PR at all. The reviewer's exact-SHA `ACCEPT` is relayed
-   to the PR; the owner runs the merge. Every candidate change invalidates prior
-   review evidence.
+   (Grok CLI first, Codex fallback). Only the sole author and its provider family
+   are excluded from reviewing on authorship grounds; an assisting contributor
+   may review. Director-routed and manual reviews follow the owner rule now.
+   For runtime-dispatched reviews, `review_handoff.py::bind_review_handoff`
+   currently binds the assignment producer and every transitive dependency
+   outcome provider as material authors and rejects those contributors and their
+   provider families as reviewers, so it still rejects an assisting contributor
+   until a separate reviewed runtime change aligns it. The reviewer's exact-SHA
+   `ACCEPT` is relayed to the PR. The accepting reviewer performs the merge,
+   except that an assisting contributor's acceptance requires a non-contributing
+   reviewer that has thoroughly reviewed the work to perform the merge.
+   Any contributor with counted lines, whether sole author or assisting, may never
+   merge that PR, and this bar never lifts. Every candidate change invalidates
+   prior review evidence.
 
 6. **Hard stops.** The Director halts and reports at every milestone gate,
    before any provider call that would exceed the milestone's USD 25 envelope,
    and before any fan-out of more than three concurrent agents or dispatches.
-   Downloads, configuration changes, deletions, messages to other Directors, and
-   merges wait for the owner's explicit "Go".
+   Downloads, configuration changes, deletions, and messages to other Directors
+   wait for the owner's explicit "Go".
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -115,7 +127,7 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 
 | # | Milestone | Exit gate | Stop |
 |---|---|---|---|
-| PR-0 | This subsection merged | `main` contains `projects/homemade-llm/` | owner merge |
+| PR-0 | This subsection merged | `main` contains `projects/homemade-llm/` | exact-SHA ACCEPT and green checks; merge by a non-contributing reviewer that has thoroughly reviewed the work |
 | M0 | Foundation: `C:\llm` layout, Unsloth smoke fine-tune on the GPU, LM Studio serving a merged GGUF, Open WebUI reaching it, Ollama retired, mirror job | state report with every number verified | gate; report filed 2026-09-25 ([`project-state-report.md`](project-state-report.md)) |
 | M1 | Base-model shootout | winner per family with license check; owner sign-off | gate |
 | M2 | DIRECTOR data v1 + adapter v0.1 → v0.3 | > 60 % field-level acceptance on both held-out sets; no > 3-point general regression; week-4 early warning at < 45 % | gate |
@@ -127,3 +139,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
