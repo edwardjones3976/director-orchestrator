@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | BEGIN]]
 # Checks that the shared Invoke-Bounded (invoke-bounded.ps1) cannot hang on a stalled CLI and leaves no child
@@ -101,12 +102,24 @@ foreach ($f in 'train-smoke.ps1', 'serve-smoke.ps1') {
     if ($release.Count -ne 1) { $fail += "$f`: expected one finally that releases the GPU mutex, found $($release.Count)" }
 }
 
+# Grok post-merge findings on #275 (structural: an unkillable process or unremovable container cannot be simulated here).
+$ib = Get-Content -Raw (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
+if ($ib -notmatch '(?s)finally \{.*\$gone = \$p\.HasExited -or \$p\.WaitForExit\(5000\).*if \(-not \$gone\) \{ throw') { $fail += 'invoke-bounded: an unkillable command must throw, not return a timeout' }
+$ts = Get-Content -Raw (Join-Path $PSScriptRoot 'train-smoke.ps1')
+if ($ts -notmatch 'if \(\$containerGone -ne \$false\) \{ \$gpuLock\.ReleaseMutex\(\)') { $fail += 'train-smoke: the GPU lock must be kept unless the container is confirmed gone' }
+# #279 review: the normal path confirms absence too, and the flag is set only after Start-Job launched.
+if (-not $ts.Contains('$containerGone = $true')) { } else { $fail += 'train-smoke: containerGone must never be set true without a daemon check' }
+$iJob = $ts.IndexOf('$job = Start-Job'); $iFlag = $ts.IndexOf('$containerGone = $false')
+if (-not ($iJob -ge 0 -and $iFlag -gt $iJob)) { $fail += 'train-smoke: containerGone=false must come after Start-Job' }
+if (-not $ts.Contains('$containerGone = $state -eq ''stopped and removed''')) { $fail += 'train-smoke: containerGone must come from the Stop-Smoke result' }
+
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'
 Write-Output 'ok  base or revision override without a merge pin, and a non-commit revision, refused'
 Write-Output 'ok  both scripts release the GPU mutex in a finally block'
+Write-Output 'ok  unkillable bounded command throws; GPU lock kept unless the container is confirmed gone'
 Write-Output 'ok  GPU lock held by another process refused'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
@@ -114,3 +127,4 @@ Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.Tot
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
