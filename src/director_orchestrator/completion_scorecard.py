@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
@@ -2488,11 +2489,19 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         # A monitor that does not separate its probes from real requests is not monitored accounting.
         and "provider_request_count" in value
         and (value["provider_request_count"] is None or _counter(value["provider_request_count"]))
+        # Nor one that does not report settled requests missing their actual charge (review 4112533824).
+        and "unreconciled_request_count" in value
+        and (value["unreconciled_request_count"] is None or _counter(value["unreconciled_request_count"]))
         and _amount(value.get("exposure_usd"))
         for value in accounting.values())
     uncapped: list[str] = []
+    unreconciled: list[str] = []
     if monitored:
         for provider, value in sorted(accounting.items()):
+            if type(value["unreconciled_request_count"]) is int and value["unreconciled_request_count"] > 0:
+                # A settled work request with no recorded actual charge counts only at its reservation: the
+                # exposure is a lower bound, so the cap cannot be verified (review 4112533824).
+                unreconciled.append(str(provider))
             budget = value.get("daily_budget_usd")
             requests = value.get("request_count")
             # Spend, not request_count: for most providers request_count counts the monitor's own usage-check
@@ -2549,11 +2558,15 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     rollover = (datetime.fromisoformat(day).replace(tzinfo=timezone.utc) + timedelta(days=1)) if dated else None
     facts = {"usage_monitor_providers": sorted(accounting) if monitored else None, "over_cap": over,
              "accounting_day": day if dated else None,
-             "unknown_cost_providers": unpriced,
+             "unknown_cost_providers": unpriced, "unreconciled_charge_providers": unreconciled,
              "enrolled_budget_rows": len(budgets) if isinstance(budgets, list) else None, "settled_actual_cost_usd": cost}
     source = "Director /health usage_monitor and " + _CONSISTENCY_SOURCE
     if over:
         return _observation("15", False, "A daily monetary cap is exceeded: " + ", ".join(over) + ".", source, facts, at, **runtime.binding)
+    if unreconciled:
+        return _observation("15", None, "Settled provider requests have no recorded actual charge: "
+                            + ", ".join(unreconciled) + "; their reservations are only a lower bound.", source, facts,
+                            at, **runtime.binding)
     if unpriced:
         return _observation("15", None, "Usage-monitor cost is incomplete and unreserved for attempted providers: "
                             + ", ".join(unpriced) + "; unknown cost is not zero.", source, facts, at, **runtime.binding)
@@ -3527,6 +3540,10 @@ def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | No
     tree, repo = os.environ.get("DIRECTOR_SCORECARD_TREE"), os.environ.get("DIRECTOR_SCORECARD_REPO")
     if not tree or not repo or os.path.normcase(str(Path(tree).resolve())) != os.path.normcase(str(root.resolve())):
         return "not started by the owner-installed launcher from the archived evaluator tree"
+    # Review 4112533825: the archived tree is bound to the exact pin the launcher extracted; a descriptor rotated
+    # since (a different evaluator_sha) refuses rather than grading one revision's code under another's pin.
+    if os.environ.get("DIRECTOR_SCORECARD_EVALUATOR_SHA") != pinned:
+        return "the release descriptor no longer pins the evaluator revision the launcher extracted"
 
     def git(*arguments: str) -> str:
         return _run_bytes(["git", "-C", repo, *arguments]).decode().strip()
@@ -3643,3 +3660,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

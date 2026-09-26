@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 """Owner-installed launcher for the twenty-check scorecard (review 4112412081).
 
@@ -24,6 +25,7 @@ RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.j
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 TREE_ENV = "DIRECTOR_SCORECARD_TREE"  # the archived evaluator tree the scorecard must be running from
 REPO_ENV = "DIRECTOR_SCORECARD_REPO"  # the repository git reads candidate and evaluator commits from
+SHA_ENV = "DIRECTOR_SCORECARD_EVALUATOR_SHA"  # the exact pin the tree was extracted from; the child must still see it
 REFUSAL = "scorecard not run from the pinned evaluator checkout"
 
 
@@ -66,7 +68,7 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
             return _refuse("the pinned evaluator tree could not be extracted")
         env = {key: value for key, value in os.environ.items() if not key.upper().startswith("PYTHON")}
         env.update({"PYTHONPATH": str(tree / "src"), "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-                    TREE_ENV: str(tree), REPO_ENV: str(repo)})
+                    TREE_ENV: str(tree), REPO_ENV: str(repo), SHA_ENV: pin})
         return subprocess.run([sys.executable, "-s", str(tree / "scripts" / "director-scorecard.py"), *arguments],
                               env=env, cwd=here).returncode
 
@@ -88,3 +90,4 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

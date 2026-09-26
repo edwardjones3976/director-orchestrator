@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]] -->
@@ -1091,14 +1092,17 @@ directory inside the checkout, extracts exactly that commit's tree with
 `git archive` into a fresh temporary directory, and runs the archived
 `scripts/director-scorecard.py` with `PYTHONPATH` set to the archived `src`,
 every other `PYTHON*` variable removed, and `DIRECTOR_SCORECARD_TREE` /
-`DIRECTOR_SCORECARD_REPO` naming the tree and the repository. git itself is
+`DIRECTOR_SCORECARD_REPO` / `DIRECTOR_SCORECARD_EVALUATOR_SHA` naming the tree,
+the repository and the exact pin the tree was extracted from. git itself is
 trusted and reads every commit from the repository. A modified tracked
 `scripts/director-scorecard.py` or module in the checkout, committed or not,
 therefore never runs. As a second line, the archived CLI refuses (standard
 library only, before importing the evaluator) unless it is running from the
-tree the launcher named with the pin on `github/main`, and
-`untrusted_checkout` repeats that and requires the pin to be an ancestor of the
-candidate.
+tree the launcher named, the descriptor still pins the revision the launcher
+extracted, and that pin is on `github/main`; `untrusted_checkout` repeats that
+and requires the pin to be an ancestor of the candidate. The CLI runs
+`untrusted_checkout` again after the collection, so a descriptor rotated to
+another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
 
 Durable plan and effect bindings. The registered plan digest is recomputed
 in-image from the batch's assignment rows (assignment_id, sequence,
@@ -1120,7 +1124,30 @@ the day, excluding the monitor's probe keys `sha256("usage:<cycle>:<provider>")`
 None for providers the ledger does not account, whose real requests the
 monitor cannot see). `request_count` keeps its old meaning for the monitor's
 own limits. An accounting entry without `provider_request_count` is not
-monitored accounting.
+monitored accounting, nor is one without `unreconciled_request_count`.
+
+Ordinary work settles through the same `record_charge` path as the probes
+(review 4112533824). Every place that reserves in the daily spend ledger
+(`ProviderDailySpendLedger.reserve`): the usage monitor's probes
+(`usage.py` `_probe_reserver`, settled in `run_once`), and the engine's
+`_reserve_provider_daily_spend`, reached from single packet dispatch
+(`_route_live_dispatch`, settled by `_settle_packet_spend` when the packet
+completes), parallel packet batches (`_dispatch_parallel_packet_batch`, the
+same), legacy dispatch and legacy revision (`_execute_assignment`, settled by
+`_settle_provider_spend` once the run is terminal). Settlement records the
+provider-reported cost (the result packet's `usage.cost_usd`, else the run's
+reported `usage.cost`) against the request's reservation; with no reported cost
+the request is settled without a charge, keeps counting at its reservation, and
+is reported as `unreconciled_request_count`, which makes check 15 UNKNOWN. Every
+work reservation is at least the provider's per-request bound
+(`Settings.request_cost_bound_usd`, the same bound the probes reserve); a $0
+estimate with no bound configured is refused. The other spend authorities are
+separate ledgers with their own settlement: the primary Postgres
+`director_primary_provider_spend` (`antigravity_team` budget authority, settled
+by `record_usage` receipts), the OpenAI Responses admission
+(`openai_responses_validation`, settled by `response_meter.settle`), and the
+Z.ai trial ledger (`zai_lane`, settled by `record_outcome`). The host provider
+bridge reserves nothing.
 
 The runtime admission gates use the same reconciliation
 (`ProviderDailySpendLedger._exposure`, inside `reserve()`'s `BEGIN IMMEDIATE`
@@ -1133,7 +1160,7 @@ provider (gemini, grok, perplexity) is reserved through `reserve()`
 immediately before its request is sent, never ahead (gemini reserves each
 retry inside its own retry loop), each under its own effect key, so probes count against the caps
 before they run; a refused reservation dispatches nothing, and a failed probe
-keeps its reservations. Every probe reserves a nonzero bound: grok its
+keeps its reservations. Every probe (and every work request) reserves a nonzero bound: grok its
 `GROK_REQUEST_COST_FLOOR_USD`, gemini `GEMINI_USAGE_PROBE_COST_CEILING_USD`,
 perplexity `PERPLEXITY_USAGE_PROBE_COST_CEILING_USD`; with no positive bound
 configured the probe is refused, never reserved at $0. `record_charge` raises
@@ -1396,3 +1423,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]] -->

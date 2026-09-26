@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
@@ -181,6 +182,7 @@ def health():
 def accounting(**values):
     """One provider's usage-monitor daily accounting, in the producer's key set (usage.py _daily_accounting)."""
     row = {"request_count": 0, "usage_check_count": 0, "provider_request_count": None,
+           "unreconciled_request_count": None,
            "retry_count": 0, "quota_failure_count": 0, "total_tokens": 0,
            "reported_cost_usd": 0.0, "cost_visibility_complete": True, "daily_request_limit": None,
            "daily_budget_usd": None, "reserved_cost_usd": None}
@@ -1729,6 +1731,33 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertIn("not on github/main", refused.stderr)
             self.assertNotIn("hijacked", refused.stderr)
 
+    def test_cli_refuses_a_descriptor_rotated_mid_run(self):
+        """4112533825: the archived tree is bound to the exact pin the launcher extracted. The CLI's stdlib gate
+        refuses a descriptor that pins another revision, and a rotation during the run (after the first check)
+        turns every check UNKNOWN."""
+        script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
+        loader = importlib.util.spec_from_file_location("director_scorecard_rotation", script)
+        cli = importlib.util.module_from_spec(loader)
+        loader.loader.exec_module(cli)
+        with tempfile.TemporaryDirectory() as folder:
+            descriptor = Path(folder) / "release-descriptor.json"
+            descriptor.write_text(json.dumps(EVALUATED))
+            launched = {"DIRECTOR_SCORECARD_TREE": str(cli.ROOT), "DIRECTOR_SCORECARD_REPO": str(cli.ROOT)}
+            with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_EVALUATOR_SHA": "1" * 40}):
+                self.assertEqual(cli.launch_refusal(cli.ROOT, descriptor), cli.ROTATED)
+            rotated = {**EVALUATED, "evaluator_sha": "1" * 40}
+            with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_EVALUATOR_SHA": EVALUATOR}), (
+                    patch.object(cli, "launch_refusal", return_value=None)), (
+                    patch.object(sc, "cli_release_descriptor", side_effect=[EVALUATED, rotated])), (
+                    patch.object(sc, "_run_bytes", return_value=b"")), (
+                    patch.object(sys, "argv", ["director-scorecard.py", "--candidate", SHA, "--output-dir", folder])), (
+                    patch("builtins.print")):
+                self.assertEqual(cli.main(), 0)
+            report = json.loads((Path(folder) / "completion-scorecard.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["passed"], 0)
+            self.assertTrue(all(item["status"] == "UNKNOWN" and "no longer pins" in item["explanation"]
+                                for item in report["checks"]))
+
     def test_cli_refuses_a_direct_run_outside_the_launcher(self):
         script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
         with tempfile.TemporaryDirectory() as folder:
@@ -2802,6 +2831,15 @@ class ScorecardCollectorTests(unittest.TestCase):
             request_count=4, provider_request_count=1, reported_cost_usd=0.5)
         spent.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(spent.state("15"), "UNKNOWN")
+        # Review 4112533824: a settled work request with no recorded actual charge leaves exposure a lower bound.
+        unreconciled = self.world()
+        unreconciled.payload["usage_monitor"]["daily_accounting"]["grok"]["unreconciled_request_count"] = 1
+        self.assertEqual(unreconciled.state("15"), "UNKNOWN")
+        self.assertIn("no recorded actual charge", row(unreconciled.report(), "15")["explanation"])
+        missing = self.world()
+        for value in missing.payload["usage_monitor"]["daily_accounting"].values():
+            value.pop("unreconciled_request_count")
+        self.assertNotEqual(missing.state("15"), "PASS")
 
     def test_status_timestamps_are_read_with_an_offset(self):
         # n8n's columns may be timestamp or timestamptz: every selected one is cast under a UTC session.
@@ -3936,7 +3974,8 @@ class ScorecardCollectorTests(unittest.TestCase):
             return run
         clean = {"merge-base": b""}
         tree = Path(sc.__file__).resolve().parents[2]
-        launched = {"DIRECTOR_SCORECARD_TREE": str(tree), "DIRECTOR_SCORECARD_REPO": str(tree)}
+        launched = {"DIRECTOR_SCORECARD_TREE": str(tree), "DIRECTOR_SCORECARD_REPO": str(tree),
+                    "DIRECTOR_SCORECARD_EVALUATOR_SHA": EVALUATOR}
         with patch.object(sc, "cli_release_descriptor", return_value=None):
             self.assertEqual(sc.untrusted_checkout(SHA), "evaluator revision not pinned")
         with patch.object(sc, "cli_release_descriptor", return_value=EVALUATED):
@@ -3944,6 +3983,9 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertIn("owner-installed launcher", sc.untrusted_checkout(SHA))  # a direct run
             with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_TREE": str(tree.parent)}):
                 self.assertIn("owner-installed launcher", sc.untrusted_checkout(SHA))  # another tree
+            # Review 4112533825: a descriptor rotated after extraction (another evaluator_sha) refuses.
+            with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_EVALUATOR_SHA": "1" * 40}):
+                self.assertIn("no longer pins", sc.untrusted_checkout(SHA))
             with patch.dict(os.environ, launched):
                 calls = []
                 with patch.object(sc, "_run_bytes", side_effect=git(clean, calls)):
@@ -4774,3 +4816,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

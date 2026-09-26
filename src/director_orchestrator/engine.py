@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
@@ -64,6 +65,7 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import re
 import time
 from collections import defaultdict
@@ -148,6 +150,8 @@ from .policy import (
     trusted_work_kind,
     trusted_openai_debate_phase_cost_usd,
 )
+from .models import canonical_opaque_identifier_digest
+from .usage import normalize_reported_cost, normalize_usage
 from .providers import (
     PreSubmitProviderError,
     ProviderDailyLimitExceeded,
@@ -1089,6 +1093,25 @@ class OrchestrationEngine:
             )
         return stored, reserved_key, reserved_here
 
+    def _settle_packet_spend(self, record: TaskRecord, assignment: Assignment, effect_key: str, outcome) -> None:
+        """A completed packet settles its reservation: the provider-reported cost of the run it names, else none."""
+
+        if self.provider_spend is None or assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
+            return
+        packet = getattr(outcome, "result_packet", None)
+        run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
+        run = next((item for item in reversed(record.provider_runs) if run_id and item.run_id == run_id), None)
+        usage = packet.get("usage") if isinstance(packet, dict) else None
+        cost = usage.get("cost_usd") if isinstance(usage, dict) else None
+        if not isinstance(cost, (int, float)) or isinstance(cost, bool) or not math.isfinite(cost) or cost < 0:
+            cost = normalize_reported_cost(normalize_usage(run.raw)[0]) if run is not None else None
+        self.provider_spend.record_charge(
+            provider=assignment.agent,
+            effect_key=effect_key,
+            actual_cost_usd=cost,
+            now=datetime.now(timezone.utc),
+        )
+
     @staticmethod
     def _record_packet_effect_outcome(
         record: TaskRecord,
@@ -1428,6 +1451,7 @@ class OrchestrationEngine:
                     else None
                 ),
             )
+            self._settle_packet_spend(record, assignment, task_effect_key, outcome)
             try:
                 progression = consumer.consume(
                     record, assignment, dict(work_packet), outcome
@@ -2135,6 +2159,7 @@ class OrchestrationEngine:
                     else None
                 ),
             )
+            self._settle_packet_spend(record, assignment, task_effect_key, outcome)
             try:
                 progression = activation.packet_result_consumer.consume(
                     record, assignment, work, outcome
@@ -5378,20 +5403,46 @@ class OrchestrationEngine:
             raise ProviderDailyLimitExceeded(
                 f"{assignment.agent.value} requires a durable daily spend ledger"
             )
+        # Never $0 when a bound exists (review 4112533824): the provider's per-request cost bound, the same one
+        # its usage probes reserve. A $0 request with no bound configured is refused, never reserved at nothing.
+        bound = self.settings.request_cost_bound_usd(assignment.agent.value)
+        estimated = max(assignment.estimated_cost_usd, bound or 0.0)
+        if estimated <= 0:
+            raise ProviderDailyLimitExceeded(
+                f"{assignment.agent.value} has no configured per-request cost bound for a zero estimate"
+            )
         self.provider_spend.reserve(
             provider=assignment.agent,
             effect_key=effect_key,
-            estimated_cost_usd=(
-                max(
-                    assignment.estimated_cost_usd,
-                    self.settings.grok_request_cost_floor_usd,
-                )
-                if assignment.agent == ProviderName.GROK
-                else assignment.estimated_cost_usd
-            ),
+            estimated_cost_usd=estimated,
             request_limit=request_limit,
             budget_usd=budget_usd,
+            now=datetime.now(timezone.utc),
         )
+
+    def _settle_provider_spend(self, record: TaskRecord, run_id: str | None, provider: ProviderName) -> None:
+        """Settle every daily-spend reservation for this run through the ledger's one record_charge path (review
+        4112533824): the provider-reported cost when there is one, else settled with none, so its reservation keeps
+        counting at its bound and check 15 sees it as unreconciled. The reservation is found by the effect key the
+        run's own observation carries."""
+
+        if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED or not run_id:
+            return
+        run_digest = canonical_opaque_identifier_digest(run_id)
+        keys = {
+            item.effect_key
+            for item in record.task_effect_ledger
+            if item.kind == "provider_observation" and item.run_id_digest == run_digest
+        }
+        run = next((item for item in reversed(record.provider_runs) if item.run_id == run_id), None)
+        cost = normalize_reported_cost(normalize_usage(run.raw)[0]) if run is not None else None
+        for key in sorted(keys):
+            self.provider_spend.record_charge(
+                provider=provider,
+                effect_key=key,
+                actual_cost_usd=cost,
+                now=datetime.now(timezone.utc),
+            )
 
     async def _stop_for_perplexity_refinement(
         self,
@@ -6353,6 +6404,8 @@ class OrchestrationEngine:
             return False
         run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
         record.provider_runs[run_index] = run
+        if run.status != "WAITING_CALLBACK":
+            self._settle_provider_spend(record, run.run_id, assignment.agent)
         if not run.result:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = f"{assignment.agent.value} requires manual completion verification"
@@ -6740,6 +6793,8 @@ class OrchestrationEngine:
             if not self._verified_plan_or_stop(record):
                 return False
             record.provider_runs[-1] = revised
+            if revised.status != "WAITING_CALLBACK":
+                self._settle_provider_spend(record, revised.run_id, assignment.agent)
             self.store.save(record)
             if not revised.result:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -7019,3 +7074,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

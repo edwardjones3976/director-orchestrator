@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -123,6 +124,13 @@ class ProviderDailySpendLedger:
                     ADD COLUMN actual_cost_usd REAL
                     CHECK(actual_cost_usd IS NULL OR actual_cost_usd >= 0)"""
                 )
+            # When the request the reservation paid for settled (review 4112533824). A settled request with no
+            # actual charge had no provider-reported cost: it still counts at its reservation, and it is reported
+            # (unreconciled) so check 15 cannot pass on a lower bound.
+            if "settled_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN settled_at TEXT"
+                )
 
     @staticmethod
     def _exposure(connection: sqlite3.Connection, provider: ProviderName, utc_day: str) -> tuple[int, float]:
@@ -153,10 +161,12 @@ class ProviderDailySpendLedger:
         *,
         provider: ProviderName,
         effect_key: str,
-        actual_cost_usd: float,
+        actual_cost_usd: float | None,
         now: datetime | None = None,
     ) -> None:
-        """Record a provider request's actual charge against its reservation, never lowering one already recorded.
+        """Settle a provider request against its reservation: record its actual charge, never lowering one already
+        recorded. The one path for usage probes and ordinary work (review 4112533824). ``None`` settles a request
+        whose provider reported no cost: its reservation keeps counting at its bound, and it stays unreconciled.
         A charge with no reservation (a probe the ledger did not reserve) is recorded as its own row at a zero
         reservation: the charge was incurred, so it is never refused and always counts."""
 
@@ -164,26 +174,48 @@ class ProviderDailySpendLedger:
             raise ValueError("daily spend charges apply only to supplemental providers")
         if not self._EFFECT_KEY.fullmatch(effect_key):
             raise ValueError("provider spend charge requires a canonical effect key")
-        if not isinstance(actual_cost_usd, (int, float)) or isinstance(actual_cost_usd, bool) \
-                or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0:
+        if actual_cost_usd is not None and (
+                not isinstance(actual_cost_usd, (int, float)) or isinstance(actual_cost_usd, bool)
+                or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0):
             raise ValueError("provider spend charge must be a finite non-negative amount")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if actual_cost_usd is None:
+                connection.execute(
+                    """UPDATE provider_daily_spend_reservations SET settled_at = COALESCE(settled_at, ?)
+                    WHERE provider = ? AND effect_key = ?""",
+                    (observed_at.isoformat(), provider.value, effect_key),
+                )
+                return
             updated = connection.execute(
                 """UPDATE provider_daily_spend_reservations
-                SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?)
+                SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
+                    settled_at = COALESCE(settled_at, ?)
                 WHERE provider = ? AND effect_key = ?""",
-                (float(actual_cost_usd), provider.value, effect_key),
+                (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
             ).rowcount
             if not updated:
                 connection.execute(
                     """INSERT INTO provider_daily_spend_reservations(
-                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, actual_cost_usd
-                    ) VALUES (?, ?, ?, 0, ?, ?)""",
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, actual_cost_usd, settled_at
+                    ) VALUES (?, ?, ?, 0, ?, ?, ?)""",
                     (provider.value, effect_key, observed_at.date().isoformat(),
-                     observed_at.isoformat(), float(actual_cost_usd)),
+                     observed_at.isoformat(), float(actual_cost_usd), observed_at.isoformat()),
                 )
+
+    def unreconciled(self, provider: ProviderName, *, now: datetime | None = None) -> list[str]:
+        """Effect keys of the day's settled requests that carry no actual charge (no provider-reported cost)."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend reconciliation applies only to supplemental providers")
+        utc_day = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+        with self._connect() as connection:
+            return [str(row[0]) for row in connection.execute(
+                """SELECT effect_key FROM provider_daily_spend_reservations
+                WHERE provider = ? AND utc_day = ? AND settled_at IS NOT NULL AND actual_cost_usd IS NULL""",
+                (provider.value, utc_day),
+            )]
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1653,3 +1685,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

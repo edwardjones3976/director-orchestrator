@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
@@ -28,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 TREE_ENV, REPO_ENV = "DIRECTOR_SCORECARD_TREE", "DIRECTOR_SCORECARD_REPO"  # set by the launcher
+SHA_ENV = "DIRECTOR_SCORECARD_EVALUATOR_SHA"  # the exact pin the launcher extracted the tree from
+ROTATED = "the release descriptor no longer pins the evaluator revision the launcher extracted"
 
 
 def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
@@ -51,6 +54,8 @@ def launch_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> 
     tree, repo = os.environ.get(TREE_ENV), os.environ.get(REPO_ENV)
     if not tree or not repo or os.path.normcase(str(Path(tree).resolve())) != os.path.normcase(str(root)):
         return "not started by the owner-installed launcher from the archived evaluator tree"
+    if os.environ.get(SHA_ENV) != pinned:  # review 4112533825: the tree is bound to the pin read at extraction
+        return ROTATED
     try:
         subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", pinned, "github/main"],
                        capture_output=True, timeout=30, check=True, stdin=subprocess.DEVNULL)
@@ -121,6 +126,8 @@ def main() -> int:
         runtime = next((item for item in observations if item.runtime_sha and item.image_id), None)
         report = score(args.candidate_sha, observations, evidence_dir=args.evidence_dir,
                        runtime_sha=runtime.runtime_sha if runtime else None, image_id=runtime.image_id if runtime else None)
+        # The descriptor is read again once the collection is done: a pin rotated mid-run refuses the whole run.
+        refused = refused or untrusted_checkout(args.candidate_sha)
         if refused:
             report = refuse_untrusted(report, refused)
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -151,3 +158,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -1140,6 +1141,16 @@ class Settings:
 
     def grok_cli_repository_map(self) -> dict[str, str]:
         return dict(self.grok_cli_repository_roots)
+
+    def request_cost_bound_usd(self, provider: str) -> float | None:
+        """The nonzero amount one gemini, grok or perplexity request reserves at least, before its actual charge is
+        known (reviews 4112206668 and 4112533824): grok's per-request floor, gemini's and perplexity's configured
+        per-request cost ceiling. None when the provider has none configured."""
+        bound = {"gemini": self.gemini_usage_probe_cost_ceiling_usd, "grok": self.grok_request_cost_floor_usd,
+                 "perplexity": self.perplexity_usage_probe_cost_ceiling_usd}.get(provider)
+        if not isinstance(bound, (int, float)) or isinstance(bound, bool) or not math.isfinite(bound) or bound <= 0:
+            return None
+        return float(bound)
 
     def readiness(self) -> dict[str, bool]:
         slack_gateway_ready = bool(
@@ -2601,3 +2612,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]

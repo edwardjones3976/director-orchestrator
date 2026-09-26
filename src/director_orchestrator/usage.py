@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -249,6 +250,9 @@ class UsageMonitor:
             # (work) requests. request_count stays as it was for the limits above.
             "usage_check_count": sum(record.attempt_count for record in attempted),
             "provider_request_count": self._provider_request_count(provider, records, now),
+            # Settled real requests whose provider reported no cost (review 4112533824): they count at their
+            # reservation, a lower bound, so check 15 cannot pass while any exists. None: not ledger-accounted.
+            "unreconciled_request_count": self._unreconciled_request_count(provider, records, now),
             "exposure_usd": self._exposure_usd(provider, attempted, now),
             "retry_count": retry_count,
             "quota_failure_count": quota_failures,
@@ -274,6 +278,17 @@ class UsageMonitor:
         probes = {_probe_key(record.cycle_id, provider, attempt)
                   for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
         return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now))
+
+    def _unreconciled_request_count(self, provider: str, records: list[UsageCheckRecord], now: datetime) -> int | None:
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            return None
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return None
+        probes = {_probe_key(record.cycle_id, provider, attempt)
+                  for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
+        return sum(key not in probes for key in self.provider_spend.unreconciled(name, now=now))
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
         """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts
@@ -302,17 +317,15 @@ class UsageMonitor:
         # probe cost ceiling (grok: its per-request floor). With no bound configured the probe is refused, never
         # reserved at $0; record_charge later raises a reservation to its actual charge, never below the bound.
         limits = {
-            "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd,
-                       self.settings.gemini_usage_probe_cost_ceiling_usd),
-            "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd,
-                     self.settings.grok_request_cost_floor_usd),
-            "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd,
-                           self.settings.perplexity_usage_probe_cost_ceiling_usd),
+            "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd),
+            "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd),
+            "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd),
         }
         if provider not in limits:
             return None, None
-        request_limit, budget_usd, floor_usd = limits[provider]
-        if not isinstance(floor_usd, (int, float)) or isinstance(floor_usd, bool) or not floor_usd > 0:
+        request_limit, budget_usd = limits[provider]
+        floor_usd = self.settings.request_cost_bound_usd(provider)
+        if floor_usd is None:
             raise ProviderDailyLimitExceeded(f"{provider} usage probes have no configured cost ceiling")
         attempts = 1
         if provider == "gemini":
@@ -804,3 +817,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
