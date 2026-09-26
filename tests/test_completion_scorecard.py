@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
@@ -2416,7 +2417,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(split.state("09"), "FAIL")
         unresolved = self.world()
         terminal = unresolved.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
-        terminal.update(state="AMBIGUOUS", readback_attempts=2)
+        # PrimarySlackDelivery's AMBIGUOUS row: claimed, never acknowledged, no Slack ts (4110241987).
+        terminal.update(state="AMBIGUOUS", readback_attempts=2, acknowledged_at=None, delivered_at=None, slack_ts=None)
         self.assertEqual(unresolved.state("09"), "FAIL")
         acknowledged = self.world()
         acked = acknowledged.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
@@ -2493,7 +2495,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertNotEqual(world.state("20"), "PASS")
         # The record's ambiguous-effect count itself: zero only when everything is terminal.
         row_of = lambda state: {"qualification_evidence": {"effect_state": state}}
-        readback = {"effects": [{"reserved_at": "2026-09-12T09:59:59+00:00", "execution_started_at": "2026-09-12T10:00:00+00:00",
+        readback = {"task_created_at": "2026-09-12T09:59:00+00:00",
+                    "effects": [{"reserved_at": "2026-09-12T09:59:59+00:00", "execution_started_at": "2026-09-12T10:00:00+00:00",
                                  "terminal_disposition": "COMPLETED", "terminal_recorded_at": "2026-09-12T10:00:01+00:00"}]}
         self.assertEqual(sc._ambiguous_effects(row_of("PROVIDER_EFFECT_RECORDED"), readback,
                                                {"a": {"status": "SUCCEEDED"}}), 0)
@@ -3000,7 +3003,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         packet.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["provider"] = "openai"
         self.assertEqual(packet.state("20"), "FAIL")
         # The lane-to-agent mapping: an antigravity ledger row carries a gemini outcome.
-        facts = {"readback": {"assignments": [{"assignment_id": "a", "sequence": 1, "provider_id": "antigravity",
+        facts = {"readback": {"task_created_at": "2026-09-12T09:59:00+00:00",
+                              "assignments": [{"assignment_id": "a", "sequence": 1, "provider_id": "antigravity",
                                                "status": "SUCCEEDED", "result_digest": "sha256:" + "a" * 64,
                                                "reserved_at": "2026-09-12T10:00:00+00:00",
                                                "completed_at": "2026-09-12T10:00:01+00:00"}]},
@@ -3438,6 +3442,60 @@ class ScorecardCollectorTests(unittest.TestCase):
         callback = tf.readback_fixture()
         callback["provider_attempts"][1].update(event_sequence=3, provider_run_id_digest="sha256:" + "8" * 64)
         self.assertIsNone(task_evidence_errors(tf.seal(callback))[1]["attempts"])
+
+    def test_rows_keep_their_producers_contract_inside_the_tasks_lifetime(self):
+        """4110241997: no child row predates its task's creation. 4110241987: every delivery state carries exactly
+        PrimarySlackDelivery's fields. 4110241982: a reconciliation event after its claim's terminal evidence is a
+        conflict, never hidden by the earlier terminal row. All through task_evidence_errors, the per-task and
+        global paths' one rule."""
+        import copy
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+
+        def errors(readback):
+            return {key: value for key, value in task_evidence_errors(readback)[1].items() if value}
+
+        base = tf.readback_fixture()
+        self.assertEqual(errors(base), {})
+        missing = copy.deepcopy(base)
+        del missing["task_created_at"]
+        self.assertIn("lifecycle", errors(missing))
+        for section, field in (("assignments", "reserved_at"), ("provider_attempts", "recorded_at"),
+                               ("effects", "reserved_at"), ("slack_deliveries", "created_at"),
+                               ("status_receipts", "created_at")):
+            early = copy.deepcopy(base)
+            early[section][0][field] = "2026-09-12T09:59:59+00:00"  # one second before the task was created
+            with self.subTest(section=section):
+                self.assertIn("lifecycle", errors(early))
+        delivered = base["slack_deliveries"][0]
+        unclaimed = {"claimed_at": None, "acknowledged_at": None, "delivered_at": None, "slack_ts": None,
+                     "readback_attempts": 0}
+        claimed = {**unclaimed, "claimed_at": delivered["claimed_at"]}
+        conforming = {"PENDING": unclaimed, "SUPPRESSED": unclaimed, "SUPERSEDED": unclaimed, "POSTING": claimed,
+                      "REFUSED": claimed, "AMBIGUOUS": {**claimed, "readback_attempts": 2},
+                      "ACKNOWLEDGED": {**claimed, "acknowledged_at": delivered["acknowledged_at"],
+                                       "slack_ts": delivered["slack_ts"], "readback_attempts": 1}}
+        breaking = {"PENDING": {"readback_attempts": 1}, "SUPPRESSED": {"slack_ts": delivered["slack_ts"]},
+                    "SUPERSEDED": {"acknowledged_at": delivered["acknowledged_at"]},
+                    "POSTING": {"claimed_at": None}, "REFUSED": {"claimed_at": None},
+                    "AMBIGUOUS": {"slack_ts": delivered["slack_ts"]}, "ACKNOWLEDGED": {"slack_ts": None}}
+        for index, (state, fields) in enumerate(conforming.items()):
+            def with_row(extra):
+                readback = copy.deepcopy(base)
+                readback["slack_deliveries"].append({**delivered, **fields, **extra, "state": state,
+                                                     "notification_key": "hold:sha256:" + str(index) * 64,
+                                                     "client_msg_id": f"message-{index}"})
+                return errors(readback)
+            with self.subTest(state=state):
+                self.assertEqual(with_row({}), {})
+                self.assertIn("lifecycle", with_row(breaking[state]))
+        effect = base["effects"][0]
+        for recorded, broken in ((effect["terminal_recorded_at"], False), ("2026-09-12T10:00:50+00:00", True),
+                                 ("2026-09-12T10:00:01+00:00", True)):  # at, after the terminal row; before reservation
+            readback = copy.deepcopy(base)
+            readback["reconciliation_events"] = [{"event_id": 1, "claim_key": effect["claim_key"], "state": "AMBIGUOUS",
+                                                  "evidence_digest": "sha256:" + "9" * 64, "recorded_at": recorded}]
+            with self.subTest(recorded=recorded):
+                self.assertEqual("effects" in errors(readback), broken)
 
     def test_work_packets_join_dispatch_and_results(self):
         """4107814584: every dispatched assignment has exactly one revalidated work packet, recorded before its first
@@ -4147,3 +4205,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
@@ -614,6 +615,25 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
              "terminal_tasks_open_assignments": 2, "terminal_tasks_open_effects": 1, "terminal_batches_unbound": 1,
              "projections_ahead_of_fence": 1, "open_effect_reservations": 0, "batches_pending_projection_binding": 0})
         self.assertEqual(counts["live_writer_claims"], live["live_writer_claims"])
+        # Review 4110241982: terminal evidence recorded before a claim's reconciliation event does not resolve that
+        # later event; terminal evidence at or after every event does.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_claim(claim_key, task_id, field, expected_state, target_state,"
+                " attempt_digest, owner_token, fencing_generation)"
+                " VALUES ('reconcile-2', %s, 'effect', 'NOT_STARTED', 'COMPLETED', 'fixture', 'default-director-owner', 1)",
+                (task_id,))
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_reconciliation_event(claim_key, task_id, owner_token,"
+                " fencing_generation, state, evidence_digest)"
+                " VALUES ('reconcile-2', %s, 'default-director-owner', 1, 'AMBIGUOUS', 'e')", (task_id,))
+            for claim, offset in (("reconcile-1", "- interval '1 second'"), ("reconcile-2", "+ interval '1 second'")):
+                connection.execute(
+                    f"INSERT INTO {s}.director_primary_terminal_evidence(claim_key, task_id, owner_token,"
+                    " fencing_generation, disposition, evidence_digest, recorded_at)"
+                    f" SELECT %s, %s, 'default-director-owner', 1, 'COMPLETED', 't', max(recorded_at) {offset}"
+                    f" FROM {s}.director_primary_reconciliation_event WHERE claim_key = %s", (claim, task_id, claim))
+        self.assertEqual(self.report()["counts"]["unresolved_reconciliation"], 1)
 
     def test_snapshot_connection_refuses_writes(self):
         import psycopg
@@ -867,13 +887,15 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
 
         def assignment(sql, *values):
             with self.handle.pool.connection() as connection:
-                connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET {sql}"
+                connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment x SET {sql}"
                                    " WHERE task_id=%s AND assignment_id='a1'", (*values, task_id))
 
         # Reviews 4102705142/48/62: the global counts run the same per-task rules. Settled around its attempts with
         # the last attempt's digest: consistent.
         assignment("status='SUCCEEDED', result_digest=%s, reason_code='completed', reservation_digest=%s,"
-                   " reserved_at=now() - interval '1 hour', completed_at=now() + interval '1 hour'",
+                   # Reserved when the task was created (4110241997: never before), completed after its attempts.
+                   f" reserved_at=(SELECT created_at FROM {self.schema}.director_primary_task_projection"
+                   " WHERE task_id=x.task_id), completed_at=now() + interval '1 hour'",
                    "sha256:" + "2" * 64, "sha256:" + "5" * 64)
         counts = self.report()["counts"]
         self.assertEqual((counts["settlement_invalid"], counts["lifecycle_invalid"]), (0, 0))
@@ -1088,3 +1110,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]

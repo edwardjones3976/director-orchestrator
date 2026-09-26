@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
@@ -897,7 +898,10 @@ class SummaryTests(unittest.TestCase):
                                              "owner_decision_at": "2026-09-12T10:00:22+00:00",
                                              "owner_command_id": "command-1"})
         readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": "hold:sha256:" + "7" * 64,
-                                             "client_msg_id": "hold-message", "state": "SUPPRESSED"})
+                                             "client_msg_id": "hold-message", "state": "SUPPRESSED",
+                                             # Suppressed before any claim (4110241987): never posted or read back.
+                                             "claimed_at": None, "acknowledged_at": None, "delivered_at": None,
+                                             "slack_ts": None, "readback_attempts": 0})
         self.task["qualification_evidence"] = readback
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -1654,3 +1658,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]

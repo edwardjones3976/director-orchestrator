@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -5656,7 +5657,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             # the roster records STARTED): the shared lifecycle rule refuses attempts outside that reservation.
             connection.execute(sql.SQL(
                 "UPDATE {}.director_primary_parallel_assignment SET status='ACTIVE', reservation_digest=%s,"
-                " reserved_at=now() - interval '1 minute' WHERE task_id=%s AND assignment_id=%s"
+                # Reserved in this transaction: after the task was created (4110241997), with its attempts' now().
+                " reserved_at=now() WHERE task_id=%s AND assignment_id=%s"
             ).format(sql.Identifier(self.schema)),
                 (digest("reservation:" + record.task_id), record.task_id, assignment["assignment_id"]))
             # STARTED (event 1), then an authenticated callback settlement (event 3, record_callback_result), the
@@ -6242,3 +6244,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | END]]

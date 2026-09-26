@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]] -->
@@ -955,6 +956,25 @@ enforced on every paid attempt by `PrimaryProviderBudgetAuthority.reserve`),
 which check 15 already grades. Team-journal admissions have no signed budget
 row and no join key to one.
 
+Row contracts and task lifetime. Every row `task_evidence_errors` reads is held
+to three rules on both the per-task and the global path: its state's field
+contract from the producer, every timestamp inside its parent's lifecycle, and
+no later row hidden by an earlier settled one. No child row (assignment,
+attempt, effect, reconciliation event, delivery, status receipt, result or
+work packet) may predate the task's creation (`task_created_at`, the
+projection's `created_at`, now also read on the global path). Each Slack
+delivery state carries exactly `PrimarySlackDelivery`'s fields
+(`DELIVERY_CONTRACT`): PENDING, SUPPRESSED and SUPERSEDED were never claimed,
+posted, acknowledged or read back; POSTING and REFUSED are claimed with no
+acknowledgement or Slack ts; AMBIGUOUS likewise, with up to two readbacks;
+ACKNOWLEDGED carries its acknowledgement and ts but no delivery; DELIVERED is
+the settled lifecycle. A PENDING assignment carries no reservation or
+completion time, an ACTIVE or AMBIGUOUS one no completion time. A
+reconciliation event recorded after its claim's terminal evidence (or before
+its effect's reservation) is an effects conflict, and the global
+`unresolved_reconciliation` counts a claim whose terminal row predates any of
+its events.
+
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
 to one standard. The model a CLI reports about itself is never enough; a CLI
@@ -1149,3 +1169,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]] -->

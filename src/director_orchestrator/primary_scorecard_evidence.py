@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
@@ -82,7 +83,8 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM p) AS graph_task_count,
  (SELECT count(DISTINCT r.claim_key) FROM {s}.director_primary_reconciliation_event r
     LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=r.claim_key AND t.task_id=r.task_id
-    WHERE t.claim_key IS NULL) AS unresolved_reconciliation,
+    -- A terminal row recorded before any of its claim's reconciliation events does not resolve the later event.
+    WHERE t.claim_key IS NULL OR t.recorded_at < r.recorded_at) AS unresolved_reconciliation,
  (SELECT count(*) FROM {s}.director_primary_parallel_assignment WHERE status='AMBIGUOUS') AS ambiguous_assignments,
  (SELECT count(*) FROM p WHERE tc='RECONCILIATION_REQUIRED') AS tasks_requiring_reconciliation,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
@@ -502,11 +504,62 @@ def delivery_settled(row):
             and ordered(lifecycle, DELIVERY_FIELDS, required_moments("delivery", lifecycle)))
 
 
+# Each Slack delivery state's field contract, as PrimarySlackDelivery (claim, settle, readback) and the ledger's
+# guard (director_primary_slack_delivery_guard) write it: (moments required, fields always unset, readback attempts
+# allowed). PENDING rows are suppressed or superseded before any claim; REFUSED, AMBIGUOUS and ACKNOWLEDGED follow a
+# claim (POSTING), and only an acknowledgement carries Slack's ts; readback runs only on ACKNOWLEDGED or AMBIGUOUS.
+# DELIVERED is delivery_settled's.
+_UNCLAIMED = ("claimed_at", "acknowledged_at", "delivered_at", "slack_ts")
+_UNACKNOWLEDGED = ("acknowledged_at", "delivered_at", "slack_ts")
+DELIVERY_CONTRACT = {
+    "PENDING": (("created_at",), _UNCLAIMED, {0}),
+    "SUPPRESSED": (("created_at",), _UNCLAIMED, {0}),
+    "SUPERSEDED": (("created_at",), _UNCLAIMED, {0}),
+    "POSTING": (("created_at", "claimed_at"), _UNACKNOWLEDGED, {0}),
+    "REFUSED": (("created_at", "claimed_at"), _UNACKNOWLEDGED, {0}),
+    "AMBIGUOUS": (("created_at", "claimed_at"), _UNACKNOWLEDGED, {0, 1, 2}),
+    "ACKNOWLEDGED": (("created_at", "claimed_at", "acknowledged_at", "slack_ts"), ("delivered_at",), {0, 1, 2}),
+}
+# Assignment moments primary_parallel never writes in a state: nothing before its reservation, no completion while
+# reserved (settling to AMBIGUOUS clears completed_at; OWNER_DECISION_REQUIRED may or may not carry one).
+_ASSIGNMENT_UNSET = {"PENDING": ("reserved_at", "completed_at"), "ACTIVE": ("completed_at",),
+                     "AMBIGUOUS": ("completed_at",)}
+
+
+def delivery_contract(row):
+    """A delivery row carries exactly its state's fields, its present moments in order."""
+    if row.get("state") == "DELIVERED":
+        return delivery_settled(row)
+    contract = DELIVERY_CONTRACT.get(row.get("state"))
+    if contract is None:
+        return False
+    required, unset, reads = contract
+    return (all(row.get(key) is None for key in unset) and type(row.get("readback_attempts")) is int
+            and row["readback_attempts"] in reads and ordered(row, DELIVERY_FIELDS, required))
+
+
+def task_moments(sections):
+    """Every timestamp of every child row of the task (assignments, attempts, effects, reconciliation events,
+    deliveries, status receipts, result and work packets): none may precede the task's creation."""
+    rows = [(sections.get("assignments"), ASSIGNMENT_FIELDS), (sections.get("provider_attempts"), ("recorded_at",)),
+            (sections.get("effects"), EFFECT_FIELDS), (sections.get("reconciliation_events"), ("recorded_at",)),
+            (sections.get("slack_deliveries"), ("created_at", "claimed_at", "acknowledged_at", "delivered_at",
+                                                "owner_decision_at")),
+            (sections.get("status_receipts"), ("created_at",)), (sections.get("result_artifacts"), ("recorded_at",)),
+            (sections.get("work_packets"), ("recorded_at",))]
+    return [row.get(key) for section, keys in rows for row in section or [] for key in keys if row.get(key)]
+
+
 def lifecycle_error(sections):
-    """The one ordering rule over a task's rows: each attempt's events in sequence order and chronological; every
-    attempt event inside its assignment (primary_parallel reserves, the roster records STARTED then the terminal
-    event, primary_parallel settles); every assignment, effect and DELIVERED delivery carrying the moments the
-    product writes for its state, in order. None, or the first violation."""
+    """The one ordering rule over a task's rows: every child row's moments at or after the task's creation
+    (``task_created_at``, the projection's created_at); each attempt's events in sequence order and chronological;
+    every attempt event inside its assignment (primary_parallel reserves, the roster records STARTED then the
+    terminal event, primary_parallel settles); every assignment and effect carrying exactly the moments the product
+    writes for its state, in order; every delivery its state's field contract (DELIVERY_CONTRACT). None, or the
+    first violation."""
+    created = _when(sections.get("task_created_at"))
+    if created is None or any(_when(moment) is None or _when(moment) < created for moment in task_moments(sections)):
+        return "a row of the task is recorded before the task was created, or the task's creation time is unknown"
     events = sections.get("provider_attempts") or []
     chains = {}
     for event in sorted(events, key=lambda event: event.get("event_sequence") or 0):
@@ -521,12 +574,33 @@ def lifecycle_error(sections):
     if not all(chain(*moments) for moments in chains.values()):
         return "attempt events are out of order or outside their assignment's reservation and completion"
     if not all(ordered(row, ASSIGNMENT_FIELDS, required_moments("assignment", row))
+               and all(row.get(key) is None for key in _ASSIGNMENT_UNSET.get(row.get("status"), ()))
                for row in sections.get("assignments") or []):
         return "an assignment lacks a moment its state requires, or its moments are out of order"
     if not all(ordered(row, EFFECT_FIELDS, required_moments("effect", row)) for row in sections.get("effects") or []):
         return "an external effect lacks a moment its state requires, or its moments are out of order"
-    if not all(delivery_settled(row) for row in sections.get("slack_deliveries") or [] if row.get("state") == "DELIVERED"):
-        return "a DELIVERED Slack delivery is not a settled delivery lifecycle"
+    if not all(delivery_contract(row) for row in sections.get("slack_deliveries") or []):
+        return "a Slack delivery breaks its state's field contract or lifecycle"
+    return None
+
+
+def reconciliation_error(sections):
+    """Reconciliation events against their claim's external effect: an event recorded before the effect's
+    reservation, or after the claim's terminal evidence (a later event the earlier terminal row would hide), is a
+    conflict. None, or the first violation."""
+    effects = {row.get("claim_key"): row for row in sections.get("effects") or []}
+    for event in sections.get("reconciliation_events") or []:
+        recorded = _when(event.get("recorded_at"))
+        if recorded is None:
+            return "a reconciliation event has no valid time"
+        effect = effects.get(event.get("claim_key"))
+        if effect is None:
+            continue  # a claim reconciled before any reservation: the global unresolved count still sees it
+        reserved, terminal = _when(effect.get("reserved_at")), _when(effect.get("terminal_recorded_at"))
+        if reserved is None or recorded < reserved:
+            return "a reconciliation event precedes its effect's reservation"
+        if terminal is not None and terminal < recorded:
+            return "a reconciliation event was recorded after its claim's terminal evidence"
     return None
 
 
@@ -640,7 +714,7 @@ def task_evidence_errors(sections):
                                         absent="provider_usage" in (sections.get("absent") or []))
     errors = {"attempts": attempts,
               "usage": attempts or usage,
-              "effects": validate_effects(sections.get("effects") or []),
+              "effects": validate_effects(sections.get("effects") or []) or reconciliation_error(sections),
               "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
                                                              sections.get("status_receipts") or []),
               "lifecycle": lifecycle_error(sections),
@@ -789,7 +863,10 @@ EVIDENCE_COUNT_KEYS = {"attempts": "provider_attempts_invalid", "usage": "provid
 EVIDENCE_COUNT_KEYS["work_packets"] = "work_packets_invalid"
 EVIDENCE_IN_FLIGHT_KEYS = {"usage": "provider_usage_in_flight", "deliveries": "slack_deliveries_in_flight"}
 _TASK_MODES = """SELECT task_id, projection->'application'->>'execution_mode' AS execution_mode, projection,
- projection_digest FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
+ projection_digest, created_at FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
+# Every task's reconciliation events, the columns the per-task readback serves.
+_RECONCILIATION_EVENTS = """SELECT task_id, event_id, claim_key, state, evidence_digest, recorded_at
+ FROM {s}.director_primary_reconciliation_event ORDER BY task_id, event_id LIMIT %(limit)s"""
 
 
 def _global_task_evidence(connection, schema, usage_tables):
@@ -813,12 +890,14 @@ def _global_task_evidence(connection, schema, usage_tables):
 
     def task(task_id):
         return tasks.setdefault(task_id, {"assignments": [], "provider_attempts": [], "effects": [],
+                                          "reconciliation_events": [], "task_created_at": None,
                                           "slack_deliveries": [], "status_receipts": [], "provider_usage": [],
                                           "execution_mode": None, "result_artifacts": [], "work_packets": [],
                                           "absent": [] if usage_tables else ["provider_usage"]})
 
     reads = [(name, qualification_section_sql(schema, name, all_tasks=True)) for name in names]
-    reads += [("execution_mode", _TASK_MODES.format(s=schema))]
+    reads += [("reconciliation_events", _RECONCILIATION_EVENTS.format(s=schema)),
+              ("execution_mode", _TASK_MODES.format(s=schema))]
     projections = []
     for name, query in reads:
         rows = connection.execute(query, limit).fetchall()
@@ -827,6 +906,7 @@ def _global_task_evidence(connection, schema, usage_tables):
         for row in rows:
             if name == "execution_mode":
                 task(row["task_id"])["execution_mode"] = row["execution_mode"]
+                task(row["task_id"])["task_created_at"] = _plain(row["created_at"])
                 projections.append(row)
             else:
                 task(row["task_id"])[name].append({key: _plain(value) for key, value in row.items() if key != "task_id"})
@@ -1168,3 +1248,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
