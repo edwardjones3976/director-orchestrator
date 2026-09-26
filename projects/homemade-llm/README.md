@@ -1,10 +1,12 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — project subsection
 
-**Project ID:** `homemade-llm` · **Owner:** Ed · **Project Director:** Claude (Claude Fable 5.1), appointed by the owner on 2026-09-24 for this project only · **State:** building (M0 gate report filed 2026-09-25)
+**Project ID:** `homemade-llm` · **Owner:** Ed · **Project Director:** Claude (Claude Fable 5.1), appointed by the owner on 2026-09-24 for this project only · **State:** M0 closed under O-031; record reconciliation pending until PR #293 gates pass
 
 This folder is the project-local record for building two purpose-trained local
 models on the owner's PC "blackbox" (RTX 5070 12 GB): **DIRECTOR**, an
@@ -105,16 +107,16 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 | [`project-profile.yaml`](project-profile.yaml) | Living project profile (`director-project-profile/v1`) |
 | [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Project-local provider boundaries (`director-provider-roles/v1`), with the Director deviation recorded |
 | [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; analysis-only, all Slack identities pending |
-| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); the M1 plan is not written yet, so M1 follows `project-profile.yaml` `next` |
+| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); PR #294 contains the approved but unmerged M1 plan (O-038) |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
-| [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (latest: M0 gate closed, reconciled 2026-09-26) |
+| [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
 ## Milestones
 
 | # | Milestone | Exit gate | Stop |
 |---|---|---|---|
 | PR-0 | This subsection merged | `main` contains `projects/homemade-llm/` | owner merge |
-| M0 | Foundation: `C:\llm` layout, Unsloth smoke fine-tune on the GPU, LM Studio serving a merged GGUF, Open WebUI reaching it, Ollama retired, mirror job | state report with every number verified | gate; report filed 2026-09-25 ([`project-state-report.md`](project-state-report.md)) |
+| M0 | Foundation: `C:\llm` layout, Unsloth smoke fine-tune on the GPU, LM Studio serving a merged GGUF, Open WebUI reaching it, Ollama retired, mirror job | state report with every number verified | closed under O-031; record reconciliation pending until PR #293 gates pass ([`project-state-report.md`](project-state-report.md)); initial report filed 2026-09-25 (history) |
 | M1 | Base-model shootout | winner per family with license check; owner sign-off | gate |
 | M2 | DIRECTOR data v1 + adapter v0.1 → v0.3 | > 60 % field-level acceptance on both held-out sets; no > 3-point general regression; week-4 early warning at < 45 % | gate |
 | M3 | DIRECTOR v1.0 as a local provider lane (owner decision required; after PRs #263/#264) | **L1 DIRECTOR launch checklist** (`PLAN.md` §2.1), target 2026-11-12 | gate |
@@ -125,3 +127,5 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
