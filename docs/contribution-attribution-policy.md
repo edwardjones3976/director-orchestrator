@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -100,9 +101,10 @@ considered the sole author. Co-authors contribute assistance and can review,
 among other roles."
 
 - **One author per pull request.** The provider or individual responsible for
-  at least 52 % of a pull request is its sole author. Wherever this repository
-  says "author", "producer", or "material author" for review independence,
-  acceptance, or self-merge, it means that sole author.
+  at least 52 % of a pull request is its sole author. The pull request's logical
+  producer and its material author are that same identity, so wherever this
+  repository excludes the "author", "logical producer", or "material author"
+  from review, acceptance, or merge, it excludes the sole author only.
 - **Everyone else is a co-author.** Co-authors are credited in contribution tags
   and the pull-request record, and may assist, review, and hold other roles.
   Being a co-author alone does not bar an identity from being the reviewer of
@@ -144,3 +146,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | END]] -->

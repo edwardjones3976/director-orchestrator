@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -768,8 +769,8 @@ ineligible to review the candidate at all, so AGENTS.md rule 3's no-self-merge
 bar is unaffected and never lifts.
 
 Owner ruling, 2026-09-26: each pull request has one author, the provider or
-individual responsible for at least 52 % of it, and that sole author is the
-material author meant above. Co-authors contribute assistance and may review.
+individual responsible for at least 52 % of it, and that sole author is both the
+logical producer and the material author meant above. Co-authors contribute assistance and may review.
 Definition and measurement: [`contribution-attribution-policy.md`](contribution-attribution-policy.md#sole-author-rule).
 
 The obligation reaches non-protected branches **only**. Merging into a protected
@@ -979,3 +980,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | END]] -->

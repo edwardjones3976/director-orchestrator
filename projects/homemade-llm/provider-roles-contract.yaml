@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
@@ -309,7 +310,7 @@ providers:
         boundary: "Director authority does not create a vote or a participation record that did not actually occur."
     participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
     preserved_boundaries:
-      producer_exclusion: "A producer cannot review, accept, or approve its own work; the reviewer must differ from the logical producer and every material author. A material author is the pull request's sole author, the provider or individual responsible for at least 52 % of it (owner ruling 2026-09-26, docs/contribution-attribution-policy.md#sole-author-rule); co-authors may review."
+      producer_exclusion: "A producer cannot review, accept, or approve its own work; the reviewer must differ from the logical producer and every material author. The logical producer and the material author are both the pull request's sole author, the provider or individual responsible for at least 52 % of it (owner ruling 2026-09-26, docs/contribution-attribution-policy.md#sole-author-rule); co-authors are neither, and may review."
       material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
       deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."
       assignment_target: "Separately assigned OpenAI production under the frozen profile; material authorship requires different-provider exact-candidate review and removes Director merge independence."
@@ -357,3 +358,4 @@ project_local_bindings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | END]]
