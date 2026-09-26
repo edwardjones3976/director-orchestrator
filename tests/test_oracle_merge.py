@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -1143,6 +1144,15 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.status, OracleMergeStatus.ELIGIBLE)
 
     def test_protected_project_merge_uses_authenticated_boundary(self):
+        self._assert_project_merge_uses_authenticated_boundary(protected=True)
+
+    def test_non_protected_project_merge_uses_authenticated_boundary(self):
+        self._assert_project_merge_uses_authenticated_boundary(protected=False)
+
+    def test_non_protected_boundary_refusal_never_falls_back_to_legacy_transport(self):
+        self._assert_project_merge_uses_authenticated_boundary(protected=False, refuse=True)
+
+    def _assert_project_merge_uses_authenticated_boundary(self, *, protected, refuse=False):
         import hashlib
         import hmac
         from director_orchestrator.hotl_execution import (
@@ -1151,7 +1161,7 @@ class OracleMergeGateTests(unittest.TestCase):
         from tests.test_merge_eligibility import bundle, policy, review, check, digest
 
         artifact = self.artifact()
-        github = FakeGitHub(self.snapshot(base_protected=True))
+        github = FakeGitHub(self.snapshot(base_protected=protected))
         key = b"test-only-standing-observer-key!!"
         now = datetime.now(timezone.utc)
         reviewer = replace(review("claude", "standing"), verdict="ACCEPT")
@@ -1171,14 +1181,18 @@ class OracleMergeGateTests(unittest.TestCase):
         )
 
         def observe(action, pull, challenge):
+            self.assertEqual(action.action_class, "eligible_merge_protected_branch" if protected
+                             else "eligible_merge_non_protected_branch")
             observation = MergeObservation(
                 bundle=evidence, pull_number=pull, base_sha=BASE_SHA, environment="test",
                 observed_at=now, challenge=challenge, authority_id=STANDING_MERGE_AUTHORITY,
-                authority_status="ACTIVE", operating_state="ATTENDED", producer_principal="cursor",
+                authority_status="REVOKED" if refuse else "ACTIVE",
+                operating_state="ATTENDED", producer_principal="cursor",
                 merging_principal="claude", provenance_status="COMPLETE", protection_status="SATISFIED",
                 ruleset_status="SATISFIED", bypass_status="DISABLED", cancellation_status="RUNNING",
                 tier_zero_status="CLEAR", budget_used=0, budget_limit=1,
-                attempts_used=0, attempt_limit=1, hops_used=0, hop_limit=1, base_protected=True,
+                attempts_used=0, attempt_limit=1, hops_used=0, hop_limit=1,
+                base_protected=protected,
             )
             return observation, hmac.new(key, observation.payload(), hashlib.sha256).hexdigest()
 
@@ -1197,6 +1211,13 @@ class OracleMergeGateTests(unittest.TestCase):
         service = self.service(github)
         service._standing_merge_boundary = boundary
         result = service.process(artifact)
+        self.assertEqual(github.merge_calls, 0)
+        if refuse:
+            self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+            self.assertIn("standing owner merge authority unavailable, revoked or suspended",
+                          result.reasons)
+            self.assertEqual(calls, [])
+            return
         self.assertEqual(result.status, OracleMergeStatus.MERGED, result.reasons)
         self.assertEqual(result.merge_commit_sha, "f" * 40)
         self.assertEqual(result.actor, "claude")
@@ -2219,3 +2240,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:48 UTC | END]]
