@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | BEGIN]] -->
@@ -98,8 +99,10 @@ tag on a coordination message makes the Director neither the logical producer
 nor a material author of the candidate. Current runtime enforcement: The Director
 still may not independently accept or merge code it actually materially authored.
 Under the sole-author policy below, an assisting contributor may review and
-accept when otherwise eligible; runtime-dispatched reviews retain the stricter
-exclusion until a separately authorized alignment. The Director may never merge
+accept when otherwise eligible under that policy; for any review, acceptance or
+merge passing through the material-author gates listed below, contributor review
+eligibility is prospective until a separately reviewed runtime change aligns
+them. The Director may never merge
 a pull request to which it contributed counted lines.
 
 ## Sole author rule
@@ -117,25 +120,34 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   contributors are co-authors only when one holds 52 % and the other the
   remaining 48 %. Exactly 48 % is a co-author, not below 48 %.
   Contribution tags continue to credit actual contributions.
-- **Review eligibility follows the owner rule now.** Only the sole author and
-  its provider family are excluded from reviewing on authorship grounds. An
-  assisting contributor may review in Director-routed and manual reviews.
+- **Review eligibility under the owner rule; runtime limits still apply.** Only
+  the sole author and its provider family are excluded from reviewing on
+  authorship grounds under the policy. An assisting contributor may review in
+  Director-routed and manual reviews subject to the runtime limits below.
   Any contributor with counted lines, whatever their label, may never merge that PR, and this bar never lifts.
   Any eligible reviewer with counted lines, including an assisting contributor
   or the exactly-48 % co-author, hands the merge to a non-contributing reviewer
   that has thoroughly reviewed the work.
-  For runtime-dispatched reviews, `review_handoff.py::bind_review_handoff`
-  currently binds the assignment producer and every transitive dependency
-  outcome provider as material authors and rejects those contributors and their
-  provider families as reviewers, so it still rejects an assisting contributor
-  until a separate reviewed runtime change aligns it. The runtime Director
+  The deterministic gates in `src/director_orchestrator/provider_acceptance_v3.py`,
+  `completion_gates.py`, `merge_eligibility.py`, `engineering_workload_ledger.py`,
+  and `review_handoff.py::bind_review_handoff` still reject every material
+  author. The handoff also binds the assignment producer and every transitive
+  dependency outcome provider as material authors and excludes their provider
+  families. For any review, acceptance or merge passing through these gates,
+  contributor review eligibility is prospective until a separately reviewed
+  runtime change aligns them, including Director-routed and manual reviews
+  whose verdicts pass through those gates. The runtime Director
   prompt, the charter directive, and its `DIRECTOR_OPERATING_DIRECTIVE_SHA256`
   fingerprint change with that alignment, not before.
 - **The logical producer is unchanged.** It is still the producer of the
   assignment under review, which `review_handoff.py` binds to that assignment's
   agent. The pull-request sole author is recorded separately.
-- **How the share is measured** (provisional metric, accepted by the Director on
-  2026-09-26): lines added plus lines deleted in the final base-to-head diff.
+- **How the share is measured and bound to review** (owner ruling, 2026-09-27):
+  the sole author and shares are computed from the git record at the exact
+  reviewed head: `git log <merge-base>..<head> --no-merges --numstat`, summing
+  lines added plus lines deleted per identity. Maintenance commits (Codex MX-*
+  packets or owner-directed maintenance) are assistance and do not count toward
+  authorship shares; exclude them from both the numerator and denominator.
   A line counts for an identity only when an authenticated record ties it to the
   identity that produced it: a provider-dispatch receipt or an authenticated
   provider run record. A human's lines count only when that human, from their
@@ -149,7 +161,11 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   merge, and whitespace-only changes are excluded. A counted line with no
   authenticated producer counts for no one but stays in the denominator. Record
   each identity's share and its receipt references in the pull-request
-  description.
+  description as a convenience copy. A reviewer recomputes the sole author and
+  shares from the git record at the exact head rather than trusting that copy.
+  A verdict is bound to the head SHA and therefore to that computation; any
+  change of head invalidates the review. Once #302 lands, the commit trailers
+  carry the record.
 - **Nothing to count.** When the denominator is zero (for example a pull request
   that only restores contribution envelopes), the sole author is the one identity
   whose authenticated record produced the change. If there is no such record, or
@@ -161,10 +177,12 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   `ReviewCandidateArtifact` carries only `material_authors`, and
   `bind_review_handoff` can dispatch a review without any share evidence.
   Until a reviewed runtime and schema change adds that check, the Director and
-  the reviewer enforce the threshold from the pull-request record. The Director
+  the reviewer enforce the threshold from the exact-head git computation above,
+  with the pull-request record as a convenience copy. The Director
   does not request review of a pull request whose record names no sole author
   with its shares. A reviewer, including one dispatched by the runtime, checks
-  that record first and returns no verdict if it is missing or below 52 %. A
+  that record, recomputes it at the exact reviewed head, and returns no verdict
+  if it is missing, conflicts with that computation, or is below 52 %. A
   runtime-dispatched review is therefore never, by itself, evidence that the
   threshold was met.
 - **Unchanged:** no agent merges its own pull request (AGENTS.md rule 3); one
@@ -203,3 +221,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->

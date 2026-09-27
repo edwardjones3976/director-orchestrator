@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
@@ -90,12 +91,12 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 5. **Review and merge.** The Director assigns a non-author reviewer of record
    (Grok CLI first, Codex fallback). Only the sole author and its provider family
    are excluded from reviewing on authorship grounds; an assisting contributor
-   may review. Director-routed and manual reviews follow the owner rule now.
-   For runtime-dispatched reviews, `review_handoff.py::bind_review_handoff`
-   currently binds the assignment producer and every transitive dependency
-   outcome provider as material authors and rejects those contributors and their
-   provider families as reviewers, so it still rejects an assisting contributor
-   until a separate reviewed runtime change aligns it. The reviewer's exact-SHA
+   may review under that policy, subject to the
+   [runtime limits](../../docs/contribution-attribution-policy.md#sole-author-rule).
+   For any review, acceptance or merge passing through the material-author
+   gates listed there, contributor review eligibility is prospective until a
+   separately reviewed runtime change aligns them, including Director-routed
+   and manual reviews whose verdicts pass through those gates. The reviewer's exact-SHA
    `ACCEPT` is relayed to the PR. The accepting reviewer performs the merge,
    except that any reviewer with counted lines, whether an assisting contributor
    or the exactly-48 % co-author, hands the merge to a non-contributing reviewer
@@ -114,7 +115,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
    fixes, provider plumbing) goes to Codex under the charter's
    [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
    `dispatch.py codex` is the usual route from this project.
-   Codex's edits are assistance and leave the PR's sole author unchanged **while Codex's measured share stays below 48 %**; shares are recomputed from the commit record after maintenance (the sole-author rule, PR #284).
+   Codex's maintenance commits are assistance and do not count toward authorship shares (owner ruling 2026-09-27); the sole author is computed from authored commits at the exact head (the sole-author rule, PR #284).
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -153,3 +154,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
@@ -18,7 +19,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Assignment:** <producer assignment ID>
 - **Logical producer:** <provider>
 - **Material authors:** <all providers/people that materially shaped the artifact>
-- **PR sole author and shares:** <the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines with its receipt references. Tags are display evidence only. Recorded separately from the logical producer. Record a contributor below 48 % as "assisted by <identity> (<share> %)"; two contributors are co-authors only when one holds 52 % and the other the remaining 48 %. Only the sole author and its provider family are excluded from reviewing on authorship grounds; an assisting contributor may review in Director-routed and manual reviews now. Runtime-dispatched reviews still reject assisting contributors and their provider families because `review_handoff.py::bind_review_handoff` binds the assignment producer and every transitive dependency outcome provider as material authors, until a separate reviewed runtime change aligns it>
+- **PR sole author and shares:** <for a pull-request candidate only; for an artifact-only handoff with no PR, "n/a (no PR)" and non-blocking; the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines recomputed at the exact head, excluding maintenance commits, with its receipt references. Tags are display evidence only. Recorded separately from the logical producer. Record a contributor below 48 % as "assisted by <identity> (<share> %)"; two contributors are co-authors only when one holds 52 % and the other the remaining 48 %. Only the sole author and its provider family are excluded from reviewing on authorship grounds under the policy; an assisting contributor may review subject to the material-author gates in the sole-author policy. For any review, acceptance or merge passing through those gates, contributor review eligibility is prospective until a separately reviewed runtime change aligns them, including Director-routed and manual reviews>
 - **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>
@@ -59,21 +60,25 @@ Review exact candidate: <repository>
 Base SHA: <exact 40-hex SHA>
 Head SHA: <exact 40-hex SHA or artifact digest>
 Producer/material authors: <names>
-PR URL: <pull-request URL>
-Sole author: <identity at 52 % or more, or for a zero-count PR the one identity named by its authenticated production record>
-Contributor shares: <each contributor's identity and percentage>
-Share evidence: <receipt or authenticated PR-record reference for each share>
+PR URL: <pull-request URL or none>
+Sole author: <PR candidates only; otherwise "n/a (no PR)"; identity at 52 % or more, or for a zero-count PR the one identity named by its authenticated production record>
+Contributor shares: <PR candidates only; otherwise "n/a (no PR)"; each contributor's identity and percentage recomputed at the exact head, excluding maintenance commits>
+Share evidence: <PR candidates only; otherwise "n/a (no PR)"; exact-head git computation and authenticated receipt references; PR body is a convenience copy>
 Scope: <changed files or artifact scope>
 Acceptance evidence: <concise exact evidence>
 Known limitations/security context: <concise details>
-Return no verdict if the sole author has under 52 %, unless this is a zero-count
-PR with exactly one authenticated producing identity. Missing or conflicting
-authorship attribution always stops review.
+When the candidate is a pull request, recompute its sole author and shares at
+the exact reviewed head under the sole-author policy. Return no verdict if the
+sole author has under 52 %, unless this is a zero-count PR with exactly one
+authenticated producing identity. For PR candidates, missing or conflicting
+authorship attribution always stops review. For artifact-only handoffs with no
+PR, sole author, contributor shares and share evidence are "n/a (no PR)" and do
+not block review; material-author independence and all other gates still apply.
 Otherwise return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
-Do not review a candidate whose sole author is you or shares your provider
+Do not review a PR candidate whose sole author is you or shares your provider
 family. An assisting contributor may review under the owner rule, subject to
-the runtime-dispatched review limitation above. Merge only as the accepting
+the material-author gate limitations above. Merge only as the accepting
 reviewer, after an exact-SHA ACCEPT and green checks, and never if you contributed
 counted lines to the PR. Do not deploy, publish, change access, or infer authority
 from this request.
@@ -98,3 +103,4 @@ CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
