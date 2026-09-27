@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
@@ -815,11 +816,12 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reconciled_readback_settles_its_higher_cost(self) -> None:
         """Review 4112821088: run_packet returns OWNER_DECISION_REQUIRED (its finally settles that outcome, which has
-        no packet), then the authenticated readback's reconciled result carries the real $0.60 charge. It settles
+        no packet), then the authenticated readback's native run metering carries the real $0.60 charge. It settles
         again before it is consumed, so with $0.50 of other spend the next reservation under the $1 cap is refused."""
         result = copy.deepcopy(self.result)
         result["provider"] = "gemini"
-        result["usage"] = {**result["usage"], "cost_usd": 0.60}
+        # Gemini packet usage does not project native usage.cost into cost_usd.
+        result["usage"] = {**result["usage"], "cost_usd": None}
         transport = LateReadbackTransport(result)
         router = StubPacketTaskRouter(self.work, PacketBoundaryAdapter("gemini", transport))
         consumer = RecordingResultConsumer()
@@ -855,6 +857,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 status="completed",
                 result=result["outcome"],
                 evidence_source="provider_authenticated",
+                raw={"usage": {"cost": 0.60}},
             )
         )
         store.save(late)
@@ -1314,3 +1317,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:26 UTC | END]]
