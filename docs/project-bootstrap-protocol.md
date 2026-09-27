@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
@@ -193,7 +194,6 @@ project-local fit here and link back for authority boundaries.
 | Codex / ChatGPT / OpenAI | Director (project coordination, routing, review orchestration, completion reporting); repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
 | Cursor | full-spectrum implementation, reliability, QA, architecture, independent review, technical leadership | an overflow-only role, self-review, or a durable execution target other than the named one |
 | Grok | capability-routed primary lane for research, evidence verification, programming, deep reasoning, innovation, development, QA, and assigned leadership, selected by verified transport capabilities, authority, independence, budget, availability, and expected information gain | shared capabilities or authority across the separate xAI API, Grok Build CLI, and Grok Bot contacts; assignment-scoped acceptance authority, self-review or self-approval, or bypass of scope, Codex Security, or deterministic gates |
-| GitHub Copilot | bounded project-local assignments selected by verified capability, authority, availability, budget, repository scope, and independence under the frozen allocation profile | eligibility at a zero target, standing leadership, live enrollment, self-approval, merge authority, or authority from the separate Copilot Lite observation role |
 | Gemini / Antigravity | restricted default fixture contact (bounded scaffolding, mechanical work, sandboxed ideas); explicitly granted team-contract engineering/review | primary authority, unrestricted project context, bypass of admission gates, independent acceptance, merge, or methodology truth |
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
@@ -548,3 +548,4 @@ project-specific control.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:59 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | BEGIN]] -->
@@ -25,10 +26,14 @@ behavior, exact validation, remaining blockers, and the artifact or commit.
 Do not assume project leadership, overlap another writer, invent Claude's
 approval, or independently accept or merge a candidate you materially authored.
 Keep all deterministic gates and attempt, workload, output, time, and budget
-bounds. Return scope and sequencing decisions to the ChatGPT/Codex Director
-with the evidence needed to decide them.
+bounds. Return scope and sequencing decisions to the acting Director: the
+ChatGPT/Codex Director, or, only while the owner's current scoped appointment
+of Claude as second in command is in effect and the ChatGPT/Codex Director
+is unavailable, Claude; otherwise the owner. Include the evidence needed to
+decide them.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:59 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | END]] -->

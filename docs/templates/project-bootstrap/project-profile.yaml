@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -123,7 +124,8 @@ team:
   # docs/templates/project-bootstrap/provider-roles-contract.yaml
   provider_roles_contract: "provider-roles-contract.yaml"
   director:
-    provider: "<ChatGPT/Codex Director or owner-appointed project Director>"
+    provider: "<openai | claude | canonical provider key from provider-roles-contract.yaml>"
+    appointment: "<owner appointment reference (date/record), or none>"
     # Select bounded roles from docs/project-bootstrap-protocol.md#provider-fit-menu.
     # This template creates no standing provider assignment; record owner appointment.
     # Acting leadership is separate from the actual runtime provider.
@@ -234,3 +236,4 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | END]]

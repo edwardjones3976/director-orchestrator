@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | BEGIN]]
@@ -47,10 +48,18 @@ class ActiveDocumentationTests(unittest.TestCase):
             with self.subTest(template=name):
                 text = (bootstrap / name).read_text(encoding="utf-8")
                 self.assertIn("project-bootstrap-protocol.md#provider-fit-menu", text)
-                self.assertIn("<ChatGPT/Codex Director or owner-appointed project Director>", text)
+                if name == "intake.md":
+                    self.assertIn("<ChatGPT/Codex Director or owner-appointed project Director>", text)
         profile = (bootstrap / "project-profile.yaml").read_text(encoding="utf-8")
         director = profile.split("\n  director:\n", 1)[1].split("\n  lanes:", 1)[0]
         self.assertNotIn('provider: "claude"', director)
+        self.assertEqual(
+            (
+                "<openai | claude | canonical provider key from provider-roles-contract.yaml>",
+                "<owner appointment reference (date/record), or none>",
+            ),
+            tuple(yaml.safe_load(profile)["team"]["director"][key] for key in ("provider", "appointment")),
+        )
 
     def test_codex_director_fallback_requires_explicit_owner_appointment(self):
         text = " ".join((ROOT / "prompts/codex-engineering.md").read_text(
@@ -70,6 +79,14 @@ class ActiveDocumentationTests(unittest.TestCase):
             with self.subTest(clause=clause):
                 self.assertIn(clause, text)
 
+        self.assertIn(
+            "Return scope and sequencing decisions to the acting Director: the "
+            "ChatGPT/Codex Director, or, only while the owner's current scoped appointment "
+            "of Claude as second in command is in effect and the ChatGPT/Codex Director "
+            "is unavailable, Claude; otherwise the owner.",
+            text,
+        )
+
     def test_provider_fit_menu_covers_canonical_providers(self):
         contract = yaml.safe_load((ROOT / "docs/templates/project-bootstrap/provider-roles-contract.yaml").read_text(
             encoding="utf-8"
@@ -81,9 +98,11 @@ class ActiveDocumentationTests(unittest.TestCase):
             for line in menu.splitlines() if line.startswith("| ")
             for alias in line.split("|")[1].split("/")
         }
-        canonical = set(contract["providers"]) | set(
-            contract["allocation_and_selection"]["allocation_profiles"]["lane_order"]
-        )
+        # Allocation entries do not create provider contracts; Lite is a separate observation row.
+        canonical = {
+            key.replace("_", "-")
+            for key in set(contract["providers"]) | set(contract["supplemental_reviewers"])
+        }
         self.assertFalse(canonical - providers, f"Missing provider-fit rows: {sorted(canonical - providers)}")
 
     def test_owner_local_adoption_is_documented_as_owner_signed(self):
@@ -180,3 +199,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:59 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | END]]
