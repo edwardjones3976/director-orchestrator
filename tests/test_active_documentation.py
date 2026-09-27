@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | BEGIN]]
@@ -7,6 +8,8 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("doc_guard", ROOT / "scripts/check_active_documentation.py")
@@ -32,11 +35,13 @@ class ActiveDocumentationTests(unittest.TestCase):
                 for stale in (
                     "claude is the director", "claude is the acting director",
                     "claude holds all three functions", "claude owns moderator",
-                    "claude as second in command", "acting claude director",
+                    "acting claude director",
                     "acting project director | claude",
                     "single existing claude advisory vote", "claude's one vote",
                 ):
                     self.assertNotIn(stale, text)
+                if path != ROOT / "prompts/codex-engineering.md":
+                    self.assertNotIn("claude as second in command", text)
         for name in ("intake.md", "project-profile.yaml"):
             with self.subTest(template=name):
                 text = (bootstrap / name).read_text(encoding="utf-8")
@@ -45,6 +50,37 @@ class ActiveDocumentationTests(unittest.TestCase):
         profile = (bootstrap / "project-profile.yaml").read_text(encoding="utf-8")
         director = profile.split("\n  director:\n", 1)[1].split("\n  lanes:", 1)[0]
         self.assertNotIn('provider: "claude"', director)
+
+    def test_codex_director_fallback_requires_explicit_owner_appointment(self):
+        text = " ".join((ROOT / "prompts/codex-engineering.md").read_text(
+            encoding="utf-8"
+        ).split())
+        for clause in (
+            "only under the owner's explicit appointment of Claude as second in command",
+            "owner directive, 2026-09-22",
+            "only while the ChatGPT/Codex Director is unavailable",
+            "never removes deterministic gates or permits self-approval or self-merge",
+            "Every lane routing still passes capability, authority, availability, budget, repository, and independence checks",
+            "Without that appointment, decisions wait for the ChatGPT/Codex Director or the owner",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, text)
+
+    def test_provider_fit_menu_covers_canonical_providers(self):
+        contract = yaml.safe_load((ROOT / "docs/templates/project-bootstrap/provider-roles-contract.yaml").read_text(
+            encoding="utf-8"
+        ))
+        text = (ROOT / "docs/project-bootstrap-protocol.md").read_text(encoding="utf-8")
+        menu = text.split("## Provider-fit menu\n", 1)[1].split("\n## ", 1)[0]
+        providers = {
+            alias.strip().lower().replace(" ", "-")
+            for line in menu.splitlines() if line.startswith("| ")
+            for alias in line.split("|")[1].split("/")
+        }
+        canonical = set(contract["providers"]) | set(
+            contract["allocation_and_selection"]["allocation_profiles"]["lane_order"]
+        )
+        self.assertFalse(canonical - providers, f"Missing provider-fit rows: {sorted(canonical - providers)}")
 
     def test_owner_local_adoption_is_documented_as_owner_signed(self):
         text = " ".join((ROOT / "docs/langgraph-primary-operations.md").read_text(
@@ -138,3 +174,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
