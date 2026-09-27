@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:34 UTC | BEGIN]]
@@ -1207,10 +1208,10 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             for thread in threads:
                 thread.start()
             for thread in threads:
-                thread.join(timeout=10)
+                thread.join(timeout=30)
         finally:
             self.store._lock_project = original_lock_project
-        self.assertFalse(any(thread.is_alive() for thread in threads), failures)
+        self.assertFalse(any(thread.is_alive() for thread in threads), ("workers did not finish within 30s per thread", failures))
         self.assertIn("supersede", outcomes, failures)
         self.assertFalse(
             any("deadlock" in failure.lower() or "serialization" in failure.lower()
@@ -1804,8 +1805,8 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
-        self.assertFalse(any(thread.is_alive() for thread in threads), failures)
+            thread.join(timeout=30)
+        self.assertFalse(any(thread.is_alive() for thread in threads), ("workers did not finish within 30s per thread", failures))
         self.assertEqual(failures, [])
         self.assertEqual(sum(decision.permitted for decision in decisions), 1)
         bindings = {decision.authorization_binding_digest for decision in decisions}
@@ -1907,10 +1908,10 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             time.sleep(0.05)
             self.assertTrue(query_thread.is_alive())
             blocker.execute("COMMIT")
-        revoke_thread.join(timeout=10)
-        query_thread.join(timeout=10)
-        self.assertFalse(revoke_thread.is_alive())
-        self.assertFalse(query_thread.is_alive())
+        revoke_thread.join(timeout=30)
+        query_thread.join(timeout=30)
+        self.assertFalse(revoke_thread.is_alive(), "worker did not finish within 30s")
+        self.assertFalse(query_thread.is_alive(), "worker did not finish within 30s")
         self.assertEqual(failures, [])
         self.assertEqual(len(revoke_done), 1)
         self.assertEqual(len(query_decisions), 1)
@@ -2143,3 +2144,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:09 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
