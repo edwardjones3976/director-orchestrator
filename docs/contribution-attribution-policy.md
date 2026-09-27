@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
@@ -201,9 +202,12 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   A reviewer who can neither recompute nor find that record returns no verdict.
   The authorship computation uses only `merge_base_sha` and head SHA;
   `base_sha` remains the PR current target-tip SHA for runtime exact-candidate
-  binding. The verdict binds to `base_sha`, `merge_base_sha`, and head SHA;
-  any of the three changing, including a retarget that changes the base,
-  invalidates the verdict. Once #302 lands,
+  binding. The review result must record `base_sha`, `merge_base_sha`, head SHA,
+  and `share_record_sha256`, the SHA-256 digest of the exact UTF-8 share-record
+  text used by the reviewer, including the PR share table, MX references used
+  for maintenance exclusions, and human-attribution entries in the PR record.
+  Any change to that record or any of the three SHAs, including a retarget that
+  changes the base, invalidates the verdict. Once #302 lands,
   the commit trailers carry the record.
 - **Nothing to count.** When the denominator is zero (for example a pull request
   that only restores contribution envelopes), the sole author is the one identity
@@ -279,3 +283,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:20 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | END]] -->

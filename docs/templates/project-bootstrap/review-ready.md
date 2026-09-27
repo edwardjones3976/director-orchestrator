@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
@@ -51,7 +52,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Required verdict:** `ACCEPT`, `CHANGES_REQUIRED`, or
   `SERIOUS_SAFETY_STOP`
 - **Merge path after acceptance:** <configured deterministic gate and required CI/security>
-- **Candidate invalidation:** Any base_sha, merge_base_sha, head SHA, or artifact change voids this
+- **Candidate invalidation:** Any base_sha, merge_base_sha, head SHA, share-record text, or artifact change voids this
   handoff and all review, security, CI, and merge evidence tied to it.
 
 ## Provider-to-provider prompt
@@ -76,8 +77,10 @@ When the candidate is a pull request, recompute its sole author and shares at
 the exact merge_base_sha and head SHA under the sole-author policy. Keep
 base_sha as the PR current target-tip SHA for exact-candidate binding; use
 merge_base_sha only for authorship computation. Record base_sha, merge_base_sha,
-and head SHA in the returned result. Any of the three changing invalidates
-the verdict. Return no verdict if the
+head SHA, and share_record_sha256 (SHA-256 of the exact UTF-8 share-record text
+used, including the PR share table, maintenance-exclusion MX references, and
+human-attribution entries) in the returned result. Any change to that record
+or any of the three SHAs invalidates the verdict. Return no verdict if the
 sole author has under 52 %, unless this is a zero-count PR with exactly one
 authenticated producing identity. For PR candidates, missing or conflicting
 authorship attribution always stops review. For artifact-only handoffs with no
@@ -107,6 +110,7 @@ Do not deploy, publish, change access, or infer authority from this request.
 - **Reviewed target-tip base_sha:** <exact 40-hex SHA or n/a for artifact-only review>
 - **Reviewed authorship merge_base_sha:** <exact 40-hex SHA or n/a for artifact-only review>
 - **Reviewed head SHA or artifact digest:** <exact 40-hex SHA or digest>
+- **Reviewed share_record_sha256:** <SHA-256 of the exact UTF-8 share-record text used above; n/a (no PR) for artifact-only review>
 - **Verdict:** <ACCEPT / CHANGES_REQUIRED / SERIOUS_SAFETY_STOP>
 - **Evidence/findings:** <concise result>
 - **Current CI/security evidence:** <exact status or pending>
@@ -125,3 +129,4 @@ CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | END]] -->
