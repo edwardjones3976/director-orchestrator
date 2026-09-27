@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | BEGIN]] -->
@@ -157,12 +158,21 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   reviewed merge-base SHA (`merge_base_sha`) and head SHA:
   `git log <merge-base>..<head> --no-merges --format='%H %an' -p -w --ignore-blank-lines --no-color --no-ext-diff --no-textconv -M -C --find-copies-harder`,
   counting only `+` and `-` lines inside patch hunks (not file headers), per
-  commit and authenticated identity. Exclude renames or copies with 100 %
+  commit and authenticated identity. If a PR contains binary changes and more
+  than one producer contributed, stop for owner classification unless all binary
+  changes come from one producer who also holds the text majority; that case
+  proceeds normally. Exclude renames or copies with 100 %
   similarity from both numerator and denominator; count only changed lines
   in edited renames. After removing the `+` or `-` diff prefix,
   skip empty or whitespace-only content: `-w` and `--ignore-blank-lines` do not
-  remove those lines inside mixed hunks. Exclude only whole-line, comment-style
-  contribution envelopes matching `^[ \t]*(?:#|<!--|//|\*\*)[ \t]*\[\[[^|\[\]\r\n]+ \| [^|\[\]\r\n]+ \| \d{4}-\d{2}-\d{2} \| \d{2}:\d{2} UTC \| (?:BEGIN|END)\]\][ \t]*(?:-->|#|//|\*\*)?[ \t]*$`.
+  remove those lines inside mixed hunks. Exclude only a line that is exactly one
+  contribution envelope in any comment syntax accepted by the [canonical tag
+  policy](#canonical-tag): `#`, `//`, `--`, `/* … */`, `<!-- … -->`, or `**…**`.
+  Use the canonical recognizer in
+  [`src/director_orchestrator/contribution_tags.py`](../src/director_orchestrator/contribution_tags.py)
+  (`TAG_PATTERN` and `parse_contribution_tag`), as used by
+  [`scripts/check_contribution_tags.py`](../scripts/check_contribution_tags.py);
+  do not define a separate tag grammar.
   Tag-like substrings inside strings, fixtures, or examples stay counted.
   Maintenance lines are assistance, excluded from both numerator and denominator
   only when an MX packet receipt or owner directive explicitly identifies the
@@ -268,3 +278,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:20 UTC | END]] -->
