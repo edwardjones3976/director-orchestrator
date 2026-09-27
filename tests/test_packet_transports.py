@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -309,10 +310,12 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
             resolver = LocalGitAuthoritySnapshotResolver("example/demo", root)
             with patch("director_orchestrator.packet_transports.subprocess.run", side_effect=run):
                 self.assertEqual("ok", resolver._git("status"))
-                with blob_read_deadline(time_module.monotonic() + 0.3):
+                started = time_module.monotonic()
+                deadline = started + 0.3
+                with blob_read_deadline(deadline):
                     resolver._git("status")
             self.assertEqual(30.0, timeouts[0])
-            self.assertLessEqual(timeouts[1], 0.3)
+            self.assertLessEqual(timeouts[1], deadline - started)
             with patch("director_orchestrator.packet_transports.subprocess.run",
                        side_effect=AssertionError("spawned")), \
                     blob_read_deadline(time_module.monotonic() - 1), \
@@ -1354,3 +1357,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:47 UTC | END]]
