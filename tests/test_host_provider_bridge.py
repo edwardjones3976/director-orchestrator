@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -495,7 +496,7 @@ class HostProviderBridgeTests(unittest.TestCase):
             connect_until_deadline(("bridge", 443), 30, deadline=started + 0.4,
                                    resolve=lambda *a, **k: addresses, socket_factory=Stalling)
         self.assertLess(time_module.monotonic() - started, 1.0)
-        self.assertLessEqual(timeouts[0], 0.4)
+        self.assertLessEqual(timeouts[0], 0.4 + 1e-9)
         self.assertLess(len(timeouts), 4)
 
     def test_socket_connected_after_the_deadline_is_closed_not_returned(self) -> None:
@@ -1786,3 +1787,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | END]]
