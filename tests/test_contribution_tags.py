@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
@@ -587,6 +588,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
                 json.dumps(
                     {
                         "pull_request": {
+                            "head": {"sha": "a" * 40},
                             "body": (
                                 "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]] -->\n"
                                 "**[[<Assistant> | <Model> | <YYYY-MM-DD> | <HH:MM UTC> | BEGIN]]**\n"
@@ -599,11 +601,18 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            self.assertTrue(checker._validate_github_event(event))
+            message = (
+                "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]]\n"
+                "commit\n"
+                "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]"
+            )
+            with patch.object(checker, "_git", return_value=message):
+                self.assertTrue(checker._validate_github_event(event))
             event.write_text(
                 json.dumps(
                     {
                         "pull_request": {
+                            "head": {"sha": "a" * 40},
                             "body": (
                                 "**[[Cursor | Agent | 2026-08-21 | 23:06 UTC | BEGIN]]**\n"
                                 "body\n"
@@ -614,7 +623,8 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            self.assertEqual(checker._validate_github_event(event), [])
+            with patch.object(checker, "_git", return_value=message):
+                self.assertEqual(checker._validate_github_event(event), [])
 
     def test_submission_envelope_rejects_visible_content_outside_boundaries(self):
         root = Path(__file__).resolve().parents[1]
@@ -747,6 +757,51 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
 
     BEGIN = "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]]"
     END = "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]"
+
+    def test_pr_event_requires_body_and_exact_head_commit_envelopes(self):
+        checker = self._checker("check_contribution_tags_pr_head")
+        sha = "a" * 40
+        message = f"{self.BEGIN}\ncommit\n{self.END}"
+        body = f"**{self.BEGIN}**\nbody\n**{self.END}**"
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            payload = {"pull_request": {"body": body, "head": {"sha": sha}}}
+            event.write_text(json.dumps(payload), encoding="utf-8")
+            for commit, valid in (
+                (message, True),
+                (message + "\n\nSigned-off-by: Example <example@example.invalid>\n", True),
+                ("untagged", False),
+                ("subject\n" + message, False),
+                (message + "\nNote: outside envelope", False),
+            ):
+                with self.subTest(commit=commit), patch.object(
+                    checker, "_git", return_value=commit
+                ) as git:
+                    self.assertEqual(not checker._validate_github_event(event), valid)
+                    git.assert_called_once_with("show", "-s", "--format=%B", sha, "--")
+            for failure in (OSError(), subprocess.CalledProcessError(128, ["git"])):
+                with patch.object(checker, "_git", side_effect=failure):
+                    self.assertIn(
+                        "could not read pull-request head commit envelope",
+                        checker._validate_github_event(event),
+                    )
+            payload["pull_request"]["body"] = "untagged body"
+            event.write_text(json.dumps(payload), encoding="utf-8")
+            with patch.object(checker, "_git", return_value=message):
+                self.assertTrue(checker._validate_github_event(event))
+            for head in (None, {}, {"sha": "HEAD"}, {"sha": "--all"}):
+                payload["pull_request"].update(body=body, head=head)
+                event.write_text(json.dumps(payload), encoding="utf-8")
+                with patch.object(checker, "_git") as git:
+                    self.assertTrue(checker._validate_github_event(event))
+                    git.assert_not_called()
+            event.write_text(
+                json.dumps({"ref": "refs/heads/main", "head_commit": {"message": "merge"}}),
+                encoding="utf-8",
+            )
+            with patch.object(checker, "_git") as git:
+                self.assertEqual(checker._validate_github_event(event), [])
+                git.assert_not_called()
 
     @staticmethod
     def _checker(name: str):
@@ -1342,10 +1397,14 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             event = Path(temp) / "event.json"
             event.write_text(
-                json.dumps({"pull_request": {"body": envelope + summary}}),
+                json.dumps({"pull_request": {
+                    "head": {"sha": "a" * 40}, "body": envelope + summary,
+                }}),
                 encoding="utf-8",
             )
-            self.assertEqual(checker._validate_github_event(event), [])
+            message = f"{self.BEGIN}\ncommit\n{self.END}"
+            with patch.object(checker, "_git", return_value=message):
+                self.assertEqual(checker._validate_github_event(event), [])
 
     def test_cursor_summary_block_boundaries_are_not_weakened(self):
         checker = self._checker("check_contribution_tags_cursor_summary_bounds")
@@ -1505,10 +1564,14 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             event = Path(temp) / "event.json"
             event.write_text(
-                json.dumps({"pull_request": {"body": revised_body}}),
+                json.dumps({"pull_request": {
+                    "head": {"sha": "a" * 40}, "body": revised_body,
+                }}),
                 encoding="utf-8",
             )
-            self.assertEqual(checker._validate_github_event(event), [])
+            message = f"{self.BEGIN}\ncommit\n{self.END}"
+            with patch.object(checker, "_git", return_value=message):
+                self.assertEqual(checker._validate_github_event(event), [])
 
         summary = (
             "\n\n<!-- CURSOR_SUMMARY -->\n"
@@ -1575,3 +1638,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]

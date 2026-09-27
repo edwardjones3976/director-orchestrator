@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
@@ -534,37 +535,6 @@ class PrimaryTaskCoordinator:
             )
         return self._persist_outcome(
             self._runtime.record_effect_result(task_id, command), writer
-        )
-
-    def prepare_external_effect(self, task_id: str) -> EffectReservation:
-        """Reserve one effect in Postgres before an executor performs any I/O."""
-
-        self._task_writer(task_id)
-        attempt_digest = self._runtime.prepare_effect_execution(task_id)
-        reservation = self._store.read_effect_reservation(
-            task_id=task_id,
-            effect_attempt_digest=attempt_digest,
-            owner_token=self._owner_token,
-        )
-        if reservation is None:
-            raise PrimaryCoordinatorError("effect reservation disappeared after claim")
-        return reservation
-
-    def bind_external_effect_remote(
-        self,
-        *,
-        reservation: EffectReservation,
-        remote_system: str,
-        remote_identifier: str,
-    ) -> None:
-        """Bind a remote identifier after I/O; collisions fail closed."""
-
-        self._task_writer(reservation.task_id)
-        self._store.bind_remote_effect(
-            reservation_key=reservation.reservation_key,
-            owner_token=self._owner_token,
-            remote_system=remote_system,
-            remote_identifier=remote_identifier,
         )
 
     def read_external_effect_remote(
@@ -1132,3 +1102,4 @@ class PrimaryTaskCoordinator:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]

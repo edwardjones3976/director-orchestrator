@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:06 UTC | BEGIN]]
@@ -211,6 +212,11 @@ class PrimaryBackupRestoreTests(unittest.TestCase):
                 "remote_system": "provider-double",
                 "remote_identifier": f"remote-{uuid.uuid4().hex}",
             }
+            self.assertTrue(
+                store.claim_effect_execution(
+                    reservation_key=reservation_key, owner_token=writer_token
+                )
+            )
             store.bind_remote_effect(
                 reservation_key=reservation_key,
                 owner_token=writer_token,
@@ -484,3 +490,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:06 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:00 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
