@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
@@ -6,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -97,6 +100,165 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                                          [reservations[0][0]] if expected is None else [])
                         self.assertAlmostEqual(ledger.exposure(provider)[1], max(reservations[0][1], expected or 0))
 
+    async def test_settlement_failure_retains_submit_and_stops_legacy_and_revision(self) -> None:
+        from director_orchestrator.models import ReviewDecision, ReviewVerdict
+
+        for phase in ("dispatch", "revision"):
+            for failure in ("acknowledgement", "terminal", "ambiguous_submit"):
+                with self.subTest(phase=phase, failure=failure), tempfile.TemporaryDirectory() as directory:
+                    settings, store, record, assignment = self._world(
+                        directory, max_hops=4, max_revisions=1)
+                    engine = OrchestrationEngine(settings, store)
+                    engine._status_post = AsyncMock()
+                    adapter = AsyncMock()
+                    original = ProviderRun(provider=assignment.agent, run_id="original-run",
+                                           status="completed", result="original evidence", raw={"usage": {"cost": 0.1}})
+                    revised = original.model_copy(update={"run_id": "revised-run", "result": "revised evidence"})
+                    adapter.dispatch.return_value = original
+                    adapter.revise.return_value = revised
+                    submitted = adapter.dispatch if phase == "dispatch" else adapter.revise
+                    if failure == "ambiguous_submit":
+                        submitted.side_effect = RuntimeError("submit outcome unknown")
+                    engine.providers[assignment.agent] = adapter
+                    engine.director.review = AsyncMock(return_value=ReviewDecision(
+                        verdict=ReviewVerdict.REVISE, summary="More evidence needed", revision_prompt="Add evidence"))
+                    real_charge = engine.provider_spend.record_charge
+                    calls = 0
+                    fail_at = (0 if phase == "dispatch" else 2) + (2 if failure == "terminal" else 1)
+
+                    def charge(**kwargs):
+                        nonlocal calls
+                        calls += 1
+                        if calls == fail_at:
+                            raise sqlite3.OperationalError("ledger unavailable")
+                        return real_charge(**kwargs)
+
+                    with patch.object(engine.provider_spend, "record_charge", side_effect=charge) as charge_mock:
+                        self.assertFalse(await engine._execute_assignment(record, assignment))
+                    self.assertEqual(calls, fail_at)
+                    self.assertEqual(charge_mock.call_args.kwargs["actual_cost_usd"],
+                                     0.1 if failure == "terminal" else None)
+                    self.assertEqual(engine.director.review.await_count, int(phase == "revision"))
+                    stopped = store.get(record.task_id)
+                    self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                    self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
+                    key = stopped.error.split(":", 1)[1]
+                    self.assertIn(key, engine.provider_spend.unreconciled(assignment.agent, stale_after=timedelta(0)))
+                    contact = stopped.provider_contact_attempts[-1]
+                    self.assertEqual(contact.phase, phase)
+                    self.assertEqual(contact.outcome, "ambiguous_dispatch")
+                    if failure != "ambiguous_submit":
+                        expected = original if phase == "dispatch" else revised
+                        self.assertEqual(contact.run_id, expected.run_id)
+                        self.assertEqual(stopped.provider_runs[-1].result, expected.result)
+                    self.assertFalse(await engine._execute_assignment(stopped, assignment))
+                    await engine.run(record.task_id)
+                    self.assertEqual(store.get(record.task_id).status, TaskStatus.OWNER_DECISION_REQUIRED)
+                    self.assertIn(key, engine.provider_spend.unreconciled(
+                        assignment.agent, stale_after=timedelta(0)))
+                    adapter.dispatch.assert_awaited_once()
+                    self.assertEqual(adapter.revise.await_count, int(phase == "revision"))
+
+    def test_not_created_settles_only_exact_reservation_once(self) -> None:
+        from director_orchestrator.approvals import (
+            apply_ambiguous_dispatch_resolution, record_provider_effect_observation, reserve_provider_effect,
+        )
+        from director_orchestrator.models import AmbiguousDispatchResolution, ProviderContactAttempt
+
+        for phase in ("dispatch", "revision"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment, phase=phase, max_task_budget_usd=10)
+                record_provider_effect_observation(record, assignment, effect_key=key, phase=phase, outcome="ambiguous")
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                other = _key("unrelated-reservation")
+                engine._reserve_provider_daily_spend(assignment, effect_key=other)
+                engine._charge_spend(assignment.agent, key, None)
+                engine._charge_spend(assignment.agent, other, None)
+                record.provider_contact_attempts.append(ProviderContactAttempt(
+                    assignment_sequence=assignment.sequence, provider=assignment.agent, ordinal=1,
+                    phase=phase, outcome="ambiguous_dispatch", error="submit outcome unknown"))
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                    owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                    resolution="not_created", note="Provider confirmed no request was created"))
+                store.save(record)
+                with patch.object(engine.provider_spend, "record_charge",
+                                  wraps=engine.provider_spend.record_charge) as charge:
+                    self.assertTrue(engine._settle_not_created_dispatches(record))
+                    self.assertTrue(engine._settle_not_created_dispatches(store.get(record.task_id)))
+                charge.assert_called_once()
+                self.assertEqual(charge.call_args.kwargs["effect_key"], key)
+                self.assertEqual(charge.call_args.kwargs["actual_cost_usd"], 0.0)
+                self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR), [other])
+                self.assertEqual(len(engine.provider_spend.reservations(assignment.agent)), 2)
+                # Restart uses the durable receipt, and the authoritative no-effect
+                # resolution allows a new, separately reserved attempt.
+                replay = store.get(record.task_id)
+                self.assertTrue(engine._settle_not_created_dispatches(replay))
+                replacement = reserve_provider_effect(replay, assignment, phase=phase, max_task_budget_usd=10)
+                self.assertNotEqual(replacement, key)
+
+    async def test_not_created_settlement_failure_blocks_resume_until_repaired(self) -> None:
+        from director_orchestrator.approvals import apply_ambiguous_dispatch_resolution
+        from director_orchestrator.models import AmbiguousDispatchResolution
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            engine._status_post = AsyncMock()
+            adapter = AsyncMock()
+            adapter.dispatch.side_effect = RuntimeError("submit outcome unknown")
+            engine.providers[assignment.agent] = adapter
+            self.assertFalse(await engine._execute_assignment(record, assignment))
+            record = store.get(record.task_id)
+            apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                resolution="not_created", note="Provider confirmed no request was created"))
+            store.save(record)
+            with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
+                await engine.run(record.task_id)
+            stopped = store.get(record.task_id)
+            self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            adapter.dispatch.assert_awaited_once()
+            self.assertEqual(len(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR)), 1)
+            self.assertTrue(engine._settle_not_created_dispatches(stopped))
+            self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR), [])
+
+    async def test_created_resolution_still_charges_the_original_effect(self) -> None:
+        from director_orchestrator.approvals import apply_ambiguous_dispatch_resolution
+        from director_orchestrator.models import AmbiguousDispatchResolution
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            engine._status_post = AsyncMock()
+            adapter = AsyncMock()
+            adapter.dispatch.side_effect = RuntimeError("submit outcome unknown")
+            engine.providers[assignment.agent] = adapter
+            with patch.object(engine.provider_spend, "record_charge",
+                              side_effect=sqlite3.OperationalError("locked")):
+                self.assertFalse(await engine._execute_assignment(record, assignment))
+            record = store.get(record.task_id)
+            key = engine.provider_spend.reservations(assignment.agent)[0][0]
+            apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                resolution="created", run_id="confirmed-run", note="Provider confirmed the existing run"))
+            store.save(record)
+            self.assertTrue(engine._settle_not_created_dispatches(record))
+            run = record.provider_runs[-1]
+            run.status = "completed"
+            run.result = "authenticated result"
+            run.raw = {"usage": {"cost": 0.3}}
+            with patch.object(engine.provider_spend, "record_charge",
+                              wraps=engine.provider_spend.record_charge) as charge:
+                self.assertTrue(engine._settle_provider_spend(record, run, assignment.agent))
+            self.assertEqual(charge.call_args.kwargs["effect_key"], key)
+            self.assertEqual(charge.call_args.kwargs["actual_cost_usd"], 0.3)
+            self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR), [])
+            adapter.dispatch.assert_awaited_once()
+
     def test_authoritative_cost_rejects_malformed_and_wrong_fields(self) -> None:
         for provider in ("gemini", "grok", "xai", "perplexity"):
             for cost in (None, True, -1, float("nan"), float("inf"), "0", 10 ** 1000,
@@ -116,7 +278,8 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                     "usage": {"cost_in_usd_ticks": ticks, "cost": 0},
                 }))
 
-    def _world(self, directory: str, *, ceiling: float | None = 0.01):
+    def _world(self, directory: str, *, ceiling: float | None = 0.01,
+               max_hops: int = 1, max_revisions: int = 0):
         database = str(Path(directory) / "tasks.sqlite3")
         settings = replace(
             Settings(),
@@ -152,8 +315,8 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                 normalized_outcome="settle provider spend",
                 risk_level=RiskLevel.LOW,
                 approval_required=False,
-                max_hops=1,
-                max_revisions=0,
+                max_hops=max_hops,
+                max_revisions=max_revisions,
                 assignments=[assignment],
                 final_acceptance=["Spend is reconciled"],
             ),
@@ -324,3 +487,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]]
