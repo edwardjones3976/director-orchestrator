@@ -1,3 +1,13 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]]
@@ -13,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import hmac
 import json
 import os
@@ -24,7 +35,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -88,6 +99,7 @@ class ProviderDailySpendLedger:
         self.path = sqlite_path
         Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS provider_daily_spend_reservations (
@@ -104,6 +116,139 @@ class ProviderDailySpendLedger:
                 """CREATE INDEX IF NOT EXISTS idx_provider_daily_spend_day
                 ON provider_daily_spend_reservations(provider, utc_day)"""
             )
+            # The actual charge a reservation incurred, once known (a usage-check probe's reported cost). Added in
+            # place: an existing ledger keeps every reservation, and a NULL charge counts at its reservation.
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(provider_daily_spend_reservations)"
+                )
+            }
+            pre_settlement = "actual_cost_usd" not in columns
+            if "legacy" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0"
+                )
+            if "actual_cost_usd" not in columns:
+                connection.execute(
+                    """ALTER TABLE provider_daily_spend_reservations
+                    ADD COLUMN actual_cost_usd REAL
+                    CHECK(actual_cost_usd IS NULL OR actual_cost_usd >= 0)"""
+                )
+            # When the request the reservation paid for settled (review 4112533824). A settled request with no
+            # actual charge had no provider-reported cost: it still counts at its reservation, and it is reported
+            # (unreconciled) so check 15 cannot pass on a lower bound.
+            if "settled_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN settled_at TEXT"
+                )
+            if "serialized" not in columns:
+                # Legacy reservations were estimates, not proven maxima.
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN serialized INTEGER NOT NULL DEFAULT 1"
+                )
+            if pre_settlement:
+                # Old estimates remain budget exposure, but cannot be reconciled as task effects.
+                connection.execute(
+                    "UPDATE provider_daily_spend_reservations SET legacy = 1, serialized = 0"
+                )
+            if "requested_cost_usd" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN requested_cost_usd REAL"
+                )
+
+    @staticmethod
+    def _exposure(connection: sqlite3.Connection, provider: ProviderName, utc_day: str) -> tuple[int, float]:
+        """The one reconciliation of the day's spend (review 4111357778), for the admission gate and every report:
+        each reservation counts at its actual charge when known, otherwise its reservation. Called inside the caller's
+        transaction, so reserve() compares and inserts under one BEGIN IMMEDIATE write lock."""
+
+        count, exposure = connection.execute(
+            """SELECT COUNT(*),
+                      COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd)), 0)
+            FROM provider_daily_spend_reservations
+            WHERE provider = ? AND utc_day = ?""",
+            (provider.value, utc_day),
+        ).fetchone()
+        return int(count), float(exposure)
+
+    def exposure(self, provider: ProviderName, *, now: datetime | None = None) -> tuple[int, float]:
+        """(reservations, reconciled exposure in USD) for the day."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend exposure applies only to supplemental providers")
+        utc_day = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+        with self._connect() as connection:
+            return self._exposure(connection, provider, utc_day)
+
+    def record_charge(
+        self,
+        *,
+        provider: ProviderName,
+        effect_key: str,
+        actual_cost_usd: float | None,
+        now: datetime | None = None,
+    ) -> None:
+        """Settle a provider request against its reservation: record its actual charge, never lowering one already
+        recorded. The one path for usage probes and ordinary work (review 4112533824). ``None`` settles a request
+        whose provider reported no cost: its reservation keeps counting at its bound, and it stays unreconciled.
+        A charge with no reservation (a probe the ledger did not reserve) is recorded as its own row at a zero
+        reservation: the charge was incurred, so it is never refused and always counts.
+        Operators may use this same method for a legacy row after obtaining an authoritative charge;
+        its original UTC day and legacy provenance remain unchanged."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend charges apply only to supplemental providers")
+        if not self._EFFECT_KEY.fullmatch(effect_key):
+            raise ValueError("provider spend charge requires a canonical effect key")
+        if actual_cost_usd is not None and (
+                not isinstance(actual_cost_usd, (int, float)) or isinstance(actual_cost_usd, bool)
+                or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0):
+            raise ValueError("provider spend charge must be a finite non-negative amount")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if actual_cost_usd is None:
+                connection.execute(
+                    """UPDATE provider_daily_spend_reservations SET settled_at = COALESCE(settled_at, ?)
+                    WHERE provider = ? AND effect_key = ?""",
+                    (observed_at.isoformat(), provider.value, effect_key),
+                )
+                return
+            updated = connection.execute(
+                """UPDATE provider_daily_spend_reservations
+                SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
+                    settled_at = COALESCE(settled_at, ?)
+                WHERE provider = ? AND effect_key = ?""",
+                (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
+            ).rowcount
+            if not updated:
+                connection.execute(
+                    """INSERT INTO provider_daily_spend_reservations(
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, actual_cost_usd, settled_at
+                    ) VALUES (?, ?, ?, 0, ?, ?, ?)""",
+                    (provider.value, effect_key, observed_at.date().isoformat(),
+                     observed_at.isoformat(), float(actual_cost_usd), observed_at.isoformat()),
+                )
+
+    def unreconciled(
+        self, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
+    ) -> list[str]:
+        """Effect keys of the day's reservations with no actual charge that are either settled (no provider-reported
+        cost) or still unsettled after ``stale_after`` (review 4112697677: a crash between dispatch and settlement
+        cannot hide a request)."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend reconciliation applies only to supplemental providers")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
+                WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL""",
+                (provider.value, observed_at.date().isoformat()),
+            ).fetchall()
+        return [str(key) for key, settled_at, recorded_at in rows
+                if settled_at is not None or datetime.fromisoformat(recorded_at) <= observed_at - stale_after]
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -124,6 +269,7 @@ class ProviderDailySpendLedger:
         request_limit: int,
         budget_usd: float,
         now: datetime | None = None,
+        serialize: bool = False,
     ) -> tuple[int, float]:
         if provider not in self._SUPPORTED:
             raise ValueError(
@@ -131,57 +277,75 @@ class ProviderDailySpendLedger:
             )
         if not self._EFFECT_KEY.fullmatch(effect_key):
             raise ValueError("provider spend reservation requires a canonical effect key")
-        if request_limit < 1 or budget_usd <= 0 or estimated_cost_usd < 0:
+        if (request_limit < 1 or not math.isfinite(budget_usd) or budget_usd <= 0
+                or not math.isfinite(estimated_cost_usd) or estimated_cost_usd < 0):
             raise ValueError("provider daily ceilings must be positive")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         utc_day = observed_at.date().isoformat()
+        requested_cost_usd = estimated_cost_usd
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                """SELECT utc_day, estimated_cost_usd
+                """SELECT utc_day, COALESCE(requested_cost_usd, estimated_cost_usd), serialized
                 FROM provider_daily_spend_reservations
                 WHERE provider = ? AND effect_key = ?""",
                 (provider.value, effect_key),
             ).fetchone()
             if existing is not None:
-                if existing[0] != utc_day or abs(float(existing[1]) - estimated_cost_usd) > 1e-9:
+                if (existing[0] != utc_day or bool(existing[2]) != serialize
+                        or abs(float(existing[1]) - requested_cost_usd) > 1e-9):
                     raise ProviderReservationIdentityConflict(
                         "provider daily reservation identity was reused with different accounting"
                     )
             else:
-                count, reserved = connection.execute(
-                    """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
-                    FROM provider_daily_spend_reservations
-                    WHERE provider = ? AND utc_day = ?""",
-                    (provider.value, utc_day),
+                # Unsettled non-legacy serialized requests hold admission across days.
+                # Legacy and bounded reservations still count in daily exposure.
+                pending = connection.execute(
+                    """SELECT 1 FROM provider_daily_spend_reservations
+                    WHERE provider = ? AND actual_cost_usd IS NULL
+                    AND serialized = 1 AND legacy = 0 LIMIT 1""",
+                    (provider.value,),
                 ).fetchone()
+                if pending:
+                    raise ProviderDailyLimitExceeded(
+                        f"{provider.value} has an unsettled or unreconciled paid request; "
+                        "retry after settlement or reconciliation. Allow authenticated readback "
+                        "to finish, or use /dispatch-reconciliation for an ambiguous dispatch; "
+                        "unknown charges require authoritative cost reconciliation before retry",
+                        code="provider_spend_pending_retryable",
+                    )
+                # The reconciled exposure, not the sum of reservation estimates: a probe that cost more than its
+                # floor must not leave room for more work under the cap (review 4111357778).
+                count, reserved = self._exposure(connection, provider, utc_day)
+                if serialize:
+                    # No price maximum: hold ALL remaining capacity, never a floor.
+                    remaining = budget_usd - reserved
+                    if remaining <= 0 or estimated_cost_usd > remaining:
+                        raise ProviderDailyLimitExceeded(f"{provider.value} daily assignment budget reached")
+                    estimated_cost_usd = remaining
                 if int(count) + 1 > request_limit:
                     raise ProviderDailyLimitExceeded(
                         f"{provider.value} daily assignment request limit reached"
                     )
-                if float(reserved) + estimated_cost_usd > budget_usd + 1e-9:
+                if float(reserved) + estimated_cost_usd > budget_usd:
                     raise ProviderDailyLimitExceeded(
                         f"{provider.value} daily assignment budget reached"
                     )
                 connection.execute(
                     """INSERT INTO provider_daily_spend_reservations(
-                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at
-                    ) VALUES (?, ?, ?, ?, ?)""",
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, serialized, requested_cost_usd
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         provider.value,
                         effect_key,
                         utc_day,
                         estimated_cost_usd,
                         observed_at.isoformat(),
+                        int(serialize),
+                        requested_cost_usd,
                     ),
                 )
-            count, reserved = connection.execute(
-                """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
-                FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ?""",
-                (provider.value, utc_day),
-            ).fetchone()
-            return int(count), float(reserved)
+            return self._exposure(connection, provider, utc_day)
 
     def totals(
         self,
@@ -202,6 +366,20 @@ class ProviderDailySpendLedger:
                 (provider.value, observed_at.date().isoformat()),
             ).fetchone()
         return int(count), float(reserved)
+
+    def reservations(self, provider: ProviderName, *, now: datetime | None = None) -> list[tuple[str, float]]:
+        """The day's reservations as (effect key, estimated cost), work and usage-check probes alike."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend reservations apply only to supplemental providers")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT effect_key, estimated_cost_usd FROM provider_daily_spend_reservations
+                WHERE provider = ? AND utc_day = ?""",
+                (provider.value, observed_at.date().isoformat()),
+            ).fetchall()
+        return [(str(row[0]), float(row[1])) for row in rows]
 
 
 def _response_error_blob(response: httpx.Response) -> str:
@@ -808,8 +986,10 @@ class GeminiAdapter(ProviderAdapter):
         )
 
     async def usage_check(
-        self, prompt: str, *, max_attempts: int | None = None
+        self, prompt: str, *, max_attempts: int | None = None, before_attempt=None
     ) -> ProviderRun:
+        """``before_attempt(n)`` runs immediately before request n is sent (the usage monitor reserves that one
+        attempt in the spend ledger there); if it raises, request n is never sent."""
         body = {
             "model": self.settings.gemini_usage_model,
             "input": prompt,
@@ -822,6 +1002,8 @@ class GeminiAdapter(ProviderAdapter):
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 for attempt in range(1, configured_attempts + 1):
+                    if before_attempt is not None:
+                        before_attempt(attempt)
                     response = await client.post(
                         f"{self.settings.gemini_api_base}/interactions",
                         headers=self.headers,
@@ -1356,14 +1538,17 @@ class GrokAdapter(ProviderAdapter):
             if prompt_path is not None:
                 prompt_path.unlink(missing_ok=True)
 
-    async def _submit(self, input_text: str) -> ProviderRun:
-        body = {
+    def request_body(self, input_text: str) -> dict[str, Any]:
+        return {
             "model": self.settings.grok_model,
             "input": input_text,
             "max_output_tokens": self.settings.grok_max_output_tokens,
             "tools": [],
             "store": False,
         }
+
+    async def _submit(self, input_text: str) -> ProviderRun:
+        body = self.request_body(input_text)
         async with httpx.AsyncClient(timeout=self.settings.grok_timeout_seconds) as client:
             await self._ensure_model_allowed(client)
             response = await client.post(
@@ -1541,6 +1726,26 @@ class PerplexityAdapter(ProviderAdapter):
         return self._run(payload)
 
 
+def assignment_request_cost_bound(
+    settings: Settings, assignment: Assignment, context: str | None,
+    *, revision_prompt: str | None = None,
+) -> float | None:
+    """Only bound transports whose complete input and enforced token cap are known.
+
+    Managed Gemini, packet/CLI transports, and Perplexity search cannot enforce
+    a monetary bound from token prices. They use serialized admission.
+    """
+    provider = assignment.agent.value
+    prices = settings.provider_token_prices(provider)
+    if prices is None or context is None:
+        return None
+    if assignment.agent == ProviderName.GROK and not GrokAdapter._requires_cli(assignment):
+        adapter = GrokAdapter(settings)
+        body = adapter.request_body(adapter._input(assignment, context, revision_prompt=revision_prompt))
+        return settings.token_request_cost_bound_usd(provider, body, body["max_output_tokens"])
+    return None
+
+
 def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]:
     return {
         ProviderName.CURSOR: CursorAdapter(settings),
@@ -1560,3 +1765,13 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:35 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
