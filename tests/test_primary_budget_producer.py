@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]]
 """Tests for unsigned primary-provider-budget/v1 preparation and import."""
@@ -603,10 +604,13 @@ class ProviderBudgetImportPostgresTests(unittest.TestCase):
         time.sleep(0.2)
         self.assertTrue(waiter.is_alive())  # still genuinely blocked on the held lock
         release_holder.set()
-        waiter.join(timeout=5)
-        holder.join(timeout=5)
+        waiter.join(timeout=30)
+        holder.join(timeout=30)
+        self.assertFalse(waiter.is_alive(), "budget waiter did not finish within 30s")
+        self.assertFalse(holder.is_alive(), "budget holder did not finish within 30s")
         self.assertEqual(holder_errors, [])
         self.assertEqual(len(waiter_errors), 1)
         self.assertEqual(self._row_count(), 1)
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]

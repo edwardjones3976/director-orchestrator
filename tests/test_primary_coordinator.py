@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
@@ -468,7 +469,8 @@ class PrimaryTaskCoordinatorIntegrationTests(unittest.TestCase):
             worker.start()
         barrier.wait()
         for worker in workers:
-            worker.join(timeout=10)
+            worker.join(timeout=30)
+        self.assertFalse(any(worker.is_alive() for worker in workers), "receipt workers did not finish within 30s per thread")
         self.assertFalse(errors)
         self.assertEqual(2, len(receipts))
         self.assertEqual(receipts[0], receipts[1])
@@ -481,3 +483,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]

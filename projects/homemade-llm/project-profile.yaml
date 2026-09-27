@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
+# MX-086
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:41 UTC | BEGIN]]
 # MX-081
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:20 UTC | BEGIN]]
@@ -49,7 +51,7 @@ project:
   state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-27T13:41:33Z"
+  updated_at: "2026-09-27T21:53:03Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -259,10 +261,11 @@ review_chain:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
     # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
-    base_sha: "3761bc0e49fba8ad4ef6c060668abb9a79e2d90e" # Current github/main target tip and post-sync merge base; earlier historical merge base: 4ece6d1f7666e501971cb049e2ae41f52728ae65.
+    base_sha: "7b246860443926f8f59fbac0479dab97c5a231af" # Current github/main target tip and post-sync merge base: 7b246860443926f8f59fbac0479dab97c5a231af (MX-086 sync of main). Earlier historical merge bases: 3761bc0e49fba8ad4ef6c060668abb9a79e2d90e (MX-081 sync) and 4ece6d1f7666e501971cb049e2ae41f52728ae65.
     head_sha: "bound on the M0 record reconciliation PR's review-of-record comment"
     artifact_digest: "none"
-    last_merged_candidate: "PR #283 at d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88, merged 2026-09-26T16:40:15Z as 052553f"
+    last_merged_candidate: "PR #291 at dfbb4f213e8b0803a5e721ac739d609d13158e08, merged 2026-09-27T07:08:00Z as 9bb982e4774d6382d96689087a9df1d2680237f1"
+    # Historical last_merged_candidate: PR #283 at d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88, merged 2026-09-26T16:40:15Z as 052553f.
   required_evidence:
     - "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): Use the catalog name in the assignment rather than a machine-specific absolute path. Skill discovery is required before selection; installation or a reported structural evaluation does not prove that the active provider session has loaded the skill. If a selected skill is unavailable after refresh, continue with the provider's baseline contract when that still satisfies acceptance, or reshape the plan under the assignment-specific retry budget. For #293 select none; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble. Record that baseline verification before contact; otherwise stop. The workload_policy_version: v1 plan carries immutable assignment workload_size (simple, short, medium, or long), 1–100 effort_points, fixed execution limits, any workload-variance reason, and one canonically digested pre-stage packet. The pre-stage packet binds packet_id, goal, terminal condition, exact repository, worktree, branch and lowercase 40-character base SHA, nullable candidate SHA, producer, different independent reviewer, nonempty owned paths, prohibited paths, nonempty required tests, nonempty required security evidence, budget, timeout, retry limit no greater than three, nonempty merge-eligibility conditions, and nonempty stopping conditions. For this review, candidate SHA must name the final exact head and base SHA the current base; the packet is not committed into this PR because that would change the head it names. Execution limits must specify effort, a 20-minute time cap, no-edit, and accept-only under B2: review only, do not merge unless the owner has directed this specific merge."
     - "Cursor thorough exact-head, current-base full-diff ACCEPT; the returned verdict must record the target-tip base_sha, merge_base_sha, head SHA, and share_record_sha256 binding the current share computation and exact UTF-8 share-record text (including the PR share table, maintenance-exclusion MX references, and human-attribution entries), per docs/templates/project-bootstrap/review-ready.md. Any change to any of the three SHAs or the share record invalidates the verdict. The one required non-author review carries the merge, subject to B2 and all deterministic gates"
@@ -330,3 +333,4 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]
