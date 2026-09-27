@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | BEGIN]]
@@ -57,6 +59,7 @@ $Catalog = [ordered]@{
         Key = 'mistral-nemo-base-2407'
         Label = 'Mistral-Nemo-Base-2407'
         Quants = @('Q4_K_M')
+        UseHfTokenizer = $true
     }
 }
 
@@ -176,9 +179,13 @@ function Get-ExpectedBlobMap([string]$Repo, [string]$Revision) {
     $url = "https://huggingface.co/api/models/$Repo/revision/$Revision`?blobs=true"
     $resp = Invoke-RestMethod -Uri $url -Method Get
     $map = @{}
+    $seen = @{}
     foreach ($b in $resp.siblings) {
+        if ([string]::IsNullOrWhiteSpace($b.rfilename)) { throw "Missing sibling rfilename for $key" }
+        if ($seen.ContainsKey($b.rfilename)) { throw "Duplicate sibling rfilename '$($b.rfilename)' for $key" }
+        $seen[$b.rfilename] = $true
         if ($b.lfs -and $b.lfs.sha256) {
-            $map[$b.path] = @{
+            $map[$b.rfilename] = @{
                 sha256 = $b.lfs.sha256.ToLower()
                 size = [long]$b.lfs.size
             }
@@ -300,9 +307,24 @@ function Invoke-ConvertDocker([hashtable]$Entry, [string]$Repo, [string]$Snapsho
         $out = "/work/$($Entry.Label)-$q.gguf"
         $quantLines += "$QuantizeBin $intermediate $out $q"
     }
+    $python = 'python'
+    if ($Entry.UseHfTokenizer) {
+        # MX-060: keep HF tokenizer.json; AutoTokenizer can select MistralCommonBackend (no .vocab).
+        # https://github.com/ml-explore/mlx-lm/issues/1576
+        # Process-local override: no package install, image edit, or snapshot mutation.
+        $bootstrap = @'
+import os, runpy, sys
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
+AutoTokenizer.from_pretrained = PreTrainedTokenizerFast.from_pretrained
+sys.argv = sys.argv[1:]
+sys.path.insert(0, os.path.dirname(sys.argv[0]))
+runpy.run_path(sys.argv[0], run_name="__main__")
+'@
+        $python = "python -c '$bootstrap'"
+    }
     $bash = @(
         "set -euo pipefail",
-        "python $ConvertPy $inSnap --outfile $intermediate --outtype bf16",
+        "$python $ConvertPy $inSnap --outfile $intermediate --outtype bf16",
         ($quantLines -join ' && ')
     ) -join ' && '
     $dockerArgs = @(
@@ -577,3 +599,5 @@ exit 0
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:12 UTC | END]]
