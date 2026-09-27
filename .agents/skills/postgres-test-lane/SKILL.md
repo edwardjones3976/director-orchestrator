@@ -4,6 +4,7 @@ description: "Postgres tests: use scripts/windows-postgres-test-lane.ps1, never 
 when_to_use: "Any request like: run the tests, run the full unit suite, run the Postgres suites, run tests/test_langgraph_postgres.py or a tests/test_primary_* module, a test fails with LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required, start a Postgres container for the tests, docker run postgres for the test database, reproduce the CI disposable PostgreSQL step locally, port 55433 is already in use, stop or remove the test database container, no Docker available for the Postgres tests."
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:23 UTC | BEGIN]] -->
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | BEGIN]] -->
@@ -112,3 +113,4 @@ windows-postgres-test-lane.ps1 -Action Start and -Action Test default to a concu
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:12 UTC | END]] -->
