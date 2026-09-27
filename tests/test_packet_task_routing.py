@@ -1,4 +1,3 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
@@ -1400,9 +1399,9 @@ class CompactProviderViewTests(unittest.TestCase):
                 blob_read_deadline(time_module.monotonic() + 0.3):
             self.assertIsNone(reader("a" * 40))
         self.assertLess(time_module.monotonic() - started, 1.5)
-        self.assertLessEqual(runs[0], 0.3 + 1e-9)
+        self.assertLessEqual(runs[0], 0.3)
         self.assertEqual(1, len(waits))
-        self.assertLessEqual(waits[0], 0.3 + 1e-9)
+        self.assertLessEqual(waits[0], 0.3)
         time_module.sleep(0.05)
         self.assertEqual([True], reaped)
         # A deadline already spent reads nothing at all.
@@ -1691,4 +1690,3 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | END]]
