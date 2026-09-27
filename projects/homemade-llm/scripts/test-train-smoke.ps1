@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
@@ -92,8 +93,15 @@ try {
         if (-not (Test-Path $rootDone) -or -not (Test-Path $holderPidFile)) { $fail += 'pipe holder: root/child fixture did not start' }
         if ($r[-1] -ne '__EXIT__timeout') { $fail += "pipe holder: expected timeout after root exit, got '$($r[-1])'" }
         if (Test-Path $holderPidFile) {
-            $holderProcess = Get-Process -Id ([int](Get-Content $holderPidFile)) -ErrorAction SilentlyContinue
-            if ($holderProcess) { $fail += 'pipe holder: child survived the verified job termination'; $holderProcess | Stop-Process -Force }
+            $holderId = [int](Get-Content $holderPidFile)
+            $holderProcess = Get-Process -Id $holderId -ErrorAction SilentlyContinue
+            if ($holderProcess -and -not $holderProcess.WaitForExit(2000)) {
+                $holderIdentity = Get-CimInstance Win32_Process -Filter "ProcessId=$holderId" -ErrorAction SilentlyContinue
+                $fail += "pipe holder: PID $holderId remained active after job termination; command line: $($holderIdentity.CommandLine)"
+                if ($holderIdentity.CommandLine -and $holderIdentity.CommandLine.IndexOf($holderScript, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $holderProcess | Stop-Process -Force
+                }
+            }
         }
         if ((Test-Path $GpuMarker) -or $BoundedUnconfirmed -or $BoundedGuardMissing) { $fail += 'pipe holder: confirmed kill must not poison the GPU guard' }
     } finally {
@@ -269,3 +277,4 @@ exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | END]]
