@@ -1,4 +1,4 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
@@ -185,7 +185,7 @@ if ((Test-Path -LiteralPath $GpuMarker) -or $BoundedUnconfirmed -or $BoundedGuar
 Write-Output 'console-test-ok'
 '@
     foreach ($detach in $false, $true) {
-        $psi = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application).Source)
+        $psi = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
         $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
         $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
         foreach ($arg in @('-NoProfile', '-File', $consoleTest, '-BoundedScript', (Join-Path $PSScriptRoot 'invoke-bounded.ps1'), '-Marker', (Join-Path $shim "console-$detach-marker.txt"))) { $psi.ArgumentList.Add($arg) }
@@ -340,4 +340,4 @@ exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:34 UTC | END]]
