@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
@@ -60,7 +61,7 @@ class GenerateCandidatesTests(unittest.TestCase):
             refs_manifest=gen.manifest(self.refs), inputs_manifest=gen.manifest(self.inputs),
             model="fixture-model", label="fixture-base", base_url="http://127.0.0.1:1234/v1",
             model_gguf=self.gguf, lms_models_dir=self.root,
-            qwen3=False, control_prompt=None, item_timeout=180,
+            qwen3=False, control_prompt=None, item_timeout=180, max_tokens=4096,
         )
         self.loaded = [{"identifier": "fixture-model", "path": "fixture.gguf"}]
         self.catalog = [{"modelKey": "fixture-key", "path": "fixture.gguf"}]
@@ -144,6 +145,9 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertEqual(record["base_url"], self.args.base_url)
         self.assertEqual(record["lm_studio_version"], "unknown")
         self.assertEqual(record["schema_sha256"], gen.sha256(self.args.schema.read_bytes()))
+        self.assertEqual(record["decision"], "O-044")
+        self.assertEqual(record["max_tokens"], 4096)
+        self.assertNotIn("reasoning_effort", record)
         self.assertEqual(record["reference_manifest"], self.args.refs_manifest)
         self.assertEqual(record["input_manifest"], self.args.inputs_manifest)
         candidate_hash = gen.sha256((self.out / "p1.json").read_bytes())
@@ -157,6 +161,9 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertLessEqual(datetime.fromisoformat(record["start_utc"]), datetime.fromisoformat(record["end_utc"]))
         self.assertEqual(len(self.posts()), 1)
         body = self.posts()[0].args[2]
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["max_tokens"], 4096)
+        self.assert_generation_schema(body, record)
         user_message = json.loads(body["messages"][1]["content"])
         self.assertIsInstance(user_message, dict)
         self.assertEqual(set(user_message), {"objective", "repository", "title"})
@@ -258,20 +265,99 @@ class GenerateCandidatesTests(unittest.TestCase):
 
     def test_qwen3_request_contract(self):
         self.args.qwen3 = True
+        self.args.max_tokens = 2048
         record = gen.run(self.args, self.transport)
         method, url, body, timeout = self.posts()[0].args
         self.assertEqual((method, url, timeout), ("POST", self.args.base_url + "/chat/completions", 180))
         self.assertEqual(body["temperature"], 0)
         self.assertEqual(body["n"], 1)
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(body["reasoning_effort"], "none")
+        self.assertEqual(body["max_tokens"], 2048)
+        self.assertEqual(record["reasoning_effort"], "none")
+        self.assertEqual(record["max_tokens"], 2048)
+        expected_schema = self.assert_generation_schema(body, record)
         self.assertEqual(body["response_format"], {"type": "json_schema", "json_schema": {
             "name": "model_work_packet_v1", "strict": True,
-            "schema": json.loads(self.args.schema.read_bytes()),
+            "schema": expected_schema,
         }})
         self.assertNotIn("$defs", body["response_format"]["json_schema"]["schema"])
         self.assertIn("Do not think", body["messages"][0]["content"])
         self.assertTrue(record["qwen3"])
         self.assertEqual(record["chat_template_kwargs"], {"enable_thinking": False})
+
+    def assert_generation_schema(self, body, record):
+        expected = json.loads(self.args.schema.read_bytes())
+        original_pattern = expected["properties"]["repository"]["pattern"]
+        escaped_pattern = r"^[^\/]+\/[^\/]+$"
+        expected["properties"]["repository"]["pattern"] = escaped_pattern
+        self.assertEqual(body["response_format"]["json_schema"]["schema"], expected)
+        self.assertEqual(record["schema_rewrites"], [{
+            "path": "/properties/repository/pattern", "from": original_pattern, "to": escaped_pattern,
+        }])
+        self.assertEqual(record["generation_schema_sha256"], gen.sha256(json.dumps(
+            expected, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")))
+        self.assertEqual(json.loads((self.out / "run.json").read_text()), record)
+        return expected
+
+    def test_generation_schema_preserves_escapes_and_nested_patterns(self):
+        original = {"description": "a/b", "allOf": [
+            {"pattern": r"^a/b$"}, {"pattern": r"^a\/b$"}, {"pattern": r"^a\\/b$"},
+        ]}
+        before = json.dumps(original)
+        generated, rewrites = gen.generation_schema(original)
+        self.assertEqual(generated, {"description": "a/b", "allOf": [
+            {"pattern": r"^a\/b$"}, {"pattern": r"^a\/b$"}, {"pattern": r"^a\\\/b$"},
+        ]})
+        self.assertEqual([entry["path"] for entry in rewrites], ["/allOf/0/pattern", "/allOf/2/pattern"])
+        self.assertEqual(json.dumps(original), before)
+        self.assertEqual(gen.generation_schema(generated), (generated, []))
+
+    def test_original_schema_patterns_still_validate_candidates(self):
+        original = json.loads(self.args.schema.read_bytes())
+        validator_type = type(gen.schema_validator(self.args.schema))
+        is_valid = validator_type.is_valid
+
+        def validate(validator, candidate):
+            self.assertEqual(validator.schema, original)
+            return is_valid(validator, candidate)
+
+        packet = dict(_minimal_ref(), repository="org/repo/extra")
+        self.response = self.completion(json.dumps(packet))
+        with mock.patch.object(validator_type, "is_valid", autospec=True, side_effect=validate) as checked:
+            self.assert_failed("schema-invalid")
+        checked.assert_called_once()
+
+    def test_reasoning_fields_fail_without_retry(self):
+        self.args.qwen3 = True
+        for field in ("reasoning_content", "reasoning"):
+            with self.subTest(field=field):
+                self.args.out = self.root / field
+                self.out = self.args.out
+                self.transport.reset_mock()
+                self.response = self.completion(json.dumps(_minimal_ref()))
+                self.response["choices"][0]["message"][field] = "hidden thought"
+                self.assert_failed("contains reasoning")
+
+    def test_reasoning_tokens_fail_without_retry(self):
+        self.args.qwen3 = True
+        self.response["usage"] = {"completion_tokens_details": {"reasoning_tokens": 1}}
+        self.assert_failed("reasoning tokens")
+
+    def test_empty_reasoning_and_zero_reasoning_tokens_succeed(self):
+        self.args.qwen3 = True
+        self.response["choices"][0]["message"].update(reasoning_content="", reasoning=None)
+        self.response["usage"] = {"completion_tokens_details": {"reasoning_tokens": 0}}
+        self.assertEqual(gen.run(self.args, self.transport)["counts"], {"ok": 1, "failed": 0})
+
+    def test_nonpositive_token_cap_sends_no_requests(self):
+        for cap in (0, -1):
+            with self.subTest(cap=cap):
+                self.args.max_tokens = cap
+                with self.assertRaisesRegex(ValueError, "max-tokens must be positive"):
+                    gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
 
     def test_invalid_json_is_failure(self):
         self.response = self.completion('{"objective":')
@@ -298,7 +384,7 @@ class GenerateCandidatesTests(unittest.TestCase):
 
     def test_truncated_but_parseable_completion_is_failure(self):
         self.response["choices"][0]["finish_reason"] = "length"
-        self.assert_failed("incomplete")
+        self.assert_failed("max_tokens reached")
 
     def test_server_error_envelope_is_failure(self):
         self.response = {"error": {"message": "fixture error"}}
@@ -363,6 +449,11 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.transport.assert_not_called()
         args.extend(["--model-gguf", str(self.gguf), "--lms-models-dir", str(self.root)])
         self.assertEqual(gen.main(args, transport=self.transport), 0)
+        self.assertEqual(self.posts()[0].args[2]["max_tokens"], 4096)
+        args.extend(["--qwen3", "--max-tokens", "1024", "--out", str(self.root / "custom-out")])
+        self.assertEqual(gen.main(args, transport=self.transport), 0)
+        self.assertEqual(self.posts()[-1].args[2]["max_tokens"], 1024)
+        self.assertEqual(self.posts()[-1].args[2]["reasoning_effort"], "none")
 
     def test_http_transport_uses_single_connection_and_rejects_redirect(self):
         with mock.patch.object(http.client, "HTTPConnection") as factory:
@@ -387,3 +478,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | END]]
