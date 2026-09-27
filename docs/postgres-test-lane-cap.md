@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]] -->
 # Local PostgreSQL test-lane concurrency
@@ -20,26 +21,30 @@ clearly on timeout. `-SlotWaitSeconds <seconds>` changes this bound (1 through
 86400). `-TimeoutSeconds` still controls database readiness only. Waiting never
 reads stdin, including when stdin is redirected from an empty file.
 
-Each lane records its container name, PID, and UTC start time in a slot file under
-`%LOCALAPPDATA%\director-orchestrator\test-lanes\`. A global Windows mutex
-serializes admission through container startup and serializes Stop. Docker's
-labelled containers count across worktrees and accounts using the same daemon,
-including containers created before slot tracking. Access or Docker-listing
-errors fail closed; the script does not change mutex permissions. Separate Docker
-daemons do not share a container inventory.
+Admission uses never-started Docker containers named
+`director-test-lane-slot-<N>`, labelled with their owning lane container name.
+Docker name uniqueness coordinates Windows and WSL callers on the same daemon.
+Slot creation uses the lane's pinned image with `--pull=never`; no additional
+image is downloaded. Separate Docker daemons have independent caps.
 
-`Stop` releases the slot after successful container removal or confirmed absence.
-A stale slot is reclaimed only when its PID is dead **and** its container no
-longer exists. A live shell retains its slot even if its container disappears;
-use `Stop` to release it. Failed or ambiguous removal retains the slot. Invalid
-slot records fail closed and require investigation. A container name cannot be
-admitted while its recorded PID is alive.
+The lane container is created, but not started, before slot admission. Thus a
+pending caller already has an owner container and cannot be reclaimed as stale.
+All reservations (including higher numbered CI slots) and older labelled lanes
+count against the caller's cap. Managed containers waiting for admission do not
+run PostgreSQL or consume a slot. Contention can conservatively delay admission;
+there is no queue-order guarantee.
 
-## Dispatcher integration still required
+Stop and Test cleanup remove the lane before releasing its reservation.
+A reservation is stale only when a successful daemon inventory shows its owner
+no longer exists. Removal uses immutable container IDs to avoid deleting a
+replacement slot. Listing or removal failures fail closed. If a process dies
+with its stopped owner container still present, use Stop for that lane; it is
+not reclaimed automatically. Existing same-name lanes require explicit Stop
+before a fresh Start, preventing replacement of another active caller.
 
-The author sandbox denies writes to `.agents/skills/postgres-test-lane/SKILL.md`.
-Copy the operational guidance above into that skill's body under a concurrent
-lanes section, preserving its frontmatter and existing attribution. This file
-does not substitute for the work order's required skill update.
+Local test state uses `LOCALAPPDATA`, then `XDG_STATE_HOME`, then
+`HOME/.local/state`, then `RUNNER_TEMP`, with `director-orchestrator/test-lanes`
+appended. These local files are not admission authority.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]] -->

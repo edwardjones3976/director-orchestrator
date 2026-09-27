@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | BEGIN]]
@@ -106,6 +107,40 @@ function Remove-LaneContainer {
     if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be removed." }
 }
 
+function Get-LaneStateDirectory {
+    $root = $env:LOCALAPPDATA
+    if (-not $root) { $root = $env:XDG_STATE_HOME }
+    if (-not $root -and $env:HOME) { $root = Join-Path $env:HOME '.local/state' }
+    if (-not $root) { $root = $env:RUNNER_TEMP }
+    if (-not $root) { throw "No test lane state directory is available." }
+    $directory = Join-Path $root 'director-orchestrator/test-lanes'
+    [IO.Directory]::CreateDirectory($directory) | Out-Null
+    return $directory
+}
+
+function Get-SlotInventory {
+    # One daemon snapshot includes reservations and their pre-created owners.
+    $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.Labels}}')
+    if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
+    foreach ($row in $rows) {
+        $parts = [string]$row -split '\|', 3
+        if ($parts.Count -ne 3) { throw "Invalid Docker slot inventory." }
+        $labels = @{}
+        foreach ($label in ($parts[2] -split ',')) {
+            $pair = $label -split '=', 2
+            if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
+        }
+        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
+    }
+}
+
+function Remove-SlotContainer {
+    param([string]$Id)
+    # Immutable IDs prevent removing another caller's replacement reservation.
+    & docker rm --volumes $Id | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The PostgreSQL test lane slot could not be removed." }
+}
+
 function Enter-LaneSlot {
     $limit = 2
     if ($env:GITHUB_ACTIONS -eq 'true') { $limit = 4 }
@@ -114,127 +149,85 @@ function Enter-LaneSlot {
             throw "DIRECTOR_TEST_LANE_MAX_CONCURRENCY must be a positive integer."
         }
     }
-    if (-not $env:LOCALAPPDATA) { throw "LOCALAPPDATA is required for test lane slots." }
-    $directory = Join-Path $env:LOCALAPPDATA "director-orchestrator\test-lanes"
-    [IO.Directory]::CreateDirectory($directory) | Out-Null
-    $mutex = New-Object Threading.Mutex($false, 'Global\DirectorOrchestratorPostgresTestLanes')
     $timer = [Diagnostics.Stopwatch]::StartNew()
-    $held = $false
-    try {
-        do {
-            try { $held = $mutex.WaitOne(0) }
-            catch [Threading.AbandonedMutexException] { $held = $true }
-            if ($held) {
-                try {
-                    # Count Docker lanes across accounts/worktrees, including lanes
-                    # created before slot tracking. Keep admission locked until startup
-                    # completes so another account cannot miss a pending reservation.
-                    $containers = @(& docker ps -a --format '{{.Names}}')
-                    if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
-                    $occupied = @(& docker ps -a --filter "label=$laneLabel=true" --format '{{.Names}}')
-                    if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
-                    $busy = $false
-                    foreach ($file in [IO.Directory]::GetFiles($directory, '*.json')) {
-                        $slot = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
-                        $alive = $null -ne (Get-Process -Id $slot.pid -ErrorAction SilentlyContinue)
-                        if (-not $alive -and $containers -cnotcontains $slot.container) {
-                            [IO.File]::Delete($file)
-                            continue
-                        }
-                        $occupied += $slot.container
-                        if ($slot.container -ceq $ContainerName -and $alive) { $busy = $true }
-                    }
-                    $others = @($occupied | Where-Object { $_ -cne $ContainerName } | Sort-Object -Unique)
-                    if (-not $busy -and $others.Count -lt $limit) {
-                        $script:laneSlotPath = Join-Path $directory "$ContainerName.json"
-                        $record = @{ container = $ContainerName; pid = $PID; started_at = [DateTimeOffset]::UtcNow.ToString('o') }
-                        [IO.File]::WriteAllText($script:laneSlotPath, ($record | ConvertTo-Json -Compress))
-                        return $mutex
-                    }
-                }
-                catch { $mutex.ReleaseMutex(); $held = $false; throw }
-                $mutex.ReleaseMutex()
-                $held = $false
+    do {
+        $inventory = @(Get-SlotInventory)
+        foreach ($slot in $inventory | Where-Object { $_.Owner -and $_.Name -match '^director-test-lane-slot-[1-9][0-9]*$' }) {
+            if (@($inventory | ForEach-Object { $_.Name }) -cnotcontains $slot.Owner) { Remove-SlotContainer $slot.Id }
+        }
+        for ($number = 1; $number -le $limit; $number++) {
+            # Daemon name uniqueness is atomic across Windows and WSL.
+            # The owner exists before reservation, closing the reclamation race.
+            $priorErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $id = & docker create --pull=never --name "director-test-lane-slot-$number" --label "director-orchestrator.test-lane-slot=$ContainerName" $image 2>$null
+                $created = $LASTEXITCODE -eq 0
             }
-            if ($timer.Elapsed.TotalSeconds -ge $SlotWaitSeconds) {
-                throw "Timed out waiting for a PostgreSQL test lane slot after $SlotWaitSeconds seconds (cap $limit)."
-            }
-            Write-Host "Waiting for a PostgreSQL test lane slot (cap $limit; $([int]$timer.Elapsed.TotalSeconds)s elapsed)."
-            Start-Sleep -Milliseconds ([int][Math]::Min(15000, [Math]::Max(1, ($SlotWaitSeconds - $timer.Elapsed.TotalSeconds) * 1000)))
-        } while ($true)
-    }
-    catch { $mutex.Dispose(); throw }
+            finally { $ErrorActionPreference = $priorErrorActionPreference }
+            if (-not $created) { continue }
+            # High-number CI slots and legacy lanes count against local caps too.
+            $inventory = @(Get-SlotInventory)
+            $occupied = @($inventory | Where-Object { $_.Owner -or ($_.Lane -eq 'true' -and $_.Managed -ne 'true') })
+            if ($occupied.Count -le $limit) { return }
+            Remove-SlotContainer ([string]$id)
+        }
+        if ($timer.Elapsed.TotalSeconds -ge $SlotWaitSeconds) {
+            throw "Timed out waiting for a PostgreSQL test lane slot after $SlotWaitSeconds seconds (cap $limit)."
+        }
+        Write-Host "Waiting for a PostgreSQL test lane slot (cap $limit; $([int]$timer.Elapsed.TotalSeconds)s elapsed)."
+        Start-Sleep -Milliseconds ([int][Math]::Min(15000, [Math]::Max(1, ($SlotWaitSeconds - $timer.Elapsed.TotalSeconds) * 1000)))
+    } while ($true)
 }
 
 function Remove-LaneSlot {
-    if ($env:LOCALAPPDATA) {
-        $path = Join-Path $env:LOCALAPPDATA "director-orchestrator\test-lanes\$ContainerName.json"
-        [IO.File]::Delete($path)
+    foreach ($slot in @(Get-SlotInventory)) {
+        if ($slot.Owner -ceq $ContainerName -and $slot.Name -match '^director-test-lane-slot-[1-9][0-9]*$') {
+            Remove-SlotContainer $slot.Id
+        }
     }
 }
 
 function Start-Lane {
     Assert-DockerReachable
-    # Preserve the foreign-container refusal before waiting for capacity.
     $existing = Get-LaneContainer
-    if ($null -ne $existing) { Assert-LaneOwned -Container $existing }
-    $slotMutex = Enter-LaneSlot
+    if ($null -ne $existing) {
+        Assert-LaneOwned -Container $existing
+        throw "Container '$ContainerName' already belongs to a lane; run -Action Stop first or choose a distinct name."
+    }
+    $publishers = @(& docker ps --filter "publish=$HostPort" --format '{{.Names}}')
+    if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
+    if ($publishers.Count -gt 0) {
+        throw "Host port $HostPort is already published; choose another -HostPort or stop your own lane."
+    }
+    # Create the owner first, but do not start PostgreSQL until admission.
+    & docker create --name $ContainerName --label "$laneLabel=true" --label "director-orchestrator.test-lane-managed=true" --publish ("127.0.0.1:" + $HostPort + ":5432") --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" $image | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be created." }
     try {
-        $existing = Get-LaneContainer
-        if ($null -ne $existing) {
-            Assert-LaneOwned -Container $existing
-            # Always begin from a fresh data directory so the role baked into the
-            # container equals the DSN user; a leftover is never restarted.
-            Remove-LaneContainer
-        }
-        $publishers = @(& docker ps --filter "publish=$HostPort" --format '{{.Names}}')
-        if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
-        if ($publishers.Count -gt 0) {
-            throw "Host port $HostPort is already published by container(s): $($publishers -join ', '). Choose another -HostPort or stop them yourself; this script never removes containers it did not create."
-        }
-        & docker run --detach --rm --name $ContainerName --label "$laneLabel=true" --publish "127.0.0.1:${HostPort}:5432" --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" $image | Out-Null
+        Enter-LaneSlot
+        & docker start $ContainerName | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be started." }
-        try { Wait-LaneReady }
-        catch { Remove-LaneContainer; throw }
+        Wait-LaneReady
         Export-LaneEnvironment
-        Write-Host "Disposable PostgreSQL lane '$ContainerName' is ready on 127.0.0.1:$HostPort (trust auth, loopback only, no volume, no password)."
+        Write-Host "Disposable PostgreSQL lane is ready."
     }
     catch {
-        # A failed Docker operation is ambiguous: retain the reservation unless
-        # a successful listing proves there is no surviving container.
-        try { if ($null -eq (Get-LaneContainer)) { Remove-LaneSlot } }
+        try { Remove-LaneContainer; Remove-LaneSlot }
         catch { Write-Warning "Could not verify lane cleanup; slot retained." }
         throw
     }
-    finally { $slotMutex.ReleaseMutex(); $slotMutex.Dispose() }
 }
 
 function Stop-Lane {
-    $stopMutex = New-Object Threading.Mutex($false, 'Global\DirectorOrchestratorPostgresTestLanes')
-    $held = $false
-    try {
-        try { $held = $stopMutex.WaitOne([TimeSpan]::FromSeconds($SlotWaitSeconds)) }
-        catch [Threading.AbandonedMutexException] { $held = $true }
-        if (-not $held) { throw "Timed out waiting to stop the PostgreSQL test lane." }
-        $existing = Get-LaneContainer
-        if ($null -eq $existing) {
-            Remove-LaneSlot
-            Clear-LaneEnvironment
-            Write-Host "No container named '$ContainerName' exists; nothing to remove."
-            return
-        }
+    $existing = Get-LaneContainer
+    if ($null -ne $existing) {
         Assert-LaneOwned -Container $existing
         Remove-LaneContainer
-        Remove-LaneSlot
-        Clear-LaneEnvironment
-        Write-Host "Disposable PostgreSQL lane '$ContainerName' was removed."
     }
-    finally {
-        if ($held) { $stopMutex.ReleaseMutex() }
-        $stopMutex.Dispose()
-    }
+    Remove-LaneSlot
+    Clear-LaneEnvironment
+    Write-Host "Disposable PostgreSQL lane was removed or confirmed absent."
 }
-
 if ($Action -eq "Start") { Start-Lane; return }
 if ($Action -eq "Stop") { Assert-DockerReachable; Stop-Lane; return }
 if ($Action -eq "Status") {
@@ -278,7 +271,7 @@ try {
     $laneStarted = $true
     $pythonPath = (Resolve-Path -LiteralPath $Python).Path
     [Environment]::SetEnvironmentVariable("PYTHONPATH", "src", "Process")
-    $sqlitePath = Join-Path ([IO.Path]::GetTempPath()) "director-postgres-test-lane-$([Guid]::NewGuid().ToString('N')).sqlite3"
+    $sqlitePath = Join-Path (Get-LaneStateDirectory) "director-postgres-test-lane-$([Guid]::NewGuid().ToString('N')).sqlite3"
     [Environment]::SetEnvironmentVariable("SQLITE_PATH", $sqlitePath, "Process")
     if (@($TestNames).Count -gt 0) { & $pythonPath -m unittest -v @TestNames }
     else { & $pythonPath -m unittest discover -s tests -v }
@@ -307,3 +300,4 @@ Write-Host "Unit tests passed against the disposable PostgreSQL lane; the contai
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]

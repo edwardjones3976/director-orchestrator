@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
@@ -897,157 +898,154 @@ Assert-InstalledBridgeRuntime -Root $destination
     def test_postgres_lane_slots_wait_reclaim_and_release(self) -> None:
         script = self.text("windows-postgres-test-lane.ps1")
         functions = script[script.index("function Assert-DockerReachable"):script.index('if ($Action -eq "Start")')]
-        # Isolate both the files and kernel lock; never contact Docker or use a real lane.
+        # Mock the shared daemon; never contact Docker.
         with tempfile.TemporaryDirectory() as directory:
-            functions = functions.replace(
-                "Global\\DirectorOrchestratorPostgresTestLanes",
-                "DirectorTestSlots-" + Path(directory).name,
-            )
-            harness = r'''
+            harness = r"""
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$env:LOCALAPPDATA = $args[0]
-$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
-$env:GITHUB_ACTIONS = $null
 $ContainerName = 'candidate'
 $SlotWaitSeconds = 1
+$image = 'already-present'
 $laneLabel = 'test-label'
-$script:containers = @()
+$script:items = @{}
+$script:serial = 0
 $script:listingFails = $false
+$script:removeFails = $false
+$script:createFails = $false
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
+$env:GITHUB_ACTIONS = $null
+function Item($name, $owner = '', $lane = '', $managed = '') {
+    $script:serial++
+    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed"
+}
 function docker {
     $global:LASTEXITCODE = 0
-    if ($script:listingFails) { $global:LASTEXITCODE = 1; return }
-    if ($args[0] -eq 'ps') { return $script:containers }
-    throw 'Unexpected Docker command'
+    switch ($args[0]) {
+        'ps' {
+            if ($script:listingFails) { $global:LASTEXITCODE = 1; return }
+            foreach ($row in $script:items.Values) {
+                $parts = $row -split '\|'
+                "$($parts[0])|$($parts[1])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
+            }
+            return
+        }
+        'create' {
+            $name = $args[[Array]::IndexOf($args, '--name') + 1]
+            if ($script:createFails -or $script:items.ContainsKey($name)) { $global:LASTEXITCODE = 1; return }
+            if ($args -notcontains '--pull=never') { throw 'Slot may pull image' }
+            $owner = ($args[[Array]::IndexOf($args, '--label') + 1] -split '=', 2)[1]
+            Item $name $owner
+            return [string]$script:serial
+        }
+        'rm' {
+            if ($script:removeFails) { $global:LASTEXITCODE = 1; return }
+            $id = $args[-1]
+            foreach ($name in @($script:items.Keys)) {
+                if (($script:items[$name] -split '\|')[0] -eq $id) { $script:items.Remove($name); return }
+            }
+            $global:LASTEXITCODE = 1
+        }
+        default { throw 'Unexpected Docker command (slots must never start)' }
+    }
 }
 function Check($condition, $message) { if (-not $condition) { throw $message } }
-function Acquire {
-    $lock = Enter-LaneSlot
-    $lock.ReleaseMutex()
-    $lock.Dispose()
-}
 function MustFail($pattern) {
-    try { Acquire } catch {
+    try { Enter-LaneSlot } catch {
         if ($_.Exception.Message -notlike $pattern) { throw }
         return
     }
     throw "Expected failure: $pattern"
 }
-'''
-            harness += functions + r'''
+"""
+            harness += functions + r"""
 function Clear-LaneEnvironment {}
-$directory = Join-Path $env:LOCALAPPDATA 'director-orchestrator\test-lanes'
-# A separate process holding admission must block this caller even with room.
-$lockName = 'DirectorTestSlots-' + (Split-Path $env:LOCALAPPDATA -Leaf)
-$job = Start-Job -ArgumentList $lockName -ScriptBlock {
-    param($name)
-    $guard = New-Object Threading.Mutex($false, $name)
-    try {
-        $guard.WaitOne() | Out-Null
-        Write-Output 'locked'
-        Start-Sleep -Seconds 15
-    } finally { $guard.ReleaseMutex(); $guard.Dispose() }
-}
-try {
-    $ready = $false
-    for ($attempt = 0; $attempt -lt 100; $attempt++) {
-        if (@(Receive-Job $job) -contains 'locked') { $ready = $true; break }
-        Start-Sleep -Milliseconds 100
-    }
-    Check $ready 'Concurrent holder did not acquire mutex'
-    MustFail 'Timed out waiting*'
-} finally { Stop-Job $job; Remove-Job $job }
-# Default two: one container leaves room, two do not (including untracked lanes).
-$script:containers = @('other')
-Acquire
-$record = Get-Content (Join-Path $directory 'candidate.json') -Raw | ConvertFrom-Json
-Check ($record.container -eq 'candidate' -and $record.pid -eq $PID -and $record.started_at) 'Missing slot metadata'
+$base = $args[0]
+$env:LOCALAPPDATA = Join-Path $base 'local'
+$env:XDG_STATE_HOME = Join-Path $base 'xdg'
+$env:HOME = Join-Path $base 'home'
+$env:RUNNER_TEMP = Join-Path $base 'runner'
+Check ((Get-LaneStateDirectory).StartsWith($env:LOCALAPPDATA)) 'LOCALAPPDATA precedence'
+$env:LOCALAPPDATA = $null
+Check ((Get-LaneStateDirectory).StartsWith($env:XDG_STATE_HOME)) 'XDG fallback'
+$env:XDG_STATE_HOME = $null
+Check ((Get-LaneStateDirectory) -eq (Join-Path $env:HOME '.local/state/director-orchestrator/test-lanes')) 'HOME fallback'
+$env:HOME = $null
+Check ((Get-LaneStateDirectory).StartsWith($env:RUNNER_TEMP)) 'RUNNER_TEMP fallback'
+Item 'candidate' '' 'true' 'true'
+Item 'legacy' '' 'true'
+Enter-LaneSlot
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Missing reservation'
 Remove-LaneSlot
-$script:containers = @('other', 'another')
-MustFail 'Timed out waiting*'
-# CI admits below four total lanes, including lanes started by local callers.
+Item 'legacy-two' '' 'true'
+MustFail '*cap 2*'
 $env:GITHUB_ACTIONS = 'true'
-$script:containers = @('local-one', 'local-two', 'ci-one')
-Acquire
+Enter-LaneSlot
 Remove-LaneSlot
-$script:containers += 'ci-two'
+Item 'legacy-three' '' 'true'
+Enter-LaneSlot
+Remove-LaneSlot
+Item 'legacy-four' '' 'true'
 MustFail '*cap 4*'
-# An explicit override wins over the CI default in either direction.
 $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '5'
-Acquire
-Remove-LaneSlot
-$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '2'
-$script:containers = @('ci-one', 'ci-two')
-MustFail '*cap 2*'
-$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
-# Local callers count live CI reservations even without Docker containers.
-$script:containers = @()
-$ContainerName = 'ci-one'
-Acquire
-$ContainerName = 'ci-two'
-Acquire
-$env:GITHUB_ACTIONS = 'false'
-$ContainerName = 'candidate'
-MustFail '*cap 2*'
-$ContainerName = 'ci-two'
-Remove-LaneSlot
-$ContainerName = 'candidate'
-Acquire
-Remove-LaneSlot
-$ContainerName = 'ci-one'
-Remove-LaneSlot
-$ContainerName = 'candidate'
-$env:GITHUB_ACTIONS = $null
-$script:containers = @('other', 'another')
-# Override, invalid input, and ambiguous Docker errors all fail closed.
-$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '3'
-Acquire
+Enter-LaneSlot
 Remove-LaneSlot
 foreach ($value in @('0', '-1', 'garbage', '2147483648')) {
     $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $value
     MustFail '*must be a positive integer*'
 }
 $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '1'
+$script:items = @{}
+Item 'candidate' '' 'true' 'true'
+Item 'other' '' 'true' 'true'
+Item 'director-test-lane-slot-1' 'other'
+MustFail '*cap 1*'
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Reclaimed pending owner'
+$script:items.Remove('other')
+Enter-LaneSlot
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[2] -eq 'candidate') 'Stale slot not reclaimed'
+Remove-LaneSlot
+$env:GITHUB_ACTIONS = $null
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
+Item 'ci-three' '' 'true' 'true'
+Item 'ci-four' '' 'true' 'true'
+Item 'director-test-lane-slot-3' 'ci-three'
+Item 'director-test-lane-slot-4' 'ci-four'
+MustFail '*cap 2*'
+$script:items = @{}
+Item 'candidate' '' 'true' 'true'
 $script:listingFails = $true
 MustFail 'Docker container listing failed*'
 $script:listingFails = $false
-$script:containers = @()
-$stalePath = Join-Path $directory 'old.json'
-function OldSlot($ownerPid) {
-    @{container='old'; pid=$ownerPid; started_at='2026-09-26T22:05:00Z'} |
-        ConvertTo-Json | Set-Content $stalePath
-}
-# Neither a live PID alone nor a surviving container alone may be reclaimed.
-OldSlot $PID
-MustFail 'Timed out waiting*'
-Check ([IO.File]::Exists($stalePath)) 'Reclaimed live PID'
-OldSlot 2147483647
-$script:containers = @('old')
-MustFail 'Timed out waiting*'
-Check ([IO.File]::Exists($stalePath)) 'Reclaimed existing container'
-$script:containers = @()
-Acquire
-Check (-not [IO.File]::Exists($stalePath)) 'Failed to reclaim dead and absent slot'
-Stop-Lane
-Check (-not [IO.File]::Exists((Join-Path $directory 'candidate.json'))) 'Stop retained absent lane slot'
-# Refused stops retain capacity; successful removal releases it.
-Acquire
-function Get-LaneContainer { return @{State='running'; Owned=$false} }
+$script:createFails = $true
+MustFail '*cap 2*'
+$script:createFails = $false
+Enter-LaneSlot
+function Get-LaneContainer { return @{ State='running'; Owned=$false } }
 try { Stop-Lane; throw 'Expected foreign refusal' } catch {
     if ($_.Exception.Message -notlike '*was not created by this script*') { throw }
 }
-Check ([IO.File]::Exists((Join-Path $directory 'candidate.json'))) 'Foreign refusal released slot'
-function Get-LaneContainer { return @{State='running'; Owned=$true} }
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Foreign refusal released slot'
+function Get-LaneContainer { return @{ State='running'; Owned=$true } }
 function Remove-LaneContainer { throw 'Removal failed' }
 try { Stop-Lane; throw 'Expected removal failure' } catch {
     if ($_.Exception.Message -ne 'Removal failed') { throw }
 }
-Check ([IO.File]::Exists((Join-Path $directory 'candidate.json'))) 'Failed removal released slot'
-function Remove-LaneContainer {}
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed removal released slot'
+function Remove-LaneContainer { $script:items.Remove('candidate') }
 Stop-Lane
-Check (-not [IO.File]::Exists((Join-Path $directory 'candidate.json'))) 'Successful stop retained slot'
+Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Stop retained slot'
+Item 'director-test-lane-slot-1' 'candidate'
+function Get-LaneContainer { return $null }
+$script:removeFails = $true
+try { Stop-Lane; throw 'Expected slot removal failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed slot removal lost reservation'
+$script:removeFails = $false
+Stop-Lane
+Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Absent lane retained slot'
 Write-Output 'slot-checks-passed'
-'''
+"""
             path = Path(directory) / "slots.ps1"
             path.write_text(harness, encoding="utf-8")
             result = subprocess.run(
@@ -1072,13 +1070,13 @@ Write-Output 'slot-checks-passed'
         self.assertIn('$databaseName = "director_test"', text)
         self.assertIn("[int]$HostPort = 55433", text)
         self.assertIn("[int]$SlotWaitSeconds = 2700", text)
-        self.assertIn("$slotMutex = Enter-LaneSlot", text)
+        self.assertIn("Enter-LaneSlot", text)
         self.assertIn("if ($laneStarted)", text)
         self.assertIn('$dsn = "postgresql://${databaseUser}@127.0.0.1:${HostPort}/${databaseName}?sslmode=disable"', text)
         self.assertIn("postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable", workflow)
-        self.assertIn('--publish "127.0.0.1:${HostPort}:5432"', text)
+        self.assertIn('--publish ("127.0.0.1:" + $HostPort + ":5432")', text)
         self.assertIn("POSTGRES_HOST_AUTH_METHOD=trust", text)
-        self.assertIn("docker run --detach --rm", text)
+        self.assertIn("docker create --pull=never", text)
         self.assertIn("pg_isready -h 127.0.0.1 -U $databaseUser -d $databaseName", text)
         self.assertIn("[DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)", text)
         self.assertIn("Net.Sockets.TcpClient", text)
@@ -1103,13 +1101,16 @@ Write-Output 'slot-checks-passed'
         self.assertIn('--filter "publish=$HostPort"', text)
         self.assertIn("docker rm --force --volumes", text)
         for forbidden in (
-            "docker compose", "docker start", "docker inspect", "langgraph-primary-db",
+            "docker compose", "docker inspect", "Threading.Mutex", "langgraph-primary-db",
             "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "Read-DotEnv", "0.0.0.0", "Remove-Item",
             "-AsHashtable", "ToHexString", "$IsWindows", " && ", " || ", " ?? ",
         ):
             self.assertNotIn(forbidden, text)
         start = text.index("function Start-Lane")
-        self.assertLess(text.index("Get-LaneContainer", start), text.index("docker run", start))
+        self.assertLess(text.index("Get-LaneContainer", start), text.index("docker create", start))
+        self.assertLess(text.index("docker create", start), text.index("Enter-LaneSlot", start))
+        self.assertLess(text.index("Enter-LaneSlot", start), text.index("docker start", start))
+        self.assertEqual(text.count("& docker start"), 1)
         self.assertLess(text.index("Wait-LaneReady", start), text.index("Export-LaneEnvironment", start))
         test_section = text[text.index('if ($Action -eq "Dsn")'):]
         self.assertIn("finally {", test_section)
@@ -1165,6 +1166,7 @@ Write-Output 'slot-checks-passed'
 
     def test_postgres_test_lane_skill_is_discoverable_and_complete(self) -> None:
         skill = (ROOT / ".agents" / "skills" / "postgres-test-lane" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertTrue(skill.startswith("---\n"))
         frontmatter, body = skill.split("---", 2)[1:]
         self.assertIn("name: postgres-test-lane", frontmatter)
         description_line = next(line for line in frontmatter.splitlines() if line.startswith("description:"))
@@ -1299,3 +1301,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
