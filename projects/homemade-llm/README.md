@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
@@ -113,8 +114,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
    fixes, provider plumbing) goes to Codex under the charter's
    [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
    `dispatch.py codex` is the usual route from this project.
-   Codex's edits are assistance and leave the PR's sole author unchanged (the
-   sole-author rule, PR #284).
+   Codex's edits are assistance and leave the PR's sole author unchanged **while Codex's measured share stays below 48 %**; shares are recomputed from the commit record after maintenance (the sole-author rule, PR #284).
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -152,3 +152,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]] -->

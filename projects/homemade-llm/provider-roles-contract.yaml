@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
@@ -310,7 +311,7 @@ providers:
     participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
     preserved_boundaries:
       # See docs/contribution-attribution-policy.md#sole-author-rule.
-      producer_exclusion: "Only the sole author and its provider family are barred from review or acceptance on authorship grounds; assisting contributors and co-authors may review when otherwise eligible. No contributor with counted lines may merge, whatever their label."
+      producer_exclusion: "Among contributors, only assisting contributors (under 48 %) and the exactly-48 % co-author may review when otherwise eligible; the sole author (52 % or more) and its provider family never review or accept. No contributor with counted lines may merge, whatever their label."
       material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
       deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."
       assignment_target: "Separately assigned OpenAI production under the frozen profile; material authorship requires different-provider exact-candidate review and removes Director merge independence."
@@ -358,3 +359,4 @@ project_local_bindings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]]
