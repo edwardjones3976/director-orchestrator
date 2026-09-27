@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
@@ -106,7 +107,7 @@ accept when otherwise eligible under that policy; for any review, acceptance or
 merge passing through the material-author gates listed below, contributor review
 eligibility is prospective until a separately reviewed runtime change aligns
 them. The Director may never merge
-a pull request to which it contributed counted lines.
+a pull request to which it contributed, including uncounted maintenance.
 
 ## Sole author rule
 
@@ -127,10 +128,13 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   the sole author and its provider family are excluded from reviewing on
   authorship grounds under the policy. An assisting contributor may review in
   Director-routed and manual reviews subject to the runtime limits below.
-  Any contributor with counted lines, whatever their label, may never merge that PR, and this bar never lifts.
-  Any eligible reviewer with counted lines, including an assisting contributor
-  or the exactly-48 % co-author, hands the merge to a non-contributing reviewer
-  that has thoroughly reviewed the work.
+  Every contributor, including one whose only changes are uncounted maintenance,
+  may never merge that PR; this bar never lifts. Excluding maintenance affects
+  only the 52 % share calculation, not the merge prohibition. Such an assisting
+  provider may review subject to the limits below, but never merges. Any eligible
+  reviewer who contributed, including uncounted maintenance or the exactly-48 %
+  co-author, hands the merge to a non-contributing reviewer that has thoroughly
+  reviewed the work.
   The deterministic gates in `src/director_orchestrator/provider_acceptance_v3.py`,
   `completion_gates.py`, `merge_eligibility.py`, `engineering_workload_ledger.py`,
   and `review_handoff.py::bind_review_handoff` still reject every material
@@ -148,8 +152,12 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
 - **How the share is measured and bound to review** (owner ruling, 2026-09-27):
   the sole author and shares are computed from the git record at the exact
   reviewed base SHA (merge base) and head SHA:
-  `git log <merge-base>..<head> --no-merges --numstat`, summing
-  lines added plus lines deleted per identity. Maintenance commits (Codex MX-*
+  `git log <merge-base>..<head> --no-merges --format='%H %an' -p -w --ignore-blank-lines --no-color --no-ext-diff --no-textconv --no-renames`,
+  counting only `+` and `-` lines inside patch hunks (not file headers), per
+  commit and authenticated identity. After removing the diff prefix, exclude
+  any line matching `\[\[.* \| .* \| \d{4}-\d{2}-\d{2} \| \d{2}:\d{2} UTC \| (BEGIN|END)\]\]`.
+  The whitespace flags exclude whitespace-only changes, including blank lines;
+  the regex excludes contribution envelopes. Maintenance commits (Codex MX-*
   packets or owner-directed maintenance) are assistance and do not count toward
   authorship shares; exclude them from both the numerator and denominator.
   A line counts for an identity only when an authenticated record ties it to the
@@ -244,3 +252,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:12 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | END]] -->
