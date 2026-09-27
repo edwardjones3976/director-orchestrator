@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
@@ -21,7 +22,7 @@ schema_version: "director-provider-routes/v1"
 document_type: "director-provider-route-catalog"
 authority_granted: "none"
 
-lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
 
 endpoints:
   - id: "openai"
@@ -40,6 +41,8 @@ endpoints:
     description: "Firecrawl lane: public search transport under the research contract."
   - id: "github-copilot"
     description: "GitHub Copilot lane: optional bounded quality-observation lane with no production authority."
+  - id: "zai"
+    description: "Z.ai lane: GLM models through the Claude Code executable on Z.ai's endpoint; assignment-scoped, disabled by default, never relabelled Claude."
   - id: "director"
     description: "The runtime Director control plane; executing provider is recorded separately from ChatGPT/Codex project leadership."
   - id: "owner"
@@ -89,7 +92,7 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     carries:
       - "one immutable pre-staged work packet revision per assignment"
       - "task text, acceptance checks, owned and prohibited paths, budgets, timeouts, and retry limits for prose-bearing lanes"
@@ -119,7 +122,7 @@ routes:
     direction: "provider_to_director"
     initiation: "provider_response_to_dispatch"
     endpoints: { from: "all_providers", to: "director" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     carries:
       - "one structured result packet bound to the dispatched packet identity"
       - "provider-native run or session identifiers and returned usage telemetry when present"
@@ -146,7 +149,7 @@ routes:
     direction: "director_to_owner"
     initiation: "director"
     endpoints: { from: "director", to: "slack_thread" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     carries:
       - "concise, assignment-correlated status relayed by the Director on behalf of every provider"
     withheld_context:
@@ -174,7 +177,7 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     carries:
       - "bounded outcomes of declared upstream assignments, embedded by the Director into the dependent packet"
     withheld_context:
@@ -202,7 +205,7 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok]
+    providers_involved: [openai, claude, cursor, grok, zai]
     carries:
       - "assignment ID, logical producer, material authors, exact base and head SHA or artifact digest, changed files, test evidence, known limitations, acceptance checks, security context"
     withheld_context:
@@ -419,7 +422,7 @@ routes:
     direction: "owner_to_director"
     initiation: "owner"
     endpoints: { from: "owner", to: "director" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     carries:
       - "provider run or session identifiers supplied by the owner to reconcile an ambiguous paid dispatch"
     withheld_context:
@@ -747,6 +750,66 @@ routes:
     config: [LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED, COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN]
     notes: "Not gating. A rejected finding is waste; a confirmed defect blocks through the existing defect gates, not through Copilot."
 
+  - route_id: "zai-native-cli"
+    name: "Z.ai native CLI packet transport (GLM, primary lane)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "director"
+    endpoints: { from: "director", to: "zai" }
+    providers_involved: [zai]
+    carries:
+      - "one validated work packet run by the Claude Code executable against Z.ai's Anthropic-compatible endpoint with the configured GLM model"
+      - "assignment-scoped tool grants only: repository read, fixed test runners, public web search, and isolated-branch writes confined to owned paths when the deployment allows them"
+    withheld_context:
+      - "every other lane's credential; the child inherits no Anthropic or Claude credential and receives only the Z.ai key injected by the transport"
+      - "host settings, hooks, sessions, and MCP servers; each attempt runs in a throwaway home and config directory"
+      - "every external effect; a packet that grants one is refused before launch"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-setup.md"
+        anchor: "The owner enrolled Z.ai (GLM Coding Plan) as its own production lane `zai` on"
+      - document: "docs/provider-setup.md"
+        anchor: "issuer. The transport is `src/director_orchestrator/zai_native.py`."
+      - document: "docs/providers/zai-welcome-aboard.md"
+        anchor: "Code may host your session; it does not change your provider identity to Claude."
+    enforced_by:
+      - "src/director_orchestrator/zai_native.py:ZaiNativePacketTransport"
+      - "src/director_orchestrator/primary_transports.py:discover_local_primary_command_transports"
+      - "src/director_orchestrator/config.py:Settings.zai_production_readiness"
+    prohibition_quote: null
+    config: [ZAI_ENABLED, ZAI_MODE, ZAI_PRODUCTION_ACTIVATION, ZAI_API_KEY, ZAI_API_BASE, ZAI_MODEL, ZAI_CLI_EXECUTABLE, ZAI_MAX_TURNS, ZAI_PRODUCTION_TIMEOUT_SECONDS, ZAI_ALLOW_REPOSITORY_WRITE, LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS, LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED]
+    notes: "Composed only when every production readiness boolean holds; never discovered on PATH, because the same executable is the Claude lane there. Every result must prove the configured GLM model served it; cost is recorded as unknown, never zero. Not a Windows host-bridge lane."
+
+  - route_id: "zai-lite-trial"
+    name: "Z.ai Lite trial contact (trial-only, no production credit)"
+    kind: "direct"
+    direction: "director_to_provider"
+    initiation: "owner"
+    endpoints: { from: "director", to: "zai" }
+    providers_involved: [zai]
+    carries:
+      - "one bounded, tools-disabled Lite assignment per packet digest, reserved in the separate append-only trial ledger"
+    withheld_context:
+      - "tools, MCP servers, settings sources, and session persistence"
+      - "production credit, counted review verdicts, and merge authority"
+    authority: "none"
+    status: "authorized"
+    default_config_state: "disabled"
+    charter_basis:
+      - document: "docs/provider-allocation-profiles.md"
+        anchor: "trial ledger and earns zero accepted-production credit."
+      - document: "docs/provider-setup.md"
+        anchor: "Cost stays unknown, never zero, because the host CLI prices with Anthropic"
+    enforced_by:
+      - "src/director_orchestrator/zai_lane.py:ZaiTrialLane"
+      - "src/director_orchestrator/zai_trial.py:ZaiLiteTrialTransport"
+      - "scripts/zai-trial.py"
+    prohibition_quote: null
+    config: [ZAI_TRIAL_ENABLED, ZAI_MODE, ZAI_API_KEY, ZAI_API_BASE, ZAI_MODEL, ZAI_CLI_EXECUTABLE, ZAI_TRIAL_JOURNAL_DIR, ZAI_TRIAL_LEDGER_PATH, ZAI_TIMEOUT_SECONDS, ZAI_LITE_ENTITLEMENT_VERIFIED]
+    notes: "Operator-run through the trial CLI and only with ZAI_MODE=trial_only; it refuses dispatch at or after the trial end the transport enforces. The trial ledger is not the canonical allocation ledger, and its attempts are not production evidence."
+
   - route_id: "windows-host-provider-bridge"
     name: "Windows host provider bridge"
     kind: "direct"
@@ -950,7 +1013,7 @@ routes:
     direction: "provider_to_provider"
     initiation: "none"
     endpoints: { from: "all_providers", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     carries: []
     withheld_context:
       - "everything; no such channel exists in the transport enums, the host bridge lane sets, or the typed effect actions"
@@ -996,3 +1059,4 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

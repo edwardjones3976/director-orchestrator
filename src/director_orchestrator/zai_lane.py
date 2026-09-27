@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
@@ -5,14 +6,17 @@
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 """Z.ai trial-only contact lane: typed identity, separate trial ledger, bounded dispatch.
 
-Owner directive #207 stages Z.ai (GLM Coding Plan) as a trial-only, fail-closed
-contact until the owner's separate activation decision on or after 2026-09-29.
-This module wires the existing `zai_trial` transport into the program without
-making Z.ai a production lane. The identifier `zai` is deliberately absent from
-`ProviderName`, the workload `Provider` enums, `LANES`, `PRIMARY_PROVIDER_LANES`,
-`KNOWN_LANES` and the Postgres lane constraint; that absence, plus the CHECK
-constraints below, is what makes "no production credit, no review authority, no
-merge authority" structural rather than a runtime promise.
+Owner directive #207 staged Z.ai (GLM Coding Plan) as a trial-only, fail-closed
+contact. This module wires the `zai_trial` transport into the program as that
+trial and nothing more. The CHECK constraints and append-only triggers below
+make "no production credit, no review authority, no merge authority" structural
+for every trial attempt, and they stay that way.
+
+The owner later enrolled `zai` as a production lane (2026-09-27): it now appears
+in the production registries and is served by `zai_native`. That enrollment is
+prospective. It never reads, rewrites or re-credits this trial ledger, whose
+rows keep their no-credit, no-review flags, and this trial lane never becomes
+the production route (ZAI_MODE=production refuses ZAI_TRIAL_ENABLED).
 """
 from __future__ import annotations
 
@@ -639,3 +643,4 @@ class ZaiTrialLane:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

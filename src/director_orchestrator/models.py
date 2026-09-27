@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -133,6 +134,9 @@ class ProviderName(StrEnum):
     OPENAI = "openai"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
+    # Z.ai (GLM): a distinct provider identity. Its native route runs the Claude
+    # Code executable, which never makes its output Claude's.
+    ZAI = "zai"
 
 
 class AssignmentKind(StrEnum):
@@ -1490,3 +1494,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

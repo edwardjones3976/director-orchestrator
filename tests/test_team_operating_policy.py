@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -588,8 +589,9 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "investigator",
         ])
         profiles = self.directive["allocation_profiles"]
-        self.assertEqual(profiles["weights"]["engineering"], [40,25,15,10,10,0,0,0])
-        self.assertEqual(len(profiles["lane_order"]), 8)
+        self.assertEqual(profiles["weights"]["engineering"], [33,21,12,8,8,0,0,0,18])
+        self.assertEqual(len(profiles["lane_order"]), 9)
+        self.assertEqual(profiles["lane_order"][-1], "zai")
         for targets in profiles["weights"].values():
             self.assertEqual(sum(targets), 100)
         self.assertEqual(
@@ -655,7 +657,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["share_pressure_action"], "historical_nonenforcing")
+        self.assertEqual(enforcement["share_pressure_action"], "zai_ceiling_only")
         self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
@@ -2199,3 +2201,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

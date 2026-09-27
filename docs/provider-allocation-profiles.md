@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
@@ -23,21 +24,61 @@ The canonical runtime definitions are in `allocation_profiles.py`; select one pr
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
-| OpenAI / Codex production | 27% | 40% | 20% | 32% |
-| Claude | 33% | 25% | 25% | 38% |
-| Cursor | 10% | 15% | 5% | 5% |
-| Grok | 10% | 10% | 5% | 5% |
-| Gemini / Antigravity | 5% | 10% | 5% | 5% |
-| Perplexity | 5% | 0% | 25% | 0% |
-| Firecrawl | 5% | 0% | 15% | 5% |
-| GitHub Copilot | 5% | 0% | 0% | 10% |
+| OpenAI / Codex production | 22% | 33% | 16% | 27% |
+| Claude | 27% | 21% | 21% | 31% |
+| Cursor | 9% | 12% | 4% | 4% |
+| Grok | 8% | 8% | 4% | 4% |
+| Gemini / Antigravity | 4% | 8% | 4% | 4% |
+| Perplexity | 4% | 0% | 21% | 0% |
+| Firecrawl | 4% | 0% | 12% | 4% |
+| GitHub Copilot | 4% | 0% | 0% | 8% |
+| Z.ai (GLM) | 18% | 18% | 18% | 18% |
 | Total | 100% | 100% | 100% | 100% |
 
 Canonical profile IDs are `mixed`, `engineering`, `public_research`, and
 `enterprise`. Canonical lane IDs are `openai`, `claude`, `cursor`, `grok`,
-`antigravity`, `perplexity`, `firecrawl`, and `github-copilot`. Models, native apps, CLI contacts, API transports, and
+`antigravity`, `perplexity`, `firecrawl`, `github-copilot`, and `zai`. Models, native apps, CLI contacts, API transports, and
 aliases map to their existing parent lane; they never create a second quota or
 an independent reviewer. Gemini and Antigravity share the Antigravity lane.
+Z.ai is its own lane and family even though its native route runs the Claude
+Code executable; that executable never makes Z.ai output Claude's.
+
+### Z.ai production enrollment (2026-09-27)
+
+The owner enrolled Z.ai as a production lane with an 18% target (owner
+instruction: "18% target; existing $5 total budget"). The eight earlier lanes'
+weights were redistributed deterministically, once, and are not silently
+rebalanced afterwards:
+
+1. Every nonzero lane was scaled by 82/100 and floored.
+2. The whole points still missing to reach 82 went one each to the largest
+   fractional remainders, ties broken by lane order.
+3. Zero lanes stayed zero; each profile totals exactly 100.
+
+`allocation_profiles.redistribute_for_enrollment` records the procedure and a
+test pins it to the literal table above. The pre-enrollment eight-lane targets
+are kept as `PRE_ZAI_ALLOCATION_PROFILES`; their digests
+(`pre_zai_allocation_profile_digest`) and the older pinned identities still
+authenticate admissions recorded before the enrollment, in both the PostgreSQL
+admission ledger and the SQLite engineering journal. They never authorize a
+new admission, and such rows can never name `zai`.
+
+The current identity is `capacity-allocation-v3-zai-enrollment`. As with the
+2026-09-08 swap, it changes all four profile digests: an approval bound to an
+earlier digest does not authorize the new weights, and unfinished plans need a
+fresh plan and approval. PostgreSQL history recorded under the pre-enrollment
+digests stays readable, so the `workload_history_invalid` hold described below
+does not arise from this change.
+
+Rolling twenty, normal band target plus or minus three, hard ceiling target
+plus five: for Z.ai this ceiling is enforced prospectively (at most 4 of any
+rolling 20 admissions, `workload_lane_hard_ceiling_reached`), as the owner's
+enrollment instruction requires. It does not revive the retired ceiling for
+the other lanes and rewrites no historical rule.
+
+The PROPOSED `conditional_20260929` profile below was not activated; only its
+Z.ai target was adopted. No other conditional lane (Grok Bot, VS Code Coding
+Bot) was enrolled.
 
 ## Admission and accounting
 
@@ -47,10 +88,11 @@ minus three percentage points, an advisory routing preference. The owner retired
 the rolling-twenty target-plus-five hard ceiling on 2026-09-21 as outdated; the
 historical ceiling number is preserved for reference and does not block or
 refuse admission. A zero target remains ineligible regardless of history.
+The one exception is the Z.ai lane's enrollment ceiling described above.
 Startup under-allocation is warming, never permission for filler work.
-Engineering targets correspond to eight OpenAI, five Claude, three Cursor, two
-Grok, and two Antigravity assignments per full window; these are targets, not
-mandatory concurrent agents or quotas to fill with unnecessary work.
+Engineering targets correspond to about 6.6 OpenAI, 4.2 Claude, 3.6 Z.ai, 2.4
+Cursor, 1.6 Grok, and 1.6 Antigravity assignments per full window; these are
+targets, not mandatory concurrent agents or quotas to fill with unnecessary work.
 
 Reserve admission before provider I/O and retain failed or ambiguous reservations
 for admission accounting. Accepted productive output and total observed effort
@@ -256,3 +298,4 @@ The ledgers are distinct, append-only SQLite files. A rolling 7-day observation 
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->

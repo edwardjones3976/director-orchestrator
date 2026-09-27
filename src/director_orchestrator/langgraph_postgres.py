@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
@@ -1345,7 +1346,7 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
             task_id text NOT NULL,
             assignment_id text NOT NULL,
             provider_lane text NOT NULL CHECK (provider_lane IN
-                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot')),
+                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot', 'zai')),
             reservation_digest text NOT NULL CHECK
                 (reservation_digest ~ '^sha256:[0-9a-f]{{64}}$'),
             fencing_generation bigint NOT NULL CHECK (fencing_generation >= 0),
@@ -1369,8 +1370,9 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         DO $migration$ BEGIN
             ALTER TABLE {schema}.director_primary_workload_assignment DROP CONSTRAINT IF EXISTS director_primary_workload_assignment_provider_lane_check;
             -- Preserve immutable historical rows; enforce the current roster on new writes.
+            -- The roster gained 'zai' with the owner's Z.ai production enrollment.
             ALTER TABLE {schema}.director_primary_workload_assignment ADD CONSTRAINT director_primary_workload_assignment_provider_lane_check CHECK
-                (provider_lane IN ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot')) NOT VALID;
+                (provider_lane IN ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot', 'zai')) NOT VALID;
             IF EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
                 JOIN pg_namespace n ON n.oid=t.relnamespace
                 WHERE n.nspname='{schema}' AND t.relname='director_primary_workload_assignment'
@@ -6040,3 +6042,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

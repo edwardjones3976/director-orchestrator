@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -1034,8 +1035,8 @@ class ValidationBridgeService:
 # Read-only all-lane qualification preflight
 # ---------------------------------------------------------------------------
 #
-# The static lane inventory (eight canonical lanes plus three separately
-# qualified contacts). Lane classes are descriptive only; every allocation
+# The static lane inventory (nine canonical lanes, Z.ai enrolled by the owner
+# on 2026-09-27, plus two separately qualified contacts). Lane classes are descriptive only; every allocation
 # weight is read from the owner-approved allocation_profiles authority rather
 # than duplicated here. The inventory grants nothing: enrollment, live
 # eligibility and paid readiness stay UNKNOWN because no authenticated
@@ -1049,6 +1050,7 @@ _LANE_CLASSES = {
     "perplexity": "evidence_only_research",
     "firecrawl": "public_search_transport",
     "github-copilot": "capability_routed_lane",
+    "zai": "capability_routed_lane",
 }
 
 
@@ -1064,7 +1066,6 @@ def _canonical_lanes():
 CANONICAL_LANES = _canonical_lanes()
 ADDITIONAL_CONTACTS = (
     ("grok-bot", "Grok Bot", "Unverified as an enrolled transport; direct Grok evidence cannot qualify this contact."),
-    ("z-ai", "Z.ai", "Separate tools-off Lite trial contract; not a canonical production lane."),
     ("vscode-coding-bot", "VS Code Coding Bot", "Editor host; the actual underlying provider/model identity must be preserved."),
 )
 RESEARCH_ONLY_LANES = frozenset({"perplexity", "firecrawl"})
@@ -1152,3 +1153,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

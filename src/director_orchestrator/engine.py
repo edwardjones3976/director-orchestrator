@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
@@ -278,6 +279,16 @@ _TRUSTED_ROUTING_CAPABILITIES: dict[
     WorkloadProvider.PERPLEXITY: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.FIRECRAWL: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.GITHUB_COPILOT: frozenset({WorkloadKind.IMPLEMENTATION}),
+    # Enrolled 2026-09-27. The legacy engine registers no Z.ai worker, so it is
+    # not a legacy trusted reviewer; the LangGraph primary roster routes it.
+    WorkloadProvider.ZAI: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.REVIEW,
+            WorkloadKind.RESEARCH,
+            WorkloadKind.VALIDATION,
+        }
+    ),
 }
 _TRUSTED_PRIMARY_REVIEWERS = frozenset(
     {WorkloadProvider.OPENAI, WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
@@ -7025,3 +7036,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
@@ -191,7 +192,9 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "prospective_last20_assignment_count",
             ],
             "soft_action": "route_next_eligible_work_to_an_under_target_provider",
-            "share_pressure_action": "historical_nonenforcing",
+            # Share pressure blocks nothing except the Z.ai target+5 rolling-twenty
+            # ceiling set with the owner's 2026-09-27 enrollment.
+            "share_pressure_action": "zai_ceiling_only",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
             "overall_effort_can_block_or_route": False,
@@ -859,3 +862,4 @@ def tally_advisory_votes(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

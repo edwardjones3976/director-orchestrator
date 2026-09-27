@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:07 UTC | BEGIN]]
@@ -24,7 +25,8 @@ from types import MappingProxyType
 from .langgraph_postgres import _require_schema
 from .allocation_profiles import (
     allocation_targets, allocation_profile_digest, DEFAULT_ALLOCATION_PROFILE,
-    PRE_RETIREMENT_V3 as _PRE_RETIREMENT_V3,
+    PRE_RETIREMENT_V3 as _PRE_RETIREMENT_V3, PRE_ZAI_LANES, hard_ceiling_slots,
+    pre_zai_allocation_profile_digest,
 )
 
 POLICY_VERSION = "primary-assignment-count-v3"
@@ -56,8 +58,9 @@ def _valid_history_row(row):
         profile = row["allocation_profile"]
         if row["policy_digest"] == allocation_profile_digest(profile):
             return row["provider_lane"] in TARGETS
-        if row["policy_digest"] == _CURRENT_AT_BASE_V3.get(profile):
-            return row["provider_lane"] in TARGETS
+        # Identities recorded before Z.ai enrollment name only the eight earlier lanes.
+        if row["policy_digest"] in (_CURRENT_AT_BASE_V3.get(profile), pre_zai_allocation_profile_digest(profile)):
+            return row["provider_lane"] in PRE_ZAI_LANES
         old_digest, old_lanes = _PRE_RETIREMENT_V3[profile]
         return row["policy_digest"] == old_digest and row["provider_lane"] in old_lanes
     except ValueError:
@@ -90,6 +93,9 @@ def admission_reason(provider: str, history: Sequence[str], *, allocation_profil
         return "workload_history_invalid"
     if targets[provider] == 0:
         return "workload_profile_lane_ineligible"
+    ceiling = hard_ceiling_slots(provider, allocation_profile)
+    if ceiling is not None and list(history[-19:]).count(provider) + 1 > ceiling:
+        return "workload_lane_hard_ceiling_reached"
     return None
 
 
@@ -174,3 +180,4 @@ schema is trusted and validated by its owner, never supplied by a work packet.
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:07 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]] -->
@@ -508,16 +509,90 @@ authoritative daily spend backstop. Only after billing and the dedicated
 key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
 `perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
 
+## Z.ai production lane
+
+The owner enrolled Z.ai (GLM Coding Plan) as its own production lane `zai` on
+2026-09-27 with an 18% allocation target (see `docs/provider-allocation-profiles.md`).
+Its GLM models are reached by running the Claude Code executable against Z.ai's
+Anthropic-compatible endpoint; the lane, family and result provider stay `zai`
+and are never relabelled Claude. The lane is in the provider enums, the
+allocation lanes, the primary roster (implementer and independent reviewer of
+other lanes' work, never of its own), `PRIMARY_PROVIDER_LANES` and the Postgres
+admission constraint. It is not a committee member, not part of the
+core-inventory floor, not a Windows host-bridge lane and not a native acceptance
+issuer. The transport is `src/director_orchestrator/zai_native.py`.
+
+Everything stays closed by default. Production needs all of:
+
+```dotenv
+ZAI_MODE=production
+ZAI_ENABLED=true
+ZAI_PRODUCTION_ACTIVATION=sha256:<digest of the owner's activation record>
+ZAI_API_KEY=
+ZAI_API_BASE=https://api.z.ai/api/anthropic
+ZAI_MODEL=glm-5.3
+ZAI_CLI_EXECUTABLE=<absolute path of the Claude Code CLI>
+ZAI_MAX_TURNS=30
+ZAI_PRODUCTION_TIMEOUT_SECONDS=900
+ZAI_ALLOW_REPOSITORY_WRITE=false
+ZAI_TRIAL_ENABLED=false
+```
+
+`GET /health` reports `providers.zai` and the `zai_production` readiness
+booleans (never a key, path, endpoint or model value). Startup refuses production
+mode without an activation digest, with the trial lane enabled, or with a
+non-official endpoint. The activation digest is deployment configuration: it is
+not evidence that a live round trip happened.
+
+What each attempt gets:
+
+- **Credentials.** Only the configured `ZAI_API_KEY`, passed as the child's
+  `ANTHROPIC_AUTH_TOKEN`, with `ANTHROPIC_BASE_URL` pinned to Z.ai and every
+  Anthropic model slot set to the GLM model. No host Anthropic/Claude token or
+  other lane credential is inherited. Home and `CLAUDE_CONFIG_DIR` are a fresh
+  temporary directory, removed afterwards; settings sources, MCP servers and
+  session persistence are off.
+- **Tools, scoped by the work packet.** `READ_REPOSITORY` → Read/Grep/Glob;
+  `RUN_TESTS` → Bash limited to `python -m unittest`, `python -m pytest` and
+  `pytest`; `PUBLIC_WEB_SEARCH` → WebSearch/WebFetch; `WRITE_ISOLATED_BRANCH` →
+  Edit/Write only inside the packet's owned paths, and only with
+  `ZAI_ALLOW_REPOSITORY_WRITE=true`. `.env` files, `.git` and the packet's
+  prohibited paths are always denied. Read-only work runs in plan mode; write
+  work runs in default mode, where print mode refuses anything not allowed.
+  There is no permissions bypass. Any other grant, and any external effect
+  (branch push, pull request), is refused before launch: effects stay with the
+  Director's effect gateway.
+- **Bounds.** `--max-turns` from `ZAI_MAX_TURNS`, the shared absolute cutoff and
+  contained process tree, writer fencing, the per-attempt budget variables, and
+  the existing three-attempt and ambiguity rules.
+- **Verification.** Only a `result`/`success`/`is_error: false` envelope that
+  ended on `end_turn` within the turn limit is accepted, and every model in
+  `modelUsage` must be exactly `ZAI_MODEL`; anything else is rejected, never
+  relabelled. Token counts come from the native envelope; if they are missing
+  the result is never `SUCCEEDED`. Cost is always recorded as `null` (UNKNOWN):
+  the CLI prices with Anthropic tariffs, and the owner's $5 total budget has an
+  unknown current balance.
+
+Media capabilities of individual GLM models are not wired or advertised; the
+lane is text coding and tool-enabled agent work only. Enrollment is prospective:
+it does not read, rewrite or re-credit the trial ledger below.
+
+Before any paid qualification or production call, reconcile the earlier failed
+or ambiguous trial attempts, confirm the current balance of the $5 budget, and
+obtain exact-head independent review and the applicable CI and security gates.
+Completion of the enrollment needs a real authorized Slack thread response and
+receipt through the existing Director relay; installing configuration is not
+round-trip evidence.
+
 ## Z.ai trial-only contact lane
 
-Z.ai (GLM Coding Plan) is staged as a trial-only, fail-closed contact lane under
-owner directive #207 until the owner's separate activation decision on or after
-2026-09-29. It is not a production provider: `zai` is absent from the provider
-enums, the allocation lanes, the primary roster and the Postgres lane constraint,
-so no code path can grant it production credit, a counted review verdict or merge
-authority. Anything it reviews is advisory input to the author. The runtime
-identity, ledger and dispatch path live in `src/director_orchestrator/zai_lane.py`;
-the transport is unchanged in `zai_trial.py`.
+This is the historical Lite trial route. Z.ai (GLM Coding Plan) was staged as a
+trial-only, fail-closed contact lane under owner directive #207. The trial lane
+and its ledger remain trial-only after the production enrollment above: trial
+attempts carry no production credit, no counted review verdict and no merge
+authority, and anything the trial reviewed stays advisory input to the author.
+The trial identity, ledger and dispatch path live in
+`src/director_orchestrator/zai_lane.py`; the transport is unchanged in `zai_trial.py`.
 
 Keep the key only in the ignored deployment `.env` and start with
 `ZAI_TRIAL_ENABLED=false`:
@@ -552,7 +627,8 @@ only when it is exactly this build's schema and version (a foreign, partial, wea
 or older file is refused, never migrated). The deployed container image does not carry the Claude Code CLI, so the
 lane is closed there by construction and is operated from the Windows host.
 
-Startup refuses any widening: `ZAI_MODE` other than `trial_only`, either
+In trial mode startup refuses any widening: `ZAI_MODE` other than `trial_only` or
+`production`, `ZAI_ENABLED=true`, either
 `ZAI_ALLOW_*` flag set true, a non-official `ZAI_API_BASE`, any value in
 `ZAI_PRODUCTION_ACTIVATION`, or `ZAI_TRIAL_ENABLED=true` without
 `ZAI_LITE_ENTITLEMENT_VERIFIED=true` (the owner has observed the Lite
@@ -817,3 +893,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
@@ -547,6 +548,8 @@ def health() -> dict:
         # Trial-only contact lane (owner directive #207): individual readiness
         # booleans so an operator can see which gate is closed; never a value.
         "zai_trial": settings.zai_trial_readiness(),
+        # Enrolled production lane (2026-09-27): booleans only, closed by default.
+        "zai_production": settings.zai_production_readiness(),
         "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
@@ -1925,3 +1928,4 @@ def complete_run(
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

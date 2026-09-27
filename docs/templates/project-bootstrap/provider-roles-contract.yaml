@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | BEGIN]]
@@ -69,17 +70,22 @@ allocation_and_selection:
   accepted_output_ledger: "separate_authenticated_accepted_production"
   default_profile: "engineering"
   allocation_profiles:
-    lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    # Z.ai enrolled at 18% on 2026-09-27; other nonzero lanes reduced
+    # proportionally to 82% (see docs/provider-allocation-profiles.md).
+    lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     weights:
-      engineering: [40, 25, 15, 10, 10, 0, 0, 0]
-      mixed: [27, 33, 10, 10, 5, 5, 5, 5]
-      public_research: [20, 25, 5, 5, 5, 25, 15, 0]
-      enterprise: [32, 38, 5, 5, 5, 0, 5, 10]
+      engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]
+      mixed: [22, 27, 9, 8, 4, 4, 4, 4, 18]
+      public_research: [16, 21, 4, 4, 4, 21, 12, 0, 18]
+      enterprise: [27, 31, 4, 4, 4, 0, 4, 8, 18]
   profile_binding: "frozen_before_approval_preserve_real_history_no_silent_redistribution"
   zero_target: "ineligible"
   total_effort_status: "separate_telemetry_not_production_credit"
   normal_tolerance_percentage_points: 3
   hard_ceiling_above_target_percentage_points: 5
+  # Enforced only for the newly enrolled Z.ai lane (owner, 2026-09-27); the
+  # other lanes' rolling-twenty hard stop stays retired since 2026-09-21.
+  hard_ceiling_enforced_lanes: [zai]
   allocation_unit: "assignment_count"
   prospective_window_assignments: 20
   insufficient_history_action: "fixed_twenty_slots_real_assignments_only"
@@ -399,3 +405,4 @@ project_local_bindings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

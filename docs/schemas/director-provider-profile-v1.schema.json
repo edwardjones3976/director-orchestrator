@@ -10,15 +10,15 @@
   "$defs": {
     "lane": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot"]
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "zai"]
     },
     "backendIdentity": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot"]
+      "enum": ["openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot", "zai"]
     },
     "legacyAgent": {
       "type": "string",
-      "enum": ["cursor", "claude", "gemini", "grok", "perplexity", "openai", "firecrawl", "github-copilot"]
+      "enum": ["cursor", "claude", "gemini", "grok", "perplexity", "openai", "firecrawl", "github-copilot", "zai"]
     },
     "committeeKey": {
       "type": "string",
@@ -61,6 +61,7 @@
             "docs/team-operating-charter.md",
             "docs/project-leadership.md",
             "docs/provider-setup.md",
+            "docs/providers/zai-welcome-aboard.md",
             "docs/provider-allocation-profiles.md",
             "docs/slack-collaboration-bus.md",
             "docs/model-interoperability-contract.md",
@@ -444,7 +445,7 @@
           "required": ["health_key", "readiness_function", "readiness_keys", "primary_lane_authentication_source", "variables", "allowlist_variables", "verification_rule"],
           "properties": {
             "health_key": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },
-            "readiness_function": { "type": "string", "enum": ["none", "gemini_supplemental_readiness", "grok_primary_readiness", "perplexity_research_readiness", "readiness"] },
+            "readiness_function": { "type": "string", "enum": ["none", "gemini_supplemental_readiness", "grok_primary_readiness", "perplexity_research_readiness", "zai_production_readiness", "readiness"] },
             "readiness_keys": { "type": "array", "items": { "type": "string", "pattern": "^[a-z_]+$" } },
             "primary_lane_authentication_source": { "type": "string", "enum": ["settings_field", "environment_variable", "native_login_status", "hard_coded_false"] },
             "variables": {
@@ -456,7 +457,7 @@
                     "type": "object",
                     "required": ["kind", "readiness_key", "required_value", "verify"],
                     "properties": {
-                      "kind": { "type": "string", "enum": ["enable_switch", "mode_lock", "endpoint_lock", "transport_selector", "allow_flag_must_stay_false", "allow_flag_elevating", "credential_presence", "executable_digest", "repository_map", "token_file", "tenant_binding", "callback_secret", "routine_endpoint", "bridge_endpoint", "bridge_secret"] },
+                      "kind": { "type": "string", "enum": ["enable_switch", "mode_lock", "endpoint_lock", "transport_selector", "allow_flag_must_stay_false", "allow_flag_elevating", "credential_presence", "executable_digest", "executable_path", "activation_record_digest", "repository_map", "token_file", "tenant_binding", "callback_secret", "routine_endpoint", "bridge_endpoint", "bridge_secret"] },
                       "readiness_key": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },
                       "required_value": { "type": ["string", "boolean", "null"] },
                       "verify": { "$ref": "#/$defs/shortText" }
@@ -556,7 +557,7 @@
             "properties": {
               "transport_id": { "$ref": "#/$defs/slug" },
               "kind": { "type": "string", "enum": ["http_api", "callback", "native_cli", "host_bridge", "browser_ui", "public_search_cli", "github_actions", "slack_alias", "cloud_agent_api", "managed_agent_api", "acceptance_issuer"] },
-              "runtime": { "type": "string", "enum": ["legacy_engine", "langgraph_primary", "both", "documented_only"] },
+              "runtime": { "type": "string", "enum": ["legacy_engine", "langgraph_primary", "both", "operator_cli", "documented_only"] },
               "enum_value": { "oneOf": [{ "$ref": "#/$defs/providerTransportEnum" }, { "type": "null" }] },
               "transport_kind_observed": { "type": ["string", "null"], "pattern": "^[a-z0-9-]+$" },
               "status": { "type": "string", "enum": ["implemented", "implemented_disabled_by_default", "blocked_pending_evidence", "proposed", "prohibited"] },
@@ -607,10 +608,10 @@
           "type": "array",
           "prefixItems": [
             { "const": "openai" }, { "const": "claude" }, { "const": "cursor" }, { "const": "grok" }, { "const": "antigravity" },
-            { "const": "perplexity" }, { "const": "firecrawl" }, { "const": "github-copilot" }
+            { "const": "perplexity" }, { "const": "firecrawl" }, { "const": "github-copilot" }, { "const": "zai" }
           ],
-          "minItems": 8,
-          "maxItems": 8
+          "minItems": 9,
+          "maxItems": 9
         },
         "endpoints": {
           "type": "array",
@@ -639,7 +640,7 @@
     },
     "endpoint": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers"]
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "zai", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers"]
     },
     "route": {
       "type": "object",

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -355,8 +356,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
         self.assertEqual(directive["default_allocation_profile"], "engineering")
-        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [40, 25, 15, 10, 10, 0, 0, 0])
-        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 8)
+        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [33, 21, 12, 8, 8, 0, 0, 0, 18])
+        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
         self.assertEqual(
             directive["workload_accounting"]["ledgers"]["overall_effort"],
             "prospective_observed_effort_guard",
@@ -1193,10 +1194,10 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         contract = self.contract()
         for field in (
             'default_profile: "engineering"',
-            'engineering: [40, 25, 15, 10, 10, 0, 0, 0]',
-            'mixed: [27, 33, 10, 10, 5, 5, 5, 5]',
-            'public_research: [20, 25, 5, 5, 5, 25, 15, 0]',
-            'enterprise: [32, 38, 5, 5, 5, 0, 5, 10]',
+            'engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]',
+            'mixed: [22, 27, 9, 8, 4, 4, 4, 4, 18]',
+            'public_research: [16, 21, 4, 4, 4, 21, 12, 0, 18]',
+            'enterprise: [27, 31, 4, 4, 4, 0, 4, 8, 18]',
             'total_effort_status: "separate_telemetry_not_production_credit"',
         ):
             with self.subTest(field=field):
@@ -1641,3 +1642,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

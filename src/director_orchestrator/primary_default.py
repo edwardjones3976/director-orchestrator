@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
@@ -590,6 +591,7 @@ _PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
     "perplexity": ProviderName.PERPLEXITY,
     "firecrawl": ProviderName.FIRECRAWL,
     "github-copilot": ProviderName.GITHUB_COPILOT,
+    "zai": ProviderName.ZAI,
 }
 _PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
     {"perplexity", "firecrawl"}
@@ -1740,6 +1742,9 @@ def build_automatic_primary_live_dependencies(
             or os.environ.get("GH_TOKEN", "").strip()
             or os.environ.get("GITHUB_TOKEN", "").strip()
         ),
+        # Every production readiness check, not merely a key: see
+        # Settings.zai_production_readiness.
+        "zai": settings.zai_native_config() is not None,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -1771,6 +1776,7 @@ def build_automatic_primary_live_dependencies(
         ),
         host_bridge_challenge=bridge_challenge,
         host_bridge_attested_argv=settings.host_bridge_attested_argv(),
+        zai=settings.zai_native_config(),
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -5218,3 +5224,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

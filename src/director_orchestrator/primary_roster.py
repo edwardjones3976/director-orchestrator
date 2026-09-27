@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -30,10 +31,13 @@ from .primary_workload import admission_reason
 from .allocation_profiles import ALLOCATION_PROFILES, allocation_targets, DEFAULT_ALLOCATION_PROFILE
 
 PRIMARY_TEAM = frozenset({"openai", "claude", "cursor", "grok"})
-IMPLEMENTERS = ("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")
+# Z.ai (GLM) was enrolled by the owner on 2026-09-27 as an implementer and an
+# independent reviewer of other lanes' work. It is not part of the core-inventory
+# floor, and the producer/reviewer lanes must still differ.
+IMPLEMENTERS = ("openai", "claude", "cursor", "grok", "antigravity", "github-copilot", "zai")
 RESEARCH_LANES = ("perplexity", "firecrawl")
-REVIEWERS = PRIMARY_TEAM
-KNOWN_LANES = PRIMARY_TEAM | {"antigravity", "perplexity", "firecrawl", "github-copilot"}
+REVIEWERS = PRIMARY_TEAM | {"zai"}
+KNOWN_LANES = PRIMARY_TEAM | {"antigravity", "perplexity", "firecrawl", "github-copilot", "zai"}
 
 class PrimaryRosterHold(ValueError):
     """A pre-dispatch capability or allocation hold; never a provider failure."""
@@ -152,3 +156,4 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

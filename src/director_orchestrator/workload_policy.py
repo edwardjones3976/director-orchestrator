@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -50,7 +51,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
-from .allocation_profiles import allocation_targets, canonical_allocation_lane, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest
+from .allocation_profiles import allocation_targets, canonical_allocation_lane, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest, hard_ceiling_slots
 
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -83,6 +84,9 @@ class Provider(str, Enum):
     PERPLEXITY = "perplexity"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
+    # Z.ai (GLM) is its own provider identity, never Claude, even though its
+    # native route runs the Claude Code executable against Z.ai's endpoint.
+    ZAI = "zai"
 
 
 class DirectProductionProvider(str, Enum):
@@ -101,6 +105,7 @@ class DirectProductionProvider(str, Enum):
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
     EXTERNAL_OPENAI = "external_openai"
+    ZAI = "zai"
 
 
 class WorkSize(str, Enum):
@@ -616,6 +621,9 @@ def direct_assignment_capacity_violation(
     prior = tuple(history)[-(policy.rolling_window_size - 1):]
     if policy.direct_production_target(provider) == 0:
         return f"allocation_profile_lane_ineligible:{provider.value}"
+    ceiling = hard_ceiling_slots(canonical_allocation_lane(provider.value), policy.allocation_profile)
+    if ceiling is not None and sum(record.provider is provider for record in prior) + 1 > ceiling:
+        return f"allocation_lane_hard_ceiling_reached:{provider.value}"
     return None
 
 
@@ -1429,3 +1437,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
