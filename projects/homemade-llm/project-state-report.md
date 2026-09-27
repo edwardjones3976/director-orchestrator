@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:16 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
@@ -153,7 +155,7 @@ All 19 figures are provider-reported and were read by the Director `[verified, r
 |---|---|---|
 | 1 | Project and assignment IDs | Top of this report |
 | 2 | Objective, scope, categorized status | Top of this report and the M0 table |
-| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's base `052553f`; current `main` `c432722` (PR #288, merged 2026-09-26 21:20 UTC) `[verified, git]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
+| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's starting base `052553f`; prior reconciliation base `c432722` (PR #288, merged 2026-09-26 21:20 UTC); current `main` `0ead1cb` after #297 merged `[verified, git 2026-09-27 01:26 UTC]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
 | 4 | Provider participation, unavailable providers, drafts or simulations | Every paid call has a receipt (M0 paid spend table). Unavailable during M0: Grok Build CLI (HTTP 402, D-009) and GitHub Copilot (out of quota, D-005). No draft, simulation or predicted-position content. |
 | 5 | Target and actual provider ledgers (assignment and rolling 20) | **Unavailable.** The engineering-workload ledger stops at 2026-09-12, so the rolling-20 mix is UNKNOWN. |
 | 6 | Moderator, Participant and Director actions, OpenAI vote | Director actions are recorded in the decision log (O-, D- rows). **Not applicable:** no committee vote was held in M0, and no OpenAI vote was cast. |
@@ -200,7 +202,7 @@ CI is the six required jobs at each PR's merged or pending head, read with `gh p
 - **D-019:** Set A v2 and Set B v2 ratified as documented exceptions; originals, rejected versions, timing, reviews and spend remain preserved. Set A's authenticated ACCEPT remains valid. O-042 accepts the later authenticated Set B batch-1 receipt on the frozen packet and retains pr-45 as a disclosed MINOR reference imperfection; scoring still requires the M1 pipeline gates.
 - **D-020:** Claude is principal author and Codex a material contributor under the #293-only exception (21:36 UTC, comment 5850099220; reaffirmed 21:53 UTC, comment 5850218598). #284's proposed 52 % rule is not in force and does not apply retroactively. No contributor may review.
 - **D-021:** M0 dispatch without pre-stage packets or writer leases is ratified as a historical, project-specific exception. The crossing, evidence and cost remain visible; future M1 dispatches require approved packets, leases, allocation and gates.
-- **D-022:** Exceeding the 3-revision limit, 19 paid Grok rounds plus connector rounds and USD 2.610416 review waste are ratified once, not claimed compliant. The earlier MX-011 correction and bounded review rounds are completed history. Current review authority is owner disposition 5850566834: local cross-file consistency check, one exact-head/base full-diff Grok review capped at USD 0.30, and all six CI checks; a new substantive finding stops for owner disposition.
+- **D-022:** Exceeding the 3-revision limit, 19 paid Grok rounds plus connector rounds and USD 2.610416 review waste are ratified once, not claimed compliant. The earlier MX-011 correction and bounded review rounds are completed history. Comment 5850566834 authorized an earlier comprehensive pass; later owner dispositions authorized subsequent bounded rounds. The current one-sentence citation correction and fresh exact-head Cursor review were approved in comment 5851555811. Six CI checks and all other merge gates still apply; a new substantive finding stops for owner disposition.
 - **Open #293 gates:** #293 still requires this bounded record correction, a local cross-file check, one independent exact-head/base full-diff Grok review capped at USD 0.30 under Ed's 2026-09-27 approval, all six current-head CI checks, and Cursor's own eligible exact-head review and merge. Claude and Codex contributed and cannot review or merge. This PR's six checks also supply the incomplete #277 CI evidence (3 of 6 jobs were cancelled).
 - **Merge law, owner 2026-09-26 ~21:53 UTC (O-040):** "Any provider that has reviewed the work thoroughly can merge it. The owner/sole-author (other ME), can never merge their own work." Grok supplies the bounded independent full-diff review for #293. Under the later joint disposition in PR #294 comment 5850665622, Cursor must perform its own thorough exact-head/base review and is the eligible merger after all gates. Neither contributor, Claude nor Codex, may review or merge.
 - **Separate historical/M1 items:** D-018 is ratified by O-037 in the approved but unmerged M1 plan PR #294 (owner disposition 5850566834); the historical crossing and cost remain recorded. #281 is merged as `e9461c7441c255f83cd8a30a3cd6f4c14d27b9ba`. M1 plan approval is O-038 in unmerged #294; approved packets, leases, allocation and safety/budget gates still govern dispatch.
@@ -241,3 +243,5 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:16 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]] -->
