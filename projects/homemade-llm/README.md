@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
@@ -115,7 +116,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
    fixes, provider plumbing) goes to Codex under the charter's
    [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
    `dispatch.py codex` is the usual route from this project.
-   Codex's maintenance commits are assistance and do not count toward authorship shares (owner ruling 2026-09-27); the sole author is computed from authored commits at the exact head (the sole-author rule, PR #284).
+   Codex's maintenance commits are assistance and do not count toward authorship shares (owner ruling 2026-09-27); the sole author is computed from authored commits in `merge_base_sha..head` (the sole-author rule, PR #284).
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -155,3 +156,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | END]] -->
