@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
@@ -2891,7 +2892,7 @@ class GitHubOracleGateway:
         if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
             raise RuntimeError("GitHub pull request changed during final merge validation")
         if self._base_protected(repository, pull["base"]["ref"], expected_base_sha):
-            raise RuntimeError("legacy Oracle transport lacks standing merge evidence; use MergeExecutionBoundary")
+            raise RuntimeError("protected base: legacy Oracle transport lacks standing merge evidence; use MergeExecutionBoundary")
         actor = (
             self._token_provider.actor
             if self._token_provider is not None
@@ -2954,3 +2955,4 @@ class GitHubOracleGateway:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:01 UTC | END]]
