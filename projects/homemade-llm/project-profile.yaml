@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | BEGIN]]
@@ -133,7 +134,7 @@ modules:
     purpose: "gitleaks on datasets; hard-line suite from M4"
   review_to_merge:
     state: "enabled"
-    purpose: "Non-author review; for #293 the final accepting reviewer merges after all gates (O-040)"
+    purpose: "Non-author review; for #293 Cursor performs its own thorough current-head/base review and eligible guarded merge after all gates (O-040)"
   operations:
     state: "disabled"
     purpose: "Enabled at L1 (always-on serving)"
@@ -153,9 +154,10 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Non-author review of Director PRs; for #293, review under disposition 5850566834 (one exact-head/base full-diff review capped USD 0.30 after local consistency check); merge only after ACCEPT and all gates, including six CI checks (O-040)"
+        - "Non-author review of Director PRs; for #293, one exact-head/base full-diff review capped USD 0.30 after local consistency check. Cursor separately performs its own thorough review and eligible guarded merge after all gates, including six CI checks (O-040)."
       forbidden_authority:
         - "training-data generation (xAI terms: grading only)"
+        - "merge"
     - id: "review-codex"
       provider: "other"
       role: "reviewer"
@@ -213,7 +215,7 @@ controls:
     - "Any paid call that would breach the milestone envelope"
     - "Any fan-out over 3 concurrent agents or dispatches"
     - "Downloads, deletions, config/ACL/Scheduled Task changes, messages to other Directors"
-    - "Every merge requires thorough non-author review and all deterministic gates; #293 final accepting reviewer merges, never Claude or Codex (--merge --match-head-commit; O-040)"
+    - "Every merge requires thorough non-author review and all deterministic gates; Cursor is #293's eligible merger after its own current-head/base review, never Claude or Codex (--merge --match-head-commit; O-040)"
   acceptance_checks:
     - "L1 and L2 checklists in PLAN.md"
   serious_safety_stop: true
@@ -282,4 +284,5 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
