@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:35 UTC | BEGIN]] -->
@@ -85,10 +86,12 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    model-authored prose and never touches Slack. OpenAI, ChatGPT, and Codex are
    one identity; the xAI API, Grok CLI, and Grok Bot are one family.
 
-5. **Review and merge.** The Director assigns a non-author reviewer of record
-   (Grok CLI first, Codex fallback). The reviewer's exact-SHA `ACCEPT` is relayed
-   to the PR; the owner runs the merge. Every candidate change invalidates prior
-   review evidence.
+5. **Review and merge.** The Director assigns an eligible non-author reviewer of
+   record. Review must accept the current head and base, and all required CI
+   checks must pass before the owner-authorized merge. Every candidate change
+   invalidates prior review evidence. For PR #293, O-040 assigns Cursor its own
+   thorough review and the guarded merge after all gates; Claude and Codex
+   contributed to that PR and cannot review or merge it.
 
 6. **Hard stops.** The Director halts and reports at every milestone gate,
    before any provider call that would exceed the milestone's USD 25 envelope,
@@ -99,8 +102,9 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    fixes, provider plumbing) goes to Codex under the charter's
    [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
    `dispatch.py codex` is the usual route from this project.
-   Codex's edits are assistance and leave the PR's sole author unchanged (the
-   sole-author rule, PR #284).
+   Maintenance routing does not determine material authorship. PR #284's
+   proposed 52% rule is not in force until it merges; O-041 records PR #293's
+   one-time mixed-authorship exception, with Claude principal and Codex material.
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -114,7 +118,7 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 | [`PLAN.md`](PLAN.md) | Plan v1.3: launch definition (L1/L2 checklists, calendar), research findings, and the v1.2 corrections to the owner's v1.1.0 |
 | [`project-profile.yaml`](project-profile.yaml) | Living project profile (`director-project-profile/v1`) |
 | [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Project-local provider boundaries (`director-provider-roles/v1`), with the Director deviation recorded |
-| [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; analysis-only, all Slack identities pending |
+| [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; `analysis_only` deployment intent, `explicitly_scoped` external effects, all Slack identities pending |
 | [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); PR #294 contains the approved but unmerged M1 plan (O-038) |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
@@ -139,3 +143,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:35 UTC | END]] -->
