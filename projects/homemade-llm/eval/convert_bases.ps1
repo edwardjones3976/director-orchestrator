@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:27 UTC | BEGIN]]
@@ -352,7 +353,17 @@ function Get-GgufArtifacts([string]$WorkHost, [hashtable]$Entry) {
     $list
 }
 
-function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snapshot, [hashtable]$Progress) {
+function Write-JournalLine([string]$Path, [object]$Record, [switch]$Create) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($Record | ConvertTo-Json -Depth 8 -Compress) + "`n")
+    $mode = if ($Create) { [IO.FileMode]::CreateNew } else { [IO.FileMode]::Append }
+    $stream = [IO.FileStream]::new($Path, $mode, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally { $stream.Dispose() }
+}
+
+function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snapshot, [hashtable]$Progress, [object]$StorageBefore) {
     $expected = Get-ExpectedBlobMap $Repo $Entry.Revision
     $blobMap = Get-WeightBlobMapViaDocker $Repo $Entry $Snapshot
     $relWeights = @($blobMap.Keys | Sort-Object)
@@ -361,6 +372,7 @@ function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snap
     $archiveBase = Join-Path $EArchiveRoot (Get-HubFolderName $Repo)
     $copied = [System.Collections.Generic.List[object]]::new()
     $blobHashes = @{}
+    $planned = @{}
 
     foreach ($rel in $relWeights) {
         if (-not $expected.ContainsKey($rel)) { Write-Error "no expected sha256 for weight $rel in manifest" }
@@ -369,6 +381,7 @@ function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snap
         $dest = Join-Path (Join-Path $archiveBase (Join-Path 'snapshots' $Entry.Revision)) $rel
         Copy-FileVerified $srcBlob $dest
         $copied.Add([pscustomobject]@{ path = $dest; sha256 = $sha; role = 'weight' })
+        $planned[$srcBlob] = [pscustomobject]@{ path = $srcBlob; sha256 = $sha; archivePath = $dest; archiveSha256 = $sha }
         $blobHashes[$srcBlob] = $expected[$rel]
     }
 
@@ -378,12 +391,26 @@ function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snap
         $Progress.archived.Add($c)
     }
 
+    $reports = Join-Path $CHotRoot 'reports'
+    New-Item -ItemType Directory -Force -Path $reports | Out-Null
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ')
+    $journal = Join-Path $reports "m1-convert-$($Entry.Key)-$stamp.journal.jsonl"
+    $Progress.journal = $journal
+    Write-JournalLine $journal ([ordered]@{
+        type = 'intent'; model = $Entry.Key; repo = $Repo; revision = $Entry.Revision
+        utc = [DateTime]::UtcNow.ToString('o'); removals = @($Progress.remaining | ForEach-Object { $planned[$_] })
+        storage = [ordered]@{ before = $StorageBefore; beforeRemoval = Get-StorageSnapshot }
+    }) -Create
+
     foreach ($blobPath in @($Progress.remaining)) {
         $sha = Assert-MappedBlob $blobPath $blobHashes[$blobPath]
         Write-Host "remove C: blob $blobPath (sha256 $sha)"
         Remove-Item -LiteralPath $blobPath -Force
         $Progress.removed.Add([pscustomobject]@{ path = $blobPath; sha256 = $sha })
         $Progress.remaining = @($Progress.remaining | Where-Object { $_ -ne $blobPath })
+        Write-JournalLine $journal ([ordered]@{
+            type = 'removed'; path = $blobPath; sha256 = $sha; utc = [DateTime]::UtcNow.ToString('o')
+        })
     }
 }
 
@@ -422,43 +449,49 @@ function Write-ModelReceipt(
     [object]$StorageAfter,
     [string]$Status = 'complete',
     [string[]]$Remaining = @(),
-    [string]$Failure
+    [string]$Failure,
+    [string]$Journal
 ) {
-    $reports = Join-Path $CHotRoot 'reports'
-    if ($Execute) { New-Item -ItemType Directory -Force -Path $reports | Out-Null }
-    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-    $receiptPath = Join-Path $reports "m1-convert-$($Entry.Key)-$stamp.json"
-    $body = [ordered]@{
-        model = $Entry.Key
-        repo = $Repo
-        revision = $Entry.Revision
-        utc = (Get-Date).ToUniversalTime().ToString('o')
-        status = $Status
-        remaining = @($Remaining)
-        failure = $Failure
-        gguf = @($Ggufs | Where-Object { $_.quant -ne 'bf16' } | ForEach-Object {
-                [ordered]@{ path = $_.path; quant = $_.quant; bytes = $_.bytes; sha256 = $_.sha256 }
-            })
-        archived = @($Archived | ForEach-Object { [ordered]@{ path = $_.path; sha256 = $_.sha256; role = $_.role } })
-        removed = @($Removed | ForEach-Object { [ordered]@{ path = $_.path; sha256 = $_.sha256 } })
-        dangling_links_left = @($DanglingLinks)
-        storage = [ordered]@{
-            before = [ordered]@{ cFreeGiB = $StorageBefore.cFreeGiB; llmGiB = $StorageBefore.llmGiB }
-            after = [ordered]@{ cFreeGiB = $StorageAfter.cFreeGiB; llmGiB = $StorageAfter.llmGiB }
+    try {
+        $reports = Join-Path $CHotRoot 'reports'
+        if ($Execute) { New-Item -ItemType Directory -Force -Path $reports | Out-Null }
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+        $receiptPath = Join-Path $reports "m1-convert-$($Entry.Key)-$stamp.json"
+        $body = [ordered]@{
+            model = $Entry.Key
+            repo = $Repo
+            revision = $Entry.Revision
+            utc = (Get-Date).ToUniversalTime().ToString('o')
+            status = $Status
+            remaining = @($Remaining)
+            failure = $Failure
+            journal = $Journal
+            gguf = @($Ggufs | Where-Object { $_.quant -ne 'bf16' } | ForEach-Object {
+                    [ordered]@{ path = $_.path; quant = $_.quant; bytes = $_.bytes; sha256 = $_.sha256 }
+                })
+            archived = @($Archived | ForEach-Object { [ordered]@{ path = $_.path; sha256 = $_.sha256; role = $_.role } })
+            removed = @($Removed | ForEach-Object { [ordered]@{ path = $_.path; sha256 = $_.sha256 } })
+            dangling_links_left = @($DanglingLinks)
+            storage = [ordered]@{
+                before = [ordered]@{ cFreeGiB = $StorageBefore.cFreeGiB; llmGiB = $StorageBefore.llmGiB }
+                after = [ordered]@{ cFreeGiB = $StorageAfter.cFreeGiB; llmGiB = $StorageAfter.llmGiB }
+            }
+            tools = [ordered]@{
+                convertScript = $ConvertPy
+                quantize = $QuantizeBin
+                image = $Image
+            }
         }
-        tools = [ordered]@{
-            convertScript = $ConvertPy
-            quantize = $QuantizeBin
-            image = $Image
+        if ($Execute) {
+            $body | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+            Write-Host "receipt $receiptPath"
+        } else {
+            Write-Host "plan receipt -> $receiptPath"
         }
+        $receiptPath
+    } catch {
+        throw "receipt write failed: $($_.Exception.Message); journal path: $Journal; prior failure: $Failure"
     }
-    if ($Execute) {
-        $body | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding utf8
-        Write-Host "receipt $receiptPath"
-    } else {
-        Write-Host "plan receipt -> $receiptPath"
-    }
-    $receiptPath
 }
 
 function Show-PlanLine([string]$Line) { Write-Output "PLAN $Line" }
@@ -513,21 +546,22 @@ foreach ($repo in $sequence) {
         placed = [System.Collections.Generic.List[object]]::new()
         remaining = @()
         dangling = @()
+        journal = $null
     }
     $phase = 'archive'
     try {
-        Archive-VerifiedWeights $repo $entry $snapshot $progress
+        Archive-VerifiedWeights $repo $entry $snapshot $progress $storageBefore
         $phase = 'placement'
         $placed = @(Place-FinalGgufs $entry $ggufs $workHost $progress)
         $phase = 'final storage measurement'
         $storageAfter = Get-StorageSnapshot
     } catch {
-        $failure = "${phase} failed: $($_.Exception.Message); removed C: blobs (verified on E:): [$($progress.removed.path -join '; ')]; remaining C: blobs: [$($progress.remaining -join '; ')]"
-        $null = Write-ModelReceipt $entry $repo $progress.placed.ToArray() $progress.archived.ToArray() $progress.removed.ToArray() $progress.dangling $storageBefore $null -Status 'partial' -Remaining $progress.remaining -Failure $failure
+        $failure = "${phase} failed: $($_.Exception.Message); journal path: $($progress.journal); removed C: blobs (verified on E:): [$($progress.removed.path -join '; ')]; remaining C: blobs: [$($progress.remaining -join '; ')]"
+        $null = Write-ModelReceipt $entry $repo $progress.placed.ToArray() $progress.archived.ToArray() $progress.removed.ToArray() $progress.dangling $storageBefore $null -Status 'partial' -Remaining $progress.remaining -Failure $failure -Journal $progress.journal
         throw $failure
     }
 
-    $receipt = Write-ModelReceipt $entry $repo $placed $progress.archived.ToArray() $progress.removed.ToArray() $progress.dangling $storageBefore $storageAfter
+    $receipt = Write-ModelReceipt $entry $repo $placed $progress.archived.ToArray() $progress.removed.ToArray() $progress.dangling $storageBefore $storageAfter -Journal $progress.journal
 
     $required = @('model', 'repo', 'revision', 'gguf', 'archived', 'removed', 'storage', 'tools')
     $parsed = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
@@ -542,3 +576,4 @@ exit 0
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:27 UTC | BEGIN]]
@@ -177,11 +179,37 @@ function Get-Item {
     if ($LiteralPath -eq $env:HL_MEASURE_FAIL) { throw "synthetic unreadable file: $LiteralPath" }
     Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force
 }
+$script:journalWriter = ${function:Write-JournalLine}
+$script:journalAppends = 0
+function Write-JournalLine([string]$Path, [object]$Record, [switch]$Create) {
+    if ($Create -and $env:HL_JOURNAL_FAIL -eq 'create') {
+        throw 'synthetic journal creation failure'
+    }
+    if (-not $Create) {
+        $script:journalAppends++
+        if ($env:HL_JOURNAL_FAIL -eq 'append' -and $script:journalAppends -eq 2) {
+            throw 'synthetic journal append failure before write'
+        }
+    }
+    & $script:journalWriter $Path $Record -Create:$Create
+}
+function Set-Content {
+    [CmdletBinding()]param(
+        [string]$LiteralPath, [Parameter(ValueFromPipeline)]$Value,
+        [string]$Encoding = 'utf8', [switch]$NoNewline
+    )
+    process {
+        if ($env:HL_RECEIPT_FAIL -and $LiteralPath -like '*m1-convert-*.json') {
+            throw 'synthetic receipt write failure'
+        }
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value -Encoding $Encoding -NoNewline:$NoNewline
+    }
+}
 '@
     $sourceText = Get-Content -LiteralPath $script -Raw
     $helper = (Resolve-Path (Join-Path $PSScriptRoot '..\scripts\invoke-bounded.ps1')).Path.Replace("'", "''")
     $script = Join-Path $work 'convert-under-test.ps1'
-    $sourceText.Replace(". (Join-Path `$PSScriptRoot '..\scripts\invoke-bounded.ps1')", ". '$helper'`r`n$testHooks") | Set-Content -LiteralPath $script -Encoding utf8
+    $sourceText.Replace(". (Join-Path `$PSScriptRoot '..\scripts\invoke-bounded.ps1')", ". '$helper'").Replace('$CHotRoot = Get-NormalPath $CHotRoot', "$testHooks`r`n" + '$CHotRoot = Get-NormalPath $CHotRoot') | Set-Content -LiteralPath $script -Encoding utf8
 
     # Exercise quotes, Unicode and CRLF through the same bounded native argv route.
     . (Join-Path $PSScriptRoot '..\scripts\invoke-bounded.ps1')
@@ -241,6 +269,14 @@ function Get-Item {
         }
     } | ConvertTo-Json -Depth 5
     Set-Content -LiteralPath $offline $offlineBody -Encoding utf8
+    $before = @(Get-ChildItem -LiteralPath $work -Recurse -File -Force).Count
+    $out, $code = Invoke-Convert @(
+        '-Preflight', '-Model', 'Qwen/Qwen3-8B', '-CHotRoot', $cRoot,
+        '-EArchiveRoot', $eRoot, '-GConvertRoot', $gRoot, '-GpuPoisonPath', $poison,
+        '-DockerPath', $dockerShim, '-ProbeCFreeBytes', ([long](200GB)), '-ProbeLlmBytes', 0
+    )
+    Assert ($code -eq 0) 'preflight exits 0'
+    Assert ($before -eq @(Get-ChildItem -LiteralPath $work -Recurse -File -Force).Count) 'preflight creates no files or journal'
     foreach ($step in @('blob-map', 'convert')) {
         $env:HL_DOCKER_FAIL = $step
         $mode = if ($step -eq 'blob-map') { '-Preflight' } else { '-Execute' }
@@ -269,10 +305,11 @@ function Get-Item {
     $receipts = Get-ChildItem (Join-Path $cRoot 'reports') -Filter 'm1-convert-qwen3-8b-*.json'
     Assert ($receipts.Count -eq 1) 'one receipt written'
     $rc = Get-Content -LiteralPath $receipts[0].FullName -Raw | ConvertFrom-Json
-    foreach ($field in @('model', 'repo', 'revision', 'gguf', 'archived', 'removed', 'storage', 'tools')) {
+    foreach ($field in @('model', 'repo', 'revision', 'gguf', 'archived', 'removed', 'storage', 'tools', 'journal')) {
         Assert ($rc.PSObject.Properties.Name -contains $field) "receipt has $field"
     }
     Assert ($rc.gguf.Count -eq 2) 'receipt lists exactly two final GGUF artifacts'
+    Assert (Test-Path -LiteralPath $rc.journal) 'success receipt references retained journal'
     foreach ($g in $rc.gguf) {
         Assert (-not [string]::IsNullOrWhiteSpace($g.path) -and $g.sha256 -match '^[a-f0-9]{64}$') 'GGUF entry has path and sha256'
     }
@@ -282,7 +319,7 @@ function Get-Item {
     Assert (Test-Path -LiteralPath (Join-Path $cRoot 'models\m1\qwen3-8b\Qwen3-8B-Q4_K_M.gguf')) 'final GGUF on C: m1 path'
 
     # --- fourth-round failures: exact progress survives exceptions ---
-    foreach ($case in @('partial-removal', 'placement', 'changed-source', 'unreadable')) {
+    foreach ($case in @('partial-removal', 'placement', 'changed-source', 'unreadable', 'receipt-write', 'partial-receipt-write', 'journal-create', 'journal-append')) {
         $cCase = Join-Path $work "c-$case"
         $eCase = Join-Path $work "e-$case"
         $gCase = Join-Path $work "g-$case"
@@ -291,17 +328,27 @@ function Get-Item {
         New-Item -ItemType Directory -Force (Split-Path $second) | Out-Null
         Set-Content -LiteralPath $second -Value 'second-weight' -NoNewline
         $secondSha = (Get-FileHash -LiteralPath $second -Algorithm SHA256).Hash.ToLower()
-        $env:HL_BLOB_MAP_JSON = @{
+        $map = @{
             'first.safetensors' = ('/hf/hub/blobs/aa/' + ('a' * 64))
             'second.safetensors' = ('/hf/hub/blobs/bb/' + ('b' * 64))
-        } | ConvertTo-Json -Compress
+        }
+        $files = @(
+            @{ path = 'first.safetensors'; sha256 = $fxCase.sha256; size = $fxCase.size }
+            @{ path = 'second.safetensors'; sha256 = $secondSha; size = (Get-Item -LiteralPath $second).Length }
+        )
+        if ($case -eq 'journal-append') {
+            $third = Join-Path $cCase ("hf\hub\blobs\cc\" + ('c' * 64))
+            New-Item -ItemType Directory -Force (Split-Path $third) | Out-Null
+            Set-Content -LiteralPath $third -Value 'third-weight' -NoNewline
+            $thirdSha = (Get-FileHash -LiteralPath $third -Algorithm SHA256).Hash.ToLower()
+            $files += @{ path = 'third.safetensors'; sha256 = $thirdSha; size = (Get-Item -LiteralPath $third).Length }
+            $map['third.safetensors'] = '/hf/hub/blobs/cc/' + ('c' * 64)
+        }
+        $env:HL_BLOB_MAP_JSON = $map | ConvertTo-Json -Compress
         $caseManifest = Join-Path $work "offline-$case.json"
         @{
             'Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218' = @{
-                files = @(
-                    @{ path = 'first.safetensors'; sha256 = $fxCase.sha256; size = $fxCase.size }
-                    @{ path = 'second.safetensors'; sha256 = $secondSha; size = (Get-Item -LiteralPath $second).Length }
-                )
+                files = $files
             }
         } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $caseManifest -Encoding utf8
         switch ($case) {
@@ -309,6 +356,10 @@ function Get-Item {
             'placement' { $env:HL_PLACE_FAIL = '1' }
             'changed-source' { $env:HL_CHANGE_SOURCE = $fxCase.blob }
             'unreadable' { $env:HL_MEASURE_FAIL = $second }
+            'receipt-write' { $env:HL_RECEIPT_FAIL = '1' }
+            'partial-receipt-write' { $env:HL_RECEIPT_FAIL = '1'; $env:HL_PLACE_FAIL = '1' }
+            'journal-create' { $env:HL_JOURNAL_FAIL = 'create' }
+            'journal-append' { $env:HL_JOURNAL_FAIL = 'append' }
         }
         $out, $code = Invoke-Convert @(
             '-Execute', '-Model', 'Qwen/Qwen3-8B',
@@ -316,7 +367,7 @@ function Get-Item {
             '-GpuPoisonPath', $poison, '-OfflineExpected', $caseManifest,
             '-ProbeCFreeBytes', ([long](200GB)), '-DockerPath', $dockerShim
         )
-        foreach ($name in @('HL_REMOVE_FAIL', 'HL_PLACE_FAIL', 'HL_CHANGE_SOURCE', 'HL_MEASURE_FAIL', 'HL_BLOB_MAP_JSON')) {
+        foreach ($name in @('HL_REMOVE_FAIL', 'HL_PLACE_FAIL', 'HL_CHANGE_SOURCE', 'HL_MEASURE_FAIL', 'HL_BLOB_MAP_JSON', 'HL_RECEIPT_FAIL', 'HL_JOURNAL_FAIL')) {
             Remove-Item "Env:$name" -ErrorAction SilentlyContinue
         }
         $message = Out-Text $out
@@ -330,6 +381,33 @@ function Get-Item {
             continue
         }
         $caseReceipts = @(Get-ChildItem -LiteralPath (Join-Path $cCase 'reports') -Filter '*.json')
+        $journals = @(Get-ChildItem -LiteralPath (Join-Path $cCase 'reports') -Filter '*.journal.jsonl')
+        if ($case -in @('receipt-write', 'partial-receipt-write', 'journal-append')) {
+            Assert ($journals.Count -eq 1) "$case retains one journal"
+            $rawLines = @(Get-Content -LiteralPath $journals[0].FullName)
+            $journal = @($rawLines | ForEach-Object { $_ | ConvertFrom-Json })
+            $intent = $journal[0]
+            Assert ($intent.type -eq 'intent' -and $intent.model -eq 'qwen3-8b' -and $intent.repo -eq 'Qwen/Qwen3-8B' -and $intent.revision -eq 'b968826d9c46dd6066d109eabc6255188de91218') "$case intent pins model and revision"
+            Assert (@($intent.removals).Count -eq $files.Count) "$case intent lists every planned removal"
+            Assert ($intent.storage.before.cFreeBytes -eq 200GB -and $intent.storage.beforeRemoval.cFreeBytes -eq 200GB) "$case intent contains storage figures"
+            foreach ($planned in $intent.removals) {
+                Assert ((Get-FileHash -LiteralPath $planned.archivePath -Algorithm SHA256).Hash.ToLower() -eq $planned.archiveSha256 -and $planned.sha256 -eq $planned.archiveSha256) "$case intent names verified archive and hash"
+            }
+            for ($i = 1; $i -lt $journal.Count; $i++) {
+                $record = $journal[$i]
+                $planned = @($intent.removals | Where-Object { $_.path -eq $record.path })
+                Assert ($record.type -eq 'removed' -and $planned.Count -eq 1 -and $record.sha256 -eq $planned[0].sha256 -and $rawLines[$i] -match '"utc"\s*:\s*"[^"]*Z"' -and -not (Test-Path -LiteralPath $record.path)) "$case completion line matches a removed blob and UTC time"
+            }
+            Assert ($errorText.Contains(($journals[0].FullName -replace '\s', ''))) "$case failure names retained journal"
+        }
+        if ($case -in @('receipt-write', 'partial-receipt-write')) {
+            Assert ($caseReceipts.Count -eq 0) "$case writes no final receipt"
+            Assert ($journal.Count -eq 3) "$case journal has intent plus both removals"
+            Assert ($journal[1].path -eq $fxCase.blob -and $journal[2].path -eq $second) "$case journal records exact removal order"
+            Assert (-not (Test-Path -LiteralPath $fxCase.blob) -and -not (Test-Path -LiteralPath $second)) "$case fails after all removals"
+            Assert ($message -match 'synthetic receipt write failure') "$case surfaces receipt failure"
+            continue
+        }
         Assert ($caseReceipts.Count -eq 1) "$case writes one partial receipt"
         $partial = Get-Content -LiteralPath $caseReceipts[0].FullName -Raw | ConvertFrom-Json
         Assert ($partial.status -eq 'partial') "$case receipt status partial"
@@ -338,7 +416,8 @@ function Get-Item {
         foreach ($arch in $partial.archived) {
             Assert ((Get-FileHash -LiteralPath $arch.path -Algorithm SHA256).Hash.ToLower() -eq $arch.sha256) "$case archive remains verified"
         }
-        Assert (@($partial.archived).Count -eq 2) "$case both weights verified on archive"
+        Assert (@($partial.archived).Count -eq $files.Count) "$case all weights verified on archive"
+        if ($journals.Count) { Assert ($partial.journal -eq $journals[0].FullName) "$case partial receipt references journal" }
         switch ($case) {
             'partial-removal' {
                 Assert (@($partial.removed).Count -eq 1 -and $partial.removed[0].path -eq $fxCase.blob -and $partial.removed[0].sha256 -eq $fxCase.sha256) 'partial receipt records exactly first removal and hash'
@@ -358,6 +437,19 @@ function Get-Item {
                 Assert ((Test-Path -LiteralPath $fxCase.blob) -and (Test-Path -LiteralPath $second)) 'changed source preserves both blobs'
                 Assert ((Get-FileHash -LiteralPath $fxCase.blob -Algorithm SHA256).Hash.ToLower() -ne $fxCase.sha256) 'source changed after verified copy'
                 Assert ($partial.failure -match 'hash mismatch on mapped blob' -and $message -match 'hash mismatch on mapped blob') 'immediate pre-removal rehash refuses mismatch'
+            }
+            'journal-create' {
+                Assert ($journals.Count -eq 0) 'failed journal creation leaves no journal'
+                Assert (@($partial.removed).Count -eq 0 -and @($partial.remaining).Count -eq 2) 'journal creation failure reports zero removals'
+                Assert ((Test-Path -LiteralPath $fxCase.blob) -and (Test-Path -LiteralPath $second)) 'journal creation failure preserves every blob'
+                Assert ($partial.failure -match 'synthetic journal creation failure') 'partial receipt explains journal creation failure'
+            }
+            'journal-append' {
+                Assert (-not (Test-Path -LiteralPath $fxCase.blob) -and -not (Test-Path -LiteralPath $second) -and (Test-Path -LiteralPath $third)) 'append failure stops before third removal'
+                Assert (@($partial.removed).Count -eq 2 -and $partial.removed[0].path -eq $fxCase.blob -and $partial.removed[1].path -eq $second -and @($partial.remaining).Count -eq 1 -and $partial.remaining[0] -eq $third) 'partial receipt records exact state after failed append'
+                Assert ($journal.Count -eq 2 -and $journal[1].path -eq $fxCase.blob) 'journal retains intent and first completion; failed second append adds no line'
+                Assert (@($intent.removals | Where-Object { $_.path -eq $second -and $_.sha256 -eq $secondSha }).Count -eq 1) 'unconfirmed second removal retains write-ahead archive evidence'
+                Assert ($partial.failure -match 'synthetic journal append failure before write') 'partial receipt explains append failure'
             }
         }
     }
@@ -486,7 +578,7 @@ function Get-Item {
     $logged = Get-Content -LiteralPath $orderAll
     Assert (($logged -join ',') -eq ($expectedOrder -join ',')) 'execute processes models one-at-a-time in catalog order'
 } finally {
-    foreach ($name in @('HL_REMOVE_FAIL', 'HL_PLACE_FAIL', 'HL_CHANGE_SOURCE', 'HL_MEASURE_FAIL')) {
+    foreach ($name in @('HL_REMOVE_FAIL', 'HL_PLACE_FAIL', 'HL_CHANGE_SOURCE', 'HL_MEASURE_FAIL', 'HL_RECEIPT_FAIL', 'HL_JOURNAL_FAIL')) {
         Remove-Item "Env:$name" -ErrorAction SilentlyContinue
     }
     Remove-Item Env:HL_SCRIPT_ECHO -ErrorAction SilentlyContinue
@@ -507,3 +599,5 @@ exit 0
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:40 UTC | END]]
