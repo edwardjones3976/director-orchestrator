@@ -1,4 +1,4 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | BEGIN]]
@@ -33,7 +33,12 @@ public static class JobTree {
     struct StartupInfo { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags; public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
     [StructLayout(LayoutKind.Sequential)]
     struct ProcessInformation { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct StartupInfoEx { public StartupInfo StartupInfo; public IntPtr lpAttributeList; }
     const uint CREATE_SUSPENDED = 0x00000004;
+    const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    const int PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY = 0x00020012;
+    const int PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_DISABLE_PROCESS_TREE = 0x02;
     const int STARTF_USESTDHANDLES = 0x00000100;
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("kernel32.dll")] public static extern uint GetConsoleCP();
@@ -42,7 +47,10 @@ public static class JobTree {
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out BasicAccounting info, int length, IntPtr returned);
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref StartupInfo si, out ProcessInformation pi);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref StartupInfoEx si, out ProcessInformation pi);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool InitializeProcThreadAttributeList(IntPtr list, uint count, uint flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
+    [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint ms);
@@ -70,15 +78,32 @@ public static class JobTree {
     // Create suspended and hand both handles back at once: the caller owns the process from its first instant, so
     // a failure to join or resume below is cleaned up (and verified) by the caller, never hidden here.
     public static IntPtr CreateSuspended(string commandLine, IntPtr stdIn, IntPtr stdOut, IntPtr stdErr, out IntPtr thread) {
-        var si = new StartupInfo(); si.cb = Marshal.SizeOf(typeof(StartupInfo)); si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdInput = stdIn; si.hStdOutput = stdOut; si.hStdError = stdErr;
+        var si = new StartupInfoEx(); si.StartupInfo.cb = Marshal.SizeOf(typeof(StartupInfoEx)); si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = stdIn; si.StartupInfo.hStdOutput = stdOut; si.StartupInfo.hStdError = stdErr;
         ProcessInformation pi;
         // Inherit even a windowless console and its code page. A fresh console would use the OEM
         // code page, which can replace Unicode before our pipe reader ever sees it.
         if (GetConsoleCP() == 0 && GetConsoleOutputCP() == 0) throw new InvalidOperationException("Invoke-Bounded requires an attached console to preserve child output encoding; no child was started.");
-        if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
-        thread = pi.hThread;
-        return pi.hProcess;
+        IntPtr size = IntPtr.Zero, policy = IntPtr.Zero;
+        bool initialized = false;
+        // The sizing call fails with ERROR_INSUFFICIENT_BUFFER (122) by design.
+        if (!InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size) && Marshal.GetLastWin32Error() != 122) throw new Win32Exception();
+        try {
+            si.lpAttributeList = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, ref size)) throw new Win32Exception();
+            initialized = true;
+            policy = Marshal.AllocHGlobal(sizeof(int));
+            Marshal.WriteInt32(policy, PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_DISABLE_PROCESS_TREE);
+            // Keep packaged descendants (Store pwsh) in the job instead of allowing Desktop Bridge breakaway.
+            if (!UpdateProcThreadAttribute(si.lpAttributeList, 0, new IntPtr(PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY), policy, new IntPtr(sizeof(int)), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+            if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
+            thread = pi.hThread;
+            return pi.hProcess;
+        } finally {
+            if (initialized) DeleteProcThreadAttributeList(si.lpAttributeList);
+            Marshal.FreeHGlobal(si.lpAttributeList);
+            Marshal.FreeHGlobal(policy);
+        }
     }
     public static void Join(IntPtr job, IntPtr process) { if (!AssignProcessToJobObject(job, process)) throw new Win32Exception(); }
     public static void Resume(IntPtr thread) { if (ResumeThread(thread) == 0xFFFFFFFF) throw new Win32Exception(); }
@@ -176,4 +201,4 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:48 UTC | END]]

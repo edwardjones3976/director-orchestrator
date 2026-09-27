@@ -1,4 +1,4 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:34 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
@@ -292,7 +292,8 @@ foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
 $iMark = $ts.IndexOf('launch in flight since'); $iStart = $ts.IndexOf('$job = Start-Job')
 if (-not ($iMark -ge 0 -and $iStart -gt $iMark)) { $fail += 'train-smoke: the in-flight marker must be written before Start-Job' }
 if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# No container was left unconfirmed.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
-if ($ib -notmatch '(?s)if \(GetConsoleCP\(\) == 0 && GetConsoleOutputCP\(\) == 0\) throw new InvalidOperationException\([^\r\n]+;\s*if \(!CreateProcessW\([^\r\n]+true, CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi\).*\$h = \[HomemadeLlm\.JobTree\]::CreateSuspended\(.*Add-BoundedJobMember \$job \$h; \[HomemadeLlm\.JobTree\]::Resume\(\$t\)') { $fail += 'invoke-bounded: refuse a console-less launch; otherwise inherit the console, create suspended and join the job before resuming' }
+if ($ib -notmatch '(?s)if \(GetConsoleCP\(\) == 0 && GetConsoleOutputCP\(\) == 0\) throw new InvalidOperationException\([^\r\n]+;.*if \(!CreateProcessW\([^\r\n]+true, CREATE_SUSPENDED \| EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, null, ref si, out pi\).*\$h = \[HomemadeLlm\.JobTree\]::CreateSuspended\(.*Add-BoundedJobMember \$job \$h; \[HomemadeLlm\.JobTree\]::Resume\(\$t\)') { $fail += 'invoke-bounded: refuse a console-less launch; otherwise inherit the console, create suspended and join the job before resuming' }
+if ($ib -notmatch '(?s)Marshal\.WriteInt32\(policy, PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_DISABLE_PROCESS_TREE\);.*if \(!UpdateProcThreadAttribute\(si\.lpAttributeList, 0, new IntPtr\(PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY\), policy, new IntPtr\(sizeof\(int\)\), IntPtr.Zero, IntPtr.Zero\)\) throw new Win32Exception\(\);\s*if \(!CreateProcessW\([^\r\n]+CREATE_SUSPENDED \| EXTENDED_STARTUPINFO_PRESENT') { $fail += 'invoke-bounded: apply desktop-app breakaway-disable policy to contain packaged descendants' }
 if ($ib -notmatch '(?s)if \(-not \$completed -and \$h -ne \[IntPtr\]::Zero\) \{.*\[HomemadeLlm\.JobTree\]::Kill\(\$h\).*\$gone = ') { $fail += 'invoke-bounded: the root must be killed directly too (it may be outside the job) before the wait confirms it' }
 if (-not $ib.Contains('(pid $rootPid)')) { $fail += 'invoke-bounded: the marker must record the root pid' }
 if ($ts -notmatch '(?s)\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a missing marker for an unconfirmed container must keep the lock' }
@@ -340,4 +341,4 @@ exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:48 UTC | END]]
