@@ -1,4 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
@@ -849,6 +852,11 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         """Review 4112821088: run_packet returns OWNER_DECISION_REQUIRED (its finally settles that outcome, which has
         no packet), then the authenticated readback's native run metering carries the real $0.60 charge. It settles
         again before it is consumed, so with $0.50 of other spend the next reservation under the $1 cap is refused."""
+        # This fixture transport has a fixed bounded request; token prices alone
+        # cannot establish a bound for arbitrary production packet transports.
+        pricing = patch("director_orchestrator.engine.assignment_request_cost_bound", return_value=0.01)
+        pricing.start()
+        self.addCleanup(pricing.stop)
         result = copy.deepcopy(self.result)
         result["provider"] = "gemini"
         # Gemini packet usage does not project native usage.cost into cost_usd.
@@ -862,6 +870,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             langgraph_runtime_task_writer_enabled=True,
             gemini_api_key="configured-for-readiness-only",
             gemini_daily_budget_usd=1.0,
+            gemini_input_usd_per_mtok=1.0, gemini_output_usd_per_mtok=1.0,
             gemini_usage_probe_cost_ceiling_usd=0.01,
         )
         activation = RuntimeActivation(settings, packet_task_router=router, packet_result_consumer=consumer)
@@ -903,6 +912,11 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                                           estimated_cost_usd=0.01, request_limit=50, budget_usd=1.0)
 
     async def test_readback_settlement_failure_preserves_authenticated_result(self) -> None:
+        # This fixture transport has a fixed bounded request; token prices alone
+        # cannot establish a bound for arbitrary production packet transports.
+        pricing = patch("director_orchestrator.engine.assignment_request_cost_bound", return_value=0.01)
+        pricing.start()
+        self.addCleanup(pricing.stop)
         result = copy.deepcopy(self.result)
         result["provider"] = "gemini"
         # Gemini packet usage does not project native usage.cost into cost_usd.
@@ -916,6 +930,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             langgraph_runtime_task_writer_enabled=True,
             gemini_api_key="configured-for-readiness-only",
             gemini_daily_budget_usd=1.0,
+            gemini_input_usd_per_mtok=1.0, gemini_output_usd_per_mtok=1.0,
             gemini_usage_probe_cost_ceiling_usd=0.01,
         )
         activation = RuntimeActivation(settings, packet_task_router=router, packet_result_consumer=consumer)
@@ -1516,4 +1531,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | END]]

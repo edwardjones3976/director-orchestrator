@@ -1,4 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
@@ -88,6 +91,7 @@ from .config import Settings
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .director import build_director
 from .approvals import (
+    apply_ambiguous_dispatch_resolution,
     EffectAlreadyClaimed,
     PAID_REARM_MESSAGE,
     StaleApproval,
@@ -107,6 +111,7 @@ from .approvals import (
     unresolved_ambiguous_dispatch,
 )
 from .models import (
+    AmbiguousDispatchResolution,
     Assignment,
     AssignmentKind,
     AssignmentOutcome,
@@ -163,6 +168,7 @@ from .providers import (
     PreSubmitProviderError,
     ProviderDailyLimitExceeded,
     ProviderDailySpendLedger,
+    assignment_request_cost_bound,
     ProviderError,
     ProviderReservationIdentityConflict,
     ProviderRun,
@@ -1275,10 +1281,13 @@ class OrchestrationEngine:
             if workload_reservation is None:
                 return False
         try:
-            self._reserve_provider_daily_spend(
-                assignment,
-                effect_key=task_effect_key,
-            )
+            # A bound packet already crossed admission. Recovery must retain its
+            # original reservation even after a UTC rollover or price change.
+            if bound_packet is None:
+                self._reserve_provider_daily_spend(
+                    assignment,
+                    effect_key=task_effect_key,
+                )
         except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
             identity_conflict = isinstance(
                 exc, ProviderReservationIdentityConflict
@@ -1894,9 +1903,10 @@ class OrchestrationEngine:
                     continue
                 state = MemberState.DISPATCHING
             try:
-                self._reserve_provider_daily_spend(
-                    assignment, effect_key=task_effect_key
-                )
+                if activation.runtime.bound_work_packet(str(work["idempotency_key"])) is None:
+                    self._reserve_provider_daily_spend(
+                        assignment, effect_key=task_effect_key
+                    )
             except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
                 identity_conflict = isinstance(
                     exc, ProviderReservationIdentityConflict
@@ -5445,6 +5455,8 @@ class OrchestrationEngine:
         assignment: Assignment,
         *,
         effect_key: str,
+        context: str | None = None,
+        revision_prompt: str | None = None,
     ) -> None:
         """Reserve one supplemental-provider request before paid submission."""
 
@@ -5466,14 +5478,15 @@ class OrchestrationEngine:
             raise ProviderDailyLimitExceeded(
                 f"{assignment.agent.value} requires a durable daily spend ledger"
             )
-        # Never $0 when a bound exists (review 4112533824): the provider's per-request cost bound, the same one
-        # its usage probes reserve. A $0 request with no bound configured is refused, never reserved at nothing.
-        bound = self.settings.request_cost_bound_usd(assignment.agent.value)
-        estimated = max(assignment.estimated_cost_usd, bound or 0.0)
-        if estimated <= 0:
-            raise ProviderDailyLimitExceeded(
-                f"{assignment.agent.value} has no configured per-request cost bound for a zero estimate"
+        try:
+            bound = assignment_request_cost_bound(
+                self.settings, assignment, context, revision_prompt=revision_prompt,
             )
+        except (ValueError, PreSubmitProviderError) as exc:
+            raise ProviderDailyLimitExceeded("Provider request cannot be safely priced") from exc
+        floor = self.settings.request_cost_bound_usd(assignment.agent.value) or 0.0
+        estimated = (max(assignment.estimated_cost_usd, floor, bound)
+                     if bound is not None else assignment.estimated_cost_usd)
         self.provider_spend.reserve(
             provider=assignment.agent,
             effect_key=effect_key,
@@ -5481,7 +5494,18 @@ class OrchestrationEngine:
             request_limit=request_limit,
             budget_usd=budget_usd,
             now=datetime.now(timezone.utc),
+            serialize=bound is None,
         )
+
+    def apply_dispatch_reconciliation(
+        self, record: TaskRecord, resolution: AmbiguousDispatchResolution,
+    ) -> None:
+        """Persist the owner resolution before settling or closing its effect."""
+        apply_ambiguous_dispatch_resolution(record, resolution)
+
+    def _settle_reconciled_spend(self, record: TaskRecord) -> bool:
+        # API and restart recovery share the exact-effect settlement and receipt.
+        return self._settle_not_created_dispatches(record)
 
     def _settle_not_created_dispatches(self, record: TaskRecord) -> bool:
         """Consume accepted owner resolutions before any resumed provider work.
@@ -6364,10 +6388,12 @@ class OrchestrationEngine:
                 )
                 if workload_reservation is None:
                     return False
+            handoff_context = self._handoff_context(record, assignment)
             try:
                 self._reserve_provider_daily_spend(
                     assignment,
                     effect_key=effect_key,
+                    context=handoff_context,
                 )
             except ProviderReservationIdentityConflict as exc:
                 # A reservation identity mismatch is evidence of durable
@@ -6451,7 +6477,6 @@ class OrchestrationEngine:
                         effect_key=effect_key,
                     )
                 return False
-            handoff_context = self._handoff_context(record, assignment)
             consumed_artifact_digests = (
                 self._consumed_dependency_artifact_digests(record, assignment)
             )
@@ -6807,10 +6832,14 @@ class OrchestrationEngine:
                 if revision_workload_reservation is None:
                     return False
             # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
+            revision_handoff_context = self._handoff_context(record, assignment)
+            revision_prompt = decision.revision_prompt or "Address the failed acceptance checks and report new evidence."
             try:
                 self._reserve_provider_daily_spend(
                     assignment,
                     effect_key=revision_effect_key,
+                    context=revision_handoff_context,
+                    revision_prompt=revision_prompt,
                 )
             except ProviderReservationIdentityConflict as exc:
                 if revision_workload_reservation is not None:
@@ -6854,7 +6883,6 @@ class OrchestrationEngine:
                     record, f"*{record.task_id} — BLOCKED*\n{record.message}"
                 )
                 return False
-            revision_handoff_context = self._handoff_context(record, assignment)
             revision_consumed_artifact_digests = (
                 self._consumed_dependency_artifact_digests(record, assignment)
             )
@@ -6871,7 +6899,7 @@ class OrchestrationEngine:
             try:
                 revised = await adapter.revise(
                     run,
-                    decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
+                    revision_prompt,
                     assignment=assignment,
                     context=revision_handoff_context,
                 )
@@ -7283,4 +7311,7 @@ class OrchestrationEngine:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]

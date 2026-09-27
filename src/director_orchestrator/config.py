@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -134,7 +135,10 @@ def _optional_positive_float(name: str) -> float | None:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return None
-    value = float(raw)
+    try:
+        value = float(raw)
+    except (ValueError, OverflowError):
+        raise ValueError(f"{name} must be finite and greater than zero") from None
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value
@@ -890,6 +894,12 @@ class Settings:
     grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
     grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
     grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
+    gemini_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GEMINI_INPUT_USD_PER_MTOK"))
+    gemini_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GEMINI_OUTPUT_USD_PER_MTOK"))
+    grok_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GROK_INPUT_USD_PER_MTOK"))
+    grok_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GROK_OUTPUT_USD_PER_MTOK"))
+    perplexity_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("PERPLEXITY_INPUT_USD_PER_MTOK"))
+    perplexity_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("PERPLEXITY_OUTPUT_USD_PER_MTOK"))
     grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 262_144)
     grok_daily_budget_usd: float = _float("GROK_DAILY_BUDGET_USD", 2.0)
     grok_daily_request_limit: int = _int("GROK_DAILY_REQUEST_LIMIT", 50)
@@ -1142,10 +1152,45 @@ class Settings:
     def grok_cli_repository_map(self) -> dict[str, str]:
         return dict(self.grok_cli_repository_roots)
 
+    def __post_init__(self) -> None:
+        for provider in ("gemini", "grok", "perplexity"):
+            self.provider_token_prices(provider)
+
+    def provider_token_prices(self, provider: str) -> tuple[float, float] | None:
+        prices = tuple(getattr(self, f"{provider}_{kind}_usd_per_mtok") for kind in ("input", "output"))
+        for price in prices:
+            if price is not None and (isinstance(price, bool) or not isinstance(price, (int, float))
+                                      or not math.isfinite(price) or price <= 0):
+                raise ValueError("Provider token prices must be finite and positive")
+        return None if None in prices else prices
+
+    def provider_price_readiness(self) -> dict[str, bool]:
+        return {provider: self.provider_token_prices(provider) is not None
+                for provider in ("gemini", "grok", "perplexity")}
+
+    def token_request_cost_bound_usd(
+        self, provider: str, payload: dict, max_output_tokens: int,
+    ) -> float | None:
+        prices = self.provider_token_prices(provider)
+        if prices is None:
+            return None
+        if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or max_output_tokens <= 0:
+            raise ValueError("A positive enforced output token limit is required")
+        # One token per encoded byte overestimates text tokenization; the complete
+        # JSON envelope also covers framing. Do not apply to tools/hidden inputs.
+        input_bound = len(json.dumps(payload, ensure_ascii=True).encode("utf-8"))
+        bound = (input_bound * prices[0] + max_output_tokens * prices[1]) / 1_000_000
+        if not math.isfinite(bound) or bound <= 0:
+            raise ValueError("Provider request cost bound must be finite and positive")
+        return math.nextafter(bound, math.inf)
+
     def request_cost_bound_usd(self, provider: str) -> float | None:
-        """The nonzero amount one gemini, grok or perplexity request reserves at least, before its actual charge is
-        known (reviews 4112206668 and 4112533824): grok's per-request floor, gemini's and perplexity's configured
-        per-request cost ceiling. None when the provider has none configured."""
+        """Legacy minimum used alongside a proven request maximum, never as that maximum.
+
+        Grok supplies a floor; the other settings describe probe ceilings, not
+        arbitrary assignments. Unbounded requests instead serialize and hold
+        remaining daily capacity.
+        """
         bound = {"gemini": self.gemini_usage_probe_cost_ceiling_usd, "grok": self.grok_request_cost_floor_usd,
                  "perplexity": self.perplexity_usage_probe_cost_ceiling_usd}.get(provider)
         if not isinstance(bound, (int, float)) or isinstance(bound, bool) or not math.isfinite(bound) or bound <= 0:
@@ -2613,3 +2658,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]

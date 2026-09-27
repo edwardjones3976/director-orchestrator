@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 """Native packet metering survives ordinary, parallel and late-readback settlement."""
 import copy
@@ -7,7 +8,7 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
 from director_orchestrator.models import ProviderName, ProviderRun, TaskStatus
@@ -54,6 +55,11 @@ class PacketNativeSpendTests(unittest.IsolatedAsyncioTestCase):
                                                   estimated_cost_usd=0.01, request_limit=50, budget_usd=0.5)
 
     async def test_native_metering_for_every_provider_and_settlement_path(self):
+        # These synthetic packet transports have a fixed bounded request. Real
+        # opaque packet/search transports still serialize even with token prices.
+        pricing = patch("director_orchestrator.engine.assignment_request_cost_bound", return_value=0.1)
+        pricing.start()
+        self.addCleanup(pricing.stop)
         providers = (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY)
         for provider in providers:
             for path in ("ordinary", "parallel", "late"):
@@ -62,6 +68,9 @@ class PacketNativeSpendTests(unittest.IsolatedAsyncioTestCase):
                         self.root = Path(root)
                         self.ledger_path = self.root / "runtime-ledger.sqlite3"
                         settings = self._settings(
+                            gemini_input_usd_per_mtok=1.0, gemini_output_usd_per_mtok=1.0,
+                            grok_input_usd_per_mtok=1.0, grok_output_usd_per_mtok=1.0,
+                            perplexity_input_usd_per_mtok=1.0, perplexity_output_usd_per_mtok=1.0,
                             langgraph_runtime_enabled=True,
                             langgraph_runtime_live_dispatch_enabled=True,
                             langgraph_runtime_task_writer_enabled=True,
@@ -160,3 +169,4 @@ class PacketNativeSpendTests(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
