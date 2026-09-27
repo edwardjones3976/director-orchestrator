@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:07 UTC | BEGIN]]
 """Paid-provider spend meter for homemade-llm (M0.10). Reporting is read-only.
 
@@ -11,6 +12,7 @@ under "unattributed" rather than silently dropped or wrongly claimed.
 
     python spend_meter.py                  # last 7 days, every project
     python spend_meter.py --days 28 --json
+    python spend_meter.py --purpose-prefix 'homemade-llm M1' --json
     python spend_meter.py --self-test
 
 Costs recorded in receipts:
@@ -150,3 +152,4 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:18 UTC | END]]
