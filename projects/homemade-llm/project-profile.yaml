@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | BEGIN]]
@@ -108,7 +109,7 @@ surfaces:
     mode: "explicitly_scoped" # analysis_only | explicitly_scoped
     allowed:
       - "Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)"
-      - "Independent reviews through the owner-approved provider routes, including the set B v2 review with private values redacted and one bounded batch 1 Grok rerun (O-040; completed ACCEPT, 24 OK and pr-45 MINOR; receipt xai/20260926T215607Z-666045-34b3.json; owner authentication and fix decisions pending; Set B excluded from M1 scoring) [verified 2026-09-26 21:56 UTC, receipt]"
+      - "Independent reviews through owner-approved provider routes, including the redacted Set B v2 review and authenticated batch-1 ACCEPT on the frozen packet (xai/20260926T225645Z-268799-d4c6.json, response ID 473bbadc-7d1a-93af-9b73-6299017e9b97); the prior incomplete rerun receipt remains historical evidence. pr-45 is retained as a known MINOR reference imperfection, disclosed with Set B results. M1 scoring gates remain separate [verified, receipts; joint disposition in PR #294 comment 5850665622]."
     # Any new external effect requires a profile revision first (fallbacks.changed_scope: reshape_profile_before_dependent_work).
     prohibited:
       - "Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)"
@@ -219,7 +220,7 @@ controls:
 review_chain:
   producer: "claude"
   material_authors: ["claude", "openai codex"]
-  eligible_reviewer: "Grok (xAI) only for #293; if unavailable, review waits. No contributor, including Claude or OpenAI Codex, may review."
+  eligible_reviewer: "Grok (xAI) supplies the bounded independent full-diff review. Cursor must perform its own thorough current-head/base review and is the eligible merger after all gates. Neither material contributor, Claude or OpenAI Codex, may review or merge #293."
   candidate:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
@@ -262,9 +263,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "M0 closed under O-031; record reconciliation pending until #293 review, CI and merge gates pass. MX-011 and prior bounded reviews are completed history. D-019 to D-022 are ratified documented exceptions (O-040/O-041), retaining crossings and spend. Open gates: owner disposition of the completed Set B batch 1 rerun (ACCEPT, 24 OK and pr-45 MINOR; receipt xai/20260926T215607Z-666045-34b3.json omits the provider response ID; file SHA-256 is only in purpose) [verified 2026-09-26 21:56 UTC, receipt], including receipt authentication and whether to fix pr-45; Set B remains excluded from M1 scoring; one independent full-diff Grok review under owner disposition 5850566834, capped at USD 0.30, after a local cross-file consistency check bound to #293 exact head and base; all six CI checks green at that head. The owner-approved Set B batch 1 rerun completed: ACCEPT batch 1 (25 items), 24 OK and one MINOR (pr-45: constraints omit eligibility and evaluation from the body's Claude-default routing exclusion list). Receipt xai/20260926T215607Z-666045-34b3.json has a unique filename, grok-4.6, HTTP 200, status completed, and USD 0.1406. Its purpose carries frozen packet SHA-256 101c5f2d59b4b94ad0d9f581fc51793af0a07a35123a265cba1394c16d53c663; before the call the Director confirmed all 25 embedded packets byte-identical to the pinned pr-reconstructed-v2 files (manifest 38a93d79…69bc). The wrapper omits the owner-required provider response ID; packet_sha256 is a 16-hex digest of the full sent payload including the preamble, and the owner-required file SHA-256 appears only in purpose. These facts were read by the Director [verified 2026-09-26 21:56 UTC, receipt]. Set B stays out of M1 scoring until the owner accepts this receipt as batch 1 authentication or requires a rerun after the wrapper records provider response IDs. The owner also decides whether pr-45 needs a fix, which would change the pinned manifest. If the final review requires changes, stop for a new owner disposition. Set A ACCEPT remains valid under O-040 scoring rules. Future M1 dispatches need approved packets, leases, allocation and gates; M1 plan approval is separate (O-038, approved but unmerged PR #294); this record grants no dispatch authority. D-018 is ratified by O-037 in the approved but unmerged M1 plan PR #294 (owner disposition 5850566834); the historical crossing and cost remain recorded."
-  responsible_party: "Director records the owner decisions on Set B receipt authentication and pr-45 and coordinates review/CI; Grok (xAI), the only eligible non-author reviewer, gives the final verdict and merges after ACCEPT and gates. If unavailable, review waits; neither Claude nor Codex may review or merge."
-  expected_evidence: "Owner disposition accepting the batch 1 receipt as authentication or requiring a rerun with provider response IDs, plus disposition of pr-45 MINOR; one independent full-diff Grok review under owner disposition 5850566834, capped at USD 0.30, after a local cross-file consistency check bound to exact head and base; all six CI checks green at that head. Owner law (2026-09-26 ~21:53 UTC, O-040): Any provider that has reviewed the work thoroughly can merge it. The owner/sole-author (other ME), can never merge their own work."
+  action: "M0 closed under O-031; #293 record reconciliation remains pending. D-018 is ratified under O-037; D-019 to D-022 are documented exceptions under O-040/O-041, retaining historical crossings and spend. Set B batch 1 has an authenticated ACCEPT for all 25 frozen items (xai/20260926T225645Z-268799-d4c6.json, response 473bbadc-7d1a-93af-9b73-6299017e9b97, file SHA-256 101c5f2d59b4b94ad0d9f581fc51793af0a07a35123a265cba1394c16d53c663, sent-payload SHA-256 b248ce563e9e9c0e5e820080baa6ecdf22c415ac05e3989525c37c290efa81bb, USD 0.15078); batch 2 has a separate ACCEPT. The original pr-45 constraint omission is retained as a known MINOR reference imperfection and must be disclosed with Set B results. Set B scoring still requires the M1 pipeline gates. #293 still requires this bounded record correction, a local cross-file check, one independent exact-head/base full-diff Grok review capped at USD 0.30 under Ed's 2026-09-27 approval, all six current-head CI checks, and Cursor's own eligible exact-head review and merge. Claude and Codex contributed and cannot review or merge. The M1 plan is approved under O-038 but still unmerged in PR #294; this M0 record grants no dispatch authority."
+  responsible_party: "Codex Director maintains this record and coordinates review and CI. Grok supplies the authorized independent full-diff review; Cursor, with no counted contribution, supplies its own thorough current-head review and performs the merge only after all gates. Claude and Codex may not review or merge #293."
+  expected_evidence: "Authenticated Set B batch-1 receipt xai/20260926T225645Z-268799-d4c6.json and separate batch-2 ACCEPT; disclosed pr-45 caveat; local cross-file consistency check; one independent full-diff Grok review capped at USD 0.30; Cursor exact-head/base review; six CI successes on that head; conflict-free non-draft PR and guarded eligible merge. This record is not merge clearance."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
@@ -279,3 +280,4 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
