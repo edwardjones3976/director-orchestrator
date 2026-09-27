@@ -1,3 +1,8 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:58 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
@@ -21,12 +26,13 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from fastapi.testclient import TestClient
 
 from director_orchestrator.approvals import build_slack_intake_attestation
+from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.langgraph_primary import ApprovalDecision, ApprovalKind, ApprovalResume
 from director_orchestrator.langgraph_postgres import _base_control_plane_ddl
 from director_orchestrator.models import IntakeAuthentication, TaskStatus
@@ -49,6 +55,43 @@ class _AsyncByteStream(httpx.AsyncByteStream):
 
     async def aclose(self):
         await self._chunks.aclose()
+
+
+class PaidOffSlackWorkerTests(unittest.TestCase):
+    def test_non_edge_paid_off_worker_keeps_offline_slack_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
+        delivery = SimpleNamespace(run_once=AsyncMock())
+        with (patch.object(main, "settings", SimpleNamespace(app_env="local", allow_paid_runs=False)),
+              patch.object(main, "primary_slack_delivery", delivery)):
+            with self.assertRaises(TimeoutError):
+                asyncio.run(asyncio.wait_for(main._primary_slack_delivery_loop(), 0.1))
+        delivery.run_once.assert_awaited()
+
+    def test_paid_off_legacy_status_makes_no_slack_intent_or_call(self):
+        engine = object.__new__(OrchestrationEngine)
+        engine.settings = SimpleNamespace(app_env="edge-engine", allow_paid_runs=False, slack_bot_token="fake")
+        engine.store = Mock()
+        engine.notifier = Mock()
+        record = SimpleNamespace(collaboration_fallback_active=False)
+        self.assertEqual(
+            (True, None),
+            asyncio.run(engine._deliver_collaboration_message(record, "status")),
+        )
+        engine.notifier.post.assert_not_called()
+        engine.store.save.assert_not_called()
+        self.assertFalse(record.collaboration_fallback_active)
+
+    def test_paid_off_worker_makes_no_slack_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
+            delivery = Mock()
+            with (patch.object(main, "settings", SimpleNamespace(app_env="edge-engine", allow_paid_runs=False)),
+                  patch.object(main, "primary_slack_delivery", delivery)):
+                asyncio.run(asyncio.wait_for(main._primary_slack_delivery_loop(), 0.1))
+            delivery.run_once.assert_not_called()
 
 
 class PrimarySlackDeliveryTests(unittest.TestCase):
@@ -772,3 +815,8 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:58 UTC | END]]

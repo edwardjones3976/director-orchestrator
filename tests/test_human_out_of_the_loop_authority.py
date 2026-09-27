@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
@@ -80,7 +81,6 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "Deletion of data",
             "Purchases",
             "Credential, secret, token, or access-scope changes",
-            "protected branch",
             "Editing this document",
         ):
             self.assertIn(never, tier_zero)
@@ -104,6 +104,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             bullets,
             [
                 "Executing an eligible merge of a pull request into a non-protected branch.",
+                "Executing an eligible merge of a pull request into a protected branch.",
                 "Marking a pull request ready for review.",
                 "Posting to the project's own designated Slack channel.",
                 "Executing a small read-only task that "
@@ -125,10 +126,23 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "billing",
             "credential",
             "secret",
-            # "non-protected branch" is legitimate in bullet one, so match the act.
-            "into a protected branch",
         ):
             self.assertNotIn(forbidden, delegable)
+
+    def test_standing_owner_merge_law_is_narrow_revocable_and_evidence_bound(self):
+        standing = " ".join(self.section(
+            "Standing owner authority for pull-request merge execution").split())
+        for phrase in (
+            "2026-09-26", "21:53 UTC", "Any provider that has reviewed the work thoroughly can merge it.",
+            "owner-merge-law-2026-09-26", "no per-deployment grant",
+            "owner explicitly revokes it", "Suspension holds it", "no counted lines",
+            "expected-head", "immediately before merging", "no bypass",
+            "cannot authorize its own merge", "Cursor",
+        ):
+            self.assertIn(phrase, standing)
+        tier_zero = self.section("Decision classes").split("### Tier 0", 1)[1]
+        self.assertNotIn("Merging into a protected branch", tier_zero)
+        self.assertIn("only while a live grant names it", self.section("Decision classes"))
 
     def test_small_read_only_class_is_bounded_and_owner_signed(self) -> None:
         standing = self.section("Standing grant for small read-only tasks")
@@ -510,3 +524,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]

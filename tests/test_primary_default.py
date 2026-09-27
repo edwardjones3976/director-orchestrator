@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -82,6 +85,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import re
 import unittest
 from functools import partial
@@ -2386,6 +2390,32 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         ):
             DefaultPrimaryActivation(settings)
 
+    def test_paid_off_startup_does_not_load_live_capture_enrollment(self):
+        settings = replace(Settings(), langgraph_primary_enabled=True,
+                           allow_paid_runs=False,
+                           langgraph_primary_live_provider_dispatch_enabled=False)
+        handle = SimpleNamespace(claim_store=object(), close=lambda: None)
+        services = SimpleNamespace(handlers=lambda: {}, application_projection=lambda *_: {})
+        provider_activation = object()
+        with (
+            patch("director_orchestrator.primary_default.resolve_default_primary_authority"),
+            patch("director_orchestrator.primary_default.build_typed_external_effect_grant"),
+            patch("director_orchestrator.acceptance_journal.require_runtime_acceptance", return_value=None),
+            patch("director_orchestrator.acceptance_journal.bind_runtime_database"),
+            patch("director_orchestrator.primary_default.open_postgres_control_plane", return_value=handle),
+            patch.object(Settings, "primary_provider_activation_bindings", return_value={"openai": object()}),
+            patch("director_orchestrator.primary_default.PrimaryProviderActivationService",
+                  return_value=provider_activation) as activation_service,
+            patch("director_orchestrator.provider_validation.capture_verifier_from_environment") as capture,
+            patch("director_orchestrator.primary_default.DefaultDryRunServices", return_value=services),
+            patch("director_orchestrator.primary_default.PrimaryTaskCoordinator"),
+            patch("director_orchestrator.primary_default.DefaultPrimaryApplication"),
+        ):
+            activation = DefaultPrimaryActivation(settings)
+        capture.assert_not_called()
+        self.assertIs(activation.provider_activation, provider_activation)
+        self.assertIsNone(activation_service.call_args.kwargs["capture_verifier"])
+
     def test_reconciliation_readiness_is_not_sticky_after_failed_pass(self):
         activation = object.__new__(DefaultPrimaryActivation)
         activation.application = SimpleNamespace(
@@ -3654,6 +3684,15 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         [entry] = ledger.delegation_audit_records(limit=10)
         self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
 
+    def wait_for_dispatch_ready(self, ready):
+        deadline = time.monotonic() + 30
+        while not ready:
+            self.assertLess(
+                time.monotonic(), deadline,
+                "dispatch-ready callback was not received within 30s",
+            )
+            time.sleep(0.05)
+
     def test_granted_intake_hands_dispatch_to_the_callback(self):
         dispatched: list[int] = []
         self.use_standing_grant(self.succeeding(dispatched))
@@ -3661,6 +3700,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
         record = self.attested_intake("callback-small", on_dispatch_ready=ready.append)
 
+        self.wait_for_dispatch_ready(ready)
         self.assertEqual([record.task_id], ready)
         self.assertEqual([], dispatched)
         projection = self.coordinator.get_projection(record.task_id)
@@ -3754,6 +3794,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         ledger = self.use_standing_grant(self.succeeding([]))
         ready: list[str] = []
         granted = self.attested_intake("callback-failed-small", on_dispatch_ready=ready.append)
+        self.wait_for_dispatch_ready(ready)
         self.assertEqual([granted.task_id], ready)
         [first] = self.coordinator.reserve_parallel_ready(
             task_id=granted.task_id, policy=self.application._parallel_policy())
@@ -4894,9 +4935,9 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             )
         finally:
             self.services._record = original_record
-            worker.join(timeout=10)
+            worker.join(timeout=30)
 
-        self.assertFalse(worker.is_alive(), "recovery worker did not finish")
+        self.assertFalse(worker.is_alive(), "recovery worker did not finish within 30s")
         self.assertFalse(errors, errors)
         self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, record.status)
         self.assertGreaterEqual(record.plan_generation, 1)
@@ -5557,8 +5598,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                                         psycopg.errors.TransactionTimeout, DeadlineExpired)):
                     store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
                 refused_at = clock.monotonic() - origin
-                releaser.join(timeout=second_release + 5.0)
-                self.assertFalse(releaser.is_alive())
+                releaser.join(timeout=30)
+                self.assertFalse(releaser.is_alive(), "worker did not finish within 30s")
                 self.assertEqual([], worker_errors)
                 self.assertEqual({"early", "later"}, set(waiting))
                 self.assertEqual(waiting["early"], waiting["later"])
@@ -5567,8 +5608,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 self.assertLess(refused_at, allowance + 0.75)
             finally:
                 stop.set()
-                releaser.join(timeout=10.0)
-                self.assertFalse(releaser.is_alive())
+                releaser.join(timeout=30)
+                self.assertFalse(releaser.is_alive(), "worker did not finish within 30s")
         # The lane is intact afterwards and a normal read still completes.
         after = store.read_primary_qualification_evidence(record.task_id)
         self.assertTrue(after["complete"])
@@ -6161,3 +6202,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]

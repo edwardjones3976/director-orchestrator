@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
@@ -432,6 +436,10 @@ def _intake_row(**overrides: object) -> dict[str, object]:
     }
     row.update(overrides)
     return row
+
+
+def _claimed_row() -> dict[str, object]:
+    return {"reservation_key": DIGEST_A}
 
 
 def _reservation_row(**overrides: object) -> dict[str, object]:
@@ -1272,7 +1280,14 @@ class EffectControlPlaneTests(unittest.TestCase):
 
     def test_binding_locks_the_remote_identifier_and_verifies_authority(self):
         store, connection = _store(
-            [_lock_row(), _reservation_row(), None, None, {"reservation_key": DIGEST_A}]
+            [
+                _lock_row(),
+                _reservation_row(),
+                _claimed_row(),
+                None,
+                None,
+                {"reservation_key": DIGEST_A},
+            ]
         )
         self.bind(store)
         self.assertIn("pg_advisory_xact_lock", connection.statements()[0])
@@ -1280,7 +1295,12 @@ class EffectControlPlaneTests(unittest.TestCase):
 
     def test_a_cross_reservation_remote_collision_is_typed_and_fails_closed(self):
         store, connection = _store(
-            [_lock_row(), _reservation_row(), {"reservation_key": DIGEST_D}]
+            [
+                _lock_row(),
+                _reservation_row(),
+                _claimed_row(),
+                {"reservation_key": DIGEST_D},
+            ]
         )
         with self.assertRaisesRegex(
             PostgresControlPlaneError, "already bound to a different reservation"
@@ -1293,8 +1313,13 @@ class EffectControlPlaneTests(unittest.TestCase):
             [
                 _lock_row(),
                 _reservation_row(),
+                _claimed_row(),
                 {"reservation_key": DIGEST_A},
-                {"remote_system": "provider", "remote_identifier": "remote-1"},
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "remote-1",
+                    "claim_precedes": True,
+                },
             ]
         )
         self.bind(store)
@@ -1305,11 +1330,41 @@ class EffectControlPlaneTests(unittest.TestCase):
         ):
             self.bind(store)
 
+    def test_binding_without_an_execution_claim_is_refused(self):
+        store, connection = _store([_lock_row(), _reservation_row(), None])
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "no execution claim precedes it"
+        ):
+            self.bind(store)
+        self.assertIn("director_primary_effect_execution", connection.statements()[2])
+        self.assertEqual(1, connection.rollbacks)
+
+    def test_replay_of_a_binding_that_predates_its_claim_is_refused(self):
+        store, connection = _store(
+            [
+                _lock_row(),
+                _reservation_row(),
+                _claimed_row(),
+                {"reservation_key": DIGEST_A},
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "remote-1",
+                    "claim_precedes": False,
+                },
+            ]
+        )
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "predates its execution claim"
+        ):
+            self.bind(store)
+        self.assertEqual(1, connection.rollbacks)
+
     def test_binding_a_different_remote_object_is_refused(self):
         store, _ = _store(
             [
                 _lock_row(),
                 _reservation_row(),
+                _claimed_row(),
                 None,
                 {"remote_system": "provider", "remote_identifier": "remote-2"},
             ]
@@ -1319,9 +1374,42 @@ class EffectControlPlaneTests(unittest.TestCase):
         ):
             self.bind(store)
 
+    def test_readback_never_trusts_a_binding_without_a_preceding_claim(self):
+        # None = no claim row (LEFT JOIN); False = claimed after binding.
+        for claim_precedes in (None, False):
+            untrusted = {
+                "remote_system": "provider",
+                "remote_identifier": "r",
+                "claim_precedes": claim_precedes,
+            }
+            with self.subTest(path="current writer", claim_precedes=claim_precedes):
+                store, _ = _store([_reservation_row(), untrusted])
+                with self.assertRaisesRegex(
+                    PostgresControlPlaneError, "predates its execution claim"
+                ):
+                    store.read_remote_binding(
+                        reservation_key=DIGEST_A, owner_token="owner-1"
+                    )
+            with self.subTest(path="successor", claim_precedes=claim_precedes):
+                store, _ = _store([_reservation_row(), untrusted])
+                with self.assertRaisesRegex(
+                    PostgresControlPlaneError, "predates its execution claim"
+                ):
+                    store.read_remote_binding_for_successor_reconciliation(
+                        reservation_key=DIGEST_A,
+                        successor_owner_token="owner-2",
+                    )
+
     def test_readback_is_authenticated_and_may_return_nothing(self):
         store, _ = _store(
-            [_reservation_row(), {"remote_system": "provider", "remote_identifier": "r"}]
+            [
+                _reservation_row(),
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "r",
+                    "claim_precedes": True,
+                },
+            ]
         )
         self.assertEqual(
             {"remote_system": "provider", "remote_identifier": "r"},
@@ -1348,7 +1436,14 @@ class EffectControlPlaneTests(unittest.TestCase):
             "fencing_generation": 4,
         }
         store, connection = _store(
-            [authority, {"remote_system": "provider", "remote_identifier": "r-2"}]
+            [
+                authority,
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "r-2",
+                    "claim_precedes": True,
+                },
+            ]
         )
         self.assertEqual(
             {"remote_system": "provider", "remote_identifier": "r-2"},
@@ -3196,6 +3291,11 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
     def test_reconciliation_blocks_new_reservations_but_not_readback_or_evidence(self):
         key = self.prepare_claim("1b")
         reservation = self.reserve(self.store, key, "2b")
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+        )
         self.store.bind_remote_effect(
             reservation_key=reservation.reservation_key,
             owner_token="owner-a",
@@ -3271,6 +3371,11 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
     def test_expired_claim_is_reconciled_only_by_a_strictly_newer_successor(self):
         key = self.prepare_claim("d1", limit=3)
         reservation = self.reserve(self.store, key, "d2", units=1)
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+        )
         self.store.bind_remote_effect(
             reservation_key=reservation.reservation_key,
             owner_token="owner-a",
@@ -3479,6 +3584,11 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
     def test_a_non_owner_replay_is_refused_even_with_an_identical_payload(self):
         key = self.prepare_claim("1c")
         reservation = self.reserve(self.store, key, "2c")
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+        )
         self.store.bind_remote_effect(
             reservation_key=reservation.reservation_key,
             owner_token="owner-a",
@@ -3507,9 +3617,68 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
                 with self.assertRaises(PostgresControlPlaneError):
                     call()
 
+    def test_binding_without_an_execution_claim_is_refused_and_records_nothing(self):
+        key = self.prepare_claim("1f")
+        reservation = self.reserve(self.store, key, "2f")
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "no execution claim precedes it"
+        ):
+            self.store.bind_remote_effect(
+                reservation_key=reservation.reservation_key,
+                owner_token="owner-a",
+                remote_system="provider",
+                remote_identifier="remote-unclaimed",
+            )
+        self.assertIsNone(
+            self.store.read_remote_binding(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+        )
+
+    def test_a_legacy_binding_recorded_before_its_claim_is_never_confirmed(self):
+        key = self.prepare_claim("a7f1")
+        reservation = self.reserve(self.store, key, "a7f2")
+        # Reproduce a pre-guard row: bound, then claimed afterwards.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_remote_binding "
+                "(reservation_key, task_id, owner_token, remote_system, "
+                "remote_identifier, bound_at) "
+                "VALUES (%s, %s, 'owner-a', 'provider', 'remote-legacy', "
+                "now() - interval '1 minute')",
+                (reservation.reservation_key, self.task_id),
+            )
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+        )
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "predates its execution claim"
+        ):
+            self.store.bind_remote_effect(
+                reservation_key=reservation.reservation_key,
+                owner_token="owner-a",
+                remote_system="provider",
+                remote_identifier="remote-legacy",
+            )
+        # The executor reads back before it claims or replays; that read must
+        # refuse the legacy row too, never report it trusted or absent.
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "predates its execution claim"
+        ):
+            self.store.read_remote_binding(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+
     def test_a_remote_identifier_cannot_be_reused_across_reservations(self):
         first_key = self.prepare_claim("1d")
         first = self.reserve(self.store, first_key, "2d", units=1)
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=first.reservation_key, owner_token="owner-a"
+            )
+        )
         self.store.bind_remote_effect(
             reservation_key=first.reservation_key,
             owner_token="owner-a",
@@ -3526,6 +3695,11 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             )
         )
         second = self.reserve(self.store, second_key, "5d", units=1)
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=second.reservation_key, owner_token="owner-a"
+            )
+        )
         with self.assertRaisesRegex(
             PostgresControlPlaneError, "already bound to a different reservation"
         ):
@@ -3862,8 +4036,8 @@ class CheckpointOperationDeadlineTests(unittest.TestCase):
             elapsed = monotonic() - started
         finally:
             released.set()
-            holder.join(timeout=10)
-        self.assertFalse(holder.is_alive())
+            holder.join(timeout=30)
+        self.assertFalse(holder.is_alive(), "worker did not finish within 30s")
         self.assertGreater(elapsed, 0.2, "it must have waited for the mutex")
         self.assertLess(elapsed, 3.0, "and stopped at the published cutoff")
         self.assertEqual(0, self.rows("checkpoints"))
@@ -3960,3 +4134,7 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]

@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
@@ -2109,6 +2112,26 @@ def _activation_evidence_from_row(
         observed_at=observed_at.astimezone(timezone.utc),
         expires_at=expires_at.astimezone(timezone.utc),
     )
+
+
+def _trusted_binding(row: Mapping[str, Any] | None) -> Mapping[str, str] | None:
+    """Return a binding only when its execution claim preceded it.
+
+    A binding with no claim, or one recorded before its claim, is never
+    trusted.  It is refused rather than reported as absent, because ``None``
+    tells the executor no I/O happened and would invite a second mutation.
+    """
+
+    if row is None:
+        return None
+    if row["claim_precedes"] is not True:
+        raise PostgresControlPlaneError(
+            "remote readback refused; the binding predates its execution claim"
+        )
+    return {
+        "remote_system": str(row["remote_system"]),
+        "remote_identifier": str(row["remote_identifier"]),
+    }
 
 
 def _reservation_from_row(row: Mapping[str, Any]) -> EffectReservation:
@@ -4863,6 +4886,8 @@ class PostgresConditionalClaimStore:
     ) -> None:
         """Bind one reservation to the remote object it created, exactly once.
 
+        Refused unless :meth:`claim_effect_execution` already recorded the
+        execution claim, so a bound effect always has ``started_at <= bound_at``.
         A same-payload replay still re-verifies the current writer and fence
         before reporting success.  A remote identifier already bound to a
         *different* reservation is a cross-reservation collision and fails
@@ -4894,6 +4919,21 @@ class PostgresConditionalClaimStore:
                         "remote binding refused; the reservation is not backed "
                         "by the current unexpired writer at its fencing generation"
                     )
+                # bound_at defaults to now(), so this pins started_at <= bound_at.
+                claimed = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT reservation_key
+                    FROM {schema}.director_primary_effect_execution
+                    WHERE reservation_key = %(reservation_key)s
+                      AND started_at <= now()
+                    """,
+                    {"reservation_key": reservation_key},
+                )
+                if claimed is None:
+                    raise PostgresControlPlaneError(
+                        "remote binding refused; no execution claim precedes it"
+                    )
                 collision = self._optional_row(
                     connection,
                     f"""
@@ -4918,9 +4958,13 @@ class PostgresConditionalClaimStore:
                 held = self._optional_row(
                     connection,
                     f"""
-                    SELECT remote_system, remote_identifier
-                    FROM {schema}.director_primary_remote_binding
-                    WHERE reservation_key = %(reservation_key)s
+                    SELECT bound.remote_system, bound.remote_identifier,
+                           executed.started_at <= bound.bound_at
+                               AS claim_precedes
+                    FROM {schema}.director_primary_remote_binding bound
+                    JOIN {schema}.director_primary_effect_execution executed
+                      ON executed.reservation_key = bound.reservation_key
+                    WHERE bound.reservation_key = %(reservation_key)s
                     """,
                     {"reservation_key": reservation_key},
                 )
@@ -4931,6 +4975,12 @@ class PostgresConditionalClaimStore:
                     ):
                         raise PostgresControlPlaneError(
                             "remote binding already names a different remote object"
+                        )
+                    # A binding recorded before its claim is never confirmed.
+                    if held["claim_precedes"] is not True:
+                        raise PostgresControlPlaneError(
+                            "remote binding refused; the existing binding "
+                            "predates its execution claim"
                         )
                     return
                 self._one_row(
@@ -4974,18 +5024,17 @@ class PostgresConditionalClaimStore:
                 row = self._optional_row(
                     connection,
                     f"""
-                    SELECT remote_system, remote_identifier
-                    FROM {self._schema}.director_primary_remote_binding
-                    WHERE reservation_key = %(reservation_key)s
+                    SELECT bound.remote_system, bound.remote_identifier,
+                           executed.started_at <= bound.bound_at
+                               AS claim_precedes
+                    FROM {self._schema}.director_primary_remote_binding bound
+                    LEFT JOIN {self._schema}.director_primary_effect_execution executed
+                      ON executed.reservation_key = bound.reservation_key
+                    WHERE bound.reservation_key = %(reservation_key)s
                     """,
                     {"reservation_key": reservation_key},
                 )
-        if row is None:
-            return None
-        return {
-            "remote_system": str(row["remote_system"]),
-            "remote_identifier": str(row["remote_identifier"]),
-        }
+        return _trusted_binding(row)
 
     def read_remote_binding_for_successor_reconciliation(
         self, *, reservation_key: str, successor_owner_token: str
@@ -5015,18 +5064,17 @@ class PostgresConditionalClaimStore:
                 row = self._optional_row(
                     connection,
                     f"""
-                    SELECT remote_system, remote_identifier
-                    FROM {schema}.director_primary_remote_binding
-                    WHERE reservation_key = %(reservation_key)s
+                    SELECT bound.remote_system, bound.remote_identifier,
+                           executed.started_at <= bound.bound_at
+                               AS claim_precedes
+                    FROM {schema}.director_primary_remote_binding bound
+                    LEFT JOIN {schema}.director_primary_effect_execution executed
+                      ON executed.reservation_key = bound.reservation_key
+                    WHERE bound.reservation_key = %(reservation_key)s
                     """,
                     {"reservation_key": reservation_key},
                 )
-        if row is None:
-            return None
-        return {
-            "remote_system": str(row["remote_system"]),
-            "remote_identifier": str(row["remote_identifier"]),
-        }
+        return _trusted_binding(row)
 
     # -- reconciliation and terminal evidence -----------------------------
 
@@ -6040,3 +6088,6 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | END]]
