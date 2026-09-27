@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
@@ -48,6 +49,39 @@ INPUT_FIELDS = {"id", "objective", "repository", "title"}
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def generation_schema(original):
+    """O-044: escape regex slash delimiters; report paths as JSON pointers."""
+    rewrites = []
+
+    def walk(value, path="", normalize=False):
+        if isinstance(value, list):
+            return [walk(item, f"{path}/{i}", normalize) for i, item in enumerate(value)]
+        if not isinstance(value, dict):
+            return value
+        result = {}
+        for key, item in value.items():
+            pointer = path + "/" + key.replace("~", "~0").replace("/", "~1")
+            if key == "pattern" and isinstance(item, str):
+                # Consume existing escape pairs first, including escaped backslashes.
+                # In Python and ECMA regex, / and \/ denote the same literal.
+                result[key] = re.sub(
+                    r"\\[\s\S]|/",
+                    lambda m: ("/" if m[0] == r"\/" else m[0]) if normalize
+                    else (r"\/" if m[0] == "/" else m[0]), item,
+                )
+                if not normalize and result[key] != item:
+                    rewrites.append({"path": pointer, "from": item, "to": result[key]})
+            else:
+                result[key] = walk(item, pointer, normalize)
+        return result
+
+    generated = walk(original)
+    # Equality after removing only redundant slash escapes proves both regex
+    # equivalence and that nothing outside pattern strings was changed.
+    assert walk(generated, normalize=True) == walk(original, normalize=True)
+    return generated, rewrites
 
 
 def gguf_chat_template(stream, file_bytes):
@@ -301,6 +335,8 @@ def run(args, transport=http_json):
     started = utc_now()
     if not math.isfinite(args.item_timeout) or args.item_timeout <= 0:
         raise ValueError("item-timeout must be positive and finite")
+    if args.max_tokens <= 0:
+        raise ValueError("max-tokens must be positive")
     base_url = args.base_url.rstrip("/")
     url = urlsplit(base_url)
     if (url.scheme not in {"http", "https"} or not url.hostname
@@ -339,8 +375,9 @@ def run(args, transport=http_json):
     if validator is None:
         raise ValueError("schema validation unavailable: scorer helper requires jsonschema")
     type(validator).check_schema(schema)
-    # Bind validation to the same schema object sent in every request.
+    # Validation stays bound to the original; only generation uses the rewrite.
     validator = type(validator)(schema)
+    generated_schema, schema_rewrites = generation_schema(schema)
     prompt = (args.control_prompt.read_bytes().decode("utf-8")
               if args.control_prompt else SYSTEM_PROMPT)
     control_digest = sha256(prompt.encode("utf-8")) if args.control_prompt else None
@@ -357,29 +394,38 @@ def run(args, transport=http_json):
     record = {
         **gguf_record, "loaded_model_binding": binding,
         "label": args.label, "model": args.model, "base_url": base_url,
+        "decision": "O-044", "max_tokens": args.max_tokens,
         "lm_studio_version": studio_version(base_url, transport, args.item_timeout),
         "prompt_template": prompt, "prompt_template_sha256": sha256(prompt.encode("utf-8")),
         "control_prompt_sha256": control_digest,
         "qwen3": args.qwen3, "chat_template_kwargs": kwargs,
         "temperature": 0, "n": 1, "item_timeout": args.item_timeout,
         "schema_sha256": sha256(schema_bytes),
+        # Hash sorted compact UTF-8 JSON, independent of source formatting.
+        "generation_schema_sha256": sha256(json.dumps(
+            generated_schema, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")),
+        "schema_rewrites": schema_rewrites,
         "reference_manifest": reference_digest, "input_manifest": input_digest,
         "counts": {"ok": 0, "failed": 0}, "start_utc": started,
     }
+    if args.qwen3:
+        record["reasoning_effort"] = "none"
     with (args.out / "failures.jsonl").open("x", encoding="utf-8", newline="\n") as failures:
         for item in items:
             body = {
-                "model": args.model, "temperature": 0, "n": 1,
+                "model": args.model, "temperature": 0, "n": 1, "max_tokens": args.max_tokens,
                 "messages": [{"role": "system", "content": prompt},
                              {"role": "user", "content": json.dumps(
                                  {key: item[key] for key in ("objective", "repository", "title")},
                                  sort_keys=True)}],
                 "response_format": {"type": "json_schema", "json_schema": {
-                    "name": "model_work_packet_v1", "strict": True, "schema": schema,
+                    "name": "model_work_packet_v1", "strict": True, "schema": generated_schema,
                 }},
             }
             if kwargs:
                 body["chat_template_kwargs"] = kwargs
+                body["reasoning_effort"] = "none"
             try:
                 response = transport("POST", base_url + "/chat/completions", body, args.item_timeout)
                 if not isinstance(response, dict) or response.get("error"):
@@ -388,9 +434,22 @@ def run(args, transport=http_json):
                 if not isinstance(choices, list) or len(choices) != 1:
                     raise ValueError("expected exactly one choice")
                 choice = choices[0]
+                if choice["finish_reason"] == "length":
+                    raise ValueError("max_tokens reached")
                 if choice["finish_reason"] != "stop":
                     raise ValueError("incomplete or refused completion")
-                raw = choice["message"]["content"]
+                message = choice["message"]
+                usage = response.get("usage") or {}
+                if not isinstance(message, dict) or not isinstance(usage, dict):
+                    raise ValueError("malformed message or usage")
+                if message.get("reasoning_content") or message.get("reasoning"):
+                    raise ValueError("response contains reasoning")
+                details = usage.get("completion_tokens_details") or {}
+                if not isinstance(details, dict):
+                    raise ValueError("malformed completion token details")
+                if details.get("reasoning_tokens", 0) > 0:
+                    raise ValueError("response contains reasoning tokens")
+                raw = message["content"]
                 if not isinstance(raw, str):
                     raise ValueError("completion content must be text")
                 if args.qwen3 and re.search(r"<\s*think\b", raw, re.IGNORECASE):
@@ -422,6 +481,7 @@ def main(argv=None, *, transport=http_json):
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--item-timeout", type=float, default=180)
+    parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--qwen3", action="store_true")
     parser.add_argument("--control-prompt", type=Path)
     args = parser.parse_args(argv)
@@ -438,3 +498,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | END]]
