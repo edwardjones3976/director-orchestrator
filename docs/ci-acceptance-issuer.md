@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]] -->
 # Isolated CI acceptance issuer
@@ -39,6 +40,12 @@ Python 3.12 (ubuntu-latest), Python 3.12 (windows-latest), Compose and container
 build, Secret hygiene, and Cross-process recovery probe. Policy may add checks
 but cannot omit that baseline.
 
+CI now triggers on pull requests and pushes to `main` only. Feature-branch
+heads therefore have no branch-push run for this push-only issuer to accept.
+Their PR runs remain ineligible under this gate; using them for pre-merge
+receipts requires a separately authorized issuer change and refreshed workflow
+pins. The trigger change does not relax this gate or provision the issuer.
+
 Repository metadata independently supplied by the coordinating review on
 2026-09-06 identifies `edwardjones3976/director-orchestrator`, repository ID
 `1333573567`, owner ID `145315321`, and CI workflow ID `333971972` at
@@ -78,3 +85,4 @@ No live issuer provenance is claimed by unit tests. Synthetic RSA/Ed25519 keys a
 mocked authenticated API responses exercise rejection behavior only.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]] -->
