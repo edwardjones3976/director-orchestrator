@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
@@ -27,6 +28,7 @@ SPEC.loader.exec_module(runner)
 
 class ParallelRunnerTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"DIRECTOR_CI_PG_LANE": ""}))
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -345,3 +347,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:18 UTC | END]]
