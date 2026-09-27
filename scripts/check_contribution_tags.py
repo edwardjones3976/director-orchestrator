@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
@@ -99,7 +100,7 @@ def validate_pr_body(body: str) -> list[str]:
     return ["PR body requires exactly one Sole author: <assistant> (<model>) header"]
 
 
-def _validate_github_event(path: Path) -> list[str]:
+def _validate_github_event(path: Path) -> tuple[list[str], str | None]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("invalid event")
@@ -110,8 +111,12 @@ def _validate_github_event(path: Path) -> list[str]:
         body = pr.get("body") or ""
         if not isinstance(body, str):
             raise ValueError("invalid body")
-        return validate_pr_body(body)
-    return []  # Push events, including main, require commit trailers only.
+        head = pr.get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        if not isinstance(sha, str) or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+            raise ValueError("pull-request head must identify an exact commit SHA")
+        return validate_pr_body(body), sha
+    return [], None  # Push events, including main, require commit trailers only.
 
 
 def main() -> int:
@@ -122,9 +127,14 @@ def main() -> int:
     parser.add_argument("--github-event", type=Path)
     args = parser.parse_args()
     try:
-        errors = validate_commits(args.base, args.head, args.default_branch_ref)
+        errors = []
+        head = args.head
         if args.github_event is not None:
-            errors.extend(_validate_github_event(args.github_event))
+            errors, source_head = _validate_github_event(args.github_event)
+            if source_head is not None:
+                # Never select checkout's synthetic PR merge commit.
+                head = source_head
+        errors.extend(validate_commits(args.base, head, args.default_branch_ref))
     except (OSError, ValueError, subprocess.CalledProcessError):
         # Never echo commit messages, event payloads or subprocess stderr.
         print("ERROR: could not read the commit range or GitHub event", file=sys.stderr)
@@ -152,3 +162,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]

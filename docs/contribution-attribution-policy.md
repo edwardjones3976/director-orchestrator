@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
@@ -78,11 +79,17 @@ No date cutoff is needed for the transition: once merged, commits checked under
 the old in-file tag rule are reachable from main and excluded, as is the main
 push's merge commit. Consequently, a main push with an up-to-date default-branch
 ref has no new commits to validate; trailer enforcement happens before merge
-on branch/PR checks. An unmerged legacy branch still needs trailers on its
+on PR checks. An unmerged legacy branch still needs trailers on its
 selected commits. This check is not a post-merge audit of main history.
 
-On pull-request events it also requires exactly one `Sole author:` header in
-the event-file PR body. Push events on main (and other refs) check trailers only.
+CI runs on `pull_request` and pushes to `main` only. On pull-request events,
+the checked range ends at `pull_request.head.sha` from the event payload,
+overriding `--head`. It must be a 40-hex commit SHA readable from Git; a missing,
+invalid or unreadable source head fails closed. Checkout's synthetic merge
+commit (`Merge <sha> into <sha>`) is never selected as the PR range head.
+The checker also requires exactly one `Sole author:` header in the event-file
+PR body. Push events check trailers only and retain the default-branch exclusion.
+No commit-message BEGIN/END tag envelope is required on any event.
 Unreadable revisions or event files fail closed. The checker does not read,
 require or validate in-file tags: adding or removing them never fails this
 check. The policy still prohibits writing new tags.
@@ -118,3 +125,4 @@ work; this change replaces repository policy and CI validation.
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]] -->

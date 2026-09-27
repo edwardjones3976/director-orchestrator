@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
@@ -838,11 +839,13 @@ class GitAttributionTests(unittest.TestCase):
 
     def test_event_file_pr_and_push_and_malformed_input(self):
         event = self.root / "event.json"
-        for payload, valid in (({"pull_request": {"body": "Sole author: Codex (GPT-6)"}}, True),
-                               ({"pull_request": {"body": None}}, False),
+        for payload, valid in (({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": self.base}}}, True),
+                               ({"pull_request": {"body": None, "head": {"sha": self.base}}}, False),
                                ({"ref": "refs/heads/main"}, True)):
             event.write_text(json.dumps(payload), encoding="utf-8")
-            self.assertEqual(self.checker._validate_github_event(event) == [], valid)
+            errors, source_head = self.checker._validate_github_event(event)
+            self.assertEqual(errors == [], valid)
+            self.assertEqual(source_head, self.base if "pull_request" in payload else None)
         head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
         event.write_text("invalid JSON", encoding="utf-8")
         with patch("sys.argv", ["checker", "--base", self.base, "--head", head, "--github-event", str(event)]), patch("sys.stderr", new_callable=io.StringIO):
@@ -852,18 +855,72 @@ class GitAttributionTests(unittest.TestCase):
         event = self.root / "event.json"
         head = self.commit("No trailer")
         for payload, valid in (({"ref": "refs/heads/main"}, False),
-                               ({"pull_request": {"body": "Sole author: Codex (GPT-6)"}}, False)):
+                               ({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": head}}}, False)):
             event.write_text(json.dumps(payload), encoding="utf-8")
             with patch("sys.argv", ["checker", "--base", self.base, "--head", head, "--github-event", str(event)]), patch("sys.stderr", new_callable=io.StringIO):
                 self.assertEqual(self.checker.main(), 1)
         base = head
         head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
         for payload, expected in (({"ref": "refs/heads/main"}, 0),
-                                  ({"pull_request": {"body": "Sole author: Codex (GPT-6)"}}, 0),
-                                  ({"pull_request": {"body": "No header"}}, 1)):
+                                  ({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": head}}}, 0),
+                                  ({"pull_request": {"body": "No header", "head": {"sha": head}}}, 1)):
             event.write_text(json.dumps(payload), encoding="utf-8")
             with patch("sys.argv", ["checker", "--base", base, "--head", head, "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO), patch("sys.stderr", new_callable=io.StringIO):
                 self.assertEqual(self.checker.main(), expected)
+
+    def test_pr_source_head_overrides_synthetic_merge_checkout(self):
+        main = self.commit("Main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", self.base)
+        source = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        self.git("checkout", "-b", "pr-merge", main)
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            self.git("merge", "--no-ff", "-m", f"Merge {source} into {main}", source)
+        synthetic = self.git("rev-parse", "HEAD")
+        self.assertIn(synthetic, self.checker.validate_commits(self.base, "HEAD")[0])
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"pull_request": {
+            "body": "Sole author: Codex (GPT-6)", "head": {"sha": source},
+        }}), encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", "HEAD",
+                                "--github-event", str(event)]), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ), patch.object(self.checker, "_git", wraps=self.checker._git) as git:
+            self.assertEqual(self.checker.main(), 0)
+        git.assert_any_call("rev-list", f"{self.base}..{source}", "--not", main)
+        self.assertFalse(any(synthetic in call.args or "HEAD^{commit}" in call.args
+                             for call in git.call_args_list))
+
+    def test_pr_missing_or_invalid_source_head_fails_closed(self):
+        event = self.root / "event.json"
+        for pr_head in (None, {}, {"sha": "HEAD"}, {"sha": "--all"},
+                        {"sha": "a" * 39}, {"sha": "g" * 40}, {"sha": 123}):
+            with self.subTest(head=pr_head):
+                pr = {"body": "Sole author: Codex (GPT-6)"}
+                if pr_head is not None:
+                    pr["head"] = pr_head
+                event.write_text(json.dumps({"pull_request": pr}), encoding="utf-8")
+                with patch("sys.argv", ["checker", "--base", self.base, "--head", "HEAD",
+                                        "--github-event", str(event)]), patch(
+                    "sys.stderr", new_callable=io.StringIO
+                ), patch.object(self.checker, "validate_commits") as validate:
+                    self.assertEqual(self.checker.main(), 1)
+                    validate.assert_not_called()
+
+    def test_pr_unreadable_source_head_fails_closed(self):
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"pull_request": {
+            "body": "Sole author: Codex (GPT-6)", "head": {"sha": "a" * 40},
+        }}), encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", self.base,
+                                "--github-event", str(event)]), patch(
+            "sys.stderr", new_callable=io.StringIO
+        ), patch.object(self.checker, "_git", wraps=self.checker._git) as git:
+            self.assertEqual(self.checker.main(), 1)
+        git.assert_called_once_with("rev-parse", "--verify", "--end-of-options",
+                                    f"{'a' * 40}^{{commit}}")
 
     def test_policy_and_templates_use_git_attribution(self):
         root = Path(__file__).resolve().parents[1]
@@ -918,3 +975,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
