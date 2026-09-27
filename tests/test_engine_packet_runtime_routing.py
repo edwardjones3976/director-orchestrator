@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
@@ -1215,7 +1216,10 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_parallel_cancellation_propagates_when_settlement_fails(self):
         await self._parallel_settlement_failure(cancel=True)
 
-    async def _parallel_settlement_failure(self, *, cancel=False):
+    async def test_parallel_reset_before_settlement_keeps_only_accounting(self):
+        await self._parallel_settlement_failure(reset=True)
+
+    async def _parallel_settlement_failure(self, *, cancel=False, reset=False):
         assignments = [
             Assignment(
                 sequence=1,
@@ -1307,6 +1311,35 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine, store = self._engine(settings, activation)
         engine._publish_delegation = AsyncMock(return_value=True)
         stored, _ = store.create(record)
+
+        if reset:
+            from director_orchestrator.approvals import reset_for_owner_clarification
+
+            settle = engine._settle_packet_spend
+            dispatch_generation = stored.plan_generation
+            reset_done = False
+
+            def settle_after_reset(*args, **kwargs):
+                nonlocal reset_done
+                if not reset_done:
+                    current = store.get(record.task_id)
+                    reset_for_owner_clarification(current)
+                    current.plan_generation += 1
+                    store.save(current)
+                    reset_done = True
+                return settle(*args, **kwargs)
+
+            with patch.object(engine, "_settle_packet_spend", side_effect=settle_after_reset):
+                self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
+            self.assertTrue(reset_done)
+            self.assertEqual(store.get(record.task_id).provider_runs, [])
+            self.assertEqual(consumer.calls, 0)
+            self.assertEqual(transports["gemini"].sends, 1)
+            self.assertEqual(transports["openai"].sends, 1)
+            held, = engine.provider_spend.settlements(record.task_id).values()
+            self.assertEqual(held["plan_generation"], dispatch_generation)
+            self.assertFalse(held["pending"])
+            return
 
         if cancel:
             with patch("director_orchestrator.engine.asyncio.to_thread", new=AsyncMock(side_effect=asyncio.CancelledError)), patch.object(
@@ -1607,3 +1640,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]

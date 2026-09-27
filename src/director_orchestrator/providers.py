@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | BEGIN]]
@@ -167,14 +168,21 @@ class ProviderDailySpendLedger:
                 connection.execute(
                     "ALTER TABLE provider_daily_spend_reservations ADD COLUMN released_at TEXT"
                 )
+            if "request_exists" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN request_exists INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute(
+                    "UPDATE provider_daily_spend_reservations SET request_exists = 1 WHERE actual_cost_usd > 0"
+                )
             connection.execute("""CREATE TABLE IF NOT EXISTS engine_spend_settlements (
                 task_id TEXT NOT NULL, effect_key TEXT NOT NULL, evidence TEXT NOT NULL,
                 PRIMARY KEY(task_id, effect_key))""")
 
-    def save_settlement(self, task_id: str, effect_key: str, evidence: dict) -> None:
+    def save_settlement(self, task_id: str, effect_key: str, evidence: dict, *, timeout: float = 30) -> None:
         """Persist only accounting/identity evidence, never provider content."""
         evidence = self.compact_settlement(evidence)
-        with self._connect() as connection:
+        with self._connect(timeout=timeout) as connection:
             connection.execute(
                 """INSERT INTO engine_spend_settlements VALUES (?, ?, ?)
                 ON CONFLICT(task_id, effect_key) DO UPDATE SET evidence = excluded.evidence""",
@@ -256,12 +264,15 @@ class ProviderDailySpendLedger:
         effect_key: str,
         actual_cost_usd: float | None,
         now: datetime | None = None,
+        request_exists: bool = True,
     ) -> None:
         """Settle a provider request against its reservation: record its actual charge, never lowering one already
         recorded. The one path for usage probes and ordinary work (review 4112533824). ``None`` settles a request
         whose provider reported no cost: its reservation keeps counting at its bound, and it stays unreconciled.
         A charge with no reservation (a probe the ledger did not reserve) is recorded as its own row at a zero
         reservation: the charge was incurred, so it is never refused and always counts.
+        Authenticated existence is permanent, regardless of cost. Only absence or ambiguous
+        accounting passes request_exists=False; it cannot change a row with existence evidence.
         Operators may use this same method for a legacy row after obtaining an authoritative charge;
         its original UTC day and legacy provenance remain unchanged."""
 
@@ -273,15 +284,31 @@ class ProviderDailySpendLedger:
                 not isinstance(actual_cost_usd, (int, float)) or isinstance(actual_cost_usd, bool)
                 or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0):
             raise ValueError("provider spend charge must be a finite non-negative amount")
+        request_exists = request_exists or (actual_cost_usd is not None and actual_cost_usd > 0)
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # Existence is monotonic, including zero and unknown charges. Owner
+            # absence/pre-submit accounting cannot undo authenticated existence.
+            if not request_exists and connection.execute(
+                """SELECT 1 FROM provider_daily_spend_reservations
+                WHERE provider = ? AND effect_key = ? AND request_exists = 1""",
+                (provider.value, effect_key),
+            ).fetchone():
+                return
+            connection.execute(
+                """UPDATE provider_daily_spend_reservations
+                SET request_exists = MAX(request_exists, ?)
+                WHERE provider = ? AND effect_key = ?""",
+                (int(request_exists), provider.value, effect_key),
+            )
             if actual_cost_usd is None:
                 connection.execute(
                     """UPDATE provider_daily_spend_reservations
                     SET settled_at = COALESCE(settled_at, ?),
-                        actual_cost_usd = CASE WHEN released_at IS NOT NULL THEN NULL ELSE actual_cost_usd END,
-                        released_at = NULL
+                        actual_cost_usd = CASE WHEN released_at IS NOT NULL AND request_exists
+                                              THEN NULL ELSE actual_cost_usd END,
+                        released_at = CASE WHEN request_exists THEN NULL ELSE released_at END
                     WHERE provider = ? AND effect_key = ?""",
                     (observed_at.isoformat(), provider.value, effect_key),
                 )
@@ -289,7 +316,7 @@ class ProviderDailySpendLedger:
             updated = connection.execute(
                 """UPDATE provider_daily_spend_reservations
                 SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
-                    released_at = NULL,
+                    released_at = CASE WHEN request_exists THEN NULL ELSE released_at END,
                     settled_at = COALESCE(settled_at, ?)
                 WHERE provider = ? AND effect_key = ?""",
                 (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
@@ -297,22 +324,24 @@ class ProviderDailySpendLedger:
             if not updated:
                 connection.execute(
                     """INSERT INTO provider_daily_spend_reservations(
-                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, actual_cost_usd, settled_at
-                    ) VALUES (?, ?, ?, 0, ?, ?, ?)""",
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, actual_cost_usd, settled_at, request_exists
+                    ) VALUES (?, ?, ?, 0, ?, ?, ?, ?)""",
                     (provider.value, effect_key, observed_at.date().isoformat(),
-                     observed_at.isoformat(), float(actual_cost_usd), observed_at.isoformat()),
+                     observed_at.isoformat(), float(actual_cost_usd), observed_at.isoformat(), int(request_exists)),
                 )
 
     def release_not_created(self, *, provider: ProviderName, effect_key: str) -> None:
-        """Exclude a confirmed absent request from both ceilings, retaining its row."""
+        """Reserved -> released -> reinstated; existence permanently forbids release."""
         if provider not in self._SUPPORTED or not self._EFFECT_KEY.fullmatch(effect_key):
             raise ValueError("release requires a supplemental provider and canonical effect key")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                """SELECT actual_cost_usd FROM provider_daily_spend_reservations
+                """SELECT actual_cost_usd, request_exists FROM provider_daily_spend_reservations
                 WHERE provider = ? AND effect_key = ?""", (provider.value, effect_key),
             ).fetchone()
+            if row is not None and row[1]:
+                return  # An obsolete absence receipt is a no-op.
             if row is None or row[0] != 0:
                 raise ValueError("not-created release requires an existing zero-charge reservation")
             connection.execute(
@@ -342,8 +371,8 @@ class ProviderDailySpendLedger:
                 if settled_at is not None or datetime.fromisoformat(recorded_at) <= observed_at - stale_after]
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        with closing(sqlite3.connect(self.path, timeout=30)) as connection:
+    def _connect(self, *, timeout: float = 30) -> Iterator[sqlite3.Connection]:
+        with closing(sqlite3.connect(self.path, timeout=timeout)) as connection:
             connection.execute("PRAGMA secure_delete = ON")
             with connection:
                 yield connection
@@ -1874,3 +1903,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]

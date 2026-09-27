@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | BEGIN]]
@@ -70,7 +71,8 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     now = datetime.now(timezone.utc)
                     ledger.reserve(provider=provider, effect_key=effect, estimated_cost_usd=0.75,
                                    request_limit=1, budget_usd=1, now=now)
-                    ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=0, now=now)
+                    ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=0, now=now,
+                                         request_exists=False)
                     ledger.release_not_created(provider=provider, effect_key=effect)
                     monitor = UsageMonitor(settings, settlement.TaskStore(settings.sqlite_path))
                     self.assertEqual(ledger.reservations(provider, now=now, include_released=False), [])
@@ -82,6 +84,11 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                         self.assertEqual(db.execute("SELECT COUNT(*) FROM provider_daily_spend_reservations").fetchone()[0], 1)
                     ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=cost, now=now)
                     reopened = ProviderDailySpendLedger(settings.sqlite_path)
+                    # Both the obsolete release and its zero-cost precursor are
+                    # harmless after authenticated existence, even across restart.
+                    reopened.record_charge(provider=provider, effect_key=effect, actual_cost_usd=0,
+                                           now=now, request_exists=False)
+                    reopened.release_not_created(provider=provider, effect_key=effect)
                     self.assertEqual(reopened.exposure(provider, now=now), (1, 0.75 if cost is None else cost))
                     self.assertEqual(reopened.unreconciled(provider, stale_after=timedelta(hours=1), now=now),
                                      [effect] if cost is None else [])
@@ -523,3 +530,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]

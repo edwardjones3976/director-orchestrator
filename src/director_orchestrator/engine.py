@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
@@ -1122,15 +1125,21 @@ class OrchestrationEngine:
         return stored, reserved_key, reserved_here
 
     def _settle_packet_spend(self, record: TaskRecord, assignment: Assignment, effect_key: str, outcome, *,
-                             unsent: bool = False) -> bool:
+                             unsent: bool = False, plan_generation: int | None = None) -> bool:
         """Every exit of a packet run settles its reservation: the provider-reported cost of the run its result
         names, else none (unreconciled). ``unsent`` only where the runtime key was provably closed pre-submit."""
 
+        # Capture the caller's dispatch snapshot before reloading callback state.
+        if plan_generation is None:
+            plan_generation = record.plan_generation
+        snapshot_runs = record.provider_runs
+        latest = self.store.get(record.task_id) or record
+        generation_current = (
+            latest.plan is not None and plan_generation == latest.plan_generation)
         if self.provider_spend is None or assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
-            return True
+            return generation_current
         if unsent:
             return self._charge_spend(assignment.agent, effect_key, 0.0)
-        latest = self.store.get(record.task_id)
         if latest is not None and latest._store_version != record._store_version:
             for field_name in type(record).model_fields:
                 setattr(record, field_name, copy.deepcopy(getattr(latest, field_name)))
@@ -1141,7 +1150,7 @@ class OrchestrationEngine:
         run = next((item for item in reversed(latest.provider_runs)
                     if run_id and item.run_id == run_id and item.provider == assignment.agent), None)
         if run is None:
-            run = next((item for item in reversed(record.provider_runs)
+            run = next((item for item in reversed(snapshot_runs)
                         if run_id and item.run_id == run_id and item.provider == assignment.agent), None)
         cost = authoritative_reported_cost(assignment.agent, run.raw) if run is not None else None
         packet_only = run is None and bool(run_id)
@@ -1150,13 +1159,17 @@ class OrchestrationEngine:
                               run_id=run_id, status="RECONCILIATION_REQUIRED",
                               result=str(packet.get("outcome", "")))
         if run is not None:
+            if plan_generation is not None:
+                run = run.model_copy(update={"plan_generation": plan_generation})
             held = self._spend_settlements(record, run).get(effect_key)
-            if (held and not held["pending"] and held["cost"] == cost
+            if (generation_current and held and not held["pending"] and held["cost"] == cost
+                    and held.get("plan_generation") == record.plan_generation
                     and held.get("result_packet_digest") == document_digest(packet)):
                 return True
-        return self._charge_spend(assignment.agent, effect_key, cost, record=record,
-                                  assignment=assignment, run=run, result_packet=packet,
-                                  packet_outcome=outcome, packet_only=packet_only)
+        settled = self._charge_spend(assignment.agent, effect_key, cost, record=record,
+                                    assignment=assignment, run=run, result_packet=packet,
+                                    packet_outcome=outcome, packet_only=packet_only)
+        return settled and generation_current
 
     @staticmethod
     def _record_packet_effect_outcome(
@@ -1370,6 +1383,7 @@ class OrchestrationEngine:
             return False
         packet_outcome = None
         provably_unsent = False
+        packet_generation = record.plan_generation
         try:
             outcome = await asyncio.to_thread(
                 runtime.run_packet,
@@ -1426,7 +1440,8 @@ class OrchestrationEngine:
             # Review 4112697677: every exit after the packet ran settles its reservation (a later readback that
             # reconciles a result raises it to the actual charge).
             settlement_ok = self._settle_packet_spend(
-                record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent)
+                record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent,
+                plan_generation=packet_generation)
         if not settlement_ok:
             if workload_reservation is not None:
                 await self._finalize_workload_dispatch(
@@ -1468,7 +1483,10 @@ class OrchestrationEngine:
                     )
                     # Review 4112821088: the reconciled result replaces the outcome the finally above settled; it
                     # settles again, before anything consumes it (record_charge only raises a charge).
-                    if not self._settle_packet_spend(record, assignment, task_effect_key, outcome):
+                    if not self._settle_packet_spend(
+                        record, assignment, task_effect_key, outcome,
+                        plan_generation=packet_generation,
+                    ):
                         if workload_reservation is not None:
                             await self._finalize_workload_dispatch(
                                 record, workload_reservation,
@@ -1509,6 +1527,9 @@ class OrchestrationEngine:
             # the packet thread waited. Carry that exact state forward before
             # binding the result packet, rather than overwriting it with a stale
             # in-memory record.
+            if (latest.plan is None or assignment not in latest.plan.assignments
+                    or latest.plan_generation != packet_generation):
+                return False
             for field_name in type(record).model_fields:
                 setattr(
                     record,
@@ -2096,6 +2117,9 @@ class OrchestrationEngine:
                 )
             )
 
+        settlements = []
+        packet_generation = record.plan_generation
+
         async def dispatch_one(item):
             (
                 member,
@@ -2122,11 +2146,17 @@ class OrchestrationEngine:
                 return item, None, exc
             finally:
                 # Review 4112697677: completed, failed, raised or cancelled, the member's reservation settles.
-                self._settle_packet_spend(record, assignment, _task_effect_key, outcome)
+                settlements.append(self._settle_packet_spend(
+                    record, assignment, _task_effect_key, outcome,
+                    plan_generation=packet_generation))
 
         observed = await asyncio.gather(
             *(dispatch_one(item) for item in dispatchable)
         )
+        current = self.store.get(record.task_id)
+        if (current is None or current.plan is None or current.plan != record.plan
+                or current.plan_generation != packet_generation):
+            return False
         completed_packets: list[
             tuple[Assignment, dict[str, object], object, str]
         ] = []
@@ -2225,6 +2255,8 @@ class OrchestrationEngine:
                     )
 
         if record.error and record.error.startswith("spend_settlement_failed:"):
+            return False
+        if not all(settlements):
             return False
         if replay_integrity_failure:
             await self._stop_for_owner(
@@ -5641,14 +5673,16 @@ class OrchestrationEngine:
 
         if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED:
             return True
+        content_current = True
         if record is not None and run is not None:
-            self._journal_spend_acknowledgement(
+            content_current = self._journal_spend_acknowledgement(
                 record, effect_key, run,
                 cost if cost is not None else authoritative_reported_cost(run.provider, run.raw),
                 result_packet=result_packet, packet_only=packet_only)
         try:
             self.provider_spend.record_charge(
-                provider=provider, effect_key=effect_key, actual_cost_usd=cost, now=datetime.now(timezone.utc)
+                provider=provider, effect_key=effect_key, actual_cost_usd=cost, now=datetime.now(timezone.utc),
+                request_exists=run is not None,
             )
             if record is not None and run is not None:
                 held = self.provider_spend.settlements(record.task_id)[effect_key]
@@ -5659,7 +5693,7 @@ class OrchestrationEngine:
             if record is None or (assignment is None and run is None):
                 raise  # Pre-submit callers have no ambiguous paid effect.
         else:
-            return True
+            return content_current
         # Never include the ledger exception text: it may contain connection details.
         record.status = TaskStatus.OWNER_DECISION_REQUIRED
         record.error = "spend_settlement_failed:" + effect_key
@@ -5667,6 +5701,8 @@ class OrchestrationEngine:
             "Spend settlement failed; resume retries accounting for the preserved run. "
             "An unidentified request still requires owner reconciliation."
         )
+        if not content_current:
+            return False
         intent = next((item for item in record.task_effect_ledger
                        if item.effect_key == effect_key and item.kind == "provider_intent"), None)
         if intent is None:
@@ -5706,19 +5742,25 @@ class OrchestrationEngine:
 
     def _journal_spend_acknowledgement(self, record: TaskRecord, effect_key: str,
                                        run: ProviderRun, cost: float | None, *,
-                                       result_packet=None, packet_only: bool = False) -> None:
+                                       result_packet=None, packet_only: bool = False) -> bool:
         if self.provider_spend is None or run.provider not in ProviderDailySpendLedger._SUPPORTED:
-            return
-        # Preserve known accounting evidence even when intent identity is absent.
-        # Recovery still requires an exact intent match before restoring a run.
+            return True
+        # Dispatch-stamped runs survive reloads; direct callers still hold the
+        # dispatch snapshot. Intent presence never decides content eligibility.
         intent = next((item for item in record.task_effect_ledger
                        if item.kind == "provider_intent" and item.effect_key == effect_key), None)
+        generation = run.plan_generation
+        if generation is None:
+            generation = self._spend_settlements(record, run).get(effect_key, {}).get("plan_generation")
+        if generation is None:
+            generation = record.plan_generation
+        run = run.model_copy(update={"plan_generation": generation})
         evidence = {
             "provider": run.provider.value, "run_id": run.run_id, "cost": cost, "pending": True,
             "phase": intent.phase if intent else None,
             "assignment_sequence": intent.assignment_sequence if intent else None,
             "assignment_digest": intent.assignment_digest if intent else None,
-            "plan_generation": intent.plan_generation if intent else None,
+            "plan_generation": generation,
             "result_digest": canonical_opaque_identifier_digest(run.result) if run.result else None,
             "packet_only": packet_only,
             "result_packet_digest": document_digest(result_packet) if result_packet is not None else None,
@@ -5749,11 +5791,18 @@ class OrchestrationEngine:
             if time.monotonic() >= deadline:
                 break
             try:
+                latest = self.store.get(record.task_id, timeout=0.25)
+                if latest is None or latest.plan is None or generation != latest.plan_generation:
+                    # Missing intent is not a reset. A captured generation mismatch
+                    # permits only content-free accounting, including on CAS retry.
+                    self.provider_spend.save_settlement(record.task_id, effect_key, evidence, timeout=0.25)
+                    if latest is not None:
+                        for field in type(record).model_fields:
+                            setattr(record, field, copy.deepcopy(getattr(latest, field)))
+                        record._store_version = latest._store_version
+                    return False
                 if attempt:
-                    candidate = self.store.get(record.task_id, timeout=0.25)
-                    if (candidate is None or candidate.plan_generation != preserved.plan_generation
-                            or candidate.plan != preserved.plan):
-                        break  # Never restore content across an owner privacy reset.
+                    candidate = latest
                     for field in ("task_effect_ledger", "provider_interaction_ledger", "provider_contact_attempts"):
                         current = getattr(candidate, field)
                         current.extend(copy.deepcopy(item) for item in getattr(preserved, field) if item not in current)
@@ -5792,7 +5841,7 @@ class OrchestrationEngine:
                 for field in type(record).model_fields:
                     setattr(record, field, copy.deepcopy(getattr(candidate, field)))
                 record._store_version = candidate._store_version
-                return
+                return True
         raise AcknowledgementPersistencePending("Acknowledgement persistence exhausted; reconcile the durable intent")
 
     def _save_spend_hold(self, record: TaskRecord) -> bool:
@@ -6882,6 +6931,7 @@ class OrchestrationEngine:
                 consumed_artifact_digests=consumed_artifact_digests,
             )
             self.store.save(record)
+            dispatch_generation = record.plan_generation
             try:
                 run = await adapter.dispatch(
                     assignment,
@@ -6970,6 +7020,7 @@ class OrchestrationEngine:
             # exit (unavailable, timeout, cancellation, any exception) leaves it unreconciled, never invisible; the
             # terminal run below raises it to its reported cost.
             run.assignment_sequence = assignment.sequence
+            run.plan_generation = dispatch_generation
             run.interaction_id = interaction_id
             run.evidence_source = "provider_authenticated"
             self._record_dispatch_acknowledgement(record, run)
@@ -7290,6 +7341,7 @@ class OrchestrationEngine:
                 consumed_artifact_digests=revision_consumed_artifact_digests,
             )
             self.store.save(record)
+            revision_generation = record.plan_generation
             try:
                 revised = await adapter.revise(
                     run,
@@ -7379,6 +7431,7 @@ class OrchestrationEngine:
                 return False
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
+            revised.plan_generation = revision_generation
             revised.interaction_id = revision_interaction_id
             revised.evidence_source = "provider_authenticated"
             self._record_dispatch_acknowledgement(record, revised)
@@ -7600,6 +7653,7 @@ class OrchestrationEngine:
                         "provider poll changed the dispatched run identity"
                     )
                 observed.interaction_id = current.interaction_id
+                observed.plan_generation = current.plan_generation
                 observed.assignment_sequence = current.assignment_sequence
                 observed.session_id = observed.session_id or current.session_id
                 observed.evidence_source = "provider_authenticated"
@@ -7719,3 +7773,6 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]

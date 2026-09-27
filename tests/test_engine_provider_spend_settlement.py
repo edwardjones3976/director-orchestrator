@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:05 UTC | BEGIN]]
@@ -87,6 +91,168 @@ def _key(label: str) -> str:
 
 
 class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
+    def test_intent_free_acknowledgement_uses_captured_generation(self):
+        from director_orchestrator.approvals import reset_for_owner_clarification
+
+        for source in ("run", "packet", "journal", "absent"):
+            for reset in (False, True):
+                if source == "absent" and reset:
+                    continue  # Historical unbound runs cannot prove their dispatch epoch.
+                with self.subTest(source=source, reset=reset), tempfile.TemporaryDirectory() as directory:
+                    settings, store, record, assignment = self._world(directory)
+                    engine = OrchestrationEngine(settings, store)
+                    key = _key("intent-free")
+                    generation = record.plan_generation
+                    engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                    run = ProviderRun(provider=assignment.agent, run_id="intent-free-run",
+                                      assignment_sequence=assignment.sequence, status="completed",
+                                      result="bounded-result", raw={"usage": {"cost": 0.25}},
+                                      plan_generation=generation if source == "run" else None)
+                    self.assertFalse(any(item.kind == "provider_intent" for item in record.task_effect_ledger))
+                    if source == "journal":
+                        engine.provider_spend.save_settlement(record.task_id, key, {
+                            "provider": run.provider.value, "run_id": run.run_id,
+                            "cost": 0.25, "pending": True, "plan_generation": generation,
+                        })
+                    if reset:
+                        reset_for_owner_clarification(record)
+                        store.save(record)
+                    if source == "packet":
+                        outcome = SimpleNamespace(result_packet={
+                            "run_reference": run.run_id, "outcome": run.result})
+                        accepted = engine._settle_packet_spend(
+                            record, assignment, key, outcome, plan_generation=generation)
+                    else:
+                        accepted = engine._charge_spend(
+                            assignment.agent, key, 0.25, record=record, assignment=assignment, run=run)
+                    self.assertEqual(accepted, not reset)
+                    current = store.get(record.task_id)
+                    self.assertEqual(bool(current.provider_runs), not reset)
+                    if reset:
+                        self.assertNotIn("bounded-result", current.model_dump_json())
+                    held = engine.provider_spend.settlements(record.task_id)[key]
+                    self.assertFalse(held["pending"])
+                    self.assertEqual(held["plan_generation"], generation)
+                    self.assertEqual(engine.provider_spend.exposure(assignment.agent)[0], 1)
+
+    def test_intent_free_old_run_does_not_restore_replacement_plan_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = _key("old-generation")
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            run = ProviderRun(provider=assignment.agent, run_id="old-run", status="completed",
+                              result="old-content", plan_generation=record.plan_generation)
+            record.plan_generation += 1
+            store.save(record)
+            self.assertFalse(engine._charge_spend(
+                assignment.agent, key, 0.25, record=record, assignment=assignment, run=run))
+            self.assertEqual(store.get(record.task_id).provider_runs, [])
+            self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0.25))
+
+    async def test_poll_preserves_dispatch_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(replace(settings, provider_poll_seconds=0), store)
+            run = ProviderRun(provider=assignment.agent, run_id="poll-generation", status="RUNNING",
+                              plan_generation=record.plan_generation)
+            adapter = AsyncMock()
+            adapter.poll.return_value = run.model_copy(update={"status": "completed", "plan_generation": None})
+            observed = await engine._wait(adapter, run)
+            self.assertEqual(observed.plan_generation, record.plan_generation)
+            adapter.poll.assert_awaited_once()
+
+    def test_reset_before_first_ack_write_settles_without_content(self):
+        from director_orchestrator.approvals import reserve_provider_effect, reset_for_owner_clarification
+
+        for phase in ("dispatch", "revision", "packet"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment,
+                                              phase="revision" if phase == "revision" else "dispatch",
+                                              max_task_budget_usd=10)
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                store.save(record)
+                reset = store.get(record.task_id)
+                reset_for_owner_clarification(reset)
+                store.save(reset)
+                run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                                  run_id="reset-run", status="completed", result="erased-content-marker",
+                                  raw={"payload": "erased-content-marker"})
+                if phase == "packet":
+                    # Both packet exits reload the current reset snapshot before acknowledgement.
+                    outcome = SimpleNamespace(result_packet={
+                        "run_reference": run.run_id, "outcome": run.result})
+                    self.assertFalse(engine._settle_packet_spend(record, assignment, key, outcome))
+                else:
+                    self.assertFalse(engine._charge_spend(assignment.agent, key, 0.25,
+                                                         record=record, assignment=assignment, run=run))
+                current = store.get(record.task_id)
+                self.assertEqual(current.provider_runs, [])
+                self.assertNotIn("erased-content-marker", current.model_dump_json())
+                journal = engine.provider_spend.settlements(record.task_id)
+                self.assertNotIn("erased-content-marker", json.dumps(journal))
+                self.assertFalse(journal[key]["pending"])
+                self.assertEqual(engine.provider_spend.exposure(assignment.agent)[0], 1)
+                self.assertTrue(engine._retry_spend_settlements(current))
+                self.assertEqual(store.get(record.task_id).provider_runs, [])
+
+    def test_reset_between_ack_check_and_cas_keeps_only_accounting(self):
+        from director_orchestrator.approvals import reserve_provider_effect, reset_for_owner_clarification
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            store.save(record)
+            run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                              run_id="racing-reset", status="completed", result="erased-race-marker")
+            save = store.save
+
+            def reset_before_cas(candidate, **kwargs):
+                if "spend_settlement" in kwargs:
+                    reset = store.get(record.task_id)
+                    reset_for_owner_clarification(reset)
+                    save(reset)
+                return save(candidate, **kwargs)
+
+            with patch.object(store, "save", side_effect=reset_before_cas):
+                self.assertFalse(engine._charge_spend(assignment.agent, key, 0.25,
+                                                     record=record, assignment=assignment, run=run))
+            self.assertNotIn("erased-race-marker", store.get(record.task_id).model_dump_json())
+            self.assertNotIn("erased-race-marker", json.dumps(engine.provider_spend.settlements(record.task_id)))
+            self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0.25))
+
+    def test_not_created_replay_cannot_release_authenticated_existence(self):
+        from director_orchestrator.approvals import reserve_provider_effect, record_provider_effect_observation
+        from director_orchestrator.models import ProviderContactAttempt
+
+        for cost in (0.0, 0.25, None):
+            with self.subTest(cost=cost), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                record_provider_effect_observation(record, assignment, effect_key=key,
+                                                   phase="dispatch", outcome="ambiguous")
+                for phase, outcome in (("dispatch", "ambiguous_dispatch"),
+                                       ("reconciliation", "reconciled_not_created")):
+                    record.provider_contact_attempts.append(ProviderContactAttempt(
+                        assignment_sequence=assignment.sequence, provider=assignment.agent,
+                        ordinal=1, phase=phase, outcome=outcome, error="test reconciliation"))
+                store.save(record)
+                self.assertTrue(engine._settle_not_created_dispatches(record))
+                self.assertEqual(engine.provider_spend.reservations(assignment.agent, include_released=False), [])
+                engine.provider_spend.record_charge(provider=assignment.agent, effect_key=key, actual_cost_usd=cost)
+                restarted = OrchestrationEngine(settings, store)
+                self.assertTrue(restarted._settle_not_created_dispatches(store.get(record.task_id)))
+                self.assertEqual(len(restarted.provider_spend.reservations(assignment.agent, include_released=False)), 1)
+                with self.assertRaises(ProviderDailyLimitExceeded):
+                    restarted.provider_spend.reserve(provider=assignment.agent, effect_key=_key("ceiling"),
+                                                     estimated_cost_usd=0, request_limit=1, budget_usd=10)
+
     async def test_atomic_ack_retries_and_restart_preserves_result_and_binding(self):
         from director_orchestrator.approvals import reserve_provider_effect
 
@@ -145,17 +311,20 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("preserved answer", json.dumps(restarted.provider_spend.settlements(record.task_id)))
 
     def test_atomic_retry_deadline_prevents_another_write(self):
+        from director_orchestrator.approvals import reserve_provider_effect
         from director_orchestrator.engine import AcknowledgementPersistencePending
 
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = self._world(directory)
             engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            store.save(record)
             run = ProviderRun(provider=assignment.agent, run_id="deadline-run", status="completed", result="answer")
             with patch.object(store, "save", side_effect=sqlite3.OperationalError("database is locked")) as save, patch(
                 "director_orchestrator.engine.time.monotonic", side_effect=[0, 0, 0, 3, 3]
             ):
                 with self.assertRaises(AcknowledgementPersistencePending):
-                    engine._journal_spend_acknowledgement(record, _key("deadline"), run, None)
+                    engine._journal_spend_acknowledgement(record, key, run, None)
             save.assert_called_once()
             self.assertEqual(store.get(record.task_id).provider_runs, [])
 
@@ -281,9 +450,8 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
                               run_id="stale-run", status="completed", result="private stale content")
             with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
-                with self.assertRaises(AcknowledgementPersistencePending):
-                    engine._charge_spend(assignment.agent, key, 0.25,
-                                                     record=record, assignment=assignment, run=run)
+                self.assertFalse(engine._charge_spend(assignment.agent, key, 0.25,
+                                                     record=record, assignment=assignment, run=run))
             current = store.get(record.task_id)
             self.assertIsNone(current.plan)
             self.assertEqual(current.provider_runs, [])
@@ -1132,7 +1300,7 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(restarted.provider_spend, "record_charge") as charge:
                 self.assertFalse(restarted._retry_spend_settlements(saved))
             charge.assert_not_called()
-            self.assertEqual([item.run_id for item in saved.provider_runs], ["known-run"])
+            self.assertEqual([run.run_id for run in saved.provider_runs], ["known-run"])  # Missing intent is not a reset: an unchanged generation keeps the run.
 
     def test_sqlite_helpers_close_connections_on_success_and_failure(self):
         from unittest.mock import MagicMock
@@ -1156,7 +1324,15 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                                         raise sqlite3.OperationalError("locked")
                         connection.close.assert_called_once_with()
 
-    def test_a_completed_packet_settles_its_reported_cost(self) -> None:
+    def test_packet_without_intent_unchanged_generation_restores_content(self) -> None:
+        self._packet_without_intent(reset=False)
+
+    def test_packet_without_intent_reset_generation_settles_without_content(self) -> None:
+        self._packet_without_intent(reset=True)
+
+    def _packet_without_intent(self, *, reset: bool) -> None:
+        from director_orchestrator.approvals import reset_for_owner_clarification
+
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = self._world(directory)
             engine = OrchestrationEngine(settings, store)
@@ -1164,14 +1340,33 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             engine._reserve_provider_daily_spend(assignment, effect_key=key)
             record.provider_runs.append(ProviderRun(
                 provider=assignment.agent, run_id="packet-run", status="completed",
-                raw={"usage": {"cost": 0.25}},
+                result="packet-content", raw={"usage": {"cost": 0.25}},
             ))
-            outcome = SimpleNamespace(result_packet={"run_reference": "packet-run", "usage": {"cost_usd": 0}})
-            self.assertTrue(engine._settle_packet_spend(record, assignment, key, outcome))
+            generation = record.plan_generation
+            if reset:
+                current = store.get(record.task_id)
+                reset_for_owner_clarification(current)
+                # Simulate the replacement plan after the in-flight dispatch.
+                current.plan_generation += 1
+                current.plan = record.plan.model_copy(deep=True)
+                seed_production_plan_materialization(current)
+                self.assertNotEqual(current.plan_generation, generation)
+                store.save(current)
+            outcome = SimpleNamespace(result_packet={
+                "run_reference": "packet-run", "outcome": "packet-content", "usage": {"cost_usd": 0}})
+            self.assertEqual(engine._settle_packet_spend(record, assignment, key, outcome), not reset)
+            saved = store.get(record.task_id)
+            if reset:
+                self.assertEqual(saved.provider_runs, [])
+                self.assertNotIn("packet-content", saved.model_dump_json())
+            else:
+                self.assertEqual(saved.provider_runs[-1].result, "packet-content")
+                self.assertEqual(saved.provider_runs[-1].plan_generation, generation)
             held = engine.provider_spend.settlements(record.task_id)[key]
             self.assertEqual((held["provider"], held["run_id"], held["cost"], held["pending"]),
                              (assignment.agent.value, "packet-run", 0.25, False))
-            for field in ("phase", "assignment_sequence", "assignment_digest", "plan_generation"):
+            self.assertEqual(held["plan_generation"], generation)
+            for field in ("phase", "assignment_sequence", "assignment_digest"):
                 self.assertIsNone(held[field])
             self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.25)
             unpriced = _key("packet-unpriced")
@@ -1180,7 +1375,6 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                 result_packet={"run_reference": "missing-run", "usage": {"cost_usd": 0}},
             ))
             self.assertEqual(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR), [unpriced])
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -1205,3 +1399,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:07 UTC | END]]
