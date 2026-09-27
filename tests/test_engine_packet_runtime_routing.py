@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
@@ -357,13 +358,13 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
         self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
         self.assertEqual(stopped.provider_runs[-1].run_id, result["run_reference"])
-        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["packet_outcome"]["result_packet"], result)
+        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["result_packet_digest"], document_digest(result))
         self.assertEqual(consumer.calls, 0)
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertFalse(await engine._route_live_dispatch(stopped, assignment))
         self.assertEqual(transport.sends, 1)
         self.assertTrue(engine._retry_spend_settlements(stopped))
-        with patch.object(activation.runtime, "run_packet", side_effect=AssertionError("must consume preserved result")), patch.object(
+        with patch.object(
             consumer, "consume", side_effect=DirectorPacketResultConsumer().consume
         ) as consume, patch.object(engine.provider_spend, "record_charge") as recharged:
             await engine._route_live_dispatch(stopped, assignment)
@@ -997,13 +998,13 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertEqual(transport.sends, 1)
         self.assertEqual(consumer.calls, 0)
-        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["packet_outcome"]["result_packet"], result)
+        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["result_packet_digest"], document_digest(result))
         with patch.object(engine.provider_spend, "record_charge", wraps=real_charge) as retry_charge:
             self.assertTrue(engine._retry_spend_settlements(stopped))
         retry_charge.assert_called_once()
         self.assertEqual(retry_charge.call_args.kwargs["effect_key"], packet_key)
         self.assertEqual(retry_charge.call_args.kwargs["actual_cost_usd"], 0.60)
-        with patch.object(activation.runtime, "run_packet", side_effect=AssertionError("must not reconcile again")), patch.object(
+        with patch.object(
             engine.provider_spend, "reserve", side_effect=AssertionError("must reuse original reservation")
         ):
             await engine._route_live_dispatch(stopped, assignment)
@@ -1605,3 +1606,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
@@ -184,7 +186,6 @@ from .review_handoff import (
     transitive_dependency_sequences,
 )
 from .langgraph_runtime import (
-    RuntimeExecutionOutcome,
     RuntimeExecutionMode,
     RuntimeExecutionStatus,
 )
@@ -1140,6 +1141,11 @@ class OrchestrationEngine:
             run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
                               run_id=run_id, status="RECONCILIATION_REQUIRED",
                               result=str(packet.get("outcome", "")))
+        if run is not None:
+            held = self._spend_settlements(record, run).get(effect_key)
+            if (held and not held["pending"] and held["cost"] == cost
+                    and held.get("result_packet_digest") == document_digest(packet)):
+                return True
         return self._charge_spend(assignment.agent, effect_key, cost, record=record,
                                   assignment=assignment, run=run, result_packet=packet,
                                   packet_outcome=outcome, packet_only=packet_only)
@@ -1355,19 +1361,16 @@ class OrchestrationEngine:
                 )
             return False
         packet_outcome = None
-        settled_outcome = self._preserved_packet_outcome(record, task_effect_key)
         provably_unsent = False
         try:
-            outcome = settled_outcome
-            if outcome is None:
-                outcome = await asyncio.to_thread(
-                    runtime.run_packet,
-                    work_packet,
-                    provider=assignment.agent.value,
-                    execution_mode=RuntimeExecutionMode.LIVE_SAFE,
-                    adapter=adapter,
-                    writer_token=writer_token,
-                )
+            outcome = await asyncio.to_thread(
+                runtime.run_packet,
+                work_packet,
+                provider=assignment.agent.value,
+                execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                adapter=adapter,
+                writer_token=writer_token,
+            )
             packet_outcome = outcome
         except Exception as exc:
             # An exception escaping `run_packet` can occur on either side of its
@@ -1414,7 +1417,7 @@ class OrchestrationEngine:
         finally:
             # Review 4112697677: every exit after the packet ran settles its reservation (a later readback that
             # reconciles a result raises it to the actual charge).
-            settlement_ok = settled_outcome is not None or self._settle_packet_spend(
+            settlement_ok = self._settle_packet_spend(
                 record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent)
         if not settlement_ok:
             if workload_reservation is not None:
@@ -1613,7 +1616,7 @@ class OrchestrationEngine:
             if any(
                 item.assignment_sequence == planned.sequence
                 and (item.raw.get("packet_result_digest") or not any(
-                    held.get("packet_outcome") for held in self._spend_settlements(record, item).values()
+                    held.get("result_packet_digest") for held in self._spend_settlements(record, item).values()
                 ))
                 for item in record.provider_runs
             ):
@@ -2097,25 +2100,21 @@ class OrchestrationEngine:
                 _workload_reservation,
             ) = item
             outcome = None
-            settled_outcome = self._preserved_packet_outcome(record, _task_effect_key)
             try:
-                outcome = settled_outcome
-                if outcome is None:
-                    outcome = await asyncio.to_thread(
-                        activation.runtime.run_packet,
-                        work,
-                        provider=assignment.agent.value,
-                        execution_mode=RuntimeExecutionMode.LIVE_SAFE,
-                        adapter=adapter,
-                        writer_token=token,
-                    )
+                outcome = await asyncio.to_thread(
+                    activation.runtime.run_packet,
+                    work,
+                    provider=assignment.agent.value,
+                    execution_mode=RuntimeExecutionMode.LIVE_SAFE,
+                    adapter=adapter,
+                    writer_token=token,
+                )
                 return item, outcome, None
             except Exception as exc:
                 return item, None, exc
             finally:
                 # Review 4112697677: completed, failed, raised or cancelled, the member's reservation settles.
-                if settled_outcome is None:
-                    self._settle_packet_spend(record, assignment, _task_effect_key, outcome)
+                self._settle_packet_spend(record, assignment, _task_effect_key, outcome)
 
         observed = await asyncio.gather(
             *(dispatch_one(item) for item in dispatchable)
@@ -5517,6 +5516,17 @@ class OrchestrationEngine:
         self, record: TaskRecord, resolution: AmbiguousDispatchResolution,
     ) -> None:
         """Persist the owner resolution before settling or closing its effect."""
+        if self.provider_spend is not None:
+            for key, held in self.provider_spend.settlements(record.task_id).items():
+                if held["pending"] and any(
+                    item.kind == "provider_intent" and item.effect_key == key
+                    and item.assignment_sequence == resolution.assignment_sequence
+                    and item.plan_generation == record.plan_generation
+                    for item in record.task_effect_ledger
+                ):
+                    if resolution.resolution != "created" or resolution.run_id != held["run_id"]:
+                        raise StaleApproval("Reconciliation conflicts with the acknowledged provider run")
+                    return
         acknowledged = [run for run in record.provider_runs
                         if run.assignment_sequence == resolution.assignment_sequence
                         and (any(held["pending"] for held in self._spend_settlements(record, run).values())
@@ -5568,7 +5578,8 @@ class OrchestrationEngine:
             already_closed = any(item.outcome == "failed_pre_submit" for item in observations)
             # A known acknowledgement contradicts not-created. Keep its charge
             # and evidence; the existing created-run reconciliation path applies.
-            if attempt.run_id or any(item.run_id_digest for item in observations):
+            journal = self.provider_spend.settlements(record.task_id) if self.provider_spend is not None else {}
+            if attempt.run_id or any(item.run_id_digest for item in observations) or intent.effect_key in journal:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.error = "not_created_conflicts_with_provider_acknowledgement"
                 self.store.save(record)
@@ -5615,6 +5626,9 @@ class OrchestrationEngine:
 
         if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED:
             return True
+        if record is not None and run is not None:
+            self._journal_spend_acknowledgement(record, effect_key, run, cost,
+                                                result_packet=result_packet, packet_only=packet_only)
         try:
             self.provider_spend.record_charge(
                 provider=provider, effect_key=effect_key, actual_cost_usd=cost, now=datetime.now(timezone.utc)
@@ -5623,6 +5637,10 @@ class OrchestrationEngine:
             if record is None or (assignment is None and run is None):
                 raise  # Pre-submit callers have no ambiguous paid effect.
         else:
+            if record is not None and run is not None:
+                held = self.provider_spend.settlements(record.task_id)[effect_key]
+                held["pending"] = False
+                self.provider_spend.save_settlement(record.task_id, effect_key, held)
             return True
         # Never include the ledger exception text: it may contain connection details.
         record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -5631,8 +5649,19 @@ class OrchestrationEngine:
             "Spend settlement failed; resume retries accounting for the preserved run. "
             "An unidentified request still requires owner reconciliation."
         )
-        intent = next(item for item in record.task_effect_ledger
-                      if item.effect_key == effect_key and item.kind == "provider_intent")
+        intent = next((item for item in record.task_effect_ledger
+                       if item.effect_key == effect_key and item.kind == "provider_intent"), None)
+        if intent is None:
+            record.message = (
+                "Spend settlement failed and the matching provider intent is missing; "
+                "owner reconciliation is required."
+            )
+            self._save_spend_hold(record)
+            return False
+        if record.plan is None or intent.plan_generation != record.plan_generation:
+            # A packet readback may have reloaded a task after owner cleanup.
+            # Its charge survives, but its old content must not be saved again.
+            return False
         if assignment is not None and not any(item.kind == "provider_observation" and item.effect_key == effect_key
                    for item in record.task_effect_ledger):
             record_provider_effect_observation(record, assignment, effect_key=effect_key,
@@ -5640,18 +5669,6 @@ class OrchestrationEngine:
                                                run_id=run.run_id if run else None)
         if run is not None:
             run = run.model_copy(deep=True)
-            held = {"provider": provider.value, "cost": cost, "pending": True,
-                    "run_id": run.run_id, "result": run.result,
-                    "run": run.model_dump(mode="json"),
-                    "packet_only": packet_only}
-            if result_packet is not None:
-                held["packet_outcome"] = {
-                    "status": str(getattr(packet_outcome, "status", RuntimeExecutionStatus.COMPLETED)),
-                    "reason": getattr(packet_outcome, "reason", ""),
-                    "result_packet": copy.deepcopy(result_packet),
-                    "result_packet_digest": getattr(packet_outcome, "result_packet_digest", None),
-                }
-            self.provider_spend.save_settlement(record.task_id, effect_key, held)
             index = next((i for i, item in enumerate(record.provider_runs)
                           if item.run_id == run.run_id and item.provider == run.provider), None)
             if index is None:
@@ -5669,6 +5686,26 @@ class OrchestrationEngine:
         self._save_spend_hold(record)
         return False
 
+    def _journal_spend_acknowledgement(self, record: TaskRecord, effect_key: str,
+                                       run: ProviderRun, cost: float | None, *,
+                                       result_packet=None, packet_only: bool = False) -> None:
+        if self.provider_spend is None or run.provider not in ProviderDailySpendLedger._SUPPORTED:
+            return
+        # Preserve known accounting evidence even when intent identity is absent.
+        # Recovery still requires an exact intent match before restoring a run.
+        intent = next((item for item in record.task_effect_ledger
+                       if item.kind == "provider_intent" and item.effect_key == effect_key), None)
+        self.provider_spend.save_settlement(record.task_id, effect_key, {
+            "provider": run.provider.value, "run_id": run.run_id, "cost": cost, "pending": True,
+            "phase": intent.phase if intent else None,
+            "assignment_sequence": intent.assignment_sequence if intent else None,
+            "assignment_digest": intent.assignment_digest if intent else None,
+            "plan_generation": intent.plan_generation if intent else None,
+            "result_digest": canonical_opaque_identifier_digest(run.result) if run.result else None,
+            "packet_only": packet_only,
+            "result_packet_digest": document_digest(result_packet) if result_packet is not None else None,
+        })
+
     def _save_spend_hold(self, record: TaskRecord) -> bool:
         """Retry a stale hold write by merging evidence into a freshly read record."""
         evidence = record.model_copy(deep=True)
@@ -5680,6 +5717,11 @@ class OrchestrationEngine:
                 except Exception:
                     return False
                 if candidate is None:
+                    return False
+                if (candidate.plan_generation != evidence.plan_generation
+                        or candidate.plan != evidence.plan):
+                    # An owner reset ends the old content lifecycle. Accounting
+                    # remains recoverable from the content-free journal.
                     return False
                 for field in ("task_effect_ledger", "provider_contact_attempts"):
                     current = getattr(candidate, field)
@@ -5723,24 +5765,38 @@ class OrchestrationEngine:
         # Rehydrate only engine-owned evidence bound to this task's exact intent.
         if self.provider_spend is not None:
             for key, held in self.provider_spend.settlements(record.task_id).items():
-                if not held["pending"] or not held.get("run"):
+                if not held["pending"]:
+                    continue
+                intent = next((item for item in record.task_effect_ledger
+                               if item.kind == "provider_intent" and item.effect_key == key
+                               and item.provider.value == held["provider"]), None)
+                if intent is None:
+                    return False
+                if any(held.get(name, getattr(intent, name)) != getattr(intent, name)
+                       for name in ("phase", "assignment_sequence", "assignment_digest", "plan_generation")):
+                    return False
+                assignment = next((item for item in record.plan.assignments
+                                   if item.sequence == intent.assignment_sequence
+                                   and assignment_approval_digest(item) == intent.assignment_digest), None) if record.plan else None
+                if assignment is None or intent.plan_generation != record.plan_generation:
+                    # Privacy reset: settle the old charge, never restore its run.
+                    try:
+                        self.provider_spend.record_charge(provider=intent.provider, effect_key=key,
+                                                          actual_cost_usd=held["cost"])
+                        held["pending"] = False
+                        self.provider_spend.save_settlement(record.task_id, key, held)
+                    except Exception:
+                        return False
                     continue
                 if any(run.provider.value == held["provider"] and run.run_id == held["run_id"]
                        for run in record.provider_runs):
                     continue
-                run = ProviderRun.model_validate(held["run"])
-                if not any(item.kind == "provider_intent" and item.effect_key == key
-                           and item.provider == run.provider and item.assignment_sequence == run.assignment_sequence
-                           for item in record.task_effect_ledger):
-                    return False
+                run = ProviderRun(provider=intent.provider, run_id=held["run_id"],
+                                  assignment_sequence=intent.assignment_sequence,
+                                  status="RECONCILIATION_REQUIRED")
                 record.provider_runs.append(run)
-                intent = next(item for item in record.task_effect_ledger
-                              if item.kind == "provider_intent" and item.effect_key == key)
-                assignment = next((item for item in record.plan.assignments
-                                   if item.sequence == intent.assignment_sequence
-                                   and assignment_approval_digest(item) == intent.assignment_digest), None) if record.plan else None
-                if assignment is None:
-                    return False
+                if intent.phase == "revision":
+                    record.revision_count = max(record.revision_count, intent.attempt)
                 if not any(item.kind == "provider_observation" and item.effect_key == key
                            for item in record.task_effect_ledger):
                     record_provider_effect_observation(record, assignment, effect_key=key,
@@ -5781,11 +5837,8 @@ class OrchestrationEngine:
                             and (canonical_opaque_identifier_digest(item.run_id) in digests
                                  or item.run_id in acknowledged_ids)), None)
                 if run is not None and self.provider_spend is not None:
-                    self.provider_spend.save_settlement(record.task_id, key, {
-                        "provider": run.provider.value,
-                        "cost": authoritative_reported_cost(run.provider, run.raw), "pending": True,
-                        "run_id": run.run_id, "result": run.result,
-                    })
+                    self._journal_spend_acknowledgement(
+                        record, key, run, authoritative_reported_cost(run.provider, run.raw))
         for run in record.provider_runs:
             for key, held in self._spend_settlements(record, run).items():
                 if not held["pending"]:
@@ -5808,15 +5861,6 @@ class OrchestrationEngine:
                 except Exception:
                     return False
         return not (record.error and record.error.startswith("spend_settlement_failed:"))
-
-    def _preserved_packet_outcome(self, record: TaskRecord, effect_key: str):
-        for run in record.provider_runs:
-            held = self._spend_settlements(record, run).get(effect_key)
-            if held and not held["pending"] and held.get("packet_outcome"):
-                outcome = copy.deepcopy(held["packet_outcome"])
-                outcome["status"] = RuntimeExecutionStatus(outcome["status"])
-                return RuntimeExecutionOutcome(**outcome)
-        return None
 
     def _prepare_packet_consumption(self, record: TaskRecord, effect_key: str) -> None:
         # A held packet without an adapter-created ProviderRun is evidence, not
@@ -5853,7 +5897,8 @@ class OrchestrationEngine:
         for key in sorted(keys):
             settled = self._spend_settlements(record, run).get(key)
             if (settled and not settled["pending"] and settled["run_id"] == run.run_id
-                    and settled["result"] == run.result and settled["cost"] == cost):
+                    and settled.get("result_digest") == (canonical_opaque_identifier_digest(run.result) if run.result else None)
+                    and settled["cost"] == cost):
                 continue
             if not self._charge_spend(provider, key, cost, record=record, assignment=assignment, run=run):
                 return False
@@ -6790,6 +6835,8 @@ class OrchestrationEngine:
             run.assignment_sequence = assignment.sequence
             run.interaction_id = interaction_id
             run.evidence_source = "provider_authenticated"
+            self._journal_spend_acknowledgement(
+                record, effect_key, run, authoritative_reported_cost(run.provider, run.raw))
             self._record_dispatch_acknowledgement(record, run)
             record_provider_effect_observation(
                 record,
@@ -7198,6 +7245,8 @@ class OrchestrationEngine:
             revised.assignment_sequence = assignment.sequence
             revised.interaction_id = revision_interaction_id
             revised.evidence_source = "provider_authenticated"
+            self._journal_spend_acknowledgement(
+                record, revision_effect_key, revised, authoritative_reported_cost(revised.provider, revised.raw))
             self._record_dispatch_acknowledgement(record, revised)
             record_provider_effect_observation(
                 record,
@@ -7531,3 +7580,5 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]

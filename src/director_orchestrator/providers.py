@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
@@ -38,7 +40,7 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -170,13 +172,52 @@ class ProviderDailySpendLedger:
                 PRIMARY KEY(task_id, effect_key))""")
 
     def save_settlement(self, task_id: str, effect_key: str, evidence: dict) -> None:
-        """Engine-only recovery evidence, never populated from ProviderRun.raw."""
+        """Persist only accounting/identity evidence, never provider content."""
+        evidence = self.compact_settlement(evidence)
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO engine_spend_settlements VALUES (?, ?, ?)
                 ON CONFLICT(task_id, effect_key) DO UPDATE SET evidence = excluded.evidence""",
                 (task_id, effect_key, json.dumps(evidence, allow_nan=False)),
             )
+
+    @staticmethod
+    def compact_settlement(evidence: dict) -> dict:
+        # Also handles journals written before the content-free format.
+        run = evidence.get("run") or {}
+        packet = evidence.get("packet_outcome") or {}
+        compact = {name: evidence[name] for name in (
+            "provider", "cost", "pending", "run_id", "phase", "assignment_sequence",
+            "assignment_digest", "plan_generation", "result_digest", "packet_only",
+            "result_packet_digest",
+        ) if name in evidence}
+        if "assignment_sequence" not in compact and run.get("assignment_sequence") is not None:
+            compact["assignment_sequence"] = run["assignment_sequence"]
+        if packet.get("result_packet_digest"):
+            compact["result_packet_digest"] = packet["result_packet_digest"]
+        return compact
+
+    @classmethod
+    def compact_settlements(cls, connection: sqlite3.Connection, task_id: str | None = None) -> bool:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'engine_spend_settlements'"
+        ).fetchone():
+            return False
+        changed = False
+        query = "SELECT task_id, effect_key, evidence FROM engine_spend_settlements"
+        parameters = () if task_id is None else (task_id,)
+        if task_id is not None:
+            query += " WHERE task_id = ?"
+        for task_id, effect_key, encoded in connection.execute(query, parameters).fetchall():
+            evidence = json.loads(encoded)
+            compact = cls.compact_settlement(evidence)
+            if compact != evidence:
+                connection.execute(
+                    "UPDATE engine_spend_settlements SET evidence = ? WHERE task_id = ? AND effect_key = ?",
+                    (json.dumps(compact, allow_nan=False), task_id, effect_key),
+                )
+                changed = True
+        return changed
 
     def settlements(self, task_id: str) -> dict[str, dict]:
         with self._connect() as connection:
@@ -302,13 +343,10 @@ class ProviderDailySpendLedger:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA secure_delete = ON")
-        try:
+        with closing(sqlite3.connect(self.path, timeout=30)) as connection:
+            connection.execute("PRAGMA secure_delete = ON")
             with connection:
                 yield connection
-        finally:
-            connection.close()
 
     def reserve(
         self,
@@ -1834,3 +1872,5 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
@@ -46,7 +48,7 @@ import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass, replace
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -292,18 +294,15 @@ class TaskStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        # Legacy task JSON may contain provider prose that migration replaces
-        # with opaque digests. SQLite's default leaves deleted cell content in
-        # free pages, so every writer enables physical page scrubbing before
-        # any migration or update.
-        connection.execute("PRAGMA secure_delete = ON")
-        try:
+        with closing(sqlite3.connect(self.path, timeout=30)) as connection:
+            connection.row_factory = sqlite3.Row
+            # Legacy task JSON may contain provider prose that migration replaces
+            # with opaque digests. SQLite's default leaves deleted cell content in
+            # free pages, so every writer enables physical page scrubbing before
+            # any migration or update.
+            connection.execute("PRAGMA secure_delete = ON")
             with connection:
                 yield connection
-        finally:
-            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -857,6 +856,7 @@ class TaskStore:
                 """
             )
             self._migrate_effect_ledgers(connection)
+            self._compact_spend_settlements(connection)
             if self._journal_mode(connection) == "wal":
                 # A pre-upgrade WAL may still contain raw task JSON even when
                 # every logical row already uses the compact schema.
@@ -1238,11 +1238,19 @@ class TaskStore:
         else:
             changed_private_projection = previous_projection != replacement_projection
         had_private_projection = previous_projection is None or bool(previous_projection)
+        if changed_private_projection:
+            self._compact_spend_settlements(connection, json.loads(replacement_json)["task_id"])
         if (
             changed_private_projection
             and had_private_projection
             and self._journal_mode(connection) == "wal"
         ):
+            self._mark_privacy_cleanup_pending(connection)
+
+    def _compact_spend_settlements(self, connection: sqlite3.Connection, task_id: str | None = None) -> None:
+        from .providers import ProviderDailySpendLedger
+
+        if ProviderDailySpendLedger.compact_settlements(connection, task_id):
             self._mark_privacy_cleanup_pending(connection)
 
     def create(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
@@ -4346,3 +4354,5 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
