@@ -4,6 +4,7 @@ description: "Postgres tests: use scripts/windows-postgres-test-lane.ps1, never 
 when_to_use: "Any request like: run the tests, run the full unit suite, run the Postgres suites, run tests/test_langgraph_postgres.py or a tests/test_primary_* module, a test fails with LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required, start a Postgres container for the tests, docker run postgres for the test database, reproduce the CI disposable PostgreSQL step locally, port 55433 is already in use, stop or remove the test database container, no Docker available for the Postgres tests."
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 09:41 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:23 UTC | BEGIN]] -->
@@ -44,6 +45,7 @@ This is local host tooling, not a shared provider workflow skill: the Director n
 
 These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than skip when it is absent:
 
+- `tests/test_completion_scorecard.py`
 - `tests/test_edge_activation_contract.py`
 - `tests/test_entitlement_control_plane.py`
 - `tests/test_langgraph_postgres.py`
@@ -109,6 +111,10 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
 
 
+## Verified TLS (-Tls, issue #313)
+
+`windows-postgres-test-lane.ps1 -Action Test -Tls` starts the lane with `ssl=on`, using a throwaway CA and server certificate generated per run with the venv's `cryptography` package. It exports `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` with `sslmode=verify-full&sslrootcert=<ca>` and `LANGGRAPH_RUNTIME_POSTGRES_TEST_CA`, and removes the certificates on Stop, at the end of Test and on failure. The trusted-collection scorecard tests need it; without `-Tls` they skip with a reason. Pass several suites as an array: `pwsh -Command "& ./scripts/windows-postgres-test-lane.ps1 -Action Test -Tls -TestNames @('tests.a','tests.b')"`, because `pwsh -File` passes a comma list as one string.
+
 ## Concurrency cap (issue #299)
 
 windows-postgres-test-lane.ps1 -Action Start and -Action Test default to a concurrency cap of 2 for local callers and 4 when `$env:GITHUB_ACTIONS -eq 'true'`; `DIRECTOR_TEST_LANE_MAX_CONCURRENCY`, when set to a positive integer, overrides either default for that caller. Every caller compares total occupied slots across CI and local lanes with its own cap, using atomic Docker slot reservations (`director-test-lane-slot-<N>` containers, never started, created with the lane's pinned image and `--pull=never`) on the Docker daemon shared by Windows and WSL callers: a local caller waits when two or more slots are occupied, including CI slots, while a CI caller waits when four or more are occupied. This gives CI additional admission capacity without preempting existing lanes or guaranteeing queue order. Concurrent lanes require distinct container names and host ports. Admission waits up to 45 minutes by default, bounded by `-SlotWaitSeconds`, with progress every 15 seconds; ownership checks and fail-closed cleanup remain unchanged; a slot is reclaimed only when its labelled lane container no longer exists. When `LOCALAPPDATA` is unset (Linux `pwsh`), local state falls back to `XDG_STATE_HOME`, then `HOME/.local/state`, then `RUNNER_TEMP`. See docs/postgres-test-lane-cap.md.
@@ -119,3 +125,4 @@ windows-postgres-test-lane.ps1 -Action Start and -Action Test default to a concu
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:12 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 09:41 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:12 UTC | END]] -->
