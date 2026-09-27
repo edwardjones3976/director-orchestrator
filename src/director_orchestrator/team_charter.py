@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
@@ -194,7 +195,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "soft_action": "route_next_eligible_work_to_an_under_target_provider",
             # Share pressure blocks nothing except the Z.ai target+5 rolling-twenty
             # ceiling set with the owner's 2026-09-27 enrollment.
-            "share_pressure_action": "zai_ceiling_only",
+            "share_pressure_action": "zai_cap_only",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
             "overall_effort_can_block_or_route": False,
@@ -481,7 +482,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             # Antigravity is seatable only by Director invitation. It cannot open,
             # self-route, or autonomously continue a conversation, and a seat grants
             # it no review, acceptance, merge, deployment, or methodology authority.
-            "seatable_members": ["antigravity", "claude", "cursor", "grok", "openai"],
+            # Z.ai (enrolled 2026-09-27) holds a Director-invited seat. It has no
+            # configured voting weight: the 8.5 denominator is immutable and the
+            # owner has not assigned one, so its recorded position adds zero weight.
+            "seatable_members": ["antigravity", "claude", "cursor", "grok", "openai", "zai"],
             "recommended_for_complexity": ["medium", "high", "critical"],
             "procedure": [
                 "Solicit independent positions before participants see one another's conclusions when practical.",
@@ -751,7 +755,7 @@ class AdvisoryVote(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    member: Literal["antigravity", "cursor", "grok", "openai", "claude"]
+    member: Literal["antigravity", "cursor", "grok", "openai", "claude", "zai"]
     disposition: Literal["vote", "abstain", "unavailable"]
     option: str | None = Field(default=None, min_length=1, max_length=255)
     rationale: str = Field(min_length=1, max_length=2_000)
@@ -810,6 +814,11 @@ def tally_advisory_votes(
         if vote.disposition == "unavailable":
             unavailable.append(vote.member)
             continue
+        if vote.member not in members:
+            # A seated participant without a configured weight (Z.ai): its
+            # position stays in the debate record but moves no option, so it
+            # can never create or break a tie on its own.
+            continue
         weight = float(members[vote.member]["voting_power"])
         option_weights[vote.option or ""] = option_weights.get(vote.option or "", 0.0) + weight
 
@@ -863,3 +872,4 @@ def tally_advisory_votes(
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

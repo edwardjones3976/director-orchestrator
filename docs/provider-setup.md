@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
@@ -519,8 +520,9 @@ Anthropic-compatible endpoint; the lane, family and result provider stay `zai`
 and are never relabelled Claude. The lane is in the provider enums, the
 allocation lanes, the primary roster (implementer and independent reviewer of
 other lanes' work, never of its own), `PRIMARY_PROVIDER_LANES`, the Windows host
-bridge lanes and the Postgres admission constraint. It is not a committee
-member, not part of the core-inventory floor and not a native acceptance
+bridge lanes, the interaction identities and the Postgres admission constraint.
+It holds a weightless committee debate seat, is not part of the core-inventory
+floor and is not a native acceptance
 issuer. The worker is `src/director_orchestrator/zai_native.py`.
 
 ### Routes
@@ -633,6 +635,24 @@ qualifies the route after exact-head independent review and the applicable CI
 and security gates. Completion of the enrollment needs a real authorized Slack
 thread response and receipt through the existing Director relay; installing
 configuration is not round-trip evidence.
+
+### Capability map
+
+| Capability | Status | Reason |
+| --- | --- | --- |
+| Identity `zai`, family Z.ai, GLM model verified per result | Supported | Never relabelled Claude; a foreign serving model is rejected |
+| Allocation 18%, rolling-20 ±3 normal band, target+5 hard ceiling (4 of 20) | Supported | Owner instruction for this enrollment; other lanes unchanged |
+| Implementation, tests, repository research through LangGraph primary | Supported | Native route or Docker → Windows host bridge |
+| Independent review of candidates Z.ai did not author, with approved tests | Supported | Default permission mode runs only the fixed test runners |
+| Material-author family in acceptance evidence | Supported | Binds reviewer independence for Z.ai-authored candidates |
+| Interaction identities (`InteractionProvider.ZAI`, `ProviderTransport.ZAI_CODING_CLI`) | Supported | Ledger and packet-result evidence keep the Z.ai identity |
+| Slack | Supported via the Director relay | Z.ai never posts; `thread_ts` is preserved |
+| Committee debate seat and advisory-vote identity | Recognized, weight 0 | The 8.5 denominator is immutable and the owner assigned no weight; debates execute only in the legacy engine (below) |
+| Legacy engine worker | Excluded | A supported rollback path, but its worker has no v1 packet and the only route to the Windows CLI is the host bridge, whose Postgres writer fence rollback disables |
+| Protected signing (native acceptance issuer, v2 issuer family, v3 review product) | Excluded | No keys, principals or signing authority are granted; ordinary review is unaffected |
+| Web search, MCP servers, media capabilities | Excluded | Not qualified on the Coding Plan route; a generic Claude tool name is not evidence |
+| External effects (push, pull request, Slack post) | Excluded | Owned by the Director's effect gateway |
+| Plan-credit and cash measurement | Not measured offline | Read from the account after the owner-qualified canary; never invented |
 
 ## Z.ai trial-only contact lane
 
@@ -945,3 +965,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->

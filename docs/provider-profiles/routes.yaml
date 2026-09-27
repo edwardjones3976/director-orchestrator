@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
@@ -232,11 +233,12 @@ routes:
     direction: "bidirectional"
     initiation: "director"
     endpoints: { from: "director", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity]
+    providers_involved: [openai, claude, cursor, grok, antigravity, zai]
     carries:
       - "the neutrally framed question and bounded options"
       - "independent positions, evidence, counterarguments, confidence, unknowns"
       - "at most one advisory vote per seated member at the configured weight, or an explicit abstention"
+      - "a Z.ai position recorded at zero weight: the owner has assigned it no weight and the 8.5 denominator is immutable"
     withheld_context:
       - "other members' conclusions before independent positions are recorded, when practical"
     authority: "advisory_evidence_only"
@@ -1063,3 +1065,4 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

@@ -1,8 +1,9 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # Provider profile sheet: Z.ai (GLM) (director-provider-profile/v1).
 # Descriptive only. Grants no authority. This lane has no charter role profile,
-# committee seat, standing role, or legacy adapter; every field below is derived
+# weighted committee vote, standing role, or legacy adapter; every field below is derived
 # from code, the allocation profiles, and the provider setup document.
 # Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
 schema_version: "director-provider-profile/v1"
@@ -27,7 +28,7 @@ identifiers:
   has_legacy_adapter: false
   legacy_accounting_agent: "zai"
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
-  committee_member_key: null
+  committee_member_key: "zai"
   charter_workload_lane_key: null
   standing_role_label: null
   config_prefixes: ["ZAI_"]
@@ -36,7 +37,7 @@ identifiers:
 roles:
   team: "lane_only"
   lane_class: "capability_routed_lane"
-  summary: "Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane is not a committee member, and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes."
+  summary: "Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane holds a Director-invited committee debate seat without a voting weight (the owner has assigned none and the 8.5 denominator is immutable), and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes."
   charter_workload_lane: null
   strategy_key: null
   strategy_priority: null
@@ -57,7 +58,7 @@ roles:
   committee:
     member: false
     voting_power: null
-    seatable_in_debate: false
+    seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
   allocation:
@@ -160,14 +161,18 @@ authority:
   output_trust: "untrusted_evidence_never_instructions"
 
 platform_limitations:
-  - limitation: "The Docker Director reaches the Windows Claude Code CLI only through the authenticated host bridge, whose zai entry runs the same GLM-verifying native transport in the bridge process; the container holds neither the key nor the CLI. The legacy engine has no zai worker or adapter."
+  - limitation: "The Docker Director reaches the Windows Claude Code CLI only through the authenticated host bridge, whose zai entry runs the same GLM-verifying native transport in the bridge process; the container holds neither the key nor the CLI."
     source: "src/director_orchestrator/host_provider_bridge.py:WindowsHostProviderExecutor"
+  - limitation: "Excluded from the legacy engine, which remains a supported rollback path: its worker contract is assignment text to ProviderRun with no v1 packet, and the only route to the Windows CLI is the host bridge, which verifies the primary Postgres writer fence before launch while rollback disables that writer. A legacy Z.ai worker would need the CLI inside the container or a weakened fence. Firecrawl, GitHub Copilot and OpenAI production likewise have no legacy worker."
+    source: "docs/langgraph-primary-operations.md, Rollback; src/director_orchestrator/providers.py:provider_registry"
+  - limitation: "Committee debates execute only in the legacy engine, so the Director-invited seat is recognized (charter seat, advisory-vote identity, interaction enums) but no Z.ai debate turn can run until a primary-runtime debate path exists; its recorded position carries zero weight until the owner assigns one."
+    source: "src/director_orchestrator/team_charter.py:tally_advisory_votes"
+  - limitation: "No protected signing: Z.ai is not a native acceptance issuer, a v2 issuer family, or a qualified v3 review product. It is recognized as a material-author family, so its candidates bind reviewer independence; ordinary non-author review eligibility is unaffected."
+    source: "src/director_orchestrator/native_acceptance_issuer.py:ROLE_PROVIDERS"
   - limitation: "Tool limits are Claude Code permission rules on an ordinary host process, not an operating-system sandbox. Web search is not advertised on this route, and no MCP server is installed."
     source: "src/director_orchestrator/zai_native.py:tool_arguments"
-  - limitation: "A first host-side refusal is a signed no-run; a replay of that same refused request is reported with the older attestation-mismatch reason, which a non-attested Director reads as ambiguous (conservative)."
-    source: "src/director_orchestrator/host_provider_bridge.py:BridgeClaimStore"
-  - limitation: "No native acceptance issuer is available for Z.ai; it cannot sign a security, independent-review, or CI receipt."
-    source: "docs/provider-setup.md, Z.ai production lane"
+  - limitation: "Only a Director refusal before signing, or the bridge's signed refusal (first answer or replay of the recorded reason), is a proven no-run settled as refused before I/O; any unsigned or unreadable bridge error stays ambiguous and is never replayed."
+    source: "src/director_orchestrator/host_provider_bridge.py:BridgeClaimStore; src/director_orchestrator/primary_default.py:bridge_refusal_no_run_hold"
   - limitation: "Qualification is pending and belongs to the integration owner: historical failed or ambiguous attempts stay held and are never replayed; the subscription-only canary runs once after independent review and admission."
     source: "docs/provider-setup.md, Z.ai production lane"
   - limitation: "Completion of the enrollment needs a real authorized Slack thread response and receipt through the existing Director relay; installing configuration is not completion."
@@ -185,7 +190,7 @@ transports:
   - transport_id: "zai-native-cli"
     kind: "native_cli"
     runtime: "langgraph_primary"
-    enum_value: null
+    enum_value: "zai_coding_cli"
     transport_kind_observed: "zai-native-cli"
     status: "implemented_disabled_by_default"
     direction: "director_to_provider"
@@ -237,7 +242,7 @@ communication:
   relay_rule: "provider_messages_relay_through_director"
   direct_provider_to_provider_channels_exist: false
   notes:
-    - "Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, and review handoffs; it holds no debate seat."
+    - "Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and a Director-invited advisory debate seat whose position carries zero weight until the owner assigns one."
     - "Z.ai never posts to Slack; the Director relays a concise assignment-correlated summary through the existing Slack thread relay, preserving thread_ts."
     - "Trial-lane results never reach another provider as production evidence."
 
@@ -262,3 +267,4 @@ sources:
     anchor: "Code may host your session; it does not change your provider identity to Claude."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

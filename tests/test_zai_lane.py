@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
@@ -114,23 +115,27 @@ class IdentityTests(unittest.TestCase):
             "KNOWN_LANES": set(KNOWN_LANES),
             "IMPLEMENTERS": set(IMPLEMENTERS),
             "REVIEWERS": set(REVIEWERS),
+            # Foreman scope ruling 2026-09-27: interaction identities and a
+            # committee debate seat, as for other enrolled production lanes.
+            "InteractionProvider": {member.value for member in InteractionProvider},
+            "ProviderTransport": {"zai" for member in ProviderTransport if member.value == "zai_coding_cli"},
+            "committee seat": set(team_charter._TEAM_OPERATING_CHARTER["committee"]["debate"]["seatable_members"]),
         }
         for name, values in enrolled.items():
             self.assertIn("zai", values, name)
         for profile, targets in ALLOCATION_PROFILES.items():
             self.assertEqual(targets["zai"], 18, profile)
-        # Not granted by this enrollment: the core-inventory floor, committee
-        # votes, the legacy engine's reviewer set (it has no Z.ai worker), native
-        # acceptance products and the interaction ledger's lane enums.
+        # Not granted by this enrollment: the core-inventory floor, a committee
+        # voting weight (owner decision; the 8.5 denominator is immutable), the
+        # legacy engine's reviewer set (it has no Z.ai worker) and native
+        # acceptance products (no protected signing authority).
         not_granted = {
             "PRIMARY_TEAM": set(PRIMARY_TEAM),
             "_TRUSTED_PRIMARY_REVIEWERS": {
                 getattr(member, "value", member) for member in engine._TRUSTED_PRIMARY_REVIEWERS
             },
             "QUALIFIED_PRODUCTS": set(QUALIFIED_PRODUCTS),
-            "InteractionProvider": {member.value for member in InteractionProvider},
-            "ProviderTransport": {member.value for member in ProviderTransport},
-            "committee": set(team_charter._TEAM_OPERATING_CHARTER["committee"]["members"]),
+            "committee weight": set(team_charter._TEAM_OPERATING_CHARTER["committee"]["members"]),
         }
         for name, values in not_granted.items():
             self.assertNotIn("zai", {str(value).lower() for value in values}, name)
@@ -716,3 +721,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

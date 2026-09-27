@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
@@ -280,6 +281,26 @@ def _digest(value: object) -> str:
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+PROVIDER_BRIDGE_REFUSED_BEFORE_EXECUTION = "provider_bridge_refused_before_execution"
+
+
+def bridge_refusal_no_run_hold(exc: BaseException):
+    """The existing proven no-run hold for a bridge refusal that ran nothing.
+
+    Only `HostBridgeRefusedBeforeExecution` qualifies: the Director's own
+    refusal before signing, or the bridge's signed refusal (first answer or
+    replay). The roster then settles the admitted attempt FAILED as refused
+    before I/O. Every other error, and any unsigned bridge answer, stays with
+    the roster's ordinary ambiguous or transient classification.
+    """
+    from .host_provider_bridge import HostBridgeRefusedBeforeExecution
+    from .primary_workload import ProvenNoRunHold
+
+    if not isinstance(exc, HostBridgeRefusedBeforeExecution):
+        raise TypeError("only an authenticated or pre-send bridge refusal proves a no-run")
+    return ProvenNoRunHold(PROVIDER_BRIDGE_REFUSED_BEFORE_EXECUTION)
 
 
 def _execute_three_attempt_roster(
@@ -4600,7 +4621,8 @@ class DefaultPrimaryActivation:
                                     deadline=selected.deadline)
                                 if lapsed is not None:
                                     raise WorkloadAdmissionHold(lapsed)
-                        from .host_provider_bridge import HostBridgeAttestationStale
+                        from .host_provider_bridge import (
+                            HostBridgeAttestationStale, HostBridgeRefusedBeforeExecution)
                         from .packet_routing import SmallTaskViewUnavailable
                         from .primary_workload import ProvenNoRunHold
                         try:
@@ -4644,6 +4666,8 @@ class DefaultPrimaryActivation:
                             # proven no-run as a stale attestation before the send.
                             raise ProvenNoRunHold(
                                 "small_task_bridge_attestation_stale") from exc
+                        except HostBridgeRefusedBeforeExecution as exc:
+                            raise bridge_refusal_no_run_hold(exc) from exc
                         except SmallTaskViewUnavailable as exc:
                             # Raised by the transport while building its
                             # payload, before any provider request: nothing
@@ -5229,3 +5253,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

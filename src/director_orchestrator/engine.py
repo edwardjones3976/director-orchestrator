@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
@@ -224,6 +225,7 @@ _STANDING_PROVIDER_LABELS = {
     ProviderName.GROK: None,
     ProviderName.PERPLEXITY: "Research Programmers",
     ProviderName.FIRECRAWL: "Authorized public web retrieval",
+    ProviderName.ZAI: None,
     ProviderName.OWNER: None,
 }
 _PROVIDER_LABELS = {
@@ -234,6 +236,7 @@ _PROVIDER_LABELS = {
     ProviderName.GROK: "Grok",
     ProviderName.PERPLEXITY: "Perplexity",
     ProviderName.FIRECRAWL: "Firecrawl",
+    ProviderName.ZAI: "Z.ai (GLM)",
     ProviderName.OWNER: "Owner",
 }
 _STANDING_PROVIDER_ROLES = _STANDING_PROVIDER_LABELS
@@ -2238,6 +2241,7 @@ class OrchestrationEngine:
             ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
             ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
             ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
+            ProviderName.ZAI: ProviderTransport.ZAI_CODING_CLI,
         }.get(provider, ProviderTransport.DIRECTOR_BACKEND)
 
     @classmethod
@@ -7037,3 +7041,4 @@ class OrchestrationEngine:
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

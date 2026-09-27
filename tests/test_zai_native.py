@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 """Z.ai production enrollment: offline tests only; nothing here contacts Z.ai."""
@@ -641,12 +642,14 @@ class BridgeCompositionTests(unittest.TestCase):
         self.assertEqual(self.cli_calls, [])
 
     def test_director_side_refusals_send_nothing(self):
+        from director_orchestrator.host_provider_bridge import HostBridgeRefusedBeforeExecution
         _, _, adapters = self.discover(self.director_settings())
         for work in (work_packet(allowed_external_effects=["WRITE_ISOLATED_BRANCH"]),
                      work_packet(allowed_tools=["PUBLIC_WEB_SEARCH"]),
                      work_packet(allowed_tools=["READ_REPOSITORY", "WRITE_ISOLATED_BRANCH"])):
             with self.subTest(tools=work["allowed_tools"], effects=work["allowed_external_effects"]):
-                with self.assertRaises(RuntimeError):
+                # Nothing was signed or sent: a proven no-run, not an ambiguous error.
+                with self.assertRaises(HostBridgeRefusedBeforeExecution):
                     self.dispatch(adapters["zai"], work)
         self.assertEqual(self.claim_states(), [])
         self.assertEqual(self.fence.calls, 0)
@@ -695,6 +698,94 @@ class BridgeCompositionTests(unittest.TestCase):
             HostBridgePacketTransport("zai", self.endpoint, BRIDGE_SECRET,
                                       writer_owner_token_digest=WRITER_DIGEST)
 
+    def run_roster(self, dispatch_attempt):
+        from director_orchestrator.primary_default import _execute_three_attempt_roster
+        from director_orchestrator.primary_parallel import ProviderAttemptReservation
+        recorded = self.recorded = []
+
+        def reserve(ordinal):
+            return ProviderAttemptReservation(
+                task_id="T-ZAI", assignment_id="A-ZAI", attempt_ordinal=ordinal, provider_id="zai",
+                format_id="packet-v1", transport_id="zai-host-bridge",
+                idempotency_key_digest="sha256:" + "1" * 64, attempt_digest=f"sha256:{ordinal:064d}",
+                budget_evidence_digest="sha256:" + "2" * 64)
+
+        def record(attempt, status, digest, reason):
+            recorded.append((attempt.attempt_ordinal, str(status), reason))
+
+        outcome = _execute_three_attempt_roster(
+            format_roster=(("packet-v1", "zai-host-bridge"),), reserve_attempt=reserve,
+            record_attempt=record, dispatch_attempt=dispatch_attempt)
+        return outcome, recorded
+
+    def bridged_attempt(self, adapter, work):
+        """The primary dispatch closure's mapping, around the real bridge adapter."""
+        from director_orchestrator.host_provider_bridge import HostBridgeRefusedBeforeExecution
+        from director_orchestrator.primary_default import bridge_refusal_no_run_hold
+
+        def dispatch_attempt(attempt):
+            try:
+                return self.dispatch(adapter, work)
+            except HostBridgeRefusedBeforeExecution as exc:
+                raise bridge_refusal_no_run_hold(exc) from exc
+        return dispatch_attempt
+
+    def test_first_and_duplicate_signed_refusals_settle_as_no_runs(self):
+        from director_orchestrator.primary_default import PROVIDER_BRIDGE_REFUSED_BEFORE_EXECUTION
+        from director_orchestrator.primary_workload import ProvenNoRunHold
+        from contextlib import closing
+        _, _, adapters = self.discover(self.director_settings(zai_allow_repository_write=True))
+        work = work_packet(allowed_tools=["READ_REPOSITORY", "WRITE_ISOLATED_BRANCH"])
+        for label in ("first refusal", "duplicate refusal"):
+            with self.subTest(label):
+                with self.assertRaises(ProvenNoRunHold) as caught:
+                    self.run_roster(self.bridged_attempt(adapters["zai"], work))
+                self.assertEqual(caught.exception.reason_code, PROVIDER_BRIDGE_REFUSED_BEFORE_EXECUTION)
+                # The existing accounting: the admitted attempt settles FAILED as
+                # refused before I/O, never STARTED or AMBIGUOUS.
+                self.assertEqual(self.recorded, [(1, "FAILED", "provider_refused_before_io")])
+        # One claim, settled REFUSED with its signed reason; the replay ran nothing.
+        with closing(self.store._connect()) as connection:
+            rows = connection.execute("SELECT state, response_json FROM bridge_attempts").fetchall()
+        self.assertEqual(rows, [("REFUSED", b"refused_before_execution")])
+        self.assertEqual(self.cli_calls, [])
+        self.assertEqual(self.fence.calls, 1)
+
+    def test_actual_execution_that_ends_ambiguous_is_never_a_no_run(self):
+        _, _, adapters = self.discover(self.director_settings())
+        self.envelope = native_envelope(modelUsage={"claude-opus-5": {}})
+        work = work_packet(allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])
+        for label in ("first attempt", "replay"):
+            with self.subTest(label):
+                (status, result, digest, reason), recorded = self.run_roster(
+                    self.bridged_attempt(adapters["zai"], work))
+                self.assertEqual(str(status), "AMBIGUOUS")
+                self.assertEqual(reason, "provider_outcome_unknown")
+                self.assertEqual(recorded, [(1, "AMBIGUOUS", "provider_outcome_unknown")])
+        # The CLI ran once; the replay was refused as not safely replayable.
+        self.assertEqual(len(self.cli_calls), 1)
+        self.assertEqual(self.claim_states(), ["AMBIGUOUS"])
+
+    def test_an_unsigned_bridge_rejection_is_never_proof_of_no_execution(self):
+        from director_orchestrator.host_provider_bridge import (
+            HostBridgePacketTransport, HostBridgeRefusedBeforeExecution)
+        from director_orchestrator.zai_native import normalize_zai_bridge_result, zai_bridge_guard
+        from functools import partial
+        # A client holding another secret: the bridge rejects it without a
+        # signature, which proves nothing about execution.
+        transport = HostBridgePacketTransport(
+            "zai", self.endpoint, "another-secret-" + "w" * 40, writer_owner_token_digest=WRITER_DIGEST,
+            result_normalizer=partial(normalize_zai_bridge_result, MODEL),
+            request_guard=partial(zai_bridge_guard, allow_repository_write=False))
+        work = work_packet(allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])
+        with self.assertRaisesRegex(RuntimeError, "ambiguous") as caught:
+            transport.send(json.dumps(work).encode(), context=context_for(work))
+        self.assertNotIsInstance(caught.exception, HostBridgeRefusedBeforeExecution)
+        from director_orchestrator.primary_default import bridge_refusal_no_run_hold
+        with self.assertRaises(TypeError):
+            bridge_refusal_no_run_hold(caught.exception)
+        self.assertEqual(self.cli_calls, [])
+
     def test_host_command_shape_is_strict(self):
         from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
         for argv in ([sys.executable, MODEL], [sys.executable, "claude-opus-5", "12", "read-only", KEY_ID_DIGEST],
@@ -706,7 +797,52 @@ class BridgeCompositionTests(unittest.TestCase):
                     WindowsHostProviderExecutor({"zai": argv}, cwd=self.workspace)
 
 
+class CommitteeAndInteractionIdentityTests(unittest.TestCase):
+    def test_zai_is_seated_without_an_invented_weight(self):
+        from director_orchestrator.team_charter import AdvisoryVote, tally_advisory_votes, team_operating_charter
+        committee = team_operating_charter()["committee"]
+        self.assertIn("zai", committee["debate"]["seatable_members"])
+        self.assertNotIn("zai", committee["members"])
+        self.assertEqual(committee["voting"]["configured_weight_total"], 8.5)
+        vote = lambda member, option: AdvisoryVote(member=member, disposition="vote", option=option,
+                                                   rationale="position")
+        tally = tally_advisory_votes([vote("claude", "A"), vote("zai", "B")])
+        self.assertEqual(tally.winning_options, ["A"])
+        self.assertEqual(tally.option_weights, {"A": 2.0})
+        # A weightless seat alone can never produce a recommendation.
+        self.assertEqual(tally_advisory_votes([vote("zai", "B")]).resolution, "no_votes")
+
+    def test_interaction_identities_keep_zai_distinct(self):
+        from director_orchestrator.engine import OrchestrationEngine as DirectorEngine
+        from director_orchestrator.interactions import InteractionProvider, ProviderTransport
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.packet_results import DirectorPacketResultConsumer
+        self.assertEqual(InteractionProvider(ProviderName.ZAI.value), InteractionProvider.ZAI)
+        self.assertEqual(DirectorPacketResultConsumer._TRANSPORT[ProviderName.ZAI], ProviderTransport.ZAI_CODING_CLI)
+        self.assertEqual(DirectorEngine._provider_transport(ProviderName.ZAI), ProviderTransport.ZAI_CODING_CLI)
+        self.assertNotEqual(ProviderTransport.ZAI_CODING_CLI, ProviderTransport.CLAUDE_NATIVE_HOST)
+
+    def test_signing_authority_is_not_granted(self):
+        from director_orchestrator.native_acceptance_issuer import ROLE_PROVIDERS
+        from director_orchestrator.native_v3_review_issuer import QUALIFIED_PRODUCTS
+        for providers in ROLE_PROVIDERS.values():
+            self.assertNotIn("zai", providers)
+        self.assertNotIn("zai", QUALIFIED_PRODUCTS)
+        # Recognized only as a material-author family, which binds independence.
+        from director_orchestrator import provider_acceptance_v2
+        source = Path(provider_acceptance_v2.__file__).read_text(encoding="utf-8")
+        self.assertIn('"github-copilot", "zai"}', source)
+
+    def test_argv_never_prompts(self):
+        with TemporaryDirectory() as tmp:
+            config = ZaiNativeConfig(executable=Path(sys.executable), api_key=SECRET, model=MODEL,
+                                     max_turns=12, timeout_seconds=900)
+            command = ZaiNativePacketTransport(config, cwd=tmp).command
+        self.assertEqual(command[command.index("--permission-prompts") + 1], "none")
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

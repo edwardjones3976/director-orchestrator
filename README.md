@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
@@ -67,7 +68,7 @@
 # Director Orchestrator
 
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=64468f0e6b541d6f9a09c5a0e75d9a9f81cc5e1291f18e1b99d654a46ef61675 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=802ec25ac9d54d53bf1e6f54b7a3aeffab952dd9e76d2a529f976393a51a4541 -->
 
 I am the Director.
 
@@ -785,3 +786,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->

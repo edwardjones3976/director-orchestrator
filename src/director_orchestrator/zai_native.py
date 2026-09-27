@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 """Z.ai (GLM) production native lane: assignment-scoped, tool-enabled, fail closed.
@@ -25,8 +26,10 @@ What this adds to the shared `NativeCommandPacketTransport` path:
   Coding Plan's documented Claude Code route executes locally are offered; a
   generic Claude tool name is not evidence that Z.ai supports it, so web search
   (an Anthropic server tool on this CLI) is not advertised.
-* Finite execution. Print mode with a finite stdin file: the CLI can never wait
-  on an interactive permission prompt. Turns are capped, the shared absolute
+* Finite execution. Print mode with `--permission-prompts none` and a finite
+  stdin file: the CLI never waits on an interactive permission prompt (the flag
+  is present in the installed CLI's help; its live behaviour on Z.ai is
+  confirmed only by qualification). Turns are capped, the shared absolute
   cutoff and contained process tree apply, and a nonzero exit or late return
   stays ambiguous.
 * Terminal and model verification. A missing, errored, truncated or over-turn
@@ -352,6 +355,8 @@ class ZaiNativePacketTransport(NativeCommandPacketTransport):
             "zai",
             (str(executable), "--print", "--output-format", "json", "--setting-sources", "",
              "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence",
+             # Never ask: an action without an allow rule is refused at once.
+             "--permission-prompts", "none",
              "--max-turns", str(config.max_turns), "--model", config.model,
              "--append-system-prompt", IDENTITY_PROMPT),
             cwd=cwd,
@@ -419,3 +424,4 @@ class ZaiNativePacketTransport(NativeCommandPacketTransport):
         return result
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

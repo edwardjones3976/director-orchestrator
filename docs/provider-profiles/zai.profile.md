@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 
@@ -23,7 +24,7 @@
 | Has legacy adapter | no |
 | Legacy accounting agent | `zai` |
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
-| Committee member key | - |
+| Committee member key | `zai` |
 | Charter workload lane key | - |
 | Standing role label | - |
 | Configuration prefixes | `ZAI_` |
@@ -35,13 +36,13 @@
 | --- | --- |
 | Team | lane_only |
 | Lane class | capability_routed_lane |
-| Summary | Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane is not a committee member, and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes. |
+| Summary | Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane holds a Director-invited committee debate seat without a voting weight (the owner has assigned none and the 8.5 denominator is immutable), and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes. |
 | Charter workload lane | - |
 | Strategy key | - |
 | Strategy priority | - |
 | Committee member | no |
 | Voting power | - |
-| Seatable in debate | no |
+| Seatable in debate | yes |
 | May initiate debate | no |
 | Vote grants authority | no |
 | Default allocation profile | `engineering` |
@@ -204,10 +205,12 @@ Separation of duties:
 
 | Limitation | Source |
 | --- | --- |
-| The Docker Director reaches the Windows Claude Code CLI only through the authenticated host bridge, whose zai entry runs the same GLM-verifying native transport in the bridge process; the container holds neither the key nor the CLI. The legacy engine has no zai worker or adapter. | src/director_orchestrator/host_provider_bridge.py:WindowsHostProviderExecutor |
+| The Docker Director reaches the Windows Claude Code CLI only through the authenticated host bridge, whose zai entry runs the same GLM-verifying native transport in the bridge process; the container holds neither the key nor the CLI. | src/director_orchestrator/host_provider_bridge.py:WindowsHostProviderExecutor |
+| Excluded from the legacy engine, which remains a supported rollback path: its worker contract is assignment text to ProviderRun with no v1 packet, and the only route to the Windows CLI is the host bridge, which verifies the primary Postgres writer fence before launch while rollback disables that writer. A legacy Z.ai worker would need the CLI inside the container or a weakened fence. Firecrawl, GitHub Copilot and OpenAI production likewise have no legacy worker. | docs/langgraph-primary-operations.md, Rollback; src/director_orchestrator/providers.py:provider_registry |
+| Committee debates execute only in the legacy engine, so the Director-invited seat is recognized (charter seat, advisory-vote identity, interaction enums) but no Z.ai debate turn can run until a primary-runtime debate path exists; its recorded position carries zero weight until the owner assigns one. | src/director_orchestrator/team_charter.py:tally_advisory_votes |
+| No protected signing: Z.ai is not a native acceptance issuer, a v2 issuer family, or a qualified v3 review product. It is recognized as a material-author family, so its candidates bind reviewer independence; ordinary non-author review eligibility is unaffected. | src/director_orchestrator/native_acceptance_issuer.py:ROLE_PROVIDERS |
 | Tool limits are Claude Code permission rules on an ordinary host process, not an operating-system sandbox. Web search is not advertised on this route, and no MCP server is installed. | src/director_orchestrator/zai_native.py:tool_arguments |
-| A first host-side refusal is a signed no-run; a replay of that same refused request is reported with the older attestation-mismatch reason, which a non-attested Director reads as ambiguous (conservative). | src/director_orchestrator/host_provider_bridge.py:BridgeClaimStore |
-| No native acceptance issuer is available for Z.ai; it cannot sign a security, independent-review, or CI receipt. | docs/provider-setup.md, Z.ai production lane |
+| Only a Director refusal before signing, or the bridge's signed refusal (first answer or replay of the recorded reason), is a proven no-run settled as refused before I/O; any unsigned or unreadable bridge error stays ambiguous and is never replayed. | src/director_orchestrator/host_provider_bridge.py:BridgeClaimStore; src/director_orchestrator/primary_default.py:bridge_refusal_no_run_hold |
 | Qualification is pending and belongs to the integration owner: historical failed or ambiguous attempts stay held and are never replayed; the subscription-only canary runs once after independent review and admission. | docs/provider-setup.md, Z.ai production lane |
 | Completion of the enrollment needs a real authorized Slack thread response and receipt through the existing Director relay; installing configuration is not completion. | docs/provider-setup.md, Z.ai production lane |
 | usage.cost_usd is null for every attempt: a call measures no cash charge, plan credits are not reported by the CLI, and the CLI's dollar figure is model-equivalent telemetry at Anthropic tariffs, not a charge. | src/director_orchestrator/zai_native.py:accounting_notes |
@@ -219,7 +222,7 @@ Separation of duties:
 
 | Transport | Kind | Runtime | Enum value | Observed kind | Status | Route status | Direction | Config (names) | Route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `zai-native-cli` | native_cli | langgraph_primary | - | `zai-native-cli` | implemented_disabled_by_default | authorized | director_to_provider | `ZAI_ENABLED`, `ZAI_MODE`, `ZAI_TRANSPORT`, `ZAI_PRODUCTION_ACTIVATION`, `ZAI_API_KEY`, `ZAI_API_BASE`, `ZAI_MODEL`, `ZAI_CLI_EXECUTABLE`, `ZAI_MAX_TURNS`, `ZAI_PRODUCTION_TIMEOUT_SECONDS`, `ZAI_ALLOW_REPOSITORY_WRITE`, `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `zai-native-cli` |
+| `zai-native-cli` | native_cli | langgraph_primary | `zai_coding_cli` | `zai-native-cli` | implemented_disabled_by_default | authorized | director_to_provider | `ZAI_ENABLED`, `ZAI_MODE`, `ZAI_TRANSPORT`, `ZAI_PRODUCTION_ACTIVATION`, `ZAI_API_KEY`, `ZAI_API_BASE`, `ZAI_MODEL`, `ZAI_CLI_EXECUTABLE`, `ZAI_MAX_TURNS`, `ZAI_PRODUCTION_TIMEOUT_SECONDS`, `ZAI_ALLOW_REPOSITORY_WRITE`, `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `zai-native-cli` |
 | `windows-host-provider-bridge` | host_bridge | langgraph_primary | - | `authenticated-windows-host-bridge` | implemented_disabled_by_default | authorized | director_to_provider | `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED`, `ZAI_TRANSPORT`, `ZAI_MODEL` | `windows-host-provider-bridge` |
 | `zai-lite-trial` | native_cli | operator_cli | - | - | implemented_disabled_by_default | authorized | director_to_provider | `ZAI_TRIAL_ENABLED`, `ZAI_MODE`, `ZAI_API_KEY`, `ZAI_API_BASE`, `ZAI_MODEL`, `ZAI_CLI_EXECUTABLE`, `ZAI_TRIAL_JOURNAL_DIR`, `ZAI_TRIAL_LEDGER_PATH`, `ZAI_TIMEOUT_SECONDS`, `ZAI_LITE_ENTITLEMENT_VERIFIED` | `zai-lite-trial` |
 
@@ -245,7 +248,7 @@ Separation of duties:
 
 - Relay rule: provider_messages_relay_through_director.
 - Direct provider-to-provider channels exist: no.
-- Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, and review handoffs; it holds no debate seat.
+- Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and a Director-invited advisory debate seat whose position carries zero weight until the owner assigns one.
 - Z.ai never posts to Slack; the Director relays a concise assignment-correlated summary through the existing Slack thread relay, preserving thread_ts.
 - Trial-lane results never reach another provider as production evidence.
 
@@ -256,6 +259,7 @@ Separation of duties:
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
 | `dependency-outcome-forwarding` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/antigravity.py` |
 | `review-to-merge-handoff` | mediated | director_to_provider | director | authorized | enabled | evidence_for_deterministic_gate | `src/director_orchestrator/review_handoff.py`, `src/director_orchestrator/primary_roster.py` |
+| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes` |
 | `owner-manual-recovery` | mediated | owner_to_director | owner | authorized | enabled | none | `src/director_orchestrator/callbacks.py`, `src/director_orchestrator/engine.py` |
 | `zai-native-cli` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/zai_native.py:ZaiNativePacketTransport`, `src/director_orchestrator/primary_transports.py:discover_local_primary_command_transports`, `src/director_orchestrator/config.py:Settings.zai_production_readiness` |
 | `zai-lite-trial` | direct | director_to_provider | owner | authorized | disabled | none | `src/director_orchestrator/zai_lane.py:ZaiTrialLane`, `src/director_orchestrator/zai_trial.py:ZaiLiteTrialTransport`, `scripts/zai-trial.py` |
@@ -266,11 +270,11 @@ Separation of duties:
 
 | Peer | Direct channel status | Direct route ids | Mediated via |
 | --- | --- | --- | --- |
-| `openai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `owner-manual-recovery` |
-| `claude` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `owner-manual-recovery` |
-| `cursor` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `owner-manual-recovery` |
-| `grok` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `owner-manual-recovery` |
-| `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `openai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `owner-manual-recovery` |
+| `claude` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `owner-manual-recovery` |
+| `cursor` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `owner-manual-recovery` |
+| `grok` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `owner-manual-recovery` |
+| `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `advisory-debate`, `owner-manual-recovery` |
 | `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
@@ -294,3 +298,4 @@ Separation of duties:
 
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->

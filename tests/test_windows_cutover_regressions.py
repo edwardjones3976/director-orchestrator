@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
@@ -36,6 +37,8 @@ from director_orchestrator.host_provider_bridge import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PWSH = shutil.which("pwsh")
+# The Z.ai lane's bridge entry shape: [executable, GLM model, max turns, write mode, key-ID digest].
+ZAI_BRIDGE_ENTRY = [sys.executable, "glm-5.3-flash", "30", "read-only", "sha256:" + "0" * 64]
 SWITCHES = (
     "LANGGRAPH_PRIMARY_ENABLED",
     "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED",
@@ -1064,9 +1067,23 @@ else { Assert-PrimaryQuiescent }
         # Every supported Python lane is checked individually, including Cursor.
         for lane in sorted(SUPPORTED_HOST_LANES):
             with self.subTest(lane=lane):
-                result = self._preflight({lane: None})
+                result = self._preflight({lane: ZAI_BRIDGE_ENTRY if lane == "zai" else None})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("no provider was invoked", result.stdout)
+
+    def test_preflight_refuses_a_malformed_zai_entry_before_installation(self):
+        malformed = (
+            ZAI_BRIDGE_ENTRY[:2],
+            [ZAI_BRIDGE_ENTRY[0], "claude-opus-5", *ZAI_BRIDGE_ENTRY[2:]],
+            [*ZAI_BRIDGE_ENTRY[:2], "101", *ZAI_BRIDGE_ENTRY[3:]],
+            [*ZAI_BRIDGE_ENTRY[:3], "bypass", ZAI_BRIDGE_ENTRY[4]],
+            [*ZAI_BRIDGE_ENTRY[:4], "key-id"],
+        )
+        for argv in malformed:
+            with self.subTest(argv=argv[1:]):
+                result = self._preflight({"zai": argv})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("zai command must be", result.stderr + result.stdout)
 
     def test_run_forwards_validation_profile_and_clears_stale_parent_state(self):
         keys = [
@@ -1090,7 +1107,7 @@ else { Assert-PrimaryQuiescent }
             provider = root / "harmless_provider.py"
             provider.write_text("raise SystemExit(0)\n")
             argv = [sys.executable, str(provider)]
-            command_map = {lane: argv for lane in SUPPORTED_HOST_LANES}
+            command_map = {lane: ZAI_BRIDGE_ENTRY if lane == "zai" else argv for lane in SUPPORTED_HOST_LANES}
             capture = root / "child-environment.json"
             restored = root / "restored-environment.json"
             stub = root / "bridge_python.ps1"
@@ -1253,3 +1270,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

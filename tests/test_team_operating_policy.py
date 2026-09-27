@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
@@ -657,7 +658,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["share_pressure_action"], "zai_ceiling_only")
+        self.assertEqual(enforcement["share_pressure_action"], "zai_cap_only")
         self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
@@ -2202,3 +2203,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

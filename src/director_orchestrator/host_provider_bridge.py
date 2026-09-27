@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
@@ -114,7 +115,18 @@ class HostProviderBridgeRefused(HostProviderBridgeError):
 
 
 class HostBridgeRefusedBeforeExecution(RuntimeError):
-    """The bridge authenticated that it refused the request before running anything."""
+    """A proven no-run: nothing was executed for this request.
+
+    Raised only for the Director's own refusal before anything was signed or
+    sent, or for the bridge's signed refusal (first answer or replay). An
+    unsigned or unreadable error is never this; it stays ambiguous.
+    """
+
+
+# What a REFUSED claim records in its response column, so a replay repeats the
+# same signed disposition. A claim settled before reasons were recorded holds
+# NULL and keeps replaying as an attestation mismatch.
+_REFUSAL_REASONS = ("attestation_mismatch", "refused_before_execution")
 
 
 class HostProviderBridgeAttestationMismatch(HostProviderBridgeError):
@@ -624,7 +636,7 @@ class BridgeClaimStore:
                     # REFUSED attempt, which ran nothing, is the signed
                     # attestation refusal.
                     if row[6] == "REFUSED":
-                        raise HostProviderBridgeAttestationMismatch(
+                        _raise_recorded_refusal(row[7],
                             "replay attestation or limits differ from the claimed attempt")
                     if row[6] == "SUCCEEDED":
                         raise HostProviderBridgeError(
@@ -635,8 +647,7 @@ class BridgeClaimStore:
                     return row[7]
                 if row[6] == "REFUSED":
                     # Replayed as the same clean refusal: nothing ever ran.
-                    raise HostProviderBridgeAttestationMismatch(
-                        "host provider attempt was refused before execution")
+                    _raise_recorded_refusal(row[7], "host provider attempt was refused before execution")
                 raise HostProviderBridgeAmbiguous("host provider attempt is not safely replayable")
             connection.execute(
                 "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
@@ -654,12 +665,18 @@ class BridgeClaimStore:
         return None
 
     def settle(self, idempotency_digest: str, *, response: bytes | None,
-               refused: bool = False) -> None:
+               refused: bool = False, refusal_reason: str | None = None) -> None:
         """Settle an INFLIGHT claim: SUCCEEDED with its response, REFUSED when
-        the executor proved it started nothing, otherwise AMBIGUOUS."""
+        the executor proved it started nothing, otherwise AMBIGUOUS. A REFUSED
+        claim stores its signed refusal reason for replay."""
 
         state = ("REFUSED" if refused else
                  "SUCCEEDED" if response is not None else "AMBIGUOUS")
+        if refused:
+            if response is not None or (refusal_reason is not None
+                                        and refusal_reason not in _REFUSAL_REASONS):
+                raise HostProviderBridgeError("a refused attempt records only its refusal reason")
+            response = refusal_reason.encode("ascii") if refusal_reason else None
         with closing(self._connect()) as connection:
             cursor = connection.execute(
                 "UPDATE bridge_attempts SET state = ?, response_json = ?, updated_at = ? "
@@ -668,6 +685,13 @@ class BridgeClaimStore:
             )
             if cursor.rowcount != 1:
                 raise HostProviderBridgeError("bridge attempt settlement lost its claim")
+
+
+def _raise_recorded_refusal(recorded: object, message: str) -> None:
+    """Replay a REFUSED claim with the disposition it was settled under."""
+    if recorded == b"refused_before_execution":
+        raise HostProviderBridgeRefused(message)
+    raise HostProviderBridgeAttestationMismatch(message)
 
 
 def _attempt_limits(request: object) -> tuple[str, str, str] | None:
@@ -1235,8 +1259,14 @@ class HostBridgePacketTransport:
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
             raise RuntimeError("host bridge work packet is not bounded")
         if self.request_guard is not None:
-            # Refused here, nothing is challenged, signed or sent.
-            self.request_guard(json.loads(work_packet_json), context)
+            # Refused here, nothing is challenged, signed or sent: a proven no-run.
+            try:
+                self.request_guard(json.loads(work_packet_json), context)
+            except HostBridgeRefusedBeforeExecution:
+                raise
+            except RuntimeError as exc:
+                raise HostBridgeRefusedBeforeExecution(
+                    "the Director refused the request before sending it: " + str(exc)) from exc
         cutoff, host_deadline = (self._host_cutoff(context)
             if getattr(context, "deadline", None) is not None else (None, ""))
         packet = json.loads(work_packet_json)
@@ -1415,10 +1445,13 @@ def dispatch_bridge_request(
         return replay
     try:
         result = executor.execute(request)
-    except (HostProviderBridgeAttestationMismatch, HostProviderBridgeRefused):
+    except (HostProviderBridgeAttestationMismatch, HostProviderBridgeRefused) as exc:
         # Raised before any process starts: a clean, replayable refusal, never
-        # an ambiguous attempt.
-        store.settle(request.idempotency_digest, response=None, refused=True)
+        # an ambiguous attempt. The reason is kept so a replay repeats it.
+        store.settle(request.idempotency_digest, response=None, refused=True,
+                     refusal_reason=("attestation_mismatch"
+                                     if isinstance(exc, HostProviderBridgeAttestationMismatch)
+                                     else "refused_before_execution"))
         raise
     except Exception:
         store.settle(request.idempotency_digest, response=None)
@@ -1457,3 +1490,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
