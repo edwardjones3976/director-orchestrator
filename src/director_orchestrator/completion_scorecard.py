@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
@@ -3760,7 +3761,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                     (runtime_sha and item.runtime_sha != runtime_sha) or (image_id and item.image_id != image_id)):
                 error = "Evidence is missing or mismatches the runtime image binding."
             row["status"] = "UNKNOWN" if error or item.passed is None else "PASS" if item.passed is True else "FAIL"
-            row["explanation"] = error or item.explanation
+            row["explanation"] = item.explanation if item.passed is None else error or item.explanation
             row["evidence"] = [{"source": item.source, "sha256": item.digest,
                                 "facts": item.facts,
                                 "observed_at": item.observed_at.isoformat(), "expires_at": item.expires_at.isoformat(),
@@ -3946,3 +3947,4 @@ def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) ->
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
@@ -2146,6 +2147,33 @@ class CompletionScorecardTests(unittest.TestCase):
             with self.subTest(item=item):
                 self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, [item], now=NOW)["checks"]), 0)
 
+    def test_runtime_binding_errors_preserve_unknown_reason_but_reject_results(self):
+        for passed in (None, True, False):
+            for binding in ({}, {"runtime_sha": SHA}, {"image_id": IMAGE},
+                            {"runtime_sha": OTHER, "image_id": IMAGE},
+                            {"runtime_sha": SHA, "image_id": "sha256:" + "d" * 64}):
+                with self.subTest(passed=passed, binding=binding):
+                    observation = sc._observation(
+                        "06", passed, "collector not yet trusted", "fixture", {}, NOW, **binding)
+                    result = row(sc.score(SHA, [observation], now=NOW,
+                                          runtime_sha=SHA, image_id=IMAGE), "06")
+                    self.assertEqual(result["status"], "UNKNOWN")
+                    self.assertEqual(result["explanation"], "collector not yet trusted" if passed is None else
+                                     "Evidence is missing or mismatches the runtime image binding.")
+
+    def test_unknown_observation_preserves_reason_despite_invalid_time_or_candidate(self):
+        observation = sc._observation(
+            "17", None, "collector not yet trusted", "fixture", {}, NOW, candidate_sha=SHA)
+        for changes in ({"observed_at": NOW.replace(tzinfo=None)},
+                        {"expires_at": NOW},
+                        {"observed_at": NOW + timedelta(seconds=1)},
+                        {"expires_at": NOW + timedelta(hours=1)},
+                        {"candidate_sha": OTHER}):
+            with self.subTest(changes=changes):
+                result = row(sc.score(SHA, [dataclasses.replace(observation, **changes)], now=NOW), "17")
+                self.assertEqual(result["status"], "UNKNOWN")
+                self.assertEqual(result["explanation"], observation.explanation)
+
     def test_runtime_head_or_image_mismatch_does_not_transfer(self):
         observed = runtime_observations(evaluate_rules=True)
         for binding in ({"runtime_sha": OTHER}, {"image_id": "sha256:" + "d" * 64}):
@@ -3963,7 +3991,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertTrue(runtime)
         self.assertTrue(all(item["status"] == "UNKNOWN" for item in runtime))
         self.assertTrue(all("more than one runtime binding" in item["explanation"] for item in runtime
-                            if any(o.check_id == item["id"] for o in observed)))
+                            if any(o.check_id == item["id"] and o.passed is not None for o in observed)))
 
     def test_paid_outcome_must_equal_the_persisted_result_artifact_20(self):
         self.assertEqual(self.world(evaluate_rules=True).state("20"), "PASS")
@@ -5861,3 +5889,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
