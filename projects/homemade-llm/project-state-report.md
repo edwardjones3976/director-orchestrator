@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:16 UTC | BEGIN]] -->
@@ -156,7 +157,7 @@ All 19 figures are provider-reported and were read by the Director `[verified, r
 |---|---|---|
 | 1 | Project and assignment IDs | Top of this report |
 | 2 | Objective, scope, categorized status | Top of this report and the M0 table |
-| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's starting base `052553f`; prior reconciliation base `c432722` (PR #288, merged 2026-09-26 21:20 UTC); current `main` `0ead1cb` after #297 merged `[verified, git 2026-09-27 01:26 UTC]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
+| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's starting base `052553f`; prior reconciliation base `c432722` (PR #288, merged 2026-09-26 21:20 UTC); current `main` `923f924` after #274 merged `[verified, git 2026-09-27 02:19 UTC]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
 | 4 | Provider participation, unavailable providers, drafts or simulations | Every paid call has a receipt (M0 paid spend table). Unavailable during M0: Grok Build CLI (HTTP 402, D-009) and GitHub Copilot (out of quota, D-005). No draft, simulation or predicted-position content. |
 | 5 | Target and actual provider ledgers (assignment and rolling 20) | **Unavailable.** The engineering-workload ledger stops at 2026-09-12, so the rolling-20 mix is UNKNOWN. |
 | 6 | Moderator, Participant and Director actions, OpenAI vote | Director actions are recorded in the decision log (O-, D- rows). **Not applicable:** no committee vote was held in M0, and no OpenAI vote was cast. |
@@ -167,10 +168,10 @@ All 19 figures are provider-reported and were read by the Director `[verified, r
 | 11 | Pre-stage packet, workload size, writer lease, reviewer reservation | **Hard-stop crossing, ratified as a historical project-specific exception (D-021; O-040, 2026-09-26 21:53 UTC, comment 5850218598):** M0 dispatched Perplexity, xAI/Grok, Codex and Cursor without pre-stage packets or writer leases, violating the blocking pre-dispatch gate also cited in D-019. Reviewers are named per PR. |
 | 12 | Status-check, duplicate-validation, action and wave counts | **Unavailable:** not measured in M0. |
 | 13 | Avoidable-commit baseline | **Unavailable:** not measured in M0. |
-| 14 | Scope or authority changes, owner authorization | Owner authorizations: O-029 to O-036 and O-040/O-042; #293-only authorship and historical crossing exceptions, the authenticated Set B receipt and pr-45 disposition (O-042), and the owner merge law; current bounded review authority is the 2026-09-27 consolidated correction approval recorded below. Future M1 gates remain required. |
+| 14 | Scope or authority changes, owner authorization | Owner authorizations: O-029 to O-036 and O-040 to O-043; O-043 governs current #293 sole authorship, while O-041 preserves its historical exception and arithmetic; O-042 governs the authenticated Set B receipt and pr-45 disposition. The owner merge law also applies; current bounded review authority is the 2026-09-27 consolidated correction approval recorded below. Future M1 gates remain required. |
 | 15 | Recovery state and rollback | Nightly mirror and restore drill (M0.7). Repository rollback is a revert of the merged PRs. **Host rollback: documentation only, not executed.** Stop Open WebUI + SearXNG from `projects/homemade-llm/compose/` with `docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env down`, never `-v` (`compose/RUNBOOK.md` §4 "Diagnostics"). Owner stops Tailscale Serve with the documented `tailscale serve --https=443 off`, then confirms nothing is served using `tailscale serve status` (`compose/RUNBOOK.md` §2 "Phone access with Tailscale Serve (never Funnel)", step 5). Remove Scheduled Task `homemade-llm-mirror` (name recorded in M0.7 above): **no documented procedure; owner action** (`scripts/mirror.ps1`, opening usage comments; `workstream-plan.md`, "Workstreams", M0.7, and "Owner and deterministic gates"). Restore the removed live Ollama blobs from the content-verified `E:\llm-archive\ollama-2026-09\models\blobs` to `xo-fleet\ollama\models\blobs`: **no documented procedure; owner action** (`decision-log.md` D-014; `workstream-plan.md`, "Workstreams", M0.6). Receipts and reports are on disk under `C:\llm\reports` and the provider-dispatch receipts. |
 | 16 | Next gate and responsible party | "Next bounded action" below |
-| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-036 and O-040/O-042 (#294 uses O-037 to O-039); D-019 to D-022 ratified, crossings and cost retained. O-042 accepts the authenticated frozen Set B batch-1 receipt and retains pr-45 as a disclosed MINOR imperfection. D-018 is ratified by O-037 in the approved but unmerged M1 plan PR #294 (owner disposition 5850566834); the historical crossing and cost remain recorded. |
+| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-036 and O-040 to O-043 (#294 uses O-037 to O-039); D-019 to D-022 ratified, crossings and cost retained. O-042 accepts the authenticated frozen Set B batch-1 receipt and retains pr-45 as a disclosed MINOR imperfection. D-018 is ratified by O-037 in the approved but unmerged M1 plan PR #294 (owner disposition 5850566834); the historical crossing and cost remain recorded. |
 | 18 | Not done and unverified | "Not done, and what remains unverified" below |
 
 ### Per-PR validation evidence (charter item 8)
@@ -247,3 +248,4 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:16 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | END]] -->

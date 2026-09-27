@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]]
@@ -230,7 +231,7 @@ review_chain:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
     # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
-    base_sha: "0ead1cbab58bbeb13a7e7c1094fc2a95115bf722"
+    base_sha: "923f9242fb58fc050f980e441be4d3ca03267a7f"
     head_sha: "bound on the M0 record reconciliation PR's review-of-record comment"
     artifact_digest: "none"
     last_merged_candidate: "PR #283 at d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88, merged 2026-09-26T16:40:15Z as 052553f"
@@ -289,4 +290,5 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
