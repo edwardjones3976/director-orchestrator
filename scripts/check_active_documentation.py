@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]]
@@ -152,6 +153,12 @@ def check_tree(root: Path) -> list[str]:
     return errors
 
 
+def _surface_findings(text: str, pointer: str) -> list[str]:
+    """Legacy authority rules plus pointer/drift, without repeating history-marker errors."""
+
+    return list(dict.fromkeys(check_text(text) + check_instruction_text(text, pointer=pointer)))
+
+
 def check_instruction_surfaces(root: Path) -> list[str]:
     surfaces = {root / name: "always" for name in POINTER_SURFACES}
     for pattern in RULE_SURFACE_GLOBS:
@@ -162,7 +169,7 @@ def check_instruction_surfaces(root: Path) -> list[str]:
             continue
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
-        errors.extend(f"{relative}: {error}" for error in check_instruction_text(text, pointer=surfaces[path]))
+        errors.extend(f"{relative}: {error}" for error in _surface_findings(text, surfaces[path]))
     return errors
 
 
@@ -174,8 +181,7 @@ def check_local_agent_files(paths: list[Path]) -> list[str]:
         except (OSError, UnicodeDecodeError) as error:
             errors.append(f"{path}: unreadable local agent file ({type(error).__name__})")
             continue
-        findings = check_text(text) + check_instruction_text(text, pointer="topic")
-        errors.extend(f"{path}: {error}" for error in findings)
+        errors.extend(f"{path}: {error}" for error in _surface_findings(text, "topic"))
     return errors
 
 
@@ -191,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         passed = f"Local agent-file pointer/drift checks passed for {len(args.local_agent_file)} explicit file(s)."
     else:
         root = Path(__file__).resolve().parents[1]
-        failures = check_tree(root) + check_instruction_surfaces(root)
+        # CLAUDE.md is in both sets; report each finding once.
+        failures = list(dict.fromkeys(check_tree(root) + check_instruction_surfaces(root)))
         passed = "Active documentation authority and instruction-surface drift checks passed."
     print("\n".join(failures) if failures else passed)
     return int(bool(failures))
@@ -202,3 +209,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]

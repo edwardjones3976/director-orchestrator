@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
 """Review-loop controls: instruction-surface pointer and drift checks (issue #299).
 
@@ -117,6 +118,34 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
             flagged = {error.split(": ", 1)[0] for error in errors}
             self.assertEqual({"CLAUDE.md", ".cursor/rules/merge.mdc", "projects/demo/CLAUDE.md"}, flagged)
 
+    def test_named_surfaces_also_apply_the_legacy_authority_rules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            claim = "Antigravity may not write project files."
+            history = f"<!-- director-doc-history BEGIN: dated quotation -->\n{claim}\n<!-- director-doc-history END -->"
+            files = {
+                "GEMINI.md": "@AGENTS.md\n\n" + claim,
+                ".cursor/rules/old.mdc": "The legacy Director remains the sole writer.",
+                ".agents/skills/tool/SKILL.md": "Use 25/25/20/15/11/4.",
+                "CLAUDE.md": "@AGENTS.md\n\n" + history,
+            }
+            for relative, text in files.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            errors = guard.check_instruction_surfaces(root)
+            self.assertEqual(
+                {
+                    "GEMINI.md: antigravity-blanket-write-denial",
+                    ".cursor/rules/old.mdc: legacy-sole-writer",
+                    ".agents/skills/tool/SKILL.md: obsolete-allocation",
+                },
+                {error.split(":", 2)[0] + ":" + error.split(":", 2)[1] for error in errors},
+            )
+            # A malformed history marker is reported once, not once per rule set.
+            (root / "CLAUDE.md").write_text("@AGENTS.md\n\n<!-- director-doc-history END -->", encoding="utf-8")
+            self.assertEqual(1, sum("CLAUDE.md" in error for error in guard.check_instruction_surfaces(root)))
+
     def test_local_agent_file_mode_is_explicit_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             clean = Path(directory) / "clean.md"
@@ -140,3 +169,4 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]
