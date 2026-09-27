@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
@@ -1004,6 +1006,12 @@ function docker {
             if ($script:listingFails) { $global:LASTEXITCODE = 1; return }
             foreach ($row in $script:items.Values) {
                 $parts = $row -split '\|'
+                if ($args -contains '--filter') {
+                    Check ($args -contains '--no-trunc' -and $args -contains '-q') 'Expected full ID query'
+                    $filter = $args[[Array]::IndexOf($args, '--filter') + 1]
+                    if ($filter -ceq "id=$($parts[0])") { $parts[0] }
+                    continue
+                }
                 "$($parts[0])|$($parts[1])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
             }
             return
@@ -1124,6 +1132,26 @@ Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed slot remo
 $script:removeFails = $false
 Stop-Lane
 Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Absent lane retained slot'
+Item 'director-test-lane-slot-1' 'candidate'
+$removedId = [string]$script:serial
+$script:items.Remove('director-test-lane-slot-1')
+Item 'director-test-lane-slot-1' 'replacement'
+Remove-SlotContainer $removedId
+Check ($ErrorActionPreference -eq 'Stop') 'Removal changed error preference'
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[2] -eq 'replacement') 'Removed replacement slot'
+$remainingId = [string]$script:serial
+$script:removeFails = $true
+try { Remove-SlotContainer $remainingId; throw 'Expected existing slot failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed removal lost existing slot'
+$script:listingFails = $true
+try { Remove-SlotContainer $removedId; throw 'Expected listing failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($ErrorActionPreference -eq 'Stop') 'Failed removal changed error preference'
+$script:listingFails = $false
+$script:removeFails = $false
 Write-Output 'slot-checks-passed'
 """
             path = Path(directory) / "slots.ps1"
@@ -1390,3 +1418,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | END]]

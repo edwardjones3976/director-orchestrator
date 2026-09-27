@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
@@ -217,8 +219,16 @@ function Get-SlotInventory {
 function Remove-SlotContainer {
     param([string]$Id)
     # Immutable IDs prevent removing another caller's replacement reservation.
-    & docker rm --volumes $Id | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "The PostgreSQL test lane slot could not be removed." }
+    $priorErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & docker rm --volumes $Id 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { return }
+        $remaining = @(& docker ps -a -q --no-trunc --filter "id=$Id" 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $remaining.Count -eq 0) { return }
+        throw "The PostgreSQL test lane slot could not be removed."
+    }
+    finally { $ErrorActionPreference = $priorErrorActionPreference }
 }
 
 function Enter-LaneSlot {
@@ -402,3 +412,5 @@ Write-Host "Unit tests passed against the disposable PostgreSQL lane; the contai
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | END]]
