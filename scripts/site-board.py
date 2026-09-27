@@ -74,6 +74,19 @@ def open_prs(gh):
         pr["files"] = sorted({item["path"] for item in detail["files"]})
         if len(pr["files"]) != detail["changedFiles"]:
             raise BoardError("PR file list is incomplete; refusing a false clear")
+        renamed = {item["path"] for item in detail["files"] if item.get("changeType") == "RENAMED"}
+        if renamed:
+            files = gh.pages(f"{API}/pulls/{pr['number']}/files")
+            if len(files) != detail["changedFiles"] or {item["filename"] for item in files} != set(pr["files"]):
+                raise BoardError("PR rename file list is incomplete or changed; refusing a false clear")
+            previous = {item["filename"]: item.get("previous_filename")
+                        for item in files if item["status"] == "renamed"}
+            if set(previous) != renamed or not all(isinstance(path, str) and path for path in previous.values()):
+                raise BoardError("PR rename sources are incomplete; refusing a false clear")
+            current = gh.call("api", f"{API}/pulls/{pr['number']}")
+            if current["state"] != "open" or current["head"]["sha"] != pr["headRefOid"]:
+                raise BoardError("PR changed during collection; run again for a fresh snapshot")
+            pr["files"] = sorted(set(pr["files"]) | set(previous.values()))
     return sorted(prs, key=lambda pr: pr["number"])
 
 
@@ -87,7 +100,7 @@ def file_index(prs):
 
 def inline(value):
     """Keep remote text on one line and inert in a Markdown comment."""
-    return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(str(value).split()))
+    return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(str(value).split())).replace("@", "@\u200d")
 
 
 def render_board(gh, prs):
@@ -121,8 +134,13 @@ def render_board(gh, prs):
 
 
 def post_board(gh, issue, board):
+    login = gh.call("api", "user")["login"]
+    if not isinstance(login, str) or not login:
+        raise BoardError("authenticated identity is missing; refusing to post")
     comments = gh.pages(f"{API}/issues/{issue}/comments")
-    matches = [comment for comment in comments if MARKER in (comment.get("body") or "").splitlines()]
+    matches = [comment for comment in comments
+               if (comment.get("user") or {}).get("login") == login
+               and MARKER in (comment.get("body") or "").splitlines()]
     if len(matches) > 1:
         raise BoardError("multiple marker comments found; resolve duplicates before posting")
     body = MARKER + "\n" + board

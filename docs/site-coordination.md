@@ -10,6 +10,7 @@ a standalone `Session: <name>` line in the PR body and describe the intended
 file scope. Keep the draft and scope current as work changes. The board reads
 actual changed files, so a claim covering files not yet in the diff also needs
 the foreman's coordination; a draft PR is not a file lock.
+Renames claim both the previous and current paths.
 
 Before editing, check each intended repository-relative file path:
 
@@ -47,7 +48,10 @@ the earlier queue snapshot has position `unknown`.
 
 With posting authority, `--post` updates the issue comment containing the exact
 standalone marker `<!-- site-board -->` via PATCH, or creates one via POST.
-Multiple marker comments fail without a write. Use one foreman as the posting
+Only comments authored by the authenticated GitHub identity qualify; foreign
+markers are ignored. Multiple qualifying marker comments fail without a write.
+Untrusted title, branch, path and session mentions are neutralized before posting.
+Use one foreman as the posting
 writer: concurrent first-time posters could otherwise create duplicate comments.
 Writes are never retried automatically, including ambiguous timeouts. Inspect
 the issue before repeating a failed post. No posting was performed during this
@@ -57,7 +61,10 @@ The script uses Python's standard library and authenticated `gh`, targeting
 `edwardjones3976/director-orchestrator`. Each invocation caches reads. For N open
 PRs and H distinct heads, a board uses one list call, N file-detail calls, H
 latest-run calls, and at most 10 queue-page calls. Check mode uses only 1 + N
-calls. Posting adds at most 10 comment-page calls and one write. Each process
+calls, plus at most 10 REST file-page calls and one head/state check per PR with
+a rename. The CLI file list exposes `changeType` but no previous path; REST
+supplies `previous_filename`. Posting adds one cached identity read, at most
+10 comment-page calls and one write. Each process
 call has a 60-second timeout and no automatic retry. Open PRs are capped at
 1,000; paginated reads stop after 10 pages of 100. Hitting a bound, truncated
 file results, or a changed head/state during collection fails instead of

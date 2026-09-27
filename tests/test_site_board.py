@@ -27,6 +27,9 @@ class SiteBoardTests(unittest.TestCase):
         self.comments = []
         self.calls = []
         self.file_count = 1
+        self.files = [{"path": "src/shared.py", "changeType": "MODIFIED"}]
+        self.rest_files = []
+        self.rest_head = "a" * 40
 
     def gh(self, command, **kwargs):
         self.calls.append((command, kwargs))
@@ -34,8 +37,14 @@ class SiteBoardTests(unittest.TestCase):
         if args[:2] == ["pr", "list"]:
             result = self.prs
         elif args[:2] == ["pr", "view"]:
-            result = dict(files=[{"path": "src/shared.py"}], changedFiles=self.file_count,
+            result = dict(files=self.files, changedFiles=self.file_count,
                           headRefOid="a" * 40, state="OPEN")
+        elif args == ["api", "user"]:
+            result = {"login": "board-writer"}
+        elif "/files?" in args[-1]:
+            result = self.rest_files
+        elif "/pulls/" in args[-1]:
+            result = {"state": "open", "head": {"sha": self.rest_head}}
         elif args[:3] in (["api", "-X", "PATCH"], ["api", "-X", "POST"]):
             result = {"id": 9}
         elif "/comments?" in args[-1]:
@@ -78,7 +87,9 @@ class SiteBoardTests(unittest.TestCase):
         self.assertEqual(self.run_board("--check", "src/./shared.py")[0], 1)
 
     def test_post_updates_marker_comment_using_stdin(self):
-        self.comments = [{"id": 5, "body": "unrelated"}, {"id": 9, "body": board.MARKER + "\nold"}]
+        self.comments = [{"id": 5, "body": "unrelated"},
+                         {"id": 9, "body": board.MARKER + "\nold", "user": {"login": "board-writer"}},
+                         {"id": 10, "body": board.MARKER, "user": {"login": "foreign-writer"}}]
         self.assertEqual(self.run_board("--post", "299")[0], 0)
         command, kwargs = self.calls[-1]
         self.assertEqual(command, ["gh", "api", "-X", "PATCH", f"{board.API}/issues/comments/9", "--input", "-"])
@@ -89,12 +100,54 @@ class SiteBoardTests(unittest.TestCase):
         self.assertEqual(self.calls[-1][0][1:5], ["api", "-X", "POST", f"{board.API}/issues/299/comments"])
 
     def test_duplicate_markers_and_incomplete_files_fail_without_write(self):
-        self.comments = [{"id": n, "body": board.MARKER} for n in (1, 2)]
+        self.comments = [{"id": n, "body": board.MARKER, "user": {"login": "board-writer"}} for n in (1, 2)]
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.run_board("--post", "299")[0], 2)
             self.file_count = 2
             self.assertEqual(self.run_board("--check", "clear.py")[0], 2)
         self.assertFalse(any("-X" in command for command, _ in self.calls))
+
+    def test_post_neutralizes_mentions_in_all_untrusted_fields(self):
+        self.prs[0].update(title="`@title-user`", headRefName="@org/team",
+                           body="Session: @session-user")
+        self.files = [{"path": "src/@file-user.py", "changeType": "MODIFIED"}]
+        self.assertEqual(self.run_board("--post", "299")[0], 0)
+        body = json.loads(self.calls[-1][1]["input"])["body"]
+        for mention in ("title-user", "org/team", "session-user", "file-user"):
+            self.assertNotIn("@" + mention, body)
+            self.assertIn("@\u200d" + mention, body)
+        self.assertIn("\\`@\u200dtitle-user\\`", body)
+
+    def test_check_indexes_rename_source_and_destination_with_bounded_calls(self):
+        self.files = [{"path": "new.py", "changeType": "RENAMED"}]
+        self.rest_files = [{"filename": "new.py", "status": "renamed", "previous_filename": "old.py"}]
+        code, output = self.run_board("--check", "old.py", "new.py")
+        self.assertEqual(code, 1)
+        self.assertIn("old.py: #1, #2", output)
+        self.assertIn("new.py: #1, #2", output)
+        self.assertEqual(len(self.calls), 7)  # list, two views, two file pages, two head checks
+
+    def test_rename_incomplete_metadata_or_changed_head_fails_closed(self):
+        self.files = [{"path": "new.py", "changeType": "RENAMED"}]
+        for files, head in (([], "a" * 40),
+                            ([{"filename": "new.py", "status": "renamed"}], "a" * 40),
+                            ([{"filename": "new.py", "status": "renamed", "previous_filename": "old.py"}], "b" * 40)):
+            with self.subTest(files=files, head=head), contextlib.redirect_stderr(io.StringIO()):
+                self.rest_files, self.rest_head = files, head
+                self.assertEqual(self.run_board("--check", "old.py")[0], 2)
+
+    def test_foreign_markers_do_not_block_creation(self):
+        self.comments = [{"id": n, "body": board.MARKER, "user": {"login": "foreign-writer"}} for n in (1, 2)]
+        self.comments.append({"id": 3, "body": board.MARKER, "user": None})
+        self.assertEqual(self.run_board("--post", "299")[0], 0)
+        self.assertEqual(self.calls[-1][0][1:5], ["api", "-X", "POST", f"{board.API}/issues/299/comments"])
+
+    def test_post_identity_read_is_cached(self):
+        gh = board.GitHub()
+        with patch.object(board.subprocess, "run", side_effect=self.gh):
+            board.post_board(gh, 299, "first")
+            board.post_board(gh, 299, "second")
+        self.assertEqual(sum(command == ["gh", "api", "user"] for command, _ in self.calls), 1)
 
     def test_error_is_not_a_clear_and_does_not_leak_stderr(self):
         stderr = io.StringIO()
