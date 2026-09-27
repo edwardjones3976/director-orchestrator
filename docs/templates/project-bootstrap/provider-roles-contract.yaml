@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
@@ -83,7 +84,8 @@ allocation_and_selection:
   zero_target: "ineligible"
   total_effort_status: "separate_telemetry_not_production_credit"
   normal_tolerance_percentage_points: 3
-  hard_ceiling_above_target_percentage_points: 5
+  # Retired by owner direction on 2026-09-27; allocation guidance never blocks dispatch.
+  hard_ceiling_above_target_percentage_points: null
   allocation_unit: "assignment_count"
   prospective_window_assignments: 20
   insufficient_history_action: "fixed_twenty_slots_real_assignments_only"
@@ -91,8 +93,8 @@ allocation_and_selection:
   selection_order:
     - "exact scope, allowlists, transport, and readiness"
     - "task capability, tools, context, risk, and reviewer independence"
-    - "accepted-productive-work allocation compliance and under-target preference"
-    - "total-effort eligibility and corrective under-band preference"
+    - "accepted-productive-work allocation guidance and advisory under-target preference"
+    - "total-effort telemetry and advisory under-band preference"
     - "lowest trusted comparable estimated cost"
     - "deterministic tie-breaker"
   missing_cost_rule: "Unknown cost is never treated as zero or automatically cheapest."
@@ -405,3 +407,4 @@ project_local_bindings:
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:46 UTC | END]]
