@@ -507,7 +507,8 @@ process.stdout.write(JSON.stringify({outputs, store}));
         )
         self.assertIn("ubuntu-latest", workflow)
         self.assertIn("windows-latest", workflow)
-        self.assertEqual(3, workflow.count("python scripts/run-tests-parallel.py\n"))
+        self.assertEqual(1, workflow.count("- name: python scripts/run-tests-parallel.py\n"))
+        self.assertEqual(2, workflow.count("python scripts/run-tests-parallel.py --cleanup-failure-warn\n"))
         self.assertIn("DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || 8 }}", workflow)
         jobs = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)", workflow.split("\njobs:\n", 1)[1], re.MULTILINE | re.DOTALL))
         expected_names = {
