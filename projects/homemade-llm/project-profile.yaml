@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
@@ -155,7 +156,7 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Non-author review of Director PRs; for #293, one exact-head/base full-diff review capped USD 0.30 after local consistency check. Cursor separately performs its own thorough review and eligible guarded merge after all gates, including six CI checks (O-040)."
+        - "Non-author review of Director PRs; for #293, an authenticated exact-head/base full-diff ACCEPT remains required after local consistency check. The prior timed-out attempt at 57b90d2 was not a verdict. Cursor separately performs its own thorough review and eligible guarded merge after all gates, including six CI checks (O-040)."
       forbidden_authority:
         - "training-data generation (xAI terms: grading only)"
         - "merge"
@@ -164,7 +165,7 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Fallback non-author reviewer only for candidates without Codex contributions; ineligible to review #293 as a material author"
+        - "Fallback non-author reviewer only where independent; Codex assisted #293 and is not its reviewer of record"
       forbidden_authority:
         - "merge"
     - id: "research-perplexity"
@@ -223,8 +224,8 @@ controls:
 
 review_chain:
   producer: "claude"
-  material_authors: ["claude", "openai codex"]
-  eligible_reviewer: "Grok (xAI) supplies the bounded independent full-diff review. Cursor must perform its own thorough current-head/base review and is the eligible merger after all gates. Neither material contributor, Claude or OpenAI Codex, may review or merge #293."
+  material_authors: ["claude"]
+  eligible_reviewer: "Grok (xAI) supplies the bounded independent full-diff review. Cursor must perform its own thorough current-head/base review and is the eligible merger after all gates. Claude is sole author; Codex assisted and is not independent for #293. Neither may review or merge it."
   candidate:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
@@ -287,4 +288,5 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
