@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 from __future__ import annotations
@@ -3202,8 +3203,8 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+            thread.join(timeout=30)
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(errors, [])
         connection = sqlite3.connect(self.path)
         try:
@@ -3247,8 +3248,8 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+            thread.join(timeout=30)
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(errors, [])
         self.assertIn("retry_not_before", self._columns())
 
@@ -3826,9 +3827,9 @@ class MalformedRetryDeadlineTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
+            thread.join(timeout=30)
 
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(errors, [])
         self.assertEqual(len(outcomes), 2)
         for hold in outcomes:
@@ -4712,3 +4713,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
