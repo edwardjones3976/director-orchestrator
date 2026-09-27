@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -1145,16 +1147,202 @@ class ScorecardGitTrustTests(unittest.TestCase):
             sc._run_bytes(["git", "-C", str(self.repo), "show", self.pin])
 
 
+class TrustedCollectionLaneTests(unittest.TestCase):
+    """Producer-backed boundary regressions; these are not a trusted happy path."""
+
+    def setUp(self):
+        self.dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        if not self.dsn:
+            self.skipTest("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN unset; sanctioned Postgres lane unavailable")
+        import psycopg
+        from tests import test_primary_scorecard_evidence as fixtures
+        try:
+            with psycopg.connect(self.dsn, connect_timeout=3):
+                pass
+        except psycopg.OperationalError:
+            self.skipTest("Sanctioned Postgres lane unavailable; connection details withheld")
+        self.fixtures = fixtures
+        self.primary = fixtures.ScorecardEvidencePostgresTests()
+        self.primary.coordinator_fixtures = fixtures._load("test_primary_coordinator")
+        self.primary.setUp()
+        self.addCleanup(self.primary.tearDown)
+
+    def test_lane_transport_blocks_all_seven_checks_even_with_hostile_candidate_pass(self):
+        from director_orchestrator.config import Settings
+        from psycopg.conninfo import conninfo_to_dict
+
+        self.assertTrue(conninfo_to_dict(self.dsn).get("sslmode") == "disable",
+                        "This regression requires the sanctioned non-TLS test lane")
+        world = World(self)
+        # Do not feed World's hand-authored evaluator evidence into collection.
+        world.consistency = world.captures = None
+        environment = sc._environment(world.rows[0])
+        environment.update(LANGGRAPH_PRIMARY_POSTGRES_DSN=self.dsn,
+            DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN=self.dsn,
+            DIRECTOR_PROVIDER_VALIDATION_CANDIDATE=SHA,
+            DIRECTOR_PROVIDER_VALIDATION_TREE=world.commit_tree,
+            DIRECTOR_RUNTIME_IMAGE_ID=IMAGE)
+        settings = dataclasses.replace(Settings(), langgraph_primary_postgres_dsn=self.dsn,
+            langgraph_primary_postgres_schema=self.primary.schema,
+            langgraph_primary_pinned_commit_sha=SHA, langgraph_primary_pinned_tree_sha=world.commit_tree)
+        world.rows[0]["Config"]["Env"] = [f"{key}={value}" for key, value in environment.items()]
+        world.rows[0]["Mounts"] = []
+        inputs = {"environment": environment, "settings": dataclasses.asdict(settings), "mounts": []}
+        runtime = runtime_fixture(env=environment, runtime_tree=world.commit_tree)
+        original_run = world.run
+        candidate_reads = []
+
+        def hostile_run(args, timeout=15):
+            if args[:2] == ["docker", "exec"] and "director_orchestrator.primary_generation" in args:
+                candidate_reads.append(True)
+                return json.dumps({"checks": [{"id": key, "status": "PASS"}
+                    for key in ("07", "08", "11", "12", "15", "17", "20")]}).encode()
+            return original_run(args, timeout)
+
+        self.primary.coordinator.activate_new_intake(expected_generation=0)
+        for hostile in (False, True):
+            with self.subTest(hostile=hostile):
+                if hostile:
+                    # The producer creates actual in-flight work, not a fabricated report/count.
+                    request = self.primary.coordinator_fixtures.request("DIR-LG-FADE")
+                    self.primary.coordinator.create_intake(request)
+                    world.run = hostile_run
+                store_report = self.primary.report()
+                self.assertEqual(store_report["counts"]["graph_task_count"], int(hostile))
+                self.assertEqual(store_report["counts"]["nonterminal_projections"], int(hostile))
+                with patch.object(sc, "cli_release_descriptor", return_value={
+                        "trusted_collection_inputs_env": "TEST_SCORECARD_INPUTS"}), \
+                        patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}), \
+                        patch("director_orchestrator.langgraph_postgres.database_binding") as binding_read:
+                    # All prior owner/inspect bindings match. Reach the DSN parser, but the TLS
+                    # requirement refuses before database_binding or any trusted store read.
+                    with patch.object(sc, "_run_bytes", side_effect=world.run), \
+                            patch("psycopg.conninfo.conninfo_to_dict", wraps=conninfo_to_dict) as parsed:
+                        with self.assertRaisesRegex(ValueError, "^Trusted collection unavailable:"):
+                            sc._trusted_collection(runtime, [])
+                        self.assertEqual(parsed.call_count, 1)
+                    report = world.report()
+                    self.assertFalse(binding_read.called, "TLS refusal must precede database binding")
+                for key in ("07", "08", "11", "12", "15", "17", "20"):
+                    self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
+                    self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable", key)
+        self.assertFalse(candidate_reads, "Candidate in-image report must never be executed")
+
+    def test_real_signed_cli_capture_remains_unattested_with_pinned_release(self):
+        from types import SimpleNamespace
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+        from director_orchestrator.provider_activation import (
+            ProviderActivationRegistry, ProviderActivationStage, ProviderActivationSurface,
+        )
+        from director_orchestrator.provider_validation import (
+            CaptureVerifier, PostgresValidationStore, ValidationRequest, make_capture,
+        )
+
+        fixture = self.fixtures._load("test_provider_validation")
+        store = PostgresValidationStore(self.dsn)
+        store.bootstrap()
+        generation = hashlib.sha256(os.urandom(32)).hexdigest()
+        expires = int(time.time()) + 3600
+        provider_binding = fixture.binding()
+        store.create_generation(generation=generation, candidate=fixture.CANDIDATE, tree=fixture.TREE,
+            owner_token=fixture.OWNER, expires_at=expires, budget_units=2,
+            lanes={"claude": {"binding": dataclasses.asdict(provider_binding), "configuration_digest": "c" * 64,
+                              "cost_units": 2, "work_packet": fixture.work_packet()}})
+        admission = store.admit(ValidationRequest(generation=generation, provider="claude"), fixture.OWNER)
+        store.claim_execution(admission)
+        native = json.loads(fixture.raw_native())
+        native["modelUsage"] = {"claude-opus-5-5": {}}
+        output = canonical_json_bytes(native)
+        capture = make_capture(admission, output, capture_key=fixture.KEY)
+        capture_digest = store.settle(admission, output, capture)
+        verifier = CaptureVerifier(store, capture_key=fixture.KEY, candidate=fixture.CANDIDATE,
+                                   tree=fixture.TREE, generation=generation)
+        self.assertTrue(verifier.verify(provider_binding, capture_digest))
+        self.assertFalse(hasattr(capture, "executable_sha256"), "Capture schema has no executable attestation")
+        observed = datetime.now(timezone.utc) - timedelta(minutes=1)
+        registry = ProviderActivationRegistry(self.primary.handle.claim_store, provider_binding)
+        for surface in ProviderActivationSurface:
+            for index, stage in enumerate(ProviderActivationStage):
+                when = observed + timedelta(seconds=index)
+                registry.record(surface=surface, stage=stage, evidence_id=f"capture-{surface.value}-{index}",
+                    evidence_digest=capture_digest, observed_at=when,
+                    expires_at=datetime.fromtimestamp(expires, timezone.utc), now=when)
+        settings = SimpleNamespace(langgraph_primary_postgres_dsn=self.dsn,
+            langgraph_primary_allow_insecure_local_postgres=True,
+            primary_provider_activation_bindings=lambda: {"claude": provider_binding},
+            langgraph_primary_required_providers=("claude",))
+        identity = SimpleNamespace(**vars(self.primary.identity), postgres_schema=self.primary.schema)
+        raw_bindings = json.dumps({"claude": dataclasses.asdict(provider_binding)})
+        manifest = {"provider_bindings_sha256": hashlib.sha256(raw_bindings.encode()).hexdigest()}
+        descriptor = {"version": self.fixtures.evidence.CLI_RELEASE_DESCRIPTOR_VERSION,
+                      "releases": [{"provider": "claude", "product": "anthropic-claude",
+                                    "executable_sha256": "e" * 64}]}
+        started = datetime.now(timezone.utc)
+        captures = self.fixtures.evidence.activation_capture_report(settings, identity, manifest,
+            verifier=verifier, environment={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": generation},
+            descriptor=descriptor)
+        lane = captures["lanes"]["claude"]
+        self.assertEqual(lane["product"], "anthropic-claude-unattested")
+        for surface in lane["surfaces"].values():
+            self.assertTrue(surface["capture_verified"])
+            self.assertTrue(surface["chain_valid"])
+        runtime = runtime_fixture(collected_at=started, collection_end=lambda: datetime.now(timezone.utc),
+            env={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": generation,
+                 "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": raw_bindings})
+        # This is the real store-reader's check-12 predicate, not a TRUSTED collection PASS.
+        self.assertTrue(sc._capture_verdict(started, runtime, captures)[0])
+        self.assertIsNone(next(item for item in sc._capture_observations(started, runtime, captures, None)
+                               if item.check_id == "11").passed)
+
+
 class CompletionScorecardTests(unittest.TestCase):
+    def test_backup_reads_committed_wal_and_is_query_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "journal.sqlite3"
+            with closing(sqlite3.connect(path)) as writer:
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.execute("CREATE TABLE snapshot_probe (value INTEGER)")
+                writer.execute("INSERT INTO snapshot_probe VALUES (1)")
+                writer.commit()
+                snapshot = sc._sqlite_snapshot(path)
+                try:
+                    writer.execute("INSERT INTO snapshot_probe VALUES (2)")
+                    writer.commit()
+                    self.assertEqual(snapshot.execute("SELECT value FROM snapshot_probe").fetchall(), [(1,)])
+                    with self.assertRaises(sqlite3.OperationalError):
+                        snapshot.execute("INSERT INTO snapshot_probe VALUES (3)")
+                finally:
+                    snapshot.close()
+
+    def test_unavailable_or_invalid_backup_is_sanitized(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "private.sqlite3"
+            for exists in (False, True):
+                if exists:
+                    path.write_bytes(b"not a SQLite database")
+                with self.assertRaisesRegex(ValueError, "^SQLite snapshot unavailable or inconsistent$"):
+                    sc._sqlite_snapshot(path)
+
+    def test_owner_endpoint_mismatch_never_reaches_database_or_candidate(self):
+        runtime = runtime_fixture()
+        inputs = {"environment": {**runtime.env, "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "wrong"}}
+        with patch.object(sc, "cli_release_descriptor", return_value={"trusted_collection_inputs_env": "TEST_SCORECARD_INPUTS"}), \
+                patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}), \
+                patch.object(sc, "_run_json", side_effect=AssertionError("candidate executed")), \
+                patch("director_orchestrator.langgraph_postgres.database_binding",
+                      side_effect=AssertionError("database reached")):
+            with self.assertRaisesRegex(ValueError, "^Trusted collection unavailable:"):
+                sc._trusted_collection(runtime, [])
+
     def test_zero_hold_counters_are_not_reconciliation_proof(self):
         # Release 879 reported these exact zeros while authoritative plan digests conflicted.
         payload = health()
         payload["langgraph_primary"]["reconciliation_worker_ready"] = False
         report = sc.score(SHA, runtime_observations(payload), now=NOW)
         self.assertEqual(report["checks"][6]["status"], "UNKNOWN")
-        self.assertEqual(report["checks"][6]["explanation"], "collector not yet trusted")
+        self.assertEqual(report["checks"][6]["explanation"], "Trusted collection unavailable")
         self.assertEqual(report["checks"][18]["status"], "FAIL")
-        self.assertIn("trusted-collection follow-up", json.dumps(report["limitations"]))
+        self.assertIn("not independent proof", json.dumps(report["limitations"]))
 
     def test_reported_reconciliation_blocker_fails(self):
         for change in ({"ambiguous_effect_count": 2}, {"reconciliation_hold_reason": "plan digest conflict"},
@@ -1870,7 +2058,7 @@ class CompletionScorecardTests(unittest.TestCase):
         self.assertIn("unknown cost is not zero", text.lower())
         self.assertIn("Next:", text)
         self.assertIn("do not contribute points", text)
-        self.assertIn("Next: Run the in-image read-only consistency command; it must report zero unresolved, "
+        self.assertIn("Next: Run the evaluator-owned read-only consistency command; it must report zero unresolved, "
                       "ambiguous or conflicting records for the running generation.", text)
 
     def test_bad_candidate_and_naive_score_time_rejected(self):
@@ -2021,8 +2209,8 @@ class ScorecardCollectorTests(unittest.TestCase):
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
         for key in ("07", "08", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
-            self.assertIn("Trusted-collection follow-up", row(report, key)["evidence"][0]["source"])
+            self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable")
+            self.assertIn("Pinned evaluator", row(report, key)["evidence"][0]["source"])
 
         text = json.dumps(report)
         for secret in (*SECRETS, CHANNEL_FIXTURE, OWNER, BOT):
@@ -2050,7 +2238,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
         for key in ("07", "08", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
+            self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable")
 
     def test_live_requires_explicit_deployment_and_never_probes_legacy(self):
         forbidden = Mock(side_effect=AssertionError("no probe may run without --deployment"))
@@ -2332,7 +2520,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         world.handle.assert_not_called()
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertIn("collector not yet trusted" if key in ("08", "11", "20") else "--channel",
+            self.assertIn("Trusted collection unavailable" if key in ("08", "11", "20") else "--channel",
                           row(report, key)["explanation"])
         self.assertEqual(row(report, "07")["status"], "UNKNOWN")
 
@@ -2795,7 +2983,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = world.report()
         for key in ("07", "11", "12", "17"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
-        self.assertEqual(row(report, "07")["explanation"], "collector not yet trusted")
+        self.assertEqual(row(report, "07")["explanation"], "Trusted collection unavailable")
         # The generation manifest the snapshot was verified against must be the one the container pins (#4107814604).
         other_manifest = self.world()
         other_manifest.consistency["generation"]["manifest_sha256"] = "0" * 64
@@ -3803,7 +3991,7 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_one_task_evidence_rule_for_the_collector_and_the_global_count(self):
         """Reviews 4102705142, 4102705148, 4102705162: task_evidence_errors is the one per-task validation the
-        collector's readback and the in-image global count both run: attempts bounded by their assignment's
+        collector's readback and the evaluator-owned global count both run: attempts bounded by their assignment's
         reservation and completion, effects carrying their execution start before terminal evidence, and each
         assignment's status and digest agreeing with its last attempt's final event."""
         from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
@@ -4954,7 +5142,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(len(report["checks"]), 20)
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, {"05", "19"})
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
-            self.assertIn("collector not yet trusted" if key in ("08", "11", "20") else "--channel",
+            self.assertIn("Trusted collection unavailable" if key in ("08", "11", "20") else "--channel",
                           row(report, key)["explanation"])
         self.assertEqual(len({item.check_id for item in observations}), len(observations))
         text = json.dumps(report)
@@ -5067,3 +5255,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]]

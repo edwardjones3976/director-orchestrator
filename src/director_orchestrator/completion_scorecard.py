@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -164,7 +165,7 @@ CHECKS = (
     Check("04", "Status workflow actually delivers to Slack", "runtime", "Read back a fresh scheduled status message and correlate its workflow execution."),
     Check("05", "Primary owns intake with fencing", "runtime", "Observe LangGraph ownership, disabled legacy intake and a positive fencing generation."),
     Check("06", "Checkpoint survives restart", "runtime", "Resume the same bounded task after restart, preserving checkpoint and unique task identity."),
-    Check("07", "Primary reconciliation is clear", "runtime", "Run the in-image read-only consistency command; it must report zero unresolved, ambiguous or conflicting records for the running generation."),
+    Check("07", "Primary reconciliation is clear", "runtime", "Run the evaluator-owned read-only consistency command; it must report zero unresolved, ambiguous or conflicting records for the running generation."),
     Check("08", "Owner approval is authenticated and scoped", "runtime", "Verify a real signed owner decision against its delivered prompt and approved work packet."),
     Check("09", "Final reply is durable and unambiguous", "runtime", "Read back exactly one terminal reply; prove duplicate input and ambiguous-post recovery."),
     # Owner ruling 2026-09-24 ("Offline = pipeline proof"): 10 proves the offline pipeline end to end; it does
@@ -1174,8 +1175,173 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
                     "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
                     "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
-_CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
-_CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
+_CONSISTENCY_SOURCE = "Pinned evaluator: owner-bound read-only consistency collection"
+_CAPTURES_SOURCE = "Pinned evaluator: owner-bound activation-capture verification"
+
+
+def _sqlite_snapshot(path: Path):
+    """Take a bounded, WAL-aware backup; never copy a live SQLite file."""
+    end = time.monotonic() + _remaining(10)
+    snapshot = sqlite3.connect(":memory:")
+    try:
+        if any(Path(str(path) + suffix).is_symlink() for suffix in ("", "-wal", "-shm")):
+            raise ValueError("SQLite snapshot source uses a link")
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as source:
+            page_size = source.execute("PRAGMA page_size").fetchone()[0]
+            def progress(status, remaining, total):
+                if time.monotonic() >= end or total * page_size > 134217728:
+                    raise ValueError("SQLite snapshot unavailable within collection bounds")
+            source.backup(snapshot, pages=128, progress=progress, sleep=0.05)
+        snapshot.execute("PRAGMA query_only=ON")
+        snapshot.set_progress_handler(lambda: time.monotonic() >= end, 1000)
+        if snapshot.execute("PRAGMA quick_check").fetchone() != ("ok",):
+            raise ValueError("SQLite snapshot is inconsistent")
+        return snapshot
+    except Exception:
+        snapshot.close()
+        raise ValueError("SQLite snapshot unavailable or inconsistent") from None
+
+
+def _trusted_collection(runtime: _Runtime, tasks):
+    """Only evaluator code runs. Owner inputs and inspect values remain in memory."""
+    from dataclasses import fields
+    from pathlib import PurePosixPath
+    from .config import Settings
+    from .primary_activation_evidence import ActivationIdentity
+    from .primary_generation import require_generation
+    from .primary_scorecard_evidence import consistency_report, activation_capture_report
+    from .primary_provider_evidence import _BoundedCaptureReader
+    from .provider_validation import CaptureVerifier
+    from .langgraph_postgres import database_binding
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    from psycopg.rows import dict_row
+
+    try:
+        descriptor = cli_release_descriptor()
+        # The descriptor names an owner-injected environment variable, never a candidate file or command.
+        name = descriptor["trusted_collection_inputs_env"]
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", name):
+            raise ValueError("missing owner input reference")
+        raw = os.environ[name]
+        if len(raw) > MAX_BYTES:
+            raise ValueError("owner inputs exceed bound")
+        inputs = json.loads(raw)
+        environment = inputs["environment"]
+        # Exact inspected environment, including endpoint, generation and authority selections.
+        # The candidate cannot add a selector which the owner did not expect.
+        if environment != runtime.env:
+            raise ValueError("deployment differs from owner expectations")
+        values = inputs["settings"]
+        if set(values) != {f.name for f in fields(Settings)}:
+            raise ValueError("complete explicit settings required")
+        settings = Settings(**values)
+        pin = environment["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
+        if not re.fullmatch(r"[0-9a-f]{64}", pin):
+            raise ValueError("generation pin required")
+        if (environment.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION", pin) not in ("", pin)
+                or environment["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"] != runtime.runtime_sha
+                or environment["DIRECTOR_PROVIDER_VALIDATION_TREE"] != runtime.runtime_tree
+                or settings.langgraph_primary_pinned_commit_sha != runtime.runtime_sha
+                or settings.langgraph_primary_pinned_tree_sha != runtime.runtime_tree
+                or environment["DIRECTOR_RUNTIME_IMAGE_ID"] != runtime.image_id):
+            raise ValueError("candidate or generation differs")
+        commit = _run_json(["gh", "api", f"repos/{REPOSITORY}/git/commits/{_sha(runtime.runtime_sha)}",
+                            "--jq", "{tree: .tree.sha}"])
+        if not runtime.runtime_tree or commit.get("tree") != runtime.runtime_tree:
+            raise ValueError("image tree differs from repository commit")
+        inspected = _run_json(["docker", "inspect", runtime.container_id])[0]
+        if inspected["Image"] != runtime.image_id or _environment(inspected) != environment:
+            raise ValueError("deployment changed")
+        mounts = inputs["mounts"]
+        for mount in mounts:
+            if not any(m.get("Type") == "bind" and m.get("Destination") == mount["destination"]
+                       and m.get("Source") == mount["source"] for m in inspected["Mounts"]):
+                raise ValueError("owner mount differs from deployment")
+
+        def artifact(original):
+            remote = PurePosixPath(original)
+            choices = [m for m in mounts if remote.is_relative_to(PurePosixPath(m["destination"]))]
+            if not remote.is_absolute() or ".." in remote.parts or len(choices) != 1:
+                raise ValueError("artifact mount unavailable or ambiguous")
+            mount = choices[0]
+            root = Path(mount["source"])
+            relative = remote.relative_to(PurePosixPath(mount["destination"]))
+            path = root.joinpath(*relative.parts)
+            if not root.is_absolute() or not path.resolve().is_relative_to(root.resolve()):
+                raise ValueError("artifact escaped mount")
+            for entry in (path, *path.parents):
+                if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
+                    raise ValueError("artifact uses a link")
+            if not path.is_file() or path.stat().st_size > 134217728:
+                raise ValueError("artifact unavailable or oversized")
+            return path
+
+        def connection_dsn(original):
+            # No endpoint remapping. Both endpoints are owner-selected and inspect-matched.
+            parsed = conninfo_to_dict(original)
+            if any(key in parsed for key in ("service", "servicefile", "passfile")):
+                raise ValueError("implicit connection authority refused")
+            if not all(parsed.get(k) for k in ("host", "port", "dbname", "user")):
+                raise ValueError("explicit endpoint required")
+            if parsed.get("sslmode") != "verify-full":
+                raise ValueError("trusted collection requires verified TLS")
+            ca = inputs["ca"]
+            local = Path(ca["path"])
+            if not local.is_absolute() or local.is_symlink() or local.stat().st_size > MAX_BYTES:
+                raise ValueError("owner CA unavailable")
+            if hashlib.sha256(local.read_bytes()).hexdigest() != ca["sha256"]:
+                raise ValueError("owner CA differs")
+            if "options" in parsed:
+                raise ValueError("connection options are evaluator-owned")
+            return make_conninfo(original, sslrootcert=str(local))
+
+        if settings.langgraph_primary_postgres_dsn != environment["LANGGRAPH_PRIMARY_POSTGRES_DSN"]:
+            raise ValueError("primary endpoint differs")
+        primary_dsn = connection_dsn(settings.langgraph_primary_postgres_dsn)
+        validation_dsn = connection_dsn(environment["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"])
+        storage, instance = database_binding(primary_dsn, schema=settings.langgraph_primary_postgres_schema)
+        identity = ActivationIdentity(runtime.runtime_sha, runtime.runtime_tree, settings.app_env,
+            runtime.project, storage, instance, settings.langgraph_primary_postgres_schema,
+            settings.langgraph_primary_checkpoint_namespace)
+        with closing(_sqlite_snapshot(artifact(settings.langgraph_primary_acceptance_journal_path))) as journal:
+            manifest = require_generation(settings, identity, environment=environment,
+                                          local_artifact=artifact, journal_connection=journal)
+        # Only the connection copy changes; verification above used original deployment paths/configuration.
+        connected = replace(settings, langgraph_primary_postgres_dsn=primary_dsn)
+        selected = sorted(set(tasks))
+        if len(selected) > 12 or any(not re.fullmatch(r"DIR-LG-[A-F0-9]{1,32}", task) for task in selected):
+            raise ValueError("task selection invalid")
+        with psycopg.connect(primary_dsn, connect_timeout=10, row_factory=dict_row,
+                options="-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=5000") as connection:
+            consistency = consistency_report(connected, identity, tasks=selected, connection=connection,
+                environment=environment, local_artifact=artifact,
+                authority_secrets=tuple(inputs[key].encode("utf-8") for key in
+                                        ("route_verifier_secret", "owner_authority_secret")))
+        if not runtime.read_in_window(consistency["captured_at"]):
+            raise ValueError("collection outside time window")
+        try:
+            # Optional routes come from the owner's evaluator environment, never inspected candidate values.
+            from .openai_responses_validation import responses_route_from_environment
+            from .provider_validation_team import team_route_from_environment
+            verifier = CaptureVerifier(_BoundedCaptureReader(validation_dsn),
+                capture_key=inputs["capture_key"], candidate=identity.candidate_commit,
+                generation=pin, tree=identity.candidate_tree,
+                openai_responses_route=responses_route_from_environment(), team_route=team_route_from_environment())
+            captures = activation_capture_report(connected, identity, manifest, verifier=verifier,
+                                                 environment=environment, descriptor=descriptor)
+            if (not runtime.read_in_window(captures["observed_at"])
+                    or any(not isinstance(surface, dict) or surface.get("capture_verified") is not True
+                           or surface.get("chain_valid") is not True
+                           for lane in captures["lanes"].values()
+                           for surface in (lane["surfaces"].get("app"), lane["surfaces"].get("runtime_adapter")))):
+                captures = None
+        except Exception:
+            captures = None  # Capture failure cannot invalidate an independently collected consistency snapshot.
+        return consistency, captures
+    except Exception:
+        # Drivers, parsers and filesystem exceptions may contain credentials or private paths.
+        raise ValueError("Trusted collection unavailable: owner binding, store, snapshot or verification failed") from None
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -1193,7 +1359,7 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
     # Zero health counters are never consistency proof: release 879 reported
     # exactly these while authoritative task/batch plan digests conflicted.
     if consistency is None:
-        return _observation("07", None, "The in-image read-only consistency command was unavailable; health hold counters "
+        return _observation("07", None, "The evaluator-owned read-only consistency command was unavailable; health hold counters "
                             "cannot prove reconciliation. Worker readiness is scored in 19.",
                             runtime.health_url, health_facts, at, **binding)
     counts = consistency.get("counts")
@@ -1221,7 +1387,7 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
     if busy:
         return _observation("07", None, "Work is in flight (" + ", ".join(busy) + "); observe again when quiescent.",
                             _CONSISTENCY_SOURCE, facts, at, **binding)
-    return _observation("07", True, "The in-image read-only consistency snapshot reports zero unresolved, ambiguous or "
+    return _observation("07", True, "The evaluator-owned read-only consistency snapshot reports zero unresolved, ambiguous or "
                         "conflicting records for the running generation and fence.", _CONSISTENCY_SOURCE, facts, at, **binding)
 
 
@@ -1289,7 +1455,7 @@ def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None
                              runtime.health_url, {"combined_live_ready": False}, at, **binding)
     elif captures is None:
         # A readiness flag never exposes capture identity or expiry.
-        obs12 = _observation("12", None, "The in-image activation-captures command was unavailable; a readiness flag "
+        obs12 = _observation("12", None, "The evaluator-owned activation-captures command was unavailable; a readiness flag "
                              "alone never attests captures.", runtime.health_url, {}, at, **binding)
     else:
         try:
@@ -1304,7 +1470,7 @@ def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None
     latest = (paid or {}).get("latest")
     if not latest or captures is None:
         obs11 = _observation("11", None, "Requires the paid thread's collected readback with provider attempts and the "
-                             "in-image activation captures.", _CAPTURES_SOURCE, {}, at, **binding)
+                             "evaluator-owned activation captures.", _CAPTURES_SOURCE, {}, at, **binding)
     else:
         obs11 = _product_observation(at, runtime, captures, paid)
     return [obs12, obs11]
@@ -2103,7 +2269,7 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT":
         return 1
     attempts = (latest or {}).values() if isinstance(latest, dict) else []
-    # The shared lifecycle rule (the collector and the in-image consistency command apply it too): an impossible
+    # The shared lifecycle rule (the collector and the evaluator-owned consistency command apply it too): an impossible
     # order settles nothing.
     settled = (lifecycle_error(readback) is None and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
                # A bound remote object is external I/O: without terminal evidence it is unsettled, execution claim
@@ -2342,7 +2508,7 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
 
 
 def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | None:
-    """Check 20: each settled assignment's persisted provider result packet (read by the in-image report and
+    """Check 20: each settled assignment's persisted provider result packet (read by the evaluator-owned report and
     revalidated against its stored digest) is the one its result digest names, its outcome text is the graded
     outcome's result and its provider the graded outcome's provider, and the packets' assignment IDs are exactly
     the durable assignments' in both directions: an orphan packet is a mismatch, a missing one is unknown (not
@@ -2356,7 +2522,7 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     if not isinstance(artifacts, list) or not assignments:
         return None
     # Every dispatched assignment's work packet, revalidated, joined to its result packet under one authority
-    # snapshot (work_packet_error, the rule the in-image global count applies to every task).
+    # snapshot (work_packet_error, the rule the evaluator-owned global count applies to every task).
     work_packets = entry.get("work_packets")
     if not isinstance(work_packets, list):
         return None
@@ -2383,7 +2549,7 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
         rows = [row for row in artifacts if isinstance(row, dict)
                 and row.get("assignment_id") == assignment.get("assignment_id")]
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
-        # The one packet-to-assignment rule the in-image global count uses too (revalidated, the assignment's
+        # The one packet-to-assignment rule the evaluator-owned global count uses too (revalidated, the assignment's
         # agent, recorded between reservation and completion, the SUCCEEDED assignment's result digest). Both
         # lifecycle moments are inside the freshness window (_moments), so the packet is too.
         if (len(rows) != 1 or len(matching) != 1 or artifact_assignment_conflict(rows[0], assignment) is not None
@@ -2437,7 +2603,7 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
             != sorted(assignment.get("sequence") for assignment in assignments if isinstance(assignment.get("sequence"), int))
             or len({assignment.get("sequence") for assignment in assignments}) != len(assignments)):
         return False
-    # The shared per-task rules (the collector and the in-image consistency command apply the same): every
+    # The shared per-task rules (the collector and the evaluator-owned consistency command apply the same): every
     # assignment's moments in order, and, for paid runs, each assignment's status and digest agreeing with its last
     # attempt's final event (settlement_error; attempt ordinals 1..n are validate_attempt_history's).
     if lifecycle_error(readback) is not None:
@@ -2566,7 +2732,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         budgets = entry.get("budgets") if isinstance(entry, dict) else None
     unsigned = False
     if isinstance(budgets, list):
-        # A budget row counts only when the in-image report re-verified its owner signature
+        # A budget row counts only when the evaluator-owned report re-verified its owner signature
         # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
         # Each charged attempt must join the exact signed document it reserved against: same grant, same provider.
         spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
@@ -2641,7 +2807,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     except _SOURCE_ERRORS:
         return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
                              "Docker Compose labels and Director /health", {}, at),
-                *[_observation(key, None, "collector not yet trusted",
+                *[_observation(key, None, "Trusted collection unavailable: deployment identity is unverified",
                                _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
                                {}, at, candidate_sha=candidate_sha if key == "17" else None)
                   for key in ("07", "08", "11", "12", "15", "17", "20")]], None
@@ -2719,6 +2885,11 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                 except _SOURCE_ERRORS:
                     paid = None
         consistency = captures = None
+        try:
+            tasks = [task for task in (approval_task, (paid or {}).get("task_id")) if task is not None]
+            consistency, captures = _trusted_collection(director_runtime, tasks)
+        except _SOURCE_ERRORS:
+            pass
         if t is not None:
             try:
                 if approval_task is None:
@@ -2764,11 +2935,12 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     finally:
         if t is not None:
             t.close()
-    # Final disposition: health, Slack and evaluator results cannot supply trusted reports.
-    unknown(("07", "08", "15", "20"), "collector not yet trusted", _CONSISTENCY_SOURCE)
-    unknown(("11", "12"), "collector not yet trusted", _CAPTURES_SOURCE)
-    put([_observation("17", None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
-                      candidate_sha=candidate_sha)])
+    if consistency is None:
+        unknown(("07", "08", "15", "20"), "Trusted collection unavailable", _CONSISTENCY_SOURCE)
+        put([_observation("17", None, "Trusted collection unavailable", _CONSISTENCY_SOURCE, {}, at,
+                          candidate_sha=candidate_sha)])
+    if captures is None:
+        unknown(("11", "12"), "Trusted collection unavailable", _CAPTURES_SOURCE)
     return list(found.values()), state
 
 
@@ -3514,7 +3686,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Checks 07, 08, 11, 12, 15, 17 and 20 remain UNKNOWN pending the trusted-collection follow-up; other missing selections or unavailable sources also stay UNKNOWN.",
+                            "Trusted collection verifies store consistency and signatures with evaluator code. Rows and HMAC keys the candidate can write are not independent proof of execution or authorship; missing owner bindings or snapshots remain UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
@@ -3659,3 +3831,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]

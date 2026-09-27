@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
@@ -91,26 +93,59 @@ independence, authorization, security, budget and activation gates still decide
 whether any operation is permitted. The report always says
 `activation_authorized: false`; no runtime setting is changed by rendering it.
 
-### Collector containment (2026-09-27)
+### Trusted collection (2026-09-27)
 
-The trusted collector is not available yet. Live collection finishes checks
-**07, 08, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
-"collector not yet trusted" and a source naming the trusted-collection follow-up.
-It supplies no consistency or activation-capture report and never executes
-candidate Python through docker exec. Health, Slack, later observations and
-final collection merging cannot promote these seven checks to PASS.
+The pinned evaluator computes consistency and activation-capture reports using
+its own code, interpreter and dependencies. No candidate Python is executed.
+Checks **07, 08, 11, 12, 15, 17 and 20** can use these reports; unavailable or
+invalid owner inputs, stores, signatures or snapshots never earn a PASS.
+Image, candidate, generation, collection-window and final deployment-state gates
+still apply. Check 07 also counts OWNER_DECISION_REQUIRED assignments on settled
+tasks as open, including when their pending dependents are correctly blocked.
 
-The planned trusted-collection follow-up will run independently pinned collector
-code outside the candidate image, use independently enforced read-only data
-access, and return bounded, sanitized evidence. It must bind that evidence to
-the exact running image, commit, tree and generation, validate freshness and
-activation attestations independently, and expose no credentials or raw
-parallel-batch rows. This design is follow-up work, not implemented here.
+The owner-installed `~/.director-scorecard/release-descriptor.json` selects
+`trusted_collection_inputs_env`: the name of an evaluator environment variable
+injected by the owner. Its JSON value is an in-memory input bundle, never a CLI
+argument, report, receipt or generated file. It contains:
 
-The evaluation rules below remain documented and tested directly with fixtures;
-descriptions of consistency and capture reports specify their evidence contract,
-not a currently trusted live collection path. The existing producer modules are
-retained for the stacked PR.
+- `settings`: all fields of the deployment's `Settings`, explicitly supplied
+  without ambient defaults. Preserve original deployment paths and values.
+- `environment`: the complete expected Docker environment, compared exactly
+  with inspect. This independently selects both database endpoints, the
+  generation pin, candidate/tree, provider bindings and configuration digest.
+- `mounts`: owner-approved bind mounts, each with `destination` and `source`,
+  compared with Docker inspect. The source must be accessible to the evaluator.
+- `ca`: an absolute evaluator-local `path` and its owner-pinned `sha256`.
+- `capture_key`, `route_verifier_secret`, `owner_authority_secret`: owner-injected
+  verification material held only in memory. Optional Responses/team verifier
+  configuration comes from the owner's evaluator environment, never the
+  candidate environment. Existing route configuration and capture signatures
+  must still match; absent route verification cannot attest those captures.
+
+Both Postgres endpoints require explicit host, port, database and user, and TLS
+`verify-full` with the pinned CA. No endpoint is rewritten to a convenient host
+alias. The existing `database_binding()` checks the primary storage identity and
+instance against the pinned generation. Queries use read-only transactions and
+timeouts; consistency uses a repeatable-read snapshot. The capture store uses
+the existing bounded read-only reader and CaptureVerifier. Driver errors are
+replaced with a fixed message without their text.
+
+SQLite is read from the verified host mount with `mode=ro` and backed up using
+sqlite3's backup API into memory. This includes committed WAL pages. The backup
+has a time/size limit, is checked with `quick_check`, and is made query-only.
+Neither a live database file nor its WAL is copied with docker cp. Unavailable
+Docker Desktop mounts, links, invalid journals, inconsistent snapshots and
+backup timeouts leave collection UNKNOWN. Generation verification checks original
+manifest paths and configuration digests separately from local artifact access;
+it never rewrites a manifest to host paths or reserves a journal.
+
+**Limit:** rows and HMAC keys the candidate can write are not independent proof
+of execution or authorship. This collector proves that evaluator-owned validators
+accepted the observed, owner-bound stores and signed artifacts. It does not prove
+that a candidate with signing authority could not fabricate them. Existing CLI
+captures also lack executable digests; their product attestation remains UNKNOWN
+until the capture producer records that evidence. Collection alone does not lift
+that separate gate or authorize activation.
 
 | # | Required outcome | Evidence needed |
 |---|---|---|
@@ -302,11 +337,11 @@ a container ID, never a name.
   the task has a plan). An
   approval prompt Slack reports as edited or with a subtype is not the native
   prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.
-- 07, 17, 15 (budget and meter rows): the in-image `consistency` command. Its
+- 07, 17, 15 (budget and meter rows): the evaluator-owned `consistency_report()` function. Its
   verified generation commit and tree must equal the runtime image's commit
   and tree labels, and the tree must be the labelled commit's tree on GitHub
   (GET only); when any of these is unverified or differs, 07, 08, 11, 12, 15,
-  17 and 20 are UNKNOWN, because the in-image evidence belongs to that
+  17 and 20 are UNKNOWN, because the evaluator-owned evidence belongs to that
   generation, not to the labelled image. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: Owner ruling (2026-09-24), option chosen: "Offline = pipeline proof". Check 10 proves the pipeline works end to end offline (delivery, simulation labels, ten consecutive, committed structural rubric); answer correctness is check 20's job (the real paid run). Check 10 therefore does
@@ -319,7 +354,7 @@ a container ID, never a name.
   trial to the last. A trial whose terminal reply Slack reports as edited, or
   with any subtype, shows neither the simulation label nor the cost text, so it
   is neither offline nor rubric-correct.
-- 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
+- 11, 12: the evaluator-owned `activation_capture_report()` function; 11 also reads the paid run's lanes.
   The reference workflows for 01 and 04 are read from the running candidate
   commit (`git show <runtime sha>:n8n/workflows/...`), never the working tree;
   unavailable is UNKNOWN. The in-process renderer 08 and 20 use must be the
@@ -724,7 +759,7 @@ compared casefolded and must all be distinct.
 
 One per-task validation, `task_evidence_errors` in
 `primary_scorecard_evidence`, serves both readers. The collector's typed
-readback and the in-image consistency command run it on the same sections
+readback and the evaluator-owned consistency command run it on the same sections
 (`langgraph_postgres.qualification_section_sql`: one task, or every task in
 the snapshot): attempt histories, usage, external effects (terminal evidence
 joined by claim and task), deliveries and receipts, lifecycle order (every
@@ -806,7 +841,7 @@ keep a close waiting on), joins its readers only until its end and abandons any
 still blocked; the offline collector's commands (`whoami`, `icacls`,
 `docker inspect`) go through it too. The Security index's SQLite read aborts
 any statement past its wall clock through a progress handler (sqlite3's
-`timeout` bounds only lock waits). The in-image consistency and captures commands open Postgres
+`timeout` bounds only lock waits). The evaluator-owned consistency and captures commands open Postgres
 with `connect_timeout` and `statement_timeout`, and their `docker exec` runs
 under `_run_bytes`. A Responses capture names `openai-responses` only when the
 verifier's Responses route, whose signed configuration digest pins its endpoint
@@ -844,7 +879,7 @@ the gateway's own `source_event_id` (`<channel>:<ts>`, computed by the one
 `models.canonical_slack_source_event_id` both use), and every Director terminal
 classification counts as a final reply. The n8n status query casts its
 timestamps to `timestamptz` under a UTC session, so they always carry an offset. Check 20 also requires every settled assignment's persisted
-provider result packet (read by the in-image report and revalidated against
+provider result packet (read by the evaluator-owned report and revalidated against
 its stored digest) to be the one its result digest names, with outcome text
 equal to the graded outcome's result: a mismatch FAILs, an unread or missing
 artifact is UNKNOWN.
@@ -1130,14 +1165,14 @@ and requires the pin to be an ancestor of the candidate. The CLI runs
 another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
 
 Durable plan and effect bindings. The registered plan digest is recomputed
-in-image from the batch's assignment rows (assignment_id, sequence,
+evaluator-owned from the batch's assignment rows (assignment_id, sequence,
 provider_id, deployment_id, dependencies, write_surfaces, retry_limit,
 allocation_profile) and the task record's DirectorPlan with register_plan's
 own hashing (`primary_parallel.registered_plan_digest`); it must equal the
 batch's plan digest and the projection's bound parallel plan digest
 (`registered_plan_mismatches` fails 07; the per-task entry fails 20). The
 collector's readback does not serve dependencies, write_surfaces,
-retry_limit or allocation_profile, so this recomputation runs only in-image.
+retry_limit or allocation_profile, so this recomputation runs only evaluator-owned.
 An effect's execution, remote binding and terminal rows join by reservation
 (or claim) alone and carry their own task id; another task's is an effects
 conflict, and `effect_children_cross_task` counts them globally. In check 15
@@ -1254,7 +1289,7 @@ task writer (`batch_authority_mismatches`); a result or work packet's writer
 generation bounded by the task writer's. A status receipt's id is recomputed
 with `create_status_receipt`'s derivation, its channel and thread must be its
 task's own intake, and its user the owner the evaluator is configured with
-(`--owner`, which the deployment must use); the in-image global count checks
+(`--owner`, which the deployment must use); the evaluator-owned global count checks
 the id, channel and thread only, because it has no evaluator configuration.
 
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
@@ -1373,6 +1408,45 @@ stay `UNKNOWN`. No verdict from this function contributes points.
 
 ## Validation
 
+Round-2 trusted-collection coverage remains incomplete. `TrustedCollectionLaneTests`
+uses the sanctioned Postgres endpoint for both owner expectations and inspected
+deployment bindings. Real coordinator writes produce the consistency rows; real
+validation admission, execution claim, capture signing, settlement and activation
+registry writes produce the capture rows. Missing or unreachable test-lane
+connections skip these two tests with sanitized reasons.
+
+The lane uses `sslmode=disable`, while `_trusted_collection` requires
+`sslmode=verify-full` and an owner-bound CA. The matched endpoint therefore reaches
+the TLS guard and is refused before generation, SQLite, consistency or capture
+collection. The boundary regression asserts UNKNOWN for 07, 08, 11, 12, 15, 17
+and 20. Its hostile variant adds producer-created in-flight work and makes a
+candidate in-image PASS report available; that report is never executed or used.
+This proves refusal and ignored self-reporting, not successful trusted readback.
+
+The capture regression separately exercises the real Postgres readers and check
+12's predicate. Both activation surfaces verify, but the CLI product remains
+unattested even with a pinned release descriptor: `ValidationCapture` has no
+attested executable digest, and `activation_capture_report` currently supplies
+`executable_sha256=None`. Check 11 also requires producer-backed paid-attempt
+readback; its missing-input assertion remains UNKNOWN. This lower-level case
+does not count as a TRUSTED collection PASS.
+
+| Check | PASS from TRUSTED collection in the sanctioned lane |
+| --- | --- |
+| 07 | Not reachable: verified-TLS endpoint and bound CA missing. |
+| 08 | Not reachable: same transport blocker; approval happy path not established. |
+| 11 | Not reachable: same transport blocker plus no executable-digest attestation in the capture producer/reader contract. |
+| 12 | Not reachable through TRUSTED collection; its store-backed predicate has a positive assertion. |
+| 15 | Not reachable: same transport blocker; settlement/accounting happy path not established. |
+| 17 | Not reachable: same transport blocker; adoption/CI/acceptance happy path not established. |
+| 20 | Not reachable: same transport blocker; paid-run happy path not established. |
+
+The all-seven producer-backed happy path, including generation/adoption,
+consistent SQLite snapshots, ledger settlement and CI/acceptance evidence in one
+world, is **NOT CLOSED**. Existing generation tests cover the producer-created
+journal through `_sqlite_snapshot`, but that separate coverage does not close
+this integration requirement. No TLS bypass or manufactured attestation is used.
+
 ```powershell
 $env:PYTHONPATH = 'src'
 python -m unittest tests.test_completion_scorecard tests.test_primary_scorecard_evidence.ScorecardEvidenceUnitTests -v
@@ -1468,3 +1542,5 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]] -->
