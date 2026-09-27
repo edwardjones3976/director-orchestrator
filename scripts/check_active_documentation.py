@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
@@ -138,6 +139,13 @@ def check_instruction_text(text: str, *, pointer: str = "never") -> list[str]:
     return errors
 
 
+def _inside_repo(path: Path, root: Path) -> bool:
+    try:
+        return not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
+    except (OSError, RuntimeError):
+        return False
+
+
 def check_tree(root: Path) -> list[str]:
     paths = set()
     for directory in ("docs", "prompts"):
@@ -147,7 +155,12 @@ def check_tree(root: Path) -> list[str]:
     errors = []
     for path in sorted(paths):
         relative = path.relative_to(root)
-        if not path.is_file() or relative.parts[:2] == ("docs", "archive"):
+        if relative.parts[:2] == ("docs", "archive"):
+            continue
+        if not _inside_repo(path, root):
+            errors.append(f"{relative.as_posix()}: symlink or path outside repository")
+            continue
+        if not path.is_file():
             continue
         errors.extend(f"{relative.as_posix()}: {error}" for error in check_text(path.read_text(encoding="utf-8")))
     return errors
@@ -165,10 +178,13 @@ def check_instruction_surfaces(root: Path) -> list[str]:
         surfaces.update((path, "never") for path in root.glob(pattern) if path not in surfaces)
     errors = []
     for path in sorted(surfaces):
+        relative = path.relative_to(root).as_posix()
+        if not _inside_repo(path, root):
+            errors.append(f"{relative}: symlink or path outside repository")
+            continue
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        relative = path.relative_to(root).as_posix()
         errors.extend(f"{relative}: {error}" for error in _surface_findings(text, surfaces[path]))
     return errors
 
@@ -210,3 +226,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | END]]
