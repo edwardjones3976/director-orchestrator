@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
@@ -57,6 +58,82 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WindowsPrimaryActivationToolTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_tls_lane_certificates_lifecycle_and_failure_cleanup(self):
+        script = self.text("windows-postgres-test-lane.ps1")
+        functions = script[script.index("function New-LaneTls"):script.index('if ($Action -eq "Start")')]
+        with tempfile.TemporaryDirectory() as directory:
+            harness = r'''
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$Python = $args[0]
+$repoRoot = $args[1]
+$ContainerName = 'tls-fixture'
+$HostPort = 55433
+$Tls = $true
+$image = 'fixture-image'
+$databaseUser = 'fixture'
+$databaseName = 'fixture'
+$laneLabel = 'fixture-lane'
+$dsnVariable = 'LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN'
+$caVariable = 'LANGGRAPH_RUNTIME_POSTGRES_TEST_CA'
+$containerVariable = 'LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER'
+$dsn = 'unused'
+$script:tlsDirectory = $null
+$script:exists = $false
+$script:failStart = $false
+$script:encoded = ''
+$script:lastDirectory = ''
+function docker {
+    $global:LASTEXITCODE = 0
+    switch ($args[0]) {
+        'ps' { return }
+        'create' {
+            if (-not ($args -contains '--mount') -or -not ($args -contains '--entrypoint')) { throw 'TLS container options missing' }
+            if ($args[-1] -notmatch 'chmod 0600' -or $args[-1] -notmatch 'chown -R postgres:postgres' -or $args[-1] -notmatch 'ssl=on') { throw 'TLS server permissions missing' }
+            $label = @($args | Where-Object { $_ -like 'director-orchestrator.test-lane-tls-directory=*' })[0]
+            $script:encoded = $label.Split('=', 2)[1]
+            $script:lastDirectory = $script:tlsDirectory
+            $script:exists = $true
+            return
+        }
+        'start' { if ($script:failStart) { $global:LASTEXITCODE = 1 }; return }
+        'inspect' { return $script:encoded }
+        'rm' { $script:exists = $false; return }
+    }
+    throw 'Unexpected Docker command'
+}
+'''
+            harness += functions + r'''
+function Assert-DockerReachable {}
+function Enter-LaneSlot {}
+function Remove-LaneSlot {}
+function Wait-LaneReady {}
+function Get-LaneContainer { if ($script:exists) { return @{Owned=$true; State='running'; Tls=$true} }; return $null }
+Start-Lane
+if (-not (Test-Path -LiteralPath $env:LANGGRAPH_RUNTIME_POSTGRES_TEST_CA)) { throw 'CA missing' }
+if ($env:LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN -notmatch 'sslmode=verify-full&sslrootcert=') { throw 'Verified TLS not exported' }
+$saved = $script:tlsDirectory
+# A fresh script invocation recovers the original host path from the label.
+$script:tlsDirectory = $null
+Stop-Lane
+if (Test-Path -LiteralPath $saved) { throw 'TLS files survived Stop' }
+if ($env:LANGGRAPH_RUNTIME_POSTGRES_TEST_CA -or $env:LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN) { throw 'Environment survived Stop' }
+$script:failStart = $true
+try { Start-Lane; throw 'Expected start failure' } catch {
+    if ($_.Exception.Message -ne 'The disposable PostgreSQL container could not be started.') { throw }
+}
+if ($script:exists -or (Test-Path -LiteralPath $script:lastDirectory)) { throw 'TLS resources survived startup failure' }
+Write-Output 'tls-lifecycle-passed'
+'''
+            path = Path(directory) / "tls.ps1"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File",
+                str(path), sys.executable, str(ROOT)], capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, timeout=60)
+            self.assertEqual(completed.returncode, 0, "TLS lane harness failed; connection values withheld")
+            self.assertIn("tls-lifecycle-passed", completed.stdout)
+
     def text(self, name: str) -> str:
         # read_text opens in text mode with newline=None, so a CRLF checkout
         # is already folded to LF before any assertion below sees it.
@@ -959,6 +1036,7 @@ function MustFail($pattern) {
 """
             harness += functions + r"""
 function Clear-LaneEnvironment {}
+function Remove-LaneTls {}
 $base = $args[0]
 $env:LOCALAPPDATA = Join-Path $base 'local'
 $env:XDG_STATE_HOME = Join-Path $base 'xdg'
@@ -1025,7 +1103,7 @@ try { Stop-Lane; throw 'Expected foreign refusal' } catch {
     if ($_.Exception.Message -notlike '*was not created by this script*') { throw }
 }
 Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Foreign refusal released slot'
-function Get-LaneContainer { return @{ State='running'; Owned=$true } }
+function Get-LaneContainer { return @{ State='running'; Owned=$true; Tls=$false } }
 function Remove-LaneContainer { throw 'Removal failed' }
 try { Stop-Lane; throw 'Expected removal failure' } catch {
     if ($_.Exception.Message -ne 'Removal failed') { throw }
@@ -1101,8 +1179,8 @@ Write-Output 'slot-checks-passed'
         self.assertIn('--filter "publish=$HostPort"', text)
         self.assertIn("docker rm --force --volumes", text)
         for forbidden in (
-            "docker compose", "docker inspect", "Threading.Mutex", "langgraph-primary-db",
-            "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "Read-DotEnv", "0.0.0.0", "Remove-Item",
+            "docker compose", "Threading.Mutex", "langgraph-primary-db",
+            "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "Read-DotEnv", "0.0.0.0",
             "-AsHashtable", "ToHexString", "$IsWindows", " && ", " || ", " ?? ",
         ):
             self.assertNotIn(forbidden, text)
@@ -1302,3 +1380,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]

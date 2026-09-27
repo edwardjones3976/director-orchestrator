@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]]
@@ -190,7 +191,7 @@ class PrimaryProviderActivationService:
             "combined_live_ready": app_live and adapter_live,
         }
 
-    def capture_attestations(self, classify=None) -> dict:
+    def capture_attestations(self, classify=None, classify_attested=None) -> dict:
         """Per-lane capture facts for the read-only operator command; digests and expiry only, never binding contents or secrets; not part of /health.
 
         Each surface is read through the registry's own validated chain (every stage present once, in
@@ -200,6 +201,8 @@ class PrimaryProviderActivationService:
 
         ``classify(provider, output)`` names the product from the exact output bytes the verifier read and
         verified (``verified_output``, one read), reported as the surface's ``product``; never from a second read.
+        ``classify_attested(provider, output, executable_sha256)`` also receives
+        the signed executable digest from that same read (None for V1 captures).
         """
 
         from .provider_activation import ProviderActivationError
@@ -219,9 +222,18 @@ class PrimaryProviderActivationService:
                     continue
                 latest = records[-1]
                 output = None
+                executable_sha256 = None
                 if latest.stage is ProviderActivationStage.LIVE_OK and self._capture_verifier is not None:
                     reader = getattr(self._capture_verifier, "verified_output", None)
-                    if callable(reader):
+                    attested_reader = (self._capture_verifier.verified_capture
+                        if callable(getattr(type(self._capture_verifier), "verified_capture", None)) else None)
+                    if callable(attested_reader):
+                        checked = attested_reader(registry.binding, latest.evidence_digest, expires_at=latest.expires_at)
+                        verified = checked is not None
+                        if verified:
+                            output, capture = checked
+                            executable_sha256 = getattr(capture, "executable_sha256", None)
+                    elif callable(reader):
                         output = reader(registry.binding, latest.evidence_digest, expires_at=latest.expires_at)
                         verified = output is not None
                     else:
@@ -238,7 +250,10 @@ class PrimaryProviderActivationService:
                     "expires_at": latest.expires_at.isoformat(),
                     "chain_expires_at": min(record.expires_at for record in records).isoformat(),
                     "capture_verified": verified,
-                    "product": classify(provider_id, output) if classify is not None and output is not None else None,
+                    "executable_sha256": executable_sha256,
+                    "product": (classify_attested(provider_id, output, executable_sha256)
+                                if classify_attested is not None and output is not None else
+                                classify(provider_id, output) if classify is not None and output is not None else None),
                 }
             lanes[provider_id] = {"binding_digest": binding_digest(registry.binding), "surfaces": surfaces}
         return lanes
@@ -254,3 +269,4 @@ class PrimaryProviderActivationService:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]

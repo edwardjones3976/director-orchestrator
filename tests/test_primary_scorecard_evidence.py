@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -92,6 +93,39 @@ def advance(store, provider_binding, surface, through=ProviderActivationStage.LI
 
 
 class ScorecardEvidenceUnitTests(unittest.TestCase):
+    def test_v2_digest_is_signed_and_v1_keeps_its_original_bytes(self):
+        from dataclasses import asdict
+        import time
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+        from director_orchestrator.provider_validation import CaptureVerifier, make_capture, digest
+        fixture = _load("test_provider_validation")
+        expires = int(time.time()) + 3600
+        admission = dict(reservation="e" * 64, nonce="n" * 64, fence=1,
+            generation=PIN, provider="claude", candidate=fixture.CANDIDATE, tree=fixture.TREE,
+            expires_at=expires, binding=asdict(fixture.binding()), configuration_digest="d" * 64,
+            packet=canonical_json_bytes(fixture.work_packet()))
+        output = fixture.raw_native()
+        for executable in (None, "e" * 64):
+            capture = make_capture(admission, output, capture_key=fixture.KEY, executable_sha256=executable)
+            document = asdict(capture)
+            self.assertEqual("version" in document, executable is not None)
+            self.assertEqual("executable_sha256" in document, executable is not None)
+            reader = SimpleNamespace(load_capture=lambda _: (document, admission["packet"], output,
+                                                             False, expires, "succeeded"))
+            verifier = CaptureVerifier(reader, capture_key=fixture.KEY, candidate=fixture.CANDIDATE,
+                                       tree=fixture.TREE, generation=PIN)
+            evidence_digest = digest(canonical_json_bytes(document))
+            self.assertEqual(verifier.verified_output(fixture.binding(), evidence_digest), output)
+            self.assertEqual(getattr(verifier.verified_capture(fixture.binding(), evidence_digest)[1],
+                                     "executable_sha256", None), executable)
+            if executable:
+                for mutation in ({"executable_sha256": "f" * 64}, {"version": "director-validation-capture/v3"}):
+                    original = dict(document)
+                    document.update(mutation)
+                    self.assertFalse(verifier.verify(fixture.binding(), digest(canonical_json_bytes(document))))
+                    document.clear()
+                    document.update(original)
+
     def test_explicit_capture_verifier_rejects_a_real_capture_with_invalid_signature(self):
         from dataclasses import asdict
         import time
@@ -221,8 +255,9 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                         ("an extra key", (digest, {**descriptor, "releases": [{**entry, "note": "x"}]})),
                         ("releases not a list", (digest, {**descriptor, "releases": entry}))):
                     self.assertIsNone(evidence.cli_release_product(provider, *args), label)
+                    suffix = "-digest-mismatch" if label in {"another executable", "uppercase digest"} else "-unattested"
                     self.assertEqual(evidence._capture_product(provider, outputs[provider], executable_sha256=args[0],
-                                                               descriptor=args[1]), product + "-unattested", label)
+                                                               descriptor=args[1]), product + suffix, label)
         # The attested product never rescues a capture whose dialect or model is another vendor's.
         entry = {"provider": "grok", "product": "xai-grok-cli", "executable_sha256": digest}
         self.assertIsNone(evidence._capture_product(
@@ -1260,3 +1295,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]

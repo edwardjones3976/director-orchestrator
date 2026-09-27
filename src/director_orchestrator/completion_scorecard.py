@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
@@ -1490,6 +1493,16 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
                       for surface in ((value.get("surfaces") or {}).get("app"),
                                       (value.get("surfaces") or {}).get("runtime_adapter"))]
         products[lane] = value.get("product") if classified == [value.get("product")] * 2 else None
+        # A mixed V1/V2 pair still lacks one executable attestation. Preserve
+        # UNKNOWN for the same product; a signed mismatch on either surface is
+        # positive contrary evidence. Distinct products remain substitutions.
+        if all(isinstance(product, str) for product in classified) and len(set(classified)) > 1:
+            bases = {product.removesuffix("-digest-mismatch").removesuffix(_UNATTESTED)
+                     for product in classified}
+            if len(bases) == 1 and bases <= REAL_PRODUCTS.get(lane, set()):
+                suffix = "-digest-mismatch" if any(product.endswith("-digest-mismatch")
+                                                   for product in classified) else _UNATTESTED
+                products[lane] = next(iter(bases)) + suffix
         times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
         transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
         # provider_ready needs both the app and the runtime-adapter surface: each must have verified, been
@@ -2810,7 +2823,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                 *[_observation(key, None, "Trusted collection unavailable: deployment identity is unverified",
                                _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
                                {}, at, candidate_sha=candidate_sha if key == "17" else None)
-                  for key in ("07", "08", "11", "12", "15", "17", "20")]], None
+                  for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20")]], None
     try:  # the containers as the deployment probe saw them, re-inspected before the final cutoff
         state: tuple | None = _deployment_state(project, gateway)
         if not any(row[:2] == (runtime.container_id, runtime.image_id) for row in state):
@@ -2936,11 +2949,16 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         if t is not None:
             t.close()
     if consistency is None:
-        unknown(("07", "08", "15", "20"), "Trusted collection unavailable", _CONSISTENCY_SOURCE)
+        unknown(("06", "07", "08", "10", "15", "20"), "Trusted collection unavailable", _CONSISTENCY_SOURCE)
         put([_observation("17", None, "Trusted collection unavailable", _CONSISTENCY_SOURCE, {}, at,
                           candidate_sha=candidate_sha)])
     if captures is None:
         unknown(("11", "12"), "Trusted collection unavailable", _CAPTURES_SOURCE)
+    # Keep missing-input diagnostics without promoting candidate-served evidence.
+    if t is None:
+        unknown(("06", "10"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
+    elif approval_task is None:
+        unknown(("06",), "No --approval-task was supplied.", _SLACK_SOURCE)
     return list(found.values()), state
 
 
@@ -3832,3 +3850,6 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | END]]

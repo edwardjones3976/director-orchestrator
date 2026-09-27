@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
@@ -78,6 +79,45 @@
 <!-- [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 # Twenty checks for a completed Director
+
+## Trusted TLS collector fixture: issue #313, round 3
+
+The contained set is 06, 07, 08, 10, 11, 12, 15, 17 and 20. An unavailable
+trusted collection cannot be rescued by a passing candidate-served evaluator,
+including the task readback used by 06 and 10.
+
+`TrustedCollectionLaneTests` uses the sanctioned `-Tls` lane. Its Claude capture
+runs a local native-result fixture through the bridge, parser, admission,
+execution claim, signed capture and settlement. Invocation usage and cumulative
+`modelUsage` are both present; resumed session totals replace invocation totals.
+The parser is unchanged. All provider responses and authority are test fixtures.
+
+The extended fixture creates ten offline trials through the production application
+and ledger, reconstructs the coordinator at an approval interrupt, and records
+approval-resume receipts. HTTP and subprocess boundaries are forbidden during
+those trials. A separate attempt uses the actual Responses transport with a mock
+HTTP response, signed enrollment, receive-time native meter and attempt/assignment
+settlement. The evaluator reads the resulting rows through `_trusted_collection`
+over verified TLS; no candidate report supplies these assertions.
+
+These are expected fixture verdicts, pending execution by the dispatcher. They
+are not live deployment acceptance or evidence that CI ran for this revision.
+
+| Check | Expected reachability | Evidence or missing input |
+| --- | --- | --- |
+| 06 | UNKNOWN | Coordinator recovery and approval receipts exist; a trusted complete task readback, process-start chronology and correlated delivered final reply are missing. |
+| 07 | PASS in the quiescent baseline | Real generation reservation and direct consistency snapshot. Subsequent in-flight work must not retain PASS. |
+| 08 | UNKNOWN | Local approval-resume receipts exist; authenticated gateway command authorization and delivered, scoped Slack prompts are missing. |
+| 10 | UNKNOWN | Ten real offline ledger runs with zero network/native calls exist; ten consecutive authenticated owner threads, trusted complete task readbacks, canonical final deliveries and the rubric are missing. |
+| 11 | UNKNOWN | Signed Claude executable capture is pinned; paid-attempt readback joined to captures for every used provider is missing. |
+| 12 | PASS | Real signed capture and both validated activation chains, collected directly from their stores. |
+| 15 | UNKNOWN | Native metering and signed spend/budget settlement exist; complete current usage-monitor accounting and the bound paid-task evidence are missing. |
+| 17 | PASS | Owner-local adoption, including its fixture CI evidence, is validated by the real generation producer and journal reader at the candidate binding. |
+| 20 | UNKNOWN | Metered attempt and assignment settle; the complete paid task, persisted result artifact, authenticated owner thread, canonical delivery and rubric are missing. |
+
+The fixture deliberately does not manufacture Slack observations or task
+readbacks to promote these UNKNOWN results. Complete trusted task-readback
+collection and the missing lifecycle evidence remain open.
 
 This scorecard turns the owner's good-run contract into twenty fixed outcomes.
 It is a progress report, not an approval mechanism. The required outcome remains
@@ -1544,3 +1584,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]] -->

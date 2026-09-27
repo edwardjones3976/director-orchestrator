@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
@@ -743,12 +746,21 @@ class World:
                 except sc._SOURCE_ERRORS:
                     pass
             if t is not None:
+                try:
+                    put([sc._trial_observation(at, runtime, t, selected.get("trials"),
+                                               selected.get("rubric_path"))])
+                except sc._SOURCE_ERRORS:
+                    pass
                 if selected.get("paid_thread") is not None:
                     try:
                         paid = sc._paid_facts(t, selected["paid_thread"], runtime.runtime_sha)
                     except sc._SOURCE_ERRORS:
                         pass
-                if selected.get("approval_task") is not None:
+                if selected.get("approval_task") is None:
+                    put([sc._observation(key, None, "No --approval-task was supplied.",
+                                         sc._SLACK_SOURCE, {}, at, **runtime.binding)
+                         for key in ("06", "08")])
+                else:
                     try:
                         put(sc._approval_observations(at, runtime, t, selected["approval_task"], consistency))
                     except sc._SOURCE_ERRORS:
@@ -761,7 +773,7 @@ class World:
             cost = sc._settled_cost(consistency, paid)[0] if paid is not None else None
             put([sc._monetary_observation(at, runtime, paid, consistency, cost)])
             if verified is not True or t is None:
-                for key in ("08", "20"):
+                for key in ("08", "10", "20"):
                     found[key] = next(item for item in observations if item.check_id == key)
             if t is None:
                 found["11"] = next(item for item in observations if item.check_id == "11")
@@ -1148,7 +1160,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
 
 
 class TrustedCollectionLaneTests(unittest.TestCase):
-    """Producer-backed boundary regressions; these are not a trusted happy path."""
+    """Real store collection; missing paid/approval evidence must stay UNKNOWN."""
 
     def setUp(self):
         self.dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
@@ -1167,12 +1179,357 @@ class TrustedCollectionLaneTests(unittest.TestCase):
         self.primary.setUp()
         self.addCleanup(self.primary.tearDown)
 
-    def test_lane_transport_blocks_all_seven_checks_even_with_hostile_candidate_pass(self):
+    def clock_bounds(self):
+        """Bound fixture evidence from both host and disposable database clocks."""
+        before = datetime.now(timezone.utc)
+        with self.primary.handle.pool.connection() as connection:
+            database_now = connection.execute("SELECT clock_timestamp() AS observed").fetchone()["observed"]
+        after = datetime.now(timezone.utc)
+        return min(before, database_now), max(after, database_now)
+
+    def produce_offline_trials(self):
+        """Use the production graph, approval, checkpoint and offline ledger wiring."""
+        from tests import test_primary_default as fixture
+
+        settings = dataclasses.replace(fixture.Settings(), allow_paid_runs=False,
+            langgraph_primary_offline_simulation_enabled=True,
+            project_allowlist=("default",), repository_allowlist=("owner/director-orchestrator",),
+            allowed_starting_refs=("main",))
+        services = fixture.DefaultOfflineSimulationServices(settings, packet_router=fixture.packet_router(settings))
+
+        def coordinator():
+            value = fixture.PrimaryTaskCoordinator(self.primary.handle, services.handlers(),
+                owner_token="default-director-owner", checkpoint_namespace="default-director-primary-v1",
+                auto_execute_provider=False, application_projection_provider=services.application_projection)
+            value.adopt_or_activate_new_intake()
+            return value
+
+        current = coordinator()
+        application = fixture.DefaultPrimaryApplication(settings, current, services,
+            fixture.DefaultPrimaryAuthority(starting_sha=SHA, authority_snapshot_digest=fixture.digest("authority")),
+            parallel_dispatcher=fixture.build_offline_parallel_dispatcher(services, lambda: current))
+        tasks = []
+        # Network and native process boundaries are fatal here; only offline doubles may execute.
+        with patch("httpx.AsyncClient.send", side_effect=AssertionError("offline network call")) as network, \
+                patch("subprocess.Popen", side_effect=AssertionError("offline native call")) as process:
+            for index in range(10):
+                intake = fixture.DefaultPrimaryApplicationIntegrationTests.intake().model_copy(update={
+                    "source_event_id": f"trusted-offline-{index}",
+                    "thread_ts": f"{int(time.time())}.{index:06d}"})
+                pending = application.create_intake(intake,
+                    intake_authentication=fixture.IntakeAuthentication.BEARER_DRY_RUN)
+                before = current.get_projection(pending.task_id)
+                if index == 0:
+                    # Reconstruct the coordinator and recover the durable approval interrupt.
+                    current = coordinator()
+                    recovered = current.recover(pending.task_id)
+                    self.assertEqual(recovered.projection_digest, before.projection_digest)
+                    application.coordinator = current
+                approval = before.projection["pending_approval"]
+                command_id = f"trusted-approve-{index}"
+                completed = application.resume_approval(fixture.ApprovalResume(
+                    task_id=pending.task_id, kind=fixture.ApprovalKind(approval["kind"]),
+                    request_digest=approval["request_digest"], approval_event_id=command_id,
+                    decision=fixture.ApprovalDecision.APPROVE))
+                self.assertEqual(completed.status, fixture.TaskStatus.DONE)
+                current.record_command_receipt(task_id=pending.task_id, operation="approval_resume",
+                    command_id=command_id, command_digest=fixture.digest(command_id),
+                    projection=current.get_projection(pending.task_id))
+                tasks.append(pending.task_id)
+            network.assert_not_called()
+            process.assert_not_called()
+        self.primary.coordinator = current
+        self.assertGreater(services.provider_calls, 0)  # Offline doubles actually ran.
+        return tasks
+
+    def produce_metered_attempt(self):
+        """Receive a native response through the real transport, meter and attempt ledger."""
+        from types import SimpleNamespace
+        from tests import test_response_meter as fixture
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
+        from director_orchestrator.primary_parallel import ParallelAssignment, ParallelDispatchPolicy, ParallelAssignmentStatus
+        from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+
+        meter_fixture = fixture.ResponseMeterTests()
+        meter_fixture.setUpClass()
+        self.addCleanup(meter_fixture.tearDownClass)
+        meter_fixture.setUp()
+        self.addCleanup(meter_fixture.tearDown)
+        authority = PrimaryProviderBudgetAuthority(meter_fixture.store, primary_schema=self.primary.schema)
+        routing = PrimaryProviderBudgetRouting(authority=authority, pool=self.primary.handle.pool)
+        coordinator = PrimaryTaskCoordinator(self.primary.handle, self.primary.coordinator_fixtures.handlers(),
+            owner_token="default-director-owner", checkpoint_namespace="default-director-primary-v1",
+            auto_execute_provider=False)
+        coordinator.adopt_or_activate_new_intake()
+        task = "DIR-LG-FEED"
+        coordinator.create_intake(self.primary.coordinator_fixtures.request(task))
+        policy = ParallelDispatchPolicy()
+        plan = coordinator.register_parallel_plan(task_id=task,
+            plan_digest="sha256:" + "7" * 64,
+            assignments=(ParallelAssignment("metered", 1, "openai", "fixture"),), policy=policy)
+        reservation, = coordinator.reserve_parallel_ready(task_id=task, policy=policy)
+        budget = fixture.team.signed(meter_fixture.budget.model_copy(update={"task_id": task}),
+                                     fixture.team.fixtures.OWNER_SECRET)
+        with self.primary.handle.pool.connection() as connection, connection.transaction():
+            authority.register(connection, budget)
+        packet = json.loads(meter_fixture.packet)
+        packet.update(task_id=task, assignment_id=reservation.assignment_id, starting_ref=SHA)
+        admission = live_provider_admissions(settings=fixture.Settings(), budget_routing=routing,
+            team_routing=None, provider="openai", packet=packet, attempt_usd=0.00006)
+        attempt = coordinator.reserve_provider_attempt(reservation=reservation, attempt_ordinal=1,
+            format_roster=(("model-work-packet-v1", "responses-api"),),
+            idempotency_key_digest="sha256:" + "6" * 64, budget_evidence_digest="sha256:" + "5" * 64,
+            **admission)
+        packet_bytes = canonical_json_bytes(packet)
+        packet_digest = "sha256:" + hashlib.sha256(packet_bytes).hexdigest()
+        enrollment = fixture.team.signed(meter_fixture.enrollment.model_copy(update={
+            "task_id": task, "assignment_id": reservation.assignment_id,
+            "attempt_digest": attempt.attempt_digest, "work_packet_digest": packet_digest}),
+            fixture.team.fixtures.OWNER_SECRET)
+        meter = fixture.EnrolledResponseMeter(enrollment=enrollment, authority=authority,
+                                              pool=meter_fixture.store._pool)
+        context = SimpleNamespace(task_id=task, assignment_id=reservation.assignment_id,
+            idempotency_key=attempt.attempt_digest, work_packet_digest=packet_digest,
+            fencing_generation=coordinator.get_task_writer(task).fencing_generation,
+            timeout_seconds=5, total_token_limit=1000)
+        requests = []
+
+        def respond(request):
+            requests.append(request.url.path)
+            body = ({"object": "response.input_tokens", "input_tokens": 8}
+                    if request.url.path.endswith("input_tokens") else meter_fixture.native())
+            return httpx.Response(200, json=body, headers=meter_fixture.headers)
+
+        original = httpx.AsyncClient
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                side_effect=lambda **kwargs: original(transport=httpx.MockTransport(respond), **kwargs)):
+            result = fixture.OpenAIResponsesPacketTransport(api_key="test-key", model=enrollment.model,
+                response_meter=meter).send(packet_bytes, context=context)
+        self.assertEqual(len(requests), 2)  # Input count plus one response; no retry.
+        result_digest = "sha256:" + hashlib.sha256(canonical_json_bytes(result)).hexdigest()
+        coordinator.record_provider_attempt(attempt=attempt, status=ParallelAssignmentStatus.SUCCEEDED,
+            result_digest=result_digest, reason_code="attempt_succeeded")
+        coordinator.record_parallel_result(plan_digest=plan, reservation=reservation,
+            status=ParallelAssignmentStatus.SUCCEEDED, result_digest=result_digest, reason_code="attempt_succeeded")
+        self.primary.coordinator = coordinator
+        return task, fixture.team.fixtures.ROUTE_SECRET, fixture.team.fixtures.OWNER_SECRET
+
+    def test_tls_owner_bound_collection_reads_producers_and_rejects_hostile_candidate(self):
+        from pathlib import PurePosixPath
+        from director_orchestrator.config import Settings
+        from director_orchestrator import primary_activation_evidence as acceptance
+        from director_orchestrator import primary_generation as generation_module
+        from director_orchestrator.provider_activation import (
+            ProviderActivationRegistry, ProviderActivationStage, ProviderActivationSurface,
+        )
+        from director_orchestrator.provider_validation import (
+            PostgresValidationStore, ValidationBridgeService, ValidationRequest, production_configuration_digest,
+        )
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        from director_orchestrator.host_provider_bridge_server import executable_digest
+        from psycopg.conninfo import conninfo_to_dict
+
+        ca = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_CA")
+        if not ca or conninfo_to_dict(self.dsn).get("sslmode") != "verify-full":
+            self.skipTest("Verified TLS lane required: -Action Test -Tls")
+        fixture = self.fixtures._load("test_provider_validation")
+        world = World(self)
+        world.consistency = world.captures = None
+        # The fixtures below mint test authority locally; no ambient authority,
+        # candidate reports, provider calls, or external writes are used.
+        adoption_fixture_class = self.fixtures._load("test_local_activation_evidence").LocalActivationEvidenceTests
+        local = adoption_fixture_class()
+        local.setUp()
+        self.addCleanup(local.doCleanups)
+        self.addCleanup(local.tearDown)
+        root = Path(local.temporary.name)
+        local.adoption_document.update(repository=sc.REPOSITORY, reviewed_source_commit=SHA,
+                                       reviewed_source_tree=world.commit_tree)
+        adoption_path, adoption_pin = local.write_adoption()
+        provider_binding = dataclasses.replace(fixture.binding(), binding_version=root.name)
+        raw_bindings = json.dumps({"claude": {key: value for key, value in dataclasses.asdict(provider_binding).items()
+                                             if key != "provider_id"}})
+        identity = acceptance.ActivationIdentity(SHA, world.commit_tree, "local", DEPLOYMENT,
+            self.primary.identity.database_identity, self.primary.identity.database_instance_id,
+            self.primary.schema, "default-director-primary-v1")
+        settings = dataclasses.replace(Settings(), app_env="local",
+            repository_allowlist=(sc.REPOSITORY,), langgraph_primary_service_repository=sc.REPOSITORY,
+            langgraph_primary_postgres_dsn=self.dsn, langgraph_primary_postgres_schema=self.primary.schema,
+            langgraph_primary_checkpoint_namespace=identity.checkpoint_namespace,
+            langgraph_primary_pinned_commit_sha=SHA, langgraph_primary_pinned_tree_sha=world.commit_tree,
+            langgraph_primary_acceptance_mode="owner-local-evidence-v1",
+            langgraph_primary_owner_token=local.owner_token,
+            langgraph_primary_local_evidence_adoption_path="/data/adoption.json",
+            langgraph_primary_local_evidence_adoption_sha256=adoption_pin,
+            langgraph_primary_acceptance_journal_path="/data/selected.sqlite3",
+            langgraph_primary_provider_activation_bindings_json=raw_bindings,
+            langgraph_primary_required_providers=("claude",))
+        manifest = dict(version="director-primary-generation/owner-local-evidence-v1",
+            activation=dataclasses.asdict(identity), journal_path=settings.langgraph_primary_acceptance_journal_path,
+            owner_adoption_path=settings.langgraph_primary_local_evidence_adoption_path,
+            owner_adoption_sha256=adoption_pin, provider_bindings_sha256=hashlib.sha256(raw_bindings.encode()).hexdigest(),
+            deployment_configuration_sha256=generation_module.deployment_digest(settings),
+            image_id=IMAGE, resolved_compose_sha256="9" * 64)
+        manifest_path = root / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        pin = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        environment = {"DIRECTOR_RUNTIME_IMAGE_ID": IMAGE, "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "9" * 64,
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": "/data/manifest.json",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": pin,
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": raw_bindings}
+        # The real reservation producer sees its Linux /data mount on Windows.
+        # Only filesystem paths are mapped; all generation/signature checks and
+        # journal writes execute unchanged, before the read-only collection.
+        def mounted(path):
+            return root.joinpath(*PurePosixPath(path).relative_to("/data").parts)
+
+        class MountedPath(PurePosixPath):
+            def read_bytes(self):
+                return mounted(self).read_bytes()
+
+        real_open, real_connect = os.open, sqlite3.connect
+
+        def mapped_open(path, *args, **kwargs):
+            return real_open(mounted(path) if str(path).startswith("/data/") else path, *args, **kwargs)
+
+        with patch.object(generation_module, "Path", MountedPath), \
+                patch.object(generation_module, "GENERATION_DATA_ROOT", MountedPath("/data")), \
+                patch.object(acceptance, "Path", side_effect=mounted), \
+                patch.object(os, "open", side_effect=mapped_open), \
+                patch.object(sqlite3, "connect", side_effect=lambda path: real_connect(mounted(path))):
+            generation_module.require_generation(settings, identity, reserve=True, environment=environment)
+        environment.update(LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH="/data/manifest.json",
+            LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=pin,
+            LANGGRAPH_PRIMARY_POSTGRES_DSN=self.dsn, DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN=self.dsn,
+            DIRECTOR_PROVIDER_VALIDATION_CANDIDATE=SHA, DIRECTOR_PROVIDER_VALIDATION_TREE=world.commit_tree)
+        # A real admission, execution claim, signed V2 capture, and settlement.
+        validation = PostgresValidationStore(self.dsn)
+        validation.bootstrap()
+        work = fixture.work_packet()
+        work["starting_ref"] = SHA
+        native = json.loads(fixture.claude_cli_native())
+        native_path = root / "native_fixture.py"
+        native_path.write_text("import sys\nsys.stdin.buffer.read()\nprint(" + repr(json.dumps(native)) + ")\n",
+                               encoding="utf-8")
+        account = root / "fixture-account-pin"
+        account.write_text("Synthetic account binding; no credential", encoding="utf-8")
+        executor = WindowsHostProviderExecutor(
+            {"claude": (str(Path(sys.executable).resolve()), str(native_path))}, cwd=root)
+        configuration = production_configuration_digest(executor, "claude", account_files=(str(account),))
+        executable = executable_digest(executor.commands["claude"])
+        expires = int(self.clock_bounds()[1].timestamp()) + 3600
+        validation.create_generation(generation=pin, candidate=SHA, tree=world.commit_tree,
+            owner_token=fixture.OWNER, expires_at=expires, budget_units=2,
+            lanes={"claude": {"binding": dataclasses.asdict(provider_binding), "configuration_digest": configuration,
+                              "cost_units": 2, "work_packet": work}})
+        bridge = ValidationBridgeService(store=validation, production_executor=executor,
+            capture_key=fixture.KEY, owner_token=fixture.OWNER, account_files={"claude": (str(account),)})
+        receipt = bridge.run(ValidationRequest(generation=pin, provider="claude"), fixture.OWNER)
+        evidence_digest = receipt["evidence_digest"]
+        observed = self.clock_bounds()[0] - timedelta(minutes=1)
+        registry = ProviderActivationRegistry(self.primary.handle.claim_store, provider_binding)
+        for surface in ProviderActivationSurface:
+            for index, stage in enumerate(ProviderActivationStage):
+                when = observed + timedelta(seconds=index)
+                registry.record(surface=surface, stage=stage, evidence_id=f"tls-{surface.value}-{index}",
+                    evidence_digest=evidence_digest, observed_at=when,
+                    expires_at=datetime.fromtimestamp(expires, timezone.utc), now=when)
+        self.primary.coordinator.activate_new_intake(expected_generation=0)
+        started = self.clock_bounds()[0]
+        payload = health()
+        payload["langgraph_primary"]["intake_fencing_generation"] = 1
+        runtime = runtime_fixture(env=environment, runtime_tree=world.commit_tree, health=payload,
+            collected_at=started, collection_end=lambda: self.clock_bounds()[1])
+        world.rows[0]["Config"]["Env"] = [f"{key}={value}" for key, value in environment.items()]
+        world.rows[0]["Mounts"] = [{"Type": "bind", "Source": str(root), "Destination": "/data"}]
+        inputs = {"environment": environment, "settings": dataclasses.asdict(settings),
+            "mounts": [{"source": str(root), "destination": "/data"}],
+            "ca": {"path": str(Path(ca).resolve()), "sha256": hashlib.sha256(Path(ca).read_bytes()).hexdigest()},
+            "capture_key": fixture.KEY, "route_verifier_secret": "test-route-authority-only",
+            "owner_authority_secret": "test-owner-authority-only"}
+        descriptor = {"version": self.fixtures.evidence.CLI_RELEASE_DESCRIPTOR_VERSION,
+            "trusted_collection_inputs_env": "TEST_SCORECARD_INPUTS",
+            "releases": [{"provider": "claude", "product": "anthropic-claude", "executable_sha256": executable}]}
+        candidate_reads = []
+        original_run = world.run
+
+        def hostile_run(args, timeout=15):
+            if args[:2] == ["docker", "exec"] and "director_orchestrator.primary_generation" in args:
+                candidate_reads.append(True)
+                return json.dumps({"checks": [{"id": key, "status": "PASS"}
+                    for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20")]}).encode()
+            return original_run(args, timeout)
+
+        with patch.object(sc, "cli_release_descriptor", return_value=descriptor), \
+                patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}), \
+                patch.object(sc, "_run_bytes", side_effect=hostile_run):
+            consistency, captures = sc._trusted_collection(runtime, [])
+            self.assertIsNotNone(captures)
+            self.assertEqual(captures["lanes"]["claude"]["product"], "anthropic-claude")
+            for surface in captures["lanes"]["claude"]["surfaces"].values():
+                self.assertEqual(surface["executable_sha256"], executable)
+            observations = [sc._reconciliation_observation(started, runtime, consistency),
+                            sc._acceptance_observation(started, SHA, consistency),
+                            *sc._capture_observations(started, runtime, captures, None),
+                            sc._monetary_observation(started, runtime, None, consistency, None),
+                            sc._paid_observation(started, runtime, None, None, consistency, "fixture"),
+                            sc._trial_observation(started, runtime, None, None, None)]
+            report = sc.score(SHA, observations, now=started, runtime_sha=SHA, image_id=IMAGE)
+            for check in ("07", "12", "17"):
+                self.assertEqual(row(report, check)["status"], "PASS", check)
+            for check in ("06", "08", "10", "11", "15", "20"):
+                self.assertEqual(row(report, check)["status"], "UNKNOWN", check)
+
+            offline_tasks = self.produce_offline_trials()
+            offline, _ = sc._trusted_collection(runtime, offline_tasks)
+            self.assertEqual(offline["counts"]["graph_task_count"], 10)
+            self.assertEqual(offline["counts"]["provider_usage_invalid"], 0)
+            for task in offline_tasks:
+                entry = offline["tasks"][task]
+                self.assertEqual(entry["application"]["execution_mode"], "offline_simulation")
+                self.assertIsNone(entry["registered_plan"]["error"])
+                self.assertTrue(entry["application"]["task_record"]["assignment_outcomes"])
+                self.assertEqual(entry["spend"], [])
+                self.assertEqual(len(entry["approval_receipts"]), 1)
+                # Local approval_resume is real, but has no authenticated gateway command.
+                self.assertFalse(entry["approval_receipts"][0]["authorized"])
+
+            paid_task, route_secret, owner_secret = self.produce_metered_attempt()
+            inputs.update(route_verifier_secret=route_secret.decode(), owner_authority_secret=owner_secret.decode())
+            with patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}):
+                settled, _ = sc._trusted_collection(runtime, [paid_task])
+                entry = settled["tasks"][paid_task]
+                self.assertEqual(len(entry["spend"]), 1)
+                self.assertTrue(entry["spend"][0]["usage_verified"])
+                self.assertTrue(entry["spend"][0]["request_correlated"])
+                self.assertEqual(entry["spend"][0]["actual_microusd"], 58)
+                self.assertTrue(entry["budgets"][0]["signature_verified"])
+                # The live collection path must retain UNKNOWN without Slack evidence,
+                # even though real approval, restart, offline and metered rows now exist.
+                with patch.object(sc, "_runtime", return_value=([], runtime)), \
+                        patch.object(sc, "_deployment_state", return_value=()):
+                    collected, _ = sc._deployment_observations(started, SHA, DEPLOYMENT,
+                        channel=None, gateway=None, topology=False, drills={}, approval_task=offline_tasks[0],
+                        trials=None, rubric_path=None, paid_thread=None, paid_rubric_path=None)
+                by_check = {item.check_id: item for item in collected}
+                for check in ("06", "08", "10", "11", "15", "20"):
+                    self.assertIsNone(by_check[check].passed, check)
+                self.assertTrue(by_check["12"].passed)
+                self.assertTrue(by_check["17"].passed)
+            self.primary.coordinator.create_intake(self.primary.coordinator_fixtures.request("DIR-LG-FADE"))
+            hostile, _ = sc._trusted_collection(runtime, ["DIR-LG-FADE"])
+            verdict = sc._reconciliation_observation(started, runtime, hostile)
+            self.assertIsNot(verdict.passed, True)
+        self.assertFalse(candidate_reads, "Candidate reports cannot replace trusted evidence")
+
+    def test_lane_transport_blocks_all_nine_checks_even_with_hostile_candidate_pass(self):
         from director_orchestrator.config import Settings
         from psycopg.conninfo import conninfo_to_dict
 
-        self.assertTrue(conninfo_to_dict(self.dsn).get("sslmode") == "disable",
-                        "This regression requires the sanctioned non-TLS test lane")
+        if conninfo_to_dict(self.dsn).get("sslmode") != "disable":
+            self.skipTest("Non-TLS refusal regression; run the lane without -Tls")
         world = World(self)
         # Do not feed World's hand-authored evaluator evidence into collection.
         world.consistency = world.captures = None
@@ -1196,7 +1553,7 @@ class TrustedCollectionLaneTests(unittest.TestCase):
             if args[:2] == ["docker", "exec"] and "director_orchestrator.primary_generation" in args:
                 candidate_reads.append(True)
                 return json.dumps({"checks": [{"id": key, "status": "PASS"}
-                    for key in ("07", "08", "11", "12", "15", "17", "20")]}).encode()
+                    for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20")]}).encode()
             return original_run(args, timeout)
 
         self.primary.coordinator.activate_new_intake(expected_generation=0)
@@ -1223,12 +1580,21 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                         self.assertEqual(parsed.call_count, 1)
                     report = world.report()
                     self.assertFalse(binding_read.called, "TLS refusal must precede database binding")
-                for key in ("07", "08", "11", "12", "15", "17", "20"):
+                for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
                     self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
                     self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable", key)
         self.assertFalse(candidate_reads, "Candidate in-image report must never be executed")
 
     def test_real_signed_cli_capture_remains_unattested_with_pinned_release(self):
+        self.check_signed_cli_capture(None, "anthropic-claude-unattested")
+
+    def test_real_signed_cli_capture_attests_only_the_pinned_executable(self):
+        for executable, product in (("e" * 64, "anthropic-claude"),
+                                    ("f" * 64, "anthropic-claude-digest-mismatch")):
+            with self.subTest(product=product):
+                self.check_signed_cli_capture(executable, product)
+
+    def check_signed_cli_capture(self, executable, product):
         from types import SimpleNamespace
         from director_orchestrator.packet_contracts import canonical_json_bytes
         from director_orchestrator.provider_activation import (
@@ -1242,24 +1608,22 @@ class TrustedCollectionLaneTests(unittest.TestCase):
         store = PostgresValidationStore(self.dsn)
         store.bootstrap()
         generation = hashlib.sha256(os.urandom(32)).hexdigest()
-        expires = int(time.time()) + 3600
-        provider_binding = fixture.binding()
+        expires = int(self.clock_bounds()[1].timestamp()) + 3600
+        provider_binding = dataclasses.replace(fixture.binding(), binding_version=generation)
         store.create_generation(generation=generation, candidate=fixture.CANDIDATE, tree=fixture.TREE,
             owner_token=fixture.OWNER, expires_at=expires, budget_units=2,
             lanes={"claude": {"binding": dataclasses.asdict(provider_binding), "configuration_digest": "c" * 64,
                               "cost_units": 2, "work_packet": fixture.work_packet()}})
         admission = store.admit(ValidationRequest(generation=generation, provider="claude"), fixture.OWNER)
         store.claim_execution(admission)
-        native = json.loads(fixture.raw_native())
-        native["modelUsage"] = {"claude-opus-5-5": {}}
-        output = canonical_json_bytes(native)
-        capture = make_capture(admission, output, capture_key=fixture.KEY)
+        output = fixture.claude_cli_native()
+        capture = make_capture(admission, output, capture_key=fixture.KEY, executable_sha256=executable)
         capture_digest = store.settle(admission, output, capture)
         verifier = CaptureVerifier(store, capture_key=fixture.KEY, candidate=fixture.CANDIDATE,
                                    tree=fixture.TREE, generation=generation)
         self.assertTrue(verifier.verify(provider_binding, capture_digest))
-        self.assertFalse(hasattr(capture, "executable_sha256"), "Capture schema has no executable attestation")
-        observed = datetime.now(timezone.utc) - timedelta(minutes=1)
+        self.assertEqual(getattr(capture, "executable_sha256", None), executable)
+        observed = self.clock_bounds()[0] - timedelta(minutes=1)
         registry = ProviderActivationRegistry(self.primary.handle.claim_store, provider_binding)
         for surface in ProviderActivationSurface:
             for index, stage in enumerate(ProviderActivationStage):
@@ -1277,25 +1641,50 @@ class TrustedCollectionLaneTests(unittest.TestCase):
         descriptor = {"version": self.fixtures.evidence.CLI_RELEASE_DESCRIPTOR_VERSION,
                       "releases": [{"provider": "claude", "product": "anthropic-claude",
                                     "executable_sha256": "e" * 64}]}
-        started = datetime.now(timezone.utc)
+        started = self.clock_bounds()[0]
         captures = self.fixtures.evidence.activation_capture_report(settings, identity, manifest,
             verifier=verifier, environment={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": generation},
             descriptor=descriptor)
         lane = captures["lanes"]["claude"]
-        self.assertEqual(lane["product"], "anthropic-claude-unattested")
+        self.assertEqual(lane["product"], product)
         for surface in lane["surfaces"].values():
             self.assertTrue(surface["capture_verified"])
             self.assertTrue(surface["chain_valid"])
-        runtime = runtime_fixture(collected_at=started, collection_end=lambda: datetime.now(timezone.utc),
+            self.assertEqual(surface["executable_sha256"], executable)
+        runtime = runtime_fixture(collected_at=started, collection_end=lambda: self.clock_bounds()[1],
             env={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": generation,
                  "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": raw_bindings})
         # This is the real store-reader's check-12 predicate, not a TRUSTED collection PASS.
-        self.assertTrue(sc._capture_verdict(started, runtime, captures)[0])
+        passed, reason, _ = sc._capture_verdict(started, runtime, captures)
+        self.assertIs(passed, True, reason)
         self.assertIsNone(next(item for item in sc._capture_observations(started, runtime, captures, None)
                                if item.check_id == "11").passed)
 
 
 class CompletionScorecardTests(unittest.TestCase):
+    def test_check_11_distinguishes_missing_executable_from_pinned_digest_mismatch(self):
+        from director_orchestrator.primary_scorecard_evidence import _capture_product, CLI_RELEASE_DESCRIPTOR_VERSION
+        world = World(self)
+        descriptor = {"version": CLI_RELEASE_DESCRIPTOR_VERSION,
+            "releases": [{"provider": "claude", "product": "anthropic-claude", "executable_sha256": "e" * 64}]}
+        output = b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}'
+        for executable, expected in ((None, "UNKNOWN"), ("e" * 64, "PASS"), ("f" * 64, "FAIL")):
+            with self.subTest(expected=expected):
+                product = _capture_product("claude", output, executable_sha256=executable, descriptor=descriptor)
+                lane = world.captures["lanes"]["claude"]
+                lane["product"] = product
+                for surface in lane["surfaces"].values():
+                    surface["product"] = product
+                    surface["executable_sha256"] = executable
+                self.assertEqual(world.state("11", evaluate_rules=True), expected)
+        lane = world.captures["lanes"]["claude"]
+        for product, expected in (("anthropic-claude-unattested", "UNKNOWN"),
+                                  ("anthropic-claude-digest-mismatch", "FAIL")):
+            lane["product"] = None
+            lane["surfaces"]["app"]["product"] = product
+            lane["surfaces"]["runtime_adapter"]["product"] = "anthropic-claude"
+            self.assertEqual(world.state("11", evaluate_rules=True), expected)
+
     def test_backup_reads_committed_wal_and_is_query_only(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "journal.sqlite3"
@@ -2201,13 +2590,13 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_full_selection_reaches_every_live_collector_without_leaking(self):
         world = self.world()
         report = world.report()
-        passing = {"03", "04", "05", "06", "09", "10", "19"}
+        passing = {"03", "04", "05", "09", "19"}
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, passing,
                          [(item["id"], item["status"], item["explanation"]) for item in report["checks"]])
         self.assertEqual(world.opened, [HEALTH])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("07", "08", "11", "12", "15", "17", "20"):
+        for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable")
             self.assertIn("Pinned evaluator", row(report, key)["evidence"][0]["source"])
@@ -2227,6 +2616,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         with patch.object(sc, "_reconciliation_observation", return_value=passing("07")) as consistency, \
                 patch.object(sc, "_capture_observations", return_value=[passing("11"), passing("12")]) as captures, \
                 patch.object(sc, "_approval_observations", return_value=[passing("06"), passing("08")]) as approval, \
+                patch.object(sc, "_trial_observation", return_value=passing("10")), \
                 patch.object(sc, "_acceptance_observation", return_value=passing("17")) as acceptance, \
                 patch.object(sc, "_paid_observation", return_value=passing("20")) as paid, \
                 patch.object(sc, "_monetary_observation", return_value=passing("15")) as monetary:
@@ -2236,7 +2626,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertIsNone(probe.call_args.args[index])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("07", "08", "11", "12", "15", "17", "20"):
+        for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable")
 
@@ -3127,20 +3517,20 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_offline_trials_are_pipeline_proof_10(self):
         # Owner ruling 2026-09-24: the committed structural rubric plus valid evidence passes 10; answers are 20's.
-        report = self.world().report()
+        report = self.world(evaluate_rules=True).report()
         self.assertEqual(row(report, "10")["status"], "PASS")
         records = row(report, "10")["evidence"][0]["facts"]["records"]
         self.assertTrue(all("structural_rubric_passed" in r and "correctness_verified" not in r for r in records))
         self.assertIn("pipeline proof", sc.CHECKS[9].action)
         # A trial input that does not commit to the structural rubric fails it.
-        uncommitted = self.world()
+        uncommitted = self.world(evaluate_rules=True)
         thread = uncommitted.trials[2]
         task = next(t for t in uncommitted.tasks.values() if t["intake"]["thread_ts"] == thread)
         task["intake"]["text"] = "audit trial without a rubric marker"
         uncommitted.threads[thread][0]["text"] = f"<@{BOT}> " + task["intake"]["text"]
         self.assertNotEqual(uncommitted.state("10"), "PASS")
         # Without the rubric, 10 is not graded.
-        self.assertEqual(self.world().state("10", rubric_path=None), "UNKNOWN")
+        self.assertEqual(self.world(evaluate_rules=True).state("10", rubric_path=None), "UNKNOWN")
 
     def test_persisted_execution_mode_decides_the_run_kind_10_20(self):
         live_trial = self.world(evaluate_rules=True)
@@ -3190,18 +3580,18 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_offline_assignments_must_be_settled_and_joined_10(self):
         for label, change in (("pending", {"status": "PENDING"}), ("active", {"status": "ACTIVE"}),
                               ("other digest", {"result_digest": "sha256:" + "e" * 64})):
-            world = self.world()
+            world = self.world(evaluate_rules=True)
             world.tasks["DIR-LG-7A04"]["qualification_evidence"]["assignments"][0].update(change)
             with self.subTest(label=label):
                 self.assertNotEqual(world.state("10"), "PASS")
-        extra = self.world()
+        extra = self.world(evaluate_rules=True)
         assignments = extra.tasks["DIR-LG-7A05"]["qualification_evidence"]["assignments"]
         assignments.append({**assignments[0], "assignment_id": assignments[0]["assignment_id"] + "-2", "sequence": 2})
         self.assertNotEqual(extra.state("10"), "PASS")
 
     def test_restart_needs_settled_attempts_06(self):
         # The attempt's latest event is still STARTED (its SUCCEEDED event never landed): not settled.
-        unsettled = self.world()
+        unsettled = self.world(evaluate_rules=True)
         readback = unsettled.tasks[APPROVAL_TASK]["qualification_evidence"]
         readback["provider_attempts"].pop()
         tf.recount(readback)
@@ -3383,21 +3773,21 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(missing.state("20"), "FAIL")
 
     def test_offline_outcomes_are_fixed_by_the_ledger_row_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         first = "DIR-LG-7A01"
         # A genuine digest under another run identity is a mismatch.
-        forged = self.world()
+        forged = self.world(evaluate_rules=True)
         forged.tasks[first]["assignment_outcomes"][0]["run_id"] = "offline-double:sha256:" + "f" * 64
         self.assertEqual(forged.state("10"), "FAIL")
         # Other result text is not the double's (the collector already refuses it as an offline run).
-        edited = self.world()
+        edited = self.world(evaluate_rules=True)
         edited.tasks[first]["assignment_outcomes"][0]["result"] = "SIMULATION — NO PROVIDER INTERACTION (edited)"
         self.assertNotEqual(edited.state("10"), "PASS")
         self.assertFalse(sc._offline_outcomes_bound(
             {"readback": {"assignments": [{"sequence": 1, "reservation_digest": "sha256:" + "a" * 64}]},
              "task": {"assignment_outcomes": [{"assignment_sequence": 1, "run_id": "offline-double:sha256:" + "a" * 64,
                                                "result": "edited"}]}}, "label"))
-        unreserved = self.world()
+        unreserved = self.world(evaluate_rules=True)
         unreserved.tasks[first]["qualification_evidence"]["assignments"][0]["reservation_digest"] = None
         self.assertNotEqual(unreserved.state("10"), "PASS")
         self.assertIsNone(sc._offline_outcomes_bound(
@@ -3438,11 +3828,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertLess(observed[0].observed_at, inside[0])
 
     def test_assignment_timestamps_bound_settlement_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         first = "DIR-LG-7A01"
         for change in ({"completed_at": None}, {"completed_at": "2026-09-12T10:00:04+00:00"},
                        {"completed_at": "2026-09-13T10:00:25+00:00"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.tasks[first]["qualification_evidence"]["assignments"][0].update(change)
             with self.subTest(change=change):
                 self.assertNotEqual(case.state("10"), "PASS")
@@ -3507,12 +3897,12 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertNotEqual(case.state("09"), "PASS")
 
     def test_offline_finals_are_the_canonical_rendering_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
-        first = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
+        first = self.world(evaluate_rules=True)
         final = first.threads[ts(1000)][-1]
         final["blocks"] = [{"type": "section", "text": {"type": "plain_text", "text": final["text"] + " (edited)"}}]
         self.assertEqual(first.state("10"), "FAIL")
-        text = self.world()
+        text = self.world(evaluate_rules=True)
         text.threads[ts(1000)][-1]["text"] += "\nextra"
         self.assertNotEqual(text.state("10"), "PASS")
 
@@ -3601,10 +3991,10 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_resume_final_delivery_is_a_settled_lifecycle_06(self):
         """4100381657: the restart predicate's terminal delivery passes the same _delivery_settled rule as 03, 09,
         10 and 20: a DELIVERED row without its claim or readback moment, or out of order, resumes nothing."""
-        self.assertEqual(self.world().state("06"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("06"), "PASS")
         for name, change in (("unclaimed", {"claimed_at": None}), ("never read back", {"delivered_at": None}),
                              ("read back before its claim", {"delivered_at": "2026-09-12T09:00:00+00:00"})):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             terminal = next(r for r in case.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"]
                             if r["notification_key"] == "terminal")
             terminal.update(change)
@@ -3826,9 +4216,9 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_channel_history_needs_an_explicit_last_page_10(self):
         """4100880199: a history page without has_more=false (missing, or true without a cursor) is incomplete."""
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         for page in ({}, {"has_more": True}, {"has_more": None}, {"has_more": "false"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.history_page = page
             with self.subTest(page=page):
                 self.assertEqual(case.state("10"), "UNKNOWN")
@@ -4592,54 +4982,54 @@ class ScorecardCollectorTests(unittest.TestCase):
             sc._run_bytes([sys.executable, "-c", "import sys; sys.exit(3)"])
 
     def test_ten_offline_trials_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
-        called = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
+        called = self.world(evaluate_rules=True)
         called.add(task_entry("DIR-LG-7A01", 1000, offline=False,
                               text=called.tasks["DIR-LG-7A01"]["intake"]["text"]))
         report = called.report()
         self.assertEqual(row(report, "10")["status"], "FAIL")
         self.assertIn("DIR-LG-7A01", row(report, "10")["explanation"])
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         report = world.report(trials=world.trials[:9])
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
-        late = self.world()
+        late = self.world(evaluate_rules=True)
         late.rows[0]["Created"] = "2026-09-12T13:40:00Z"  # after the last trial ran (~13:34)
         report = late.report()
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
         self.assertIn("runtime_sha", row(report, "10")["explanation"])
-        wrong = self.world()
+        wrong = self.world(evaluate_rules=True)
         wrong.tasks["DIR-LG-7A02"]["status"] = "FAILED"
         self.assertEqual(wrong.state("10"), "FAIL")
         # An edited terminal reply keeps its ts but not the text it was posted with.
-        edited = self.world()
+        edited = self.world(evaluate_rules=True)
         final = next(m for m in edited.threads[ts(2000)] if m.get("ts") == ts(2030))
         final["edited"] = {"user": BOT, "ts": ts(2090)}
         self.assertNotEqual(edited.state("10"), "PASS")
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         missing.failing.add(missing.trials[3])
         self.assertEqual(missing.state("10"), "UNKNOWN")
         # Ten passing threads are not enough: they must be consecutive owner posts.
-        skipped = self.world()
+        skipped = self.world(evaluate_rules=True)
         skipped.history_extra.append({"ts": ts(1500), "user": OWNER, "text": "DIRECTOR another trial"})
         report = skipped.report()
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
         self.assertIn("consecutive", row(report, "10")["explanation"])
-        shared_file = self.world()
+        shared_file = self.world(evaluate_rules=True)
         shared_file.history_extra.append({"ts": ts(1500), "user": OWNER, "subtype": "file_share", "text": "DIRECTOR x"})
         self.assertEqual(shared_file.state("10"), "UNKNOWN")
         # A deleted post leaves a tombstone that may be a skipped trial.
-        deleted = self.world()
+        deleted = self.world(evaluate_rules=True)
         deleted.history_extra.append({"ts": ts(1500), "user": "USLACKBOT", "subtype": "tombstone", "hidden": True,
                                       "text": "This message was deleted."})
         self.assertEqual(deleted.state("10"), "UNKNOWN")
         # Every trial must itself be a visible top-level post in the window.
-        not_a_post = self.world()
+        not_a_post = self.world(evaluate_rules=True)
         not_a_post.history_hidden.add(not_a_post.trials[4])
         self.assertEqual(not_a_post.state("10"), "UNKNOWN")
-        chatter_from_bot = self.world()
+        chatter_from_bot = self.world(evaluate_rules=True)
         chatter_from_bot.history_extra.append({"ts": ts(1500), "user": BOT, "bot_id": "BBOT123", "text": "status"})
         self.assertEqual(chatter_from_bot.state("10"), "PASS")
-        no_history = self.world()
+        no_history = self.world(evaluate_rules=True)
         no_history.failing.add("history")
         self.assertEqual(no_history.state("10"), "UNKNOWN")
 
@@ -5257,3 +5647,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | END]]

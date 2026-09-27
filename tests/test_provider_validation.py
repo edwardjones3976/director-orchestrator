@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
@@ -22,6 +25,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict,replace
 from datetime import datetime,timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -168,7 +172,22 @@ def raw_native():
         "session_id":"actual-native-fixture-session","structured_output":{"status":"SUCCEEDED","outcome":"Canary analyzed"}})
 
 
+def claude_cli_native():
+    """Reuse the sanitized native continuation exercised by the real normalizer."""
+    from tests.test_host_native_result_normalization import resumed_claude_response
+
+    native, _ = resumed_claude_response()
+    return canonical_json_bytes(native)
+
+
 class NativeCaptureTests(unittest.TestCase):
+    def test_resumed_claude_cli_capture_uses_session_usage_without_double_counting(self):
+        result = normalize_capture("claude", work_packet(), claude_cli_native())
+        self.assertEqual(result["usage"]["input_tokens"], 4)
+        self.assertEqual(result["usage"]["output_tokens"], 4352)
+        self.assertEqual(result["usage"]["total_tokens"], 339818)
+        self.assertEqual(result["usage"]["cost_usd"], 1.3964232)
+
     def test_installed_runtime_inventory_detects_nested_dependency_change(self):
         from director_orchestrator.provider_validation import pinned_path_manifest
         with tempfile.TemporaryDirectory() as directory:
@@ -1398,6 +1417,10 @@ class PostgresValidationTests(unittest.TestCase):
             self.assertEqual(result["surfaces"],["app","runtime_adapter"])
             verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
             self.assertTrue(verifier.verify(binding(),result["evidence_digest"]))
+            checked = verifier.verified_capture(binding(), result["evidence_digest"])
+            self.assertEqual(checked[1].version, "director-validation-capture/v2")
+            self.assertEqual(checked[1].executable_sha256,
+                             hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest())
             self.assertIsNone(production.writer_fence_verifier)
             with self.assertRaises(ValidationError):
                 service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
@@ -1591,3 +1614,6 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | END]]

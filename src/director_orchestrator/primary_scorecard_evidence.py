@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
@@ -1472,7 +1473,19 @@ def _capture_product(provider, output: bytes, *, official_openai: bool = False, 
     model = envelope.get("model")
 
     def cli() -> str:
-        return cli_release_product(provider, executable_sha256, descriptor) or CLI_PRODUCTS[provider] + UNATTESTED
+        product = cli_release_product(provider, executable_sha256, descriptor)
+        if product:
+            return product
+        # Missing historical attestations remain unknown. An authenticated digest
+        # contradicting a well-formed pinned release is positive mismatch evidence.
+        releases = descriptor.get("releases", []) if isinstance(descriptor, dict) else []
+        if not isinstance(releases, list):
+            releases = []
+        pinned = [entry for entry in releases if isinstance(entry, dict) and entry.get("provider") == provider
+                  and cli_release_product(provider, entry.get("executable_sha256"), descriptor)]
+        if executable_sha256 is not None and pinned:
+            return CLI_PRODUCTS[provider] + "-digest-mismatch"
+        return CLI_PRODUCTS[provider] + UNATTESTED
 
     if provider == "openai":
         if envelope.get("object") == "response":
@@ -1558,10 +1571,9 @@ def activation_capture_report(settings, identity, manifest, *, verifier=None, en
         route = getattr(verifier, "openai_responses_route", None)
         official = getattr(getattr(route, "transport", None), "api_url", None) == OFFICIAL_OPENAI_RESPONSES_URL
         lanes = service.capture_attestations(
-            classify=lambda provider, output: _capture_product(
+            classify_attested=lambda provider, output, executable_sha256: _capture_product(
                 provider, output, official_openai=official,
-                # No capture records its executable's digest yet (A2): every CLI capture is unattested until it does.
-                executable_sha256=None, descriptor=descriptor if explicit else cli_release_descriptor()))
+                executable_sha256=executable_sha256, descriptor=descriptor if explicit else cli_release_descriptor()))
     bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
         # Both activation surfaces must classify as the same attested product (review 4111508065): a lane whose app
@@ -1622,3 +1634,4 @@ def activation_capture_report(settings, identity, manifest, *, verifier=None, en
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
