@@ -5,6 +5,7 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -189,6 +190,18 @@ until a separately authorized implementation aligns it with the owner law.
   workload, budget, and safety enforcement, QA, independent-review
   orchestration, exact-SHA evidence reconciliation, and eligible merge
   execution.
+- Every Director routes maintenance (review-finding fixes, record and document
+  inconsistencies, CI fixes, provider connection or plumbing problems) to
+  OpenAI Codex, through the Codex CLI (`codex exec` with a written packet) or
+  the ChatGPT/Codex Director thread, with no limit on either channel; it still
+  verifies, pushes, and replies on review
+  threads. Codex's edits are maintenance assistance and do not change
+  authorship; the PR's sole author is whoever wrote at least 52% of it (the
+  sole-author rule, PR #284, `docs/contribution-attribution-policy.md`), and only
+  that author's provider family is excluded from review. This applies to all maintenance from
+  2026-09-26, including work in flight, and changes neither rule 3 nor rule 4.
+  Canonical text: the charter's
+  [Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing).
 - Reviewing or merging a candidate never makes the Director one of its authors.
   Current runtime enforcement: The Director still may not independently accept or merge code it actually
   materially authored. Under the sole-author policy, an assisting contributor may
@@ -256,6 +269,7 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
