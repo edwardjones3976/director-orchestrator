@@ -233,7 +233,8 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
         from tests.test_completion_scorecard import World, row  # the scorecard's own fixture world
         world = World(self)
         world.payload["usage_monitor"]["daily_accounting"]["grok"]["unreconciled_request_count"] = unreconciled_count
-        return row(world.report(), "15")["status"]
+        # The direct rule path: live collection holds 15 UNKNOWN until trusted collection lands (#313).
+        return row(world.report(evaluate_rules=True), "15")["status"]
 
     async def test_an_unavailable_run_is_unreconciled_not_invisible(self) -> None:
         """Review 4112697677: the ProviderUnavailableError exit leaves the dispatched request unreconciled."""
