@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 <!-- Replace the two submission tags below; they must match except for BEGIN/END. -->
@@ -9,10 +10,11 @@
 
 ## Evidence
 
-- Base SHA:
-- Head SHA:
 - Changed surface:
 - Sole author and shares (at least 52 %, with receipt references; see docs/contribution-attribution-policy.md#sole-author-rule):
+- `base_sha` (target-branch tip at review):
+- `merge_base_sha` (for authorship share computation):
+- Head SHA:
 - Tests and checks:
 - Independent reviewer:
 - Known limitations:
@@ -26,3 +28,4 @@
 **[[<Assistant or Tool Name> | <Complete Model or System Label> | <YYYY-MM-DD> | <HH:MM UTC> | END]]**
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | END]] -->

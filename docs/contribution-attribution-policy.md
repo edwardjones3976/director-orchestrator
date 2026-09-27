@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | BEGIN]] -->
@@ -154,9 +155,11 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
 - **How the share is measured and bound to review** (owner ruling, 2026-09-27):
   the sole author and shares are computed from the git record at the exact
   reviewed merge-base SHA (`merge_base_sha`) and head SHA:
-  `git log <merge-base>..<head> --no-merges --format='%H %an' -p -w --ignore-blank-lines --no-color --no-ext-diff --no-textconv --no-renames`,
+  `git log <merge-base>..<head> --no-merges --format='%H %an' -p -w --ignore-blank-lines --no-color --no-ext-diff --no-textconv -M -C --find-copies-harder`,
   counting only `+` and `-` lines inside patch hunks (not file headers), per
-  commit and authenticated identity. After removing the `+` or `-` diff prefix,
+  commit and authenticated identity. Exclude renames or copies with 100 %
+  similarity from both numerator and denominator; count only changed lines
+  in edited renames. After removing the `+` or `-` diff prefix,
   skip empty or whitespace-only content: `-w` and `--ignore-blank-lines` do not
   remove those lines inside mixed hunks. Exclude only whole-line, comment-style
   contribution envelopes matching `^[ \t]*(?:#|<!--|//|\*\*)[ \t]*\[\[[^|\[\]\r\n]+ \| [^|\[\]\r\n]+ \| \d{4}-\d{2}-\d{2} \| \d{2}:\d{2} UTC \| (?:BEGIN|END)\]\][ \t]*(?:-->|#|//|\*\*)?[ \t]*$`.
@@ -264,3 +267,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | END]] -->
