@@ -1,8 +1,10 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
@@ -3792,29 +3794,6 @@ class DefaultPrimaryApplication:
         finally:
             self.services.discard(task_id)
 
-    def prepare_external_effect(self, task_id: str) -> EffectReservation:
-        projection = self.coordinator.get_projection(task_id)
-        if projection is None:
-            raise KeyError(task_id)
-        self.services.hydrate(projection)
-        try:
-            return self.coordinator.prepare_external_effect(task_id)
-        finally:
-            self.services.discard(task_id)
-
-    def bind_external_effect_remote(
-        self,
-        *,
-        reservation: EffectReservation,
-        remote_system: str,
-        remote_identifier: str,
-    ) -> None:
-        self.coordinator.bind_external_effect_remote(
-            reservation=reservation,
-            remote_system=remote_system,
-            remote_identifier=remote_identifier,
-        )
-
     def read_external_effect_remote(
         self, reservation: EffectReservation
     ) -> Mapping[str, str] | None:
@@ -5375,8 +5354,10 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:52 UTC | END]]
