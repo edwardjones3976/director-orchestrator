@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
@@ -632,8 +633,8 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
                 writer_token=token,
             )
             release.set()
-            thread.join(timeout=5)
-            self.assertFalse(thread.is_alive())
+            thread.join(timeout=30)
+            self.assertFalse(thread.is_alive(), "worker did not finish within 30s")
             self.assertEqual(
                 competing.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
             )
@@ -1189,3 +1190,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]

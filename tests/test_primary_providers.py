@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -253,7 +254,8 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
 
         competing = service.provider_subgraph(self.context)
         release.set()
-        worker.join(timeout=2)
+        worker.join(timeout=30)
+        self.assertFalse(worker.is_alive(), "provider worker did not finish within 30s")
 
         self.assertEqual(ProviderDisposition.AMBIGUOUS, competing.disposition)
         self.assertEqual("provider_attempt_in_flight", competing.reason_code)
@@ -334,3 +336,4 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]

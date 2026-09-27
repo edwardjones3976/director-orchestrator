@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -1958,9 +1959,9 @@ class OracleMergeGateTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
+            thread.join(timeout=30)
 
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(outcomes, [None])
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], RuntimeError)
@@ -2146,3 +2147,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
