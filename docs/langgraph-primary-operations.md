@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
@@ -551,7 +553,8 @@ GitHub author association, and its body must exactly equal the canonical
 `director-activation-review/v1` JSON artifact. Comments, quoted markers, and
 free-form prose never qualify. For alternative modes, see the separately signed
 [provider-acceptance-v2](provider-acceptance-v2.md) and
-[two-party-activation-v3](two-party-activation-v3.md) contracts. Under `github-v1`, the CI, security, and independent-review issuers
+[two-party-activation-v3](two-party-activation-v3.md) contracts, and the owner-signed, not provider-signed
+`owner-local-evidence-v1` owner adoption described below. Under `github-v1`, the CI, security, and independent-review issuers
 must supply a closed canonical artifact with a canonical facts digest and their
 separate domain-separated HMAC attestations.
 
@@ -574,7 +577,8 @@ to its container-side `adoption.json` and pin its bytes with
 `LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256`. The closed adoption document
 uses `director-primary-local-evidence-adoption/v1`, decision
 `ADOPT_SCOPED_LOCAL_EVIDENCE`, and the existing owner token's domain-separated
-signature. Its QA, independent review and security digests must identify actual
+signature. `load_pinned_owner_local_adoption` rejects unsigned documents.
+Its QA, independent review and security digests must identify actual
 files in `pinned_evidence`; each path is a simple filename beside the adoption
 document. Loading enforces at most 32 unique pins, a 64 MiB aggregate bundle
 limit, and an 8 MiB per-file cap before hashing. Loading and replay verify those file bytes. Reviewed source must match
@@ -902,3 +906,5 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]] -->

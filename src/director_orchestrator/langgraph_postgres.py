@@ -1,3 +1,11 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
@@ -1914,6 +1922,111 @@ def _validated_result_packet(
     return validated, document_digest(validated), authority_digest
 
 
+# The qualification readback's evidence sections, one definition each: (columns, tables, task column, order).
+# read_primary_qualification_evidence selects one task's rows; the in-image consistency command selects every
+# task's rows with the same columns and joins, so both feed the same shared validation
+# (primary_scorecard_evidence.task_evidence_errors) the same shapes.
+_QUALIFICATION_SECTIONS = {
+    "assignments": (
+        """assignment_id, sequence, provider_id, deployment_id, status,
+               reservation_digest, result_digest, reason_code, reserved_at, completed_at""",
+        "{schema}.director_primary_parallel_assignment", "task_id", "sequence, assignment_id"),
+    "provider_attempts": (
+        """a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
+               a.event_sequence, a.provider_id, a.format_id, a.transport_id,
+               a.idempotency_key_digest, a.attempt_digest, a.provider_run_id_digest,
+               a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
+               a.budget_evidence_digest, a.recorded_at""",
+        """{schema}.director_primary_provider_attempt a
+        JOIN {schema}.director_primary_parallel_assignment p
+          ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id""",
+        "a.task_id", "p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence"),
+    "effects": (
+        """r.reservation_key, r.claim_key, r.effect_key_digest,
+               r.effect_attempt_digest, r.writer_owner_id, r.fencing_generation,
+               r.reserved_units, r.reserved_at,
+               e.started_at AS execution_started_at,
+               b.remote_system, b.remote_identifier, b.bound_at,
+               t.disposition AS terminal_disposition,
+               t.evidence_digest AS terminal_evidence_digest,
+               t.recorded_at AS terminal_recorded_at,
+               e.task_id AS execution_task_id, b.task_id AS binding_task_id,
+               t.task_id AS terminal_task_id,
+               CASE WHEN e.reservation_key IS NULL THEN NULL
+                    ELSE e.owner_token = c.owner_token AND e.owner_token = r.owner_token END AS execution_owner_matches,
+               CASE WHEN e.reservation_key IS NULL THEN NULL
+                    ELSE e.fencing_generation = c.fencing_generation END AS execution_fencing_matches,
+               CASE WHEN b.reservation_key IS NULL THEN NULL
+                    ELSE b.owner_token = c.owner_token END AS binding_owner_matches,
+               CASE WHEN t.claim_key IS NULL THEN NULL
+                    ELSE (t.owner_token = c.owner_token AND t.fencing_generation = c.fencing_generation)
+                      OR (t.fencing_generation > c.fencing_generation AND w.task_id IS NOT NULL
+                          AND t.fencing_generation <= w.fencing_generation AND t.owner_token = w.owner_token)
+                    END AS terminal_authority_matches,
+               r.task_id = c.task_id AS reservation_task_matches,
+               r.owner_token = c.owner_token AS reservation_owner_matches,
+               r.fencing_generation = c.fencing_generation AS reservation_fencing_matches""",
+        # Children join by their reservation (or claim) alone, and carry their own task_id: a child pointing at
+        # this reservation from another task is served, then refused, never silently dropped (review 4110798521).
+        """{schema}.director_primary_effect_reservation r
+        LEFT JOIN {schema}.director_primary_effect_execution e
+          ON e.reservation_key = r.reservation_key
+        LEFT JOIN {schema}.director_primary_remote_binding b
+          ON b.reservation_key = r.reservation_key
+        LEFT JOIN {schema}.director_primary_terminal_evidence t
+          ON t.claim_key = r.claim_key
+        LEFT JOIN {schema}.director_primary_claim c
+          ON c.claim_key = r.claim_key
+        LEFT JOIN {schema}.director_primary_task_writer w
+          ON w.task_id = r.task_id""",
+        "r.task_id", "r.reserved_at, r.reservation_key"),
+    "slack_deliveries": (
+        """notification_key, projection_digest, client_msg_id, state,
+               created_at, claimed_at, acknowledged_at, delivered_at, slack_ts,
+               readback_attempts, last_error, owner_decision, owner_decision_at,
+               owner_command_id""",
+        "{schema}.director_primary_slack_delivery", "task_id", "created_at, notification_key"),
+    # Reconciliation events with their authority compared in SQL (booleans only, never the token): the claim's own
+    # owner and fence (record_reconciliation_event), or an authorized successor's, a strictly newer generation of the
+    # same task's writer (record_successor_reconciliation_event, _SUCCESSOR_RECONCILIATION_JOIN). A successor is
+    # verified against the task's current writer row: its token and a generation no newer than the writer's.
+    "reconciliation_events": (
+        """e.event_id, e.claim_key, e.state, e.evidence_digest, e.recorded_at,
+               (e.task_id = c.task_id AND (
+                   (e.owner_token = c.owner_token AND e.fencing_generation = c.fencing_generation)
+                   OR (e.fencing_generation > c.fencing_generation AND e.fencing_generation <= w.fencing_generation
+                       AND e.owner_token = w.owner_token))) IS TRUE AS authority_matches""",
+        """{schema}.director_primary_reconciliation_event e
+        LEFT JOIN {schema}.director_primary_claim c ON c.claim_key = e.claim_key
+        LEFT JOIN {schema}.director_primary_task_writer w ON w.task_id = e.task_id""",
+        "e.task_id", "e.event_id"),
+    "status_receipts": (
+        "receipt_id, source_event_id, created_at, channel_id, thread_ts, user_id, text_digest",
+        "{schema}.director_primary_slack_status_receipt", "task_id", "created_at, receipt_id"),
+    # Every spend reservation of the task, outer-joined to its usage: a reservation whose usage is not recorded yet
+    # stays visible (actual_microusd and observed_tokens null) instead of vanishing from an inner join, and an
+    # attempt with no reservation at all is found against the attempts section (validate_usage).
+    "provider_usage": (
+        """s.attempt_digest, s.provider_id, s.reserved_microusd,
+               s.token_limit, u.actual_microusd, u.observed_tokens""",
+        """{schema}.director_primary_provider_spend s
+        LEFT JOIN {schema}.director_primary_provider_usage u
+          ON u.attempt_digest = s.attempt_digest""",
+        "s.task_id", "s.attempt_digest"),
+}
+
+
+def qualification_section_sql(schema: str, name: str, *, all_tasks: bool = False) -> str:
+    """One readback section's SELECT: this task's rows (%(task_id)s), or every task's rows led by their task_id
+    and ordered by it (all_tasks), both capped at %(limit)s rows."""
+    columns, tables, task_column, order = _QUALIFICATION_SECTIONS[name]
+    tables = tables.format(schema=schema)
+    if all_tasks:
+        return (f"SELECT {task_column} AS task_id, {columns} FROM {tables} "
+                f"ORDER BY {task_column}, {order} LIMIT %(limit)s")
+    return f"SELECT {columns} FROM {tables} WHERE {task_column} = %(task_id)s ORDER BY {order} LIMIT %(limit)s"
+
+
 def _result_packet_artifact_from_row(
     row: Mapping[str, Any],
 ) -> PrimaryResultPacketArtifact:
@@ -2881,65 +2994,23 @@ class PostgresConditionalClaimStore:
                     head = cursor.fetchone()
                     if head is None:
                         return None
-                    rows(cursor, "assignments", f"""
-                        SELECT assignment_id, sequence, provider_id, deployment_id, status,
-                               reservation_digest, result_digest, reason_code, reserved_at, completed_at
-                        FROM {schema}.director_primary_parallel_assignment
+                    rows(cursor, "assignments", qualification_section_sql(schema, "assignments"))
+                    rows(cursor, "provider_attempts", qualification_section_sql(schema, "provider_attempts"))
+                    rows(cursor, "effects", qualification_section_sql(schema, "effects"))
+                    rows(cursor, "reconciliation_events",
+                         qualification_section_sql(schema, "reconciliation_events"))
+                    rows(cursor, "slack_deliveries", qualification_section_sql(schema, "slack_deliveries"))
+                    rows(cursor, "status_receipts", qualification_section_sql(schema, "status_receipts"))
+                    # The append-only claim claim_authenticated_primary_intake wrote before
+                    # the graph existed: a reader re-derives its payload and idempotency
+                    # digests from the task's intake instead of trusting the mutable
+                    # projection's intake_authentication label. Digests only; no nonce.
+                    rows(cursor, "intake_auth_claims", f"""
+                        SELECT payload_digest, idempotency_key_digest,
+                               authentication_class, created_at
+                        FROM {schema}.director_primary_intake_auth_claim
                         WHERE task_id = %(task_id)s
-                        ORDER BY sequence, assignment_id LIMIT %(limit)s
-                        """)
-                    rows(cursor, "provider_attempts", f"""
-                        SELECT a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
-                               a.event_sequence, a.provider_id, a.format_id, a.transport_id,
-                               a.idempotency_key_digest, a.attempt_digest, a.provider_run_id_digest,
-                               a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
-                               a.budget_evidence_digest, a.recorded_at
-                        FROM {schema}.director_primary_provider_attempt a
-                        JOIN {schema}.director_primary_parallel_assignment p
-                          ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id
-                        WHERE a.task_id = %(task_id)s
-                        ORDER BY p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence
-                        LIMIT %(limit)s
-                        """)
-                    rows(cursor, "effects", f"""
-                        SELECT r.reservation_key, r.claim_key, r.effect_key_digest,
-                               r.effect_attempt_digest, r.writer_owner_id, r.fencing_generation,
-                               r.reserved_units, r.reserved_at,
-                               e.started_at AS execution_started_at,
-                               b.remote_system, b.remote_identifier, b.bound_at,
-                               t.disposition AS terminal_disposition,
-                               t.evidence_digest AS terminal_evidence_digest,
-                               t.recorded_at AS terminal_recorded_at
-                        FROM {schema}.director_primary_effect_reservation r
-                        LEFT JOIN {schema}.director_primary_effect_execution e
-                          ON e.reservation_key = r.reservation_key AND e.task_id = r.task_id
-                        LEFT JOIN {schema}.director_primary_remote_binding b
-                          ON b.reservation_key = r.reservation_key AND b.task_id = r.task_id
-                        LEFT JOIN {schema}.director_primary_terminal_evidence t
-                          ON t.claim_key = r.claim_key AND t.task_id = r.task_id
-                        WHERE r.task_id = %(task_id)s
-                        ORDER BY r.reserved_at, r.reservation_key LIMIT %(limit)s
-                        """)
-                    rows(cursor, "reconciliation_events", f"""
-                        SELECT event_id, claim_key, state, evidence_digest, recorded_at
-                        FROM {schema}.director_primary_reconciliation_event
-                        WHERE task_id = %(task_id)s
-                        ORDER BY event_id LIMIT %(limit)s
-                        """)
-                    rows(cursor, "slack_deliveries", f"""
-                        SELECT notification_key, projection_digest, client_msg_id, state,
-                               created_at, claimed_at, acknowledged_at, delivered_at, slack_ts,
-                               readback_attempts, last_error, owner_decision, owner_decision_at,
-                               owner_command_id
-                        FROM {schema}.director_primary_slack_delivery
-                        WHERE task_id = %(task_id)s
-                        ORDER BY created_at, notification_key LIMIT %(limit)s
-                        """)
-                    rows(cursor, "status_receipts", f"""
-                        SELECT receipt_id, source_event_id, created_at
-                        FROM {schema}.director_primary_slack_status_receipt
-                        WHERE task_id = %(task_id)s
-                        ORDER BY created_at, receipt_id LIMIT %(limit)s
+                        ORDER BY created_at LIMIT %(limit)s
                         """)
                     # Task-and-thread-local counters for prospective status-only
                     # proof, from the same snapshot and deadline. They are not
@@ -2949,6 +3020,12 @@ class PostgresConditionalClaimStore:
                     raw_projection = head["projection"]
                     projection_value = (json.loads(raw_projection) if isinstance(raw_projection, str)
                                         else dict(raw_projection))
+                    # The projection the task record is derived from must be the content its stored digest names:
+                    # the version guard alone allows a content change that keeps the digest, so recompute it.
+                    if not hmac.compare_digest(_projection_payload(projection_value)[1].encode(),
+                                               str(head["projection_digest"]).encode()):
+                        raise PostgresControlPlaneError(
+                            "qualification readback refused: projection content does not match its stored digest")
                     intake_binding = (projection_value.get("application", {}) or {}).get("task_record", {}) or {}
                     intake_binding = intake_binding.get("intake", {}) or {}
                     cursor.execute(
@@ -2989,15 +3066,7 @@ class PostgresConditionalClaimStore:
                         absent.append("provider_usage")
                         sections["provider_usage"] = []
                     else:
-                        rows(cursor, "provider_usage", f"""
-                            SELECT u.attempt_digest, s.provider_id, s.reserved_microusd,
-                                   s.token_limit, u.actual_microusd, u.observed_tokens
-                            FROM {schema}.director_primary_provider_usage u
-                            JOIN {schema}.director_primary_provider_spend s
-                              ON s.attempt_digest = u.attempt_digest
-                            WHERE s.task_id = %(task_id)s
-                            ORDER BY u.attempt_digest LIMIT %(limit)s
-                            """)
+                        rows(cursor, "provider_usage", qualification_section_sql(schema, "provider_usage"))
         # Construction and size validation spend the same deadline; a late
         # document is refused rather than returned after the bound.
         require_deadline_remaining(deadline, "qualification readback document")
@@ -3025,7 +3094,18 @@ class PostgresConditionalClaimStore:
             "complete": not truncated,
             **sections,
         }
-        encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+        # Every served value is final before the one measurement that bounds it, and nothing served changes after
+        # the size comparison (review 4110671084). elapsed_seconds includes serialization (review 4111508060): the
+        # served encoding is timed by an identical prior encoding, and the deadline is checked again after it.
+        def finalize(document: dict[str, Any]) -> str:
+            begun = time.monotonic()
+            json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+            serialization = time.monotonic() - begun
+            document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started + serialization, 6)
+            return json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+
+        require_deadline_remaining(deadline, "qualification readback completion")
+        encoded = finalize(document)
         if len(encoded.encode("utf-8")) > byte_limit:
             document = {key: value for key, value in document.items() if key not in sections}
             document.update(
@@ -3033,8 +3113,15 @@ class PostgresConditionalClaimStore:
                 truncated=sorted({*truncated, "response_bytes"}),
                 complete=False,
             )
-        require_deadline_remaining(deadline, "qualification readback completion")
-        document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+            # Even the metadata-only document must fit the bound; otherwise the read is refused, never served
+            # over its declared limit.
+            encoded = finalize(document)
+            if len(encoded.encode("utf-8")) > byte_limit:
+                raise PostgresControlPlaneError(
+                    "qualification readback refused: its metadata alone exceeds the byte limit")
+        # A document finished after its deadline is refused, never served late.
+        require_deadline_remaining(deadline, "qualification readback serialization")
+        # The typed projection is internal to the caller (main.get_task pops it before serving), never served.
         document["projection"] = projection
         return document
 
@@ -6091,3 +6178,11 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

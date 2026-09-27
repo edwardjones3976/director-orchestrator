@@ -130,7 +130,7 @@
   "settings": {
     "executionOrder": "v1",
     "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "none",
+    "saveDataSuccessExecution": "all",
     "saveManualExecutions": false,
     "saveExecutionProgress": false
   },

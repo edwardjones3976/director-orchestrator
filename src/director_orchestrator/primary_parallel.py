@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
@@ -219,6 +220,35 @@ def authorize_provider_retry(
            for advisory in decision.advisories):
         return False, PROVIDER_RETRY_EVIDENCE_INSUFFICIENT
     return True, "provider_retry_authorized"
+
+
+def registered_plan_digest(
+    *, task_id: str, plan_digest: str, assignments: Sequence[ParallelAssignment]
+) -> str:
+    """The registered plan's identity (register_plan stores it as the batch plan_digest and the graph binds it as
+    the projection's parallel_plan_digest): the DirectorPlan document digest and every assignment's DAG identity,
+    in validate_assignment_dag's deterministic order. Shared with the scorecard's recomputation from durable rows."""
+    ordered = validate_assignment_dag(assignments)
+    return _digest(
+        {
+            "task_id": task_id,
+            "plan_digest": plan_digest,
+            "assignments": [
+                {
+                    "assignment_id": item.assignment_id,
+                    "sequence": item.sequence,
+                    "provider_id": item.provider_id,
+                    "deployment_id": item.deployment_id,
+                    "dependencies": list(item.dependencies),
+                    "write_surfaces": list(item.write_surfaces),
+                    "retry_limit": item.retry_limit,
+                    "allocation_profile": item.allocation_profile,
+                    "allocation_profile_digest": allocation_profile_digest(item.allocation_profile),
+                }
+                for item in ordered
+            ],
+        }
+    )
 
 
 class ParallelAssignmentStatus(StrEnum):
@@ -602,26 +632,7 @@ class PostgresParallelDispatch:
         if writer.task_id != task_id or writer.engine_owner != "langgraph" or not writer.lease_live:
             raise ParallelDispatchError("writer does not authorize this parallel plan")
         ordered = validate_assignment_dag(assignments)
-        plan = _digest(
-            {
-                "task_id": task_id,
-                "plan_digest": plan_digest,
-                "assignments": [
-                    {
-                        "assignment_id": item.assignment_id,
-                        "sequence": item.sequence,
-                        "provider_id": item.provider_id,
-                        "deployment_id": item.deployment_id,
-                        "dependencies": list(item.dependencies),
-                        "write_surfaces": list(item.write_surfaces),
-                        "retry_limit": item.retry_limit,
-                        "allocation_profile": item.allocation_profile,
-                        "allocation_profile_digest": allocation_profile_digest(item.allocation_profile),
-                    }
-                    for item in ordered
-                ],
-            }
-        )
+        plan = registered_plan_digest(task_id=task_id, plan_digest=plan_digest, assignments=ordered)
         schema = self._schema
         with self._pool.connection() as connection:
             with connection.transaction():
@@ -2105,3 +2116,4 @@ class PostgresParallelDispatch:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]

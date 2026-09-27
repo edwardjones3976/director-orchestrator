@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
@@ -242,12 +244,18 @@ def main():
     from .langgraph_postgres import database_binding
     from .primary_activation_evidence import ActivationIdentity
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("verify", "reserve", "compose-digest", "validate-providers", "publish-provider-evidence"))
+    parser.add_argument("command", choices=("verify", "reserve", "compose-digest", "validate-providers",
+        "publish-provider-evidence", "consistency", "activation-captures"))
     parser.add_argument("--image-id")
     parser.add_argument("--evidence-file")
+    parser.add_argument("--task", action="append", default=[])
     args = parser.parse_args()
     if bool(args.evidence_file) != (args.command == "publish-provider-evidence"):
         parser.error("--evidence-file is required only for publish-provider-evidence")
+    if args.task and args.command != "consistency":
+        parser.error("--task is accepted only by consistency")
+    if len(args.task) > 12 or any(not re.fullmatch(r"DIR-LG-[A-F0-9]{1,32}", task) for task in args.task):
+        parser.error("--task takes at most twelve exact DIR-LG task IDs")
     if args.command == "compose-digest":
         import sys
         print(resolved_deployment_digest(json.load(sys.stdin), args.image_id))
@@ -267,7 +275,15 @@ def main():
         from .primary_provider_evidence import publish_file
         print(json.dumps(publish_file(args.evidence_file, settings=settings, identity=expected), sort_keys=True))
         return
-    require_generation(settings, expected, reserve=args.command == "reserve")
+    manifest = require_generation(settings, expected, reserve=args.command == "reserve")
+    if args.command in ("consistency", "activation-captures"):
+        # Read-only scorecard evidence for the running generation; never
+        # require_runtime_off, never reserve, and nothing else on stdout.
+        from . import primary_scorecard_evidence as evidence
+        report = (evidence.consistency_report(settings, expected, tasks=tuple(args.task))
+                  if args.command == "consistency" else evidence.activation_capture_report(settings, expected, manifest))
+        print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+        return
     if args.command == "validate-providers":
         from .primary_activation_evidence import ActivationEvidenceStore, _acceptance_secrets_from_environment
         ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json",
@@ -304,3 +320,5 @@ if __name__ == "__main__":
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | END]]

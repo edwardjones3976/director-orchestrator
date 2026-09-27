@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -40,6 +41,7 @@ from urllib.parse import quote
 import httpx
 import jwt
 
+from .approvals import assignment_approval_digest
 from .interactions import (
     ProviderInteractionPhase,
     ProviderInteractionState,
@@ -55,8 +57,9 @@ from .langgraph_runtime import PacketBoundaryAdapter, ProviderAdapterContext
 from .models import Assignment, ProviderName, ProviderRun
 from .packet_contracts import canonical_json_bytes, validate_packet
 from .packet_routing import AuthoritySnapshotResolver, PacketRoutingError
-from .providers import ProviderAdapter
+from .providers import ProviderAdapter, ProviderDailySpendLedger
 from .store import TaskStore
+from .usage import authoritative_reported_cost
 
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -1075,6 +1078,7 @@ class LegacyProviderPacketTransport:
         failed = run.status in _TERMINAL_FAILURE or not run.result
         if run.status == "WAITING_CALLBACK":
             raise ValueError("provider readback is not terminal")
+        self._settle_native_metering(packet, run)
         side_effects, effect_evidence_problem = await self._authenticated_side_effects(
             packet, run
         )
@@ -1135,6 +1139,46 @@ class LegacyProviderPacketTransport:
             "revision_recommended": failed,
         }
         return validate_packet("result", result)
+
+    def _settle_native_metering(self, packet: Mapping[str, Any], run: ProviderRun) -> None:
+        """Charge the reserved dispatch from native metering before packet normalization.
+
+        Both immediate completion and authenticated readback pass here. The spend
+        ledger raises one charge per effect key; later packet settlement cannot
+        lower it or turn missing metering into a zero charge.
+        """
+        if run.provider not in ProviderDailySpendLedger._SUPPORTED:
+            return
+        record = self.task_store.get(str(packet["task_id"]))
+        if record is None:
+            raise RuntimeError("Native metering task record is unavailable")
+        assignment = next((item for item in record.plan.assignments
+                           if packet["assignment_id"] == f"{record.task_id}-{item.sequence}"
+                           and item.agent == run.provider), None) if record.plan else None
+        if assignment is None:
+            raise RuntimeError("Native metering assignment is unavailable")
+        packet_digest = hashlib.sha256(canonical_json_bytes(assignment.model_dump(mode="json"))).hexdigest()
+        failed_keys = {
+            item.effect_key for item in record.task_effect_ledger
+            if item.kind == "provider_observation" and item.outcome == "failed_pre_submit"
+        }
+        keys = {
+            item.effect_key for item in record.task_effect_ledger
+            if item.kind == "provider_intent" and item.phase == "dispatch"
+            and item.provider == run.provider
+            and item.assignment_digest == assignment_approval_digest(assignment)
+            and packet["idempotency_key"] == (
+                f"{record.task_id}:{item.plan_generation}:{item.assignment_sequence}:"
+                f"{packet_digest}"
+            )
+            and item.effect_key not in failed_keys
+        }
+        if len(keys) > 1:
+            raise RuntimeError("Native metering has conflicting dispatch intents")
+        ledger = ProviderDailySpendLedger(self.task_store.path)
+        for key in keys:
+            ledger.record_charge(provider=run.provider, effect_key=key,
+                                 actual_cost_usd=authoritative_reported_cost(run.provider, run.raw))
 
     def _result(
         self, packet: Mapping[str, Any], run: ProviderRun
@@ -1225,3 +1269,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
