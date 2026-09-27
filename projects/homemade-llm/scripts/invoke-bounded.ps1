@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
@@ -10,81 +15,169 @@
 # never derived from a caller's -HotRoot, so no choice of root can miss it.
 $GpuMarker = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'homemade-llm\gpu-poisoned.txt'
 
-# All descendants of a process (one CIM snapshot, walked breadth-first), with their creation times.
-function Get-DescendantProcess([int]$Root) {
-    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate -OperationTimeoutSec 30 -ErrorAction Stop)
-    $found = [System.Collections.Generic.List[object]]::new()
-    $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($Root)
-    while ($queue.Count) {
-        $parent = $queue.Dequeue()
-        foreach ($c in $all) { if ($c.ParentProcessId -eq $parent -and $c.ProcessId -ne $parent -and $c.ProcessId -ne $Root) { $found.Add($c); $queue.Enqueue([int]$c.ProcessId) } }
+# Each command runs in its own Windows job object. It is created suspended, put in the job, and only then resumed,
+# so it cannot start a single child outside the job; every later descendant inherits the job, even one whose parent
+# has exited. TerminateJobObject therefore reaches the whole tree, and the job's own active-process count verifies
+# the kill with no process snapshots.
+if (-not ('HomemadeLlm.JobTree' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace HomemadeLlm {
+public static class JobTree {
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicAccounting { public long TotalUserTime, TotalKernelTime, ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime; public uint TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct StartupInfo { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags; public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ProcessInformation { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct StartupInfoEx { public StartupInfo StartupInfo; public IntPtr lpAttributeList; }
+    const uint CREATE_SUSPENDED = 0x00000004;
+    const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    const int PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY = 0x00020012;
+    const int PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_DISABLE_PROCESS_TREE = 0x02;
+    const int STARTF_USESTDHANDLES = 0x00000100;
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")] public static extern uint GetConsoleCP();
+    [DllImport("kernel32.dll")] public static extern uint GetConsoleOutputCP();
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out BasicAccounting info, int length, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref StartupInfoEx si, out ProcessInformation pi);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool InitializeProcThreadAttributeList(IntPtr list, uint count, uint flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
+    [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint ms);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern int GetProcessId(IntPtr process);
+    public static IntPtr Create() { IntPtr h = CreateJobObjectW(IntPtr.Zero, null); if (h == IntPtr.Zero) throw new Win32Exception(); return h; }
+    public static void Terminate(IntPtr job) { if (!TerminateJobObject(job, 1)) throw new Win32Exception(); }
+    public static uint Active(IntPtr job) { BasicAccounting i; if (!QueryInformationJobObject(job, 1, out i, Marshal.SizeOf(typeof(BasicAccounting)), IntPtr.Zero)) throw new Win32Exception(); return i.ActiveProcesses; }
+    public static void Close(IntPtr handle) { if (handle != IntPtr.Zero) CloseHandle(handle); }
+    public static bool Wait(IntPtr process, uint ms) { return WaitForSingleObject(process, ms) == 0; }
+    public static int ExitCode(IntPtr process) { uint c; if (!GetExitCodeProcess(process, out c)) throw new Win32Exception(); return unchecked((int)c); }
+    // One argument per argv slot, quoted by the rules CommandLineToArgvW and the C runtime use to split them back.
+    public static string Quote(string arg) {
+        if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '"' }) < 0) return arg;
+        var sb = new StringBuilder("\"");
+        for (int i = 0; ; i++) {
+            int slashes = 0;
+            while (i < arg.Length && arg[i] == '\\') { slashes++; i++; }
+            if (i == arg.Length) { sb.Append('\\', slashes * 2); break; }
+            if (arg[i] == '"') { sb.Append('\\', slashes * 2 + 1).Append('"'); } else { sb.Append('\\', slashes).Append(arg[i]); }
+        }
+        return sb.Append('"').ToString();
     }
-    $found
-}
-# The snapshot members still running: same PID and exactly the same CIM creation time, so a PID that was reused
-# by an unrelated process is never mistaken for a survivor (and never force-stopped).
-function Get-SurvivingProcess($Snapshot) {
-    foreach ($s in @($Snapshot)) {
-        # -ErrorAction Stop: a failed query must not look like "no survivors" (an absent PID returns nothing, not an error).
-        $q = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$s.ProcessId)" -Property ProcessId, CreationDate -OperationTimeoutSec 30 -ErrorAction Stop
-        if ($q -and $q.CreationDate -eq $s.CreationDate) { $s }
+    // Create suspended and hand both handles back at once: the caller owns the process from its first instant, so
+    // a failure to join or resume below is cleaned up (and verified) by the caller, never hidden here.
+    public static IntPtr CreateSuspended(string commandLine, IntPtr stdIn, IntPtr stdOut, IntPtr stdErr, out IntPtr thread) {
+        var si = new StartupInfoEx(); si.StartupInfo.cb = Marshal.SizeOf(typeof(StartupInfoEx)); si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = stdIn; si.StartupInfo.hStdOutput = stdOut; si.StartupInfo.hStdError = stdErr;
+        ProcessInformation pi;
+        // Inherit even a windowless console and its code page. A fresh console would use the OEM
+        // code page, which can replace Unicode before our pipe reader ever sees it.
+        if (GetConsoleCP() == 0 && GetConsoleOutputCP() == 0) throw new InvalidOperationException("Invoke-Bounded requires an attached console to preserve child output encoding; no child was started.");
+        IntPtr size = IntPtr.Zero, policy = IntPtr.Zero;
+        bool initialized = false;
+        // The sizing call fails with ERROR_INSUFFICIENT_BUFFER (122) by design.
+        if (!InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size) && Marshal.GetLastWin32Error() != 122) throw new Win32Exception();
+        try {
+            si.lpAttributeList = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, ref size)) throw new Win32Exception();
+            initialized = true;
+            policy = Marshal.AllocHGlobal(sizeof(int));
+            Marshal.WriteInt32(policy, PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_DISABLE_PROCESS_TREE);
+            // Keep packaged descendants (Store pwsh) in the job instead of allowing Desktop Bridge breakaway.
+            if (!UpdateProcThreadAttribute(si.lpAttributeList, 0, new IntPtr(PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY), policy, new IntPtr(sizeof(int)), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+            if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
+            thread = pi.hThread;
+            return pi.hProcess;
+        } finally {
+            if (initialized) DeleteProcThreadAttributeList(si.lpAttributeList);
+            Marshal.FreeHGlobal(si.lpAttributeList);
+            Marshal.FreeHGlobal(policy);
+        }
     }
+    public static void Join(IntPtr job, IntPtr process) { if (!AssignProcessToJobObject(job, process)) throw new Win32Exception(); }
+    public static void Resume(IntPtr thread) { if (ResumeThread(thread) == 0xFFFFFFFF) throw new Win32Exception(); }
+    public static void Kill(IntPtr process) { TerminateProcess(process, 1); }   // verified by the caller's wait
+    public static int ProcessId(IntPtr process) { return GetProcessId(process); }
+}}
+'@
 }
+# Separate functions so the tests can simulate a job failure or a survivor the job still counts.
+function New-BoundedJob { [HomemadeLlm.JobTree]::Create() }
+function Get-BoundedJobActive([IntPtr]$Job) { [HomemadeLlm.JobTree]::Active($Job) }
+function Add-BoundedJobMember([IntPtr]$Job, [IntPtr]$Process) { [HomemadeLlm.JobTree]::Join($Job, $Process) }
 function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
     $path = (Get-Command $Exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-    $psi = [System.Diagnostics.ProcessStartInfo]::new($path)
-    foreach ($x in $A) { $psi.ArgumentList.Add([string]$x) }   # quoted per argument, unlike a joined string
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $completed = $false
+    $commandLine = (@($path) + @($A) | ForEach-Object { [HomemadeLlm.JobTree]::Quote([string]$_) }) -join ' '
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    # No job, no launch: a job that cannot be created throws here, before anything runs.
+    $job = New-BoundedJob
+    $h = [IntPtr]::Zero; $rootPid = 0; $completed = $false; $pipes = @()
     try {
-        $stdout = $p.StandardOutput.ReadToEndAsync()
-        $null = $p.StandardError.ReadToEndAsync()   # drained so a chatty stderr cannot block the child
-        # Wait in short slices: PowerShell.Stop() and Ctrl+C cannot interrupt one long blocking WaitForExit, but
-        # can stop the loop between slices, and finally then kills the tree.
-        $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
-        while (-not $p.WaitForExit(200)) {
+        # Inheritable anonymous pipes: stdin is closed at once (EOF), stdout is returned, stderr is drained so a
+        # chatty child cannot block on it.
+        $in = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::Out, [IO.HandleInheritability]::Inheritable)
+        $out = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, [IO.HandleInheritability]::Inheritable)
+        $err = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, [IO.HandleInheritability]::Inheritable)
+        $pipes = @($in, $out, $err)
+        # Created suspended, joined to the job, and only then resumed: no instruction runs outside the job. $h is
+        # held from creation on, so if the join or resume fails, finally still kills and verifies the process.
+        $t = [IntPtr]::Zero
+        $h = [HomemadeLlm.JobTree]::CreateSuspended($commandLine, $in.ClientSafePipeHandle.DangerousGetHandle(), $out.ClientSafePipeHandle.DangerousGetHandle(), $err.ClientSafePipeHandle.DangerousGetHandle(), [ref]$t)
+        $rootPid = [HomemadeLlm.JobTree]::ProcessId($h)
+        try { Add-BoundedJobMember $job $h; [HomemadeLlm.JobTree]::Resume($t) } finally { [HomemadeLlm.JobTree]::Close($t) }
+        foreach ($pipe in $pipes) { $pipe.DisposeLocalCopyOfClientHandle() }
+        $in.Dispose()
+        $stdout = [IO.StreamReader]::new($out, [Console]::OutputEncoding).ReadToEndAsync()
+        $stderr = [IO.StreamReader]::new($err, [Console]::OutputEncoding).ReadToEndAsync()
+        # Wait in short slices: PowerShell.Stop() and Ctrl+C cannot interrupt one long blocking wait, but can stop
+        # the loop between slices, and finally then kills the tree.
+        while (-not [HomemadeLlm.JobTree]::Wait($h, 200)) {
             if ([DateTime]::UtcNow -ge $deadline) { return @('__EXIT__timeout') }   # finally kills the tree
         }
-        $p.WaitForExit()   # also waits for the redirected streams to finish
+        # The output ends when every holder of the pipe exits; that too must finish within the deadline.
+        $left = [int][math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+        if (-not [Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), $left)) { return @('__EXIT__timeout') }
         $completed = $true
         $text = $stdout.Result.TrimEnd("`r", "`n")
         # @() matters: a single output line would otherwise be a string, and string + string concatenates.
-        @(if ($text) { $text -split "`r?`n" }) + "__EXIT__$($p.ExitCode)"
+        @(if ($text) { $text -split "`r?`n" }) + "__EXIT__$([HomemadeLlm.JobTree]::ExitCode($h))"
     } finally {
-        # Timeout, Ctrl+C or a stopped pipeline: never leave the command running after we stop waiting for it.
-        # If it cannot be confirmed dead, fail loudly: a silent 'timeout' would let callers release the GPU lock
-        # while the command (possibly a GPU container operation) is still running.
-        # HasExited covers only the root, so snapshot the whole tree before killing and verify every member is gone:
-        # a root that dies first, or a partial Kill, must not leave a descendant running unnoticed.
-        # On any path but normal completion (timeout, Ctrl+C, a stopped pipeline), snapshot the tree even if the root
-        # already exited: Windows keeps a dead parent's PID as its children's ParentProcessId, so they are still found.
-        # The kill comes first, so a stalled or failing CIM query can never delay or skip it; every CIM call is
-        # bounded (-OperationTimeoutSec) and a failed one means "not confirmed", which throws (fail closed).
-        # Children orphaned by the killed root keep its PID as ParentProcessId, so discovery still finds them.
-        $tree = @(); $unverified = $false
-        if (-not $completed) {
-            if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
-            try { $tree = @(Get-DescendantProcess $p.Id) } catch { $unverified = $true }
+        # Timeout, Ctrl+C or a stopped pipeline: never leave the command running after we stop waiting for it, and
+        # if its tree cannot be confirmed dead, fail loudly: a silent 'timeout' would let callers release the GPU
+        # lock while the command (possibly a GPU container operation) is still running.
+        $unverified = $false
+        if (-not $completed -and $h -ne [IntPtr]::Zero) {
+            try {
+                [HomemadeLlm.JobTree]::Terminate($job)
+                $until = [DateTime]::UtcNow.AddSeconds(10)   # one deadline for the whole tree
+                # Thread.Sleep, not Start-Sleep: in a stopping pipeline (Ctrl+C, PowerShell.Stop()) Start-Sleep throws,
+                # which would misreport a confirmed kill as unconfirmed.
+                while ((Get-BoundedJobActive $job) -gt 0 -and [DateTime]::UtcNow -lt $until) { [Threading.Thread]::Sleep(100) }
+                if ((Get-BoundedJobActive $job) -gt 0) { $unverified = $true }
+            } catch { $unverified = $true }
+            # The root itself may be outside the job (a failed join leaves it suspended there): kill it directly too.
+            # The wait below confirms it is gone.
+            [HomemadeLlm.JobTree]::Kill($h)
         }
-        $gone = $p.HasExited -or $p.WaitForExit(5000)
-        $id = $p.Id
-        $p.Dispose()
-        $survivors = @()
-        try {
-            $survivors = @(Get-SurvivingProcess $tree)
-            foreach ($s in $survivors) {
-                # Bind a handle first (SafeHandle opens and caches it), then check the start time and kill through that
-                # same handle: an open handle pins the process, so its PID cannot be reused in between.
-                $h = Get-Process -Id $s.ProcessId -ErrorAction SilentlyContinue
-                if ($h) { try { $null = $h.SafeHandle; if ([math]::Abs(($h.StartTime - $s.CreationDate).TotalMilliseconds) -lt 1) { $h.Kill() } } catch { } finally { $h.Dispose() } }
-            }
-            if ($survivors) { Start-Sleep -Seconds 2; $survivors = @(Get-SurvivingProcess $survivors) }
-        } catch { $unverified = $true }
-        if (-not $gone -or $survivors -or $unverified) {
-            $msg = "Invoke-Bounded: $Exe (pid $id) or a child process could not be confirmed stopped and may still be running"
+        $gone = ($h -eq [IntPtr]::Zero) -or [HomemadeLlm.JobTree]::Wait($h, 5000)
+        # No kill-on-close: a deliberately detached child survives normal completion only after closing
+        # inherited output pipes. A pipe holder remains part of the bounded command: at the deadline
+        # the job is terminated and verified above, even when the root has already exited.
+        [HomemadeLlm.JobTree]::Close($h); [HomemadeLlm.JobTree]::Close($job)
+        foreach ($pipe in $pipes) { $pipe.Dispose() }
+        if (-not $gone -or $unverified) {
+            $msg = "Invoke-Bounded: $Exe (pid $rootPid) or a child process could not be confirmed stopped and may still be running"
             # Persist the machine-wide GPU guard before any caller can unwind and release the mutex: every caller is
             # covered, not just the container path. If even that fails, flag it so callers keep the lock instead.
             $script:BoundedUnconfirmed = $true
@@ -104,3 +197,8 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:48 UTC | END]]

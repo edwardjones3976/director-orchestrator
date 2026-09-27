@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
@@ -490,6 +491,18 @@ process.stdout.write(JSON.stringify({outputs, store}));
         )
 
         self.assertIn("pull_request:", workflow)
+        self.assertEqual(
+            workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0].strip(),
+            "pull_request:\n  push:\n    branches:\n      - main",
+        )
+        self.assertIn(
+            "group: ci-${{ github.event.pull_request.number || github.run_id }}",
+            workflow,
+        )
+        self.assertIn(
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            workflow,
+        )
         self.assertIn("ubuntu-latest", workflow)
         self.assertIn("windows-latest", workflow)
         self.assertIn("python -m unittest discover -s tests -v", workflow)
@@ -640,3 +653,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
