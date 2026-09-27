@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
@@ -154,7 +155,7 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Non-author review of Director PRs; for #293, one exact-head/base full-diff review capped USD 0.30 after local consistency check. Cursor separately performs its own thorough review and eligible guarded merge after all gates, including six CI checks (O-040)."
+        - "Non-author review of Director PRs; for #293, an authenticated exact-head/base full-diff ACCEPT remains required after local consistency check. The prior timed-out attempt at 57b90d2 was not a verdict. Cursor separately performs its own thorough review and eligible guarded merge after all gates, including six CI checks (O-040)."
       forbidden_authority:
         - "training-data generation (xAI terms: grading only)"
         - "merge"
@@ -163,7 +164,7 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Fallback non-author reviewer only for candidates without Codex contributions; ineligible to review #293 as a material author"
+        - "Fallback non-author reviewer only where independent; Codex assisted #293 and is not its reviewer of record"
       forbidden_authority:
         - "merge"
     - id: "research-perplexity"
@@ -222,8 +223,8 @@ controls:
 
 review_chain:
   producer: "claude"
-  material_authors: ["claude", "openai codex"]
-  eligible_reviewer: "Grok (xAI) supplies the bounded independent full-diff review. Cursor must perform its own thorough current-head/base review and is the eligible merger after all gates. Neither material contributor, Claude or OpenAI Codex, may review or merge #293."
+  material_authors: ["claude"]
+  eligible_reviewer: "Grok (xAI) supplies the bounded independent full-diff review. Cursor must perform its own thorough current-head/base review and is the eligible merger after all gates. Claude is sole author; Codex assisted and is not independent for #293. Neither may review or merge it."
   candidate:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
@@ -266,9 +267,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "M0 closed under O-031; #293 record reconciliation remains pending. D-018 is ratified under O-037; D-019 to D-022 are documented exceptions under O-040/O-041, retaining historical crossings and spend. Set B batch 1 has an authenticated ACCEPT for all 25 frozen items (xai/20260926T225645Z-268799-d4c6.json, response 473bbadc-7d1a-93af-9b73-6299017e9b97, file SHA-256 101c5f2d59b4b94ad0d9f581fc51793af0a07a35123a265cba1394c16d53c663, sent-payload SHA-256 b248ce563e9e9c0e5e820080baa6ecdf22c415ac05e3989525c37c290efa81bb, USD 0.15078); batch 2 has a separate ACCEPT. The original pr-45 constraint omission is retained as a known MINOR reference imperfection and must be disclosed with Set B results. Set B scoring still requires the M1 pipeline gates. #293 still requires this bounded record correction, a local cross-file check, one independent exact-head/base full-diff Grok review capped at USD 0.30 under Ed's 2026-09-27 approval, all six current-head CI checks, and Cursor's own eligible exact-head review and merge. Claude and Codex contributed and cannot review or merge. The M1 plan is approved under O-038 but still unmerged in PR #294; this M0 record grants no dispatch authority."
+  action: "M0 closed under O-031; #293 record reconciliation remains pending. D-018 is ratified under O-037; D-019 to D-022 are documented historical exceptions under O-040/O-041, retaining crossings and spend; O-043 governs current #293 authorship. Set B batch 1 has an authenticated ACCEPT for all 25 frozen items (xai/20260926T225645Z-268799-d4c6.json, response 473bbadc-7d1a-93af-9b73-6299017e9b97, file SHA-256 101c5f2d59b4b94ad0d9f581fc51793af0a07a35123a265cba1394c16d53c663, sent-payload SHA-256 b248ce563e9e9c0e5e820080baa6ecdf22c415ac05e3989525c37c290efa81bb, USD 0.15078); batch 2 has a separate ACCEPT. The original pr-45 constraint omission is retained as a known MINOR reference imperfection and must be disclosed with Set B results. Set B scoring still requires the M1 pipeline gates. #293 requires a local cross-file check, authenticated independent Grok and Cursor ACCEPTs on the current head/base, all six current-head CI checks, and Cursor's eligible guarded merge. The Grok attempt at 57b90d2 timed out without response ID, usage, or verdict (xai/20260927T013948Z-066570-564b.json); do not replay it while ambiguous. Claude authored and Codex assisted; neither may review or merge #293. The M1 plan is approved under O-038 but still unmerged in PR #294; this M0 record grants no dispatch authority."
   responsible_party: "Codex Director maintains this record and coordinates review and CI. Grok supplies the authorized independent full-diff review; Cursor, with no counted contribution, supplies its own thorough current-head review and performs the merge only after all gates. Claude and Codex may not review or merge #293."
-  expected_evidence: "Authenticated Set B batch-1 receipt xai/20260926T225645Z-268799-d4c6.json and separate batch-2 ACCEPT; disclosed pr-45 caveat; local cross-file consistency check; one independent full-diff Grok review capped at USD 0.30; Cursor exact-head/base review; six CI successes on that head; conflict-free non-draft PR and guarded eligible merge. This record is not merge clearance."
+  expected_evidence: "Authenticated Set B batch-1 receipt xai/20260926T225645Z-268799-d4c6.json and separate batch-2 ACCEPT; disclosed pr-45 caveat; local cross-file consistency check; authenticated independent full-diff Grok ACCEPT at current head/base; Cursor exact-head/base review; six CI successes on that head; conflict-free non-draft PR and guarded eligible merge. This record is not merge clearance."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
@@ -286,3 +287,4 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | END]]

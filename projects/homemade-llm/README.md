@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
@@ -102,9 +103,10 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    fixes, provider plumbing) goes to Codex under the charter's
    [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
    `dispatch.py codex` is the usual route from this project.
-   Maintenance routing does not determine material authorship. PR #284's
-   proposed 52% rule is not in force until it merges; O-041 records PR #293's
-   one-time mixed-authorship exception, with Claude principal and Codex material.
+   Under the later owner ruling O-043, Codex's owner-directed maintenance on
+   PR #293 is assistance and Claude is its sole author. O-041 remains the
+   historical exception before that ruling. PR #284's repository-wide 52%
+   rule is still proposed until it merges.
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -144,3 +146,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:13 UTC | END]] -->
