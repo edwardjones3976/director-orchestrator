@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
@@ -114,16 +115,96 @@ effect or use `/dispatch-reconciliation` for a legacy probe without one.
 ### Collector containment (2026-09-27)
 
 The trusted collector is not available yet. Live collection finishes checks
-**03, 06, 07, 08, 09, 10, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
+**01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20** as **UNKNOWN**, with the reason
 "collector not yet trusted" and a source naming the trusted-collection follow-up.
 It supplies no consistency or activation-capture report and never executes
 candidate Python through docker exec. Health, Slack, later observations and
-final collection merging cannot promote these eleven checks to PASS. Checks 03,
+final collection merging cannot promote these sixteen checks to PASS. Checks 03,
 06, 09 and 10 retain Slack-side collection. Candidate drill readbacks from
 `/v1/slack-thread-bindings`, `/v1/tasks` and `/deliveries` cannot prove
 reserved-5xx, duplicate-input or ambiguous-post outcomes. Candidate `/v1/tasks` readback cannot
 establish trusted checkpoint timing, provider attempts, assignment outcomes or
 zero-call offline execution. Trusted collection moves to #313 / PR #327.
+
+### All twenty collector inputs: trust audit
+
+`COLLECTOR_INPUTS` in `completion_scorecard.py` records this classification and
+derives `_CONTAINED_RUNTIME`; the capture and candidate containment groups remain
+separate. Report limitations use those same groups. The classification test checks
+all twenty entries, the documented containment column and live suppression even
+when collectors return PASS. Rule-path fixture tests remain separate from live
+trust tests; a correct predicate over candidate assertions is not trusted evidence.
+
+**T** means owner-controlled configuration/descriptor, Docker daemon facts,
+GitHub or Slack API facts, or the pinned evaluator's computation over trusted
+store transport. **C** means candidate-controlled HTTP, code, files or reports.
+Authenticated HTTP and a Git blob hash establish transport/bytes, not independent
+authority. Every row below includes transitive prerequisites, not just the final
+predicate. Shared inputs are expanded here once:
+
+- **Deployment (T):** explicit deployment/gateway/channel/owner selections;
+  Docker Compose and full running inventories, image/commit/tree labels,
+  environment comparisons in memory, ports, networks/aliases, launch signatures,
+  creation/start/running state of Director, primary database, gateway, n8n and
+  n8n database, and final deployment reinspection. No configuration values are
+  reproduced here.
+- **Health prerequisite (C):** `_runtime` reads Director `/health`, validates its
+  environment and primary-object shape, then constructs the runtime required by
+  every deployment collector, including 02, 04 and 17. A malformed or unavailable
+  candidate response prevents their PASS even when their final predicate uses T.
+- **Route (T/C):** Docker route/credential/store bindings and the active intake
+  workflow/version/timestamps/nodes/connections/settings/pin data read by fixed
+  SQL from deployment-owned n8n-db (**T**); the candidate's
+  `n8n/workflows/director-intake.json` used as the comparison contract (**C**).
+  These database commands execute `psql` in the separate database service, not
+  candidate Python in the Director image.
+- **Slack (T):** owner configuration, `auth.test`, complete `conversations.replies`
+  pages and their message identities, timestamps, text, blocks and edit metadata.
+- **Task (C):** Director `/v1/tasks/{id}` body, headers and qualification readback
+  (task/intake, projections, checkpoints, assignments, attempts, effects, usage,
+  results and delivery rows), plus `/v1/primary/tasks/{id}/deliveries`.
+- **Renderer (C):** candidate renderer blobs; the evaluator compares their bytes
+  to its pinned renderer before local rendering. This equality does not
+  authenticate the candidate-supplied application record being rendered.
+- **Consistency (C, disabled):** former in-image consistency report: generation,
+  fence, counts, adoption, approval authorizations/receipts/bindings, result
+  artifacts, budgets, spend and verified-meter claims. Live collection now passes
+  `None`; only direct rule fixtures supply this report.
+- **Captures (C, disabled):** former in-image activation report: generation and
+  provider binding digests, required lanes, products, app/runtime-adapter surfaces,
+  verification/chain flags and observation/recording/expiry times. Live input is
+  `None`; these assertions require an independent collector before promotion.
+
+| Check | Inputs (including shared inputs above) | T/C | Contained? |
+| --- | --- | --- | --- |
+| 01 | Deployment; health prerequisite; route; n8n upstream GET `/health` environment | T: deployment, route store. C: health, candidate workflow, upstream HTTP | Yes |
+| 02 | Deployment; health prerequisite; Windows `Win32_Process` known gateway inventory | T: daemon and host inventory. C: shared health prerequisite | Yes |
+| 03 | Deployment; health prerequisite; route; Slack; task; `/v1/slack-thread-bindings` status/body for rejection and ambiguity drills | T: deployment, route store, Slack. C: health, workflow, task, thread binding | Yes |
+| 04 | Deployment; health prerequisite; Slack; bound n8n-db active status workflow/version, latest and posting executions, saved Slack response and credential update time; candidate `director-status.json` | T: deployment, n8n store, Slack. C: health prerequisite and candidate workflow contract | Yes |
+| 05 | Deployment; health prerequisite; `/health` intake owner, legacy disablement, writer lease readiness and fencing generation | T: deployment. C: health ownership assertions | Yes |
+| 06 | Deployment; health prerequisite; route; Slack; task; renderer; consistency approval/checkpoint/resume evidence | T: deployment, route store, Slack. C: health, workflow, task, renderer, consistency | Yes |
+| 07 | Deployment; health prerequisite; `/health` holds, ambiguous counts and fence; consistency generation/counts | T: deployment. C: health and consistency | Yes |
+| 08 | Deployment; health prerequisite; route; Slack; task; renderer; consistency approval authorizations, command receipts, application and effect bindings | T: deployment, route store, Slack. C: health, workflow, task, renderer, consistency | Yes |
+| 09 | Deployment; health prerequisite; route; Slack; task; renderer; `/v1/slack-thread-bindings` for duplicate/ambiguous-post drills | T: deployment, route store, Slack. C: health, workflow, task, renderer, binding | Yes |
+| 10 | Deployment; health prerequisite; route; Slack and `conversations.history`; task; renderer; owner structural rubric and digest | T: deployment, route store, Slack, rubric. C: health, workflow, task, renderer | Yes |
+| 11 | Deployment; health prerequisite; Slack; paid task and renderer; captures including products/transports and attempt-time validity | T: deployment, Slack. C: health, task, renderer, captures | Yes |
+| 12 | Deployment; health prerequisite; `/health` activation readiness; captures and chain expiry | T: deployment. C: health and captures | Yes |
+| 13 | Owner-controlled assignment journal, policy/cutover and twenty admissions; pinned ledger recomputation of integrity, completeness and reported usage bounds | T: independent local journal read and evaluator computation; operator attestations remain labelled | No |
+| 14 | Same journal/window; declared timeout/call/turn/output/USD bounds, cap attestation, evidence reference and digest | T: independent local journal read and evaluator computation; cap signatures are not claimed verified | No |
+| 15 | Deployment; health prerequisite; Slack; paid task and renderer; `/health` usage-monitor readiness, day, providers, counts, budgets and exposure; consistency signed-budget and spend/meter claims | T: deployment, Slack. C: health accounting, task, renderer, consistency | Yes |
+| 16 | GitHub exact-head runs/jobs/executed steps and workflow blobs; owner workflow hash or evaluator revision; fallback owner-signed replica, installed signer key, lane counts/failures/command digests and GitHub ancestry | T: GitHub facts and workflow equality to owner authority, owner-authenticated replica | No |
+| 17 | Deployment; health prerequisite; consistency generation/adoption repository, reviewed commit/tree, author/reviewer identities and acceptance mode | T: deployment. C: health prerequisite and disabled adoption report | Yes |
+| 18 | Owner native Security index and sealed manifest, canonical coverage/findings and preserved-source hashes; descriptor security base, optional CLI equality, GitHub ancestry and evaluator git changed-path computation | T: owner-controlled scan store/descriptor, GitHub and pinned computation; CLI alone grants no authority | No |
+| 19 | Deployment; health prerequisite; `/health` paid switch, primary runtime, effect executor, reconciliation worker and combined provider readiness | T: deployment. C: health activation assertions | Yes |
+| 20 | Deployment; health prerequisite; route; Slack; paid task; renderer; owner predeclared answer rubric/digest; consistency artifacts and settled request-correlated meter claims | T: deployment, route store, Slack, rubric. C: health, workflow, task, renderer, consistency | Yes |
+
+**Newly contained for #313 / PR #327: 01, 02, 04, 05 and 19.** In particular,
+02 and 04 require removal of the shared candidate-health prerequisite before
+their otherwise independent evidence can pass. The full contained set is
+01–12, 15, 17, 19 and 20. Checks 13/14 assume the selected journal is maintained
+outside candidate control; they prove consistency of reported admissions, not
+external usage authenticity. The native Security store and installed owner keys
+likewise belong outside candidate control. No newly trusted collector is added.
 
 The planned trusted-collection follow-up will run independently pinned collector
 code outside the candidate image, use independently enforced read-only data
@@ -418,10 +499,12 @@ a container ID, never a name.
   partial read.
 - 18: the native Security index for `--security-scan`. The sealed scan's base
   must equal the pinned reviewed base: the owner release descriptor's
-  `security_base_sha` (the check-11 descriptor shape), else `--security-base`.
+  `security_base_sha` (the check-11 descriptor shape). An optional `--security-base`
+  must match that value exactly; it cannot supply authority when the descriptor
+  omits the base. A missing descriptor base or differing CLI base is UNKNOWN,
+  "security base not owner-authenticated".
   The pin must be a strict ancestor of the candidate (GitHub compare, GET only)
-  and the `base..candidate` diff non-empty; no pin is UNKNOWN, "security base
-  not pinned". The merge base is not used: it moves with the candidate (once
+  and the `base..candidate` diff non-empty. The merge base is not used: it moves with the candidate (once
   the candidate is on `main` it is the candidate itself and the diff would be
   empty). The completion plan pins the release acceptance scan to the
   cumulative diff from `5394e64`. Check 16's replica base test (a `main`
@@ -1192,7 +1275,8 @@ and requires the pin to be an ancestor of the candidate. The CLI runs
 `untrusted_checkout` again after the collection, so a descriptor rotated to
 another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
 The report limitations derive the contained check IDs from the same tuples
-used to suppress their collector results: 03, 06, 07, 08, 09, 10, 11, 12, 15, 17 and 20,
+used to suppress their collector results, derived from the input classification:
+01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20,
 pending the trusted-collection follow-up in #313 / PR #327.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
@@ -1541,3 +1625,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]] -->

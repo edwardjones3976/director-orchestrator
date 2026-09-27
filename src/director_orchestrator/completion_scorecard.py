@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
@@ -1179,9 +1180,61 @@ _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writ
                     "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
 _CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
 _CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
-_CONTAINED_RUNTIME = ("03", "06", "07", "08", "09", "10", "15", "20")
+# Input trust is transitive, including prerequisites shared by collectors. T is
+# owner configuration, independent transport/store facts or pinned computation;
+# C is candidate-controlled data, even when fetched over authenticated transport.
+# Keep the expanded audit in docs/twenty-check-completion-scorecard.md in sync.
+_DEPLOYMENT_INPUTS = (
+    ("owner selections; Docker inventory, configuration, networks and lifecycle", "T"),
+    ("Director /health prerequisite (environment and primary object)", "C"),
+)
+_ROUTE_INPUTS = (
+    ("n8n active intake workflow via its bound database", "T"),
+    ("candidate n8n/workflows/director-intake.json", "C"),
+)
+_SLACK_INPUTS = (("Slack auth.test, conversations.replies and owner configuration", "T"),)
+_TASK_INPUTS = (("Director /v1/tasks readback and /v1/primary/tasks/*/deliveries", "C"),)
+_RENDER_INPUTS = (("candidate renderer blobs compared with pinned evaluator renderer", "C"),)
+_CONSISTENCY_INPUTS = (("in-image consistency report (disabled; live input is None)", "C"),)
+_CAPTURE_INPUTS = (("in-image activation captures (disabled; live input is None)", "C"),)
+COLLECTOR_INPUTS = {
+    "01": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + (("n8n upstream GET /health", "C"),),
+    "02": _DEPLOYMENT_INPUTS + (("Windows Win32_Process gateway inventory", "T"),),
+    "03": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + (
+        ("Director /v1/slack-thread-bindings", "C"),),
+    "04": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + (
+        ("n8n active status workflow, executions and credential update time via bound database", "T"),
+        ("candidate n8n/workflows/director-status.json", "C"),),
+    "05": _DEPLOYMENT_INPUTS + (("/health intake owner, legacy disablement, writer lease and fence", "C"),),
+    "06": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
+    "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
+    "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
+    "09": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
+        ("Director /v1/slack-thread-bindings", "C"),),
+    "10": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
+        ("owner structural rubric and Slack conversations.history", "T"),),
+    "11": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CAPTURE_INPUTS,
+    "12": _DEPLOYMENT_INPUTS + _CAPTURE_INPUTS + (("/health provider activation readiness", "C"),),
+    "13": (("owner-controlled assignment journal; pinned ledger recomputation of reported usage", "T"),),
+    "14": (("owner-controlled assignment journal; pinned recomputation of declared bounds and cap attestations", "T"),),
+    "15": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS + (
+        ("/health usage_monitor readiness, accounting day, provider counts, caps and exposure", "C"),),
+    "16": (("GitHub exact-head runs, jobs, steps, workflow blobs and ancestry", "T"),
+           ("owner release descriptor or pinned evaluator workflow; owner-signed replica and installed key", "T")),
+    "17": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS,
+    "18": (("owner-controlled native Security index, seal, manifest, artifacts and preserved-source hashes", "T"),
+           ("owner release descriptor security base; CLI base equality; GitHub ancestry; pinned git diff", "T")),
+    "19": _DEPLOYMENT_INPUTS + (("/health paid switch, runtime, executor, reconciliation and provider readiness", "C"),),
+    "20": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS + (
+        ("owner predeclared paid-answer rubric", "T"),),
+}
 _CONTAINED_CAPTURES = ("11", "12")
 _CONTAINED_CANDIDATE = ("17",)
+_CONTAINED_RUNTIME = tuple(
+    key for key, inputs in COLLECTOR_INPUTS.items()
+    if any(trust == "C" for _, trust in inputs)
+    and key not in _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE
+)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -2650,7 +2703,8 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                 *[_observation(key, None, "collector not yet trusted",
                                _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
                                {}, at, candidate_sha=candidate_sha if key == "17" else None)
-                  for key in (*_CONTAINED_RUNTIME, *_CONTAINED_CAPTURES, *_CONTAINED_CANDIDATE)]], None
+                  for key in (*_CONTAINED_RUNTIME, *_CONTAINED_CAPTURES, *_CONTAINED_CANDIDATE)
+                  if key != "19"]], None
     try:  # the containers as the deployment probe saw them, re-inspected before the final cutoff
         state: tuple | None = _deployment_state(project, gateway)
         if not any(row[:2] == (runtime.container_id, runtime.image_id) for row in state):
@@ -2866,12 +2920,11 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime, securi
         raise ValueError("canonical evidence belongs to another scan")
     # The reviewed base is pinned (review 4111174707): once the candidate is on main (the trusted-checkout rule), its
     # merge base is itself and a base..candidate diff would be empty. The owner's release descriptor names it
-    # (security_base_sha), else the operator's --security-base; it must be a strict ancestor of the candidate and the
-    # scan's recorded base. A convenient base could otherwise drop the candidate's own changes from the diff.
-    pinned = security_base_pin(cli_release_descriptor()) or security_base
-    if pinned is None:
-        return _observation("18", None, "security base not pinned: neither the release descriptor's security_base_sha "
-                            "nor --security-base names the reviewed base.", str(root / "scan-manifest.json"),
+    # (security_base_sha); a CLI value may only repeat it. An arbitrary strict ancestor can omit reviewed changes.
+    pinned = security_base_pin(cli_release_descriptor())
+    if pinned is None or (security_base is not None and security_base != pinned):
+        return _observation("18", None, "security base not owner-authenticated: the release descriptor must name "
+                            "security_base_sha and any --security-base must match it exactly.", str(root / "scan-manifest.json"),
                             {"scan_id": scan_id, "scan_base": base}, at, candidate_sha=candidate_sha)
     _sha(pinned)
     if base != pinned or _compare_status(pinned, candidate_sha) != "ahead":
@@ -3697,3 +3750,4 @@ def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) ->
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | BEGIN]]
@@ -709,7 +710,8 @@ class World:
                 patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "_http_client", client), \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack), \
                 patch.object(sc, "_CONTAINED_RUNTIME", tuple(
-                    key for key in sc._CONTAINED_RUNTIME if not evaluate_rules or key not in ("03", "09"))):
+                    key for key in sc._CONTAINED_RUNTIME
+                    if not evaluate_rules or key not in ("01", "02", "03", "04", "05", "09", "19"))):
             observations = sc.collect(SHA, now=self.now, until=self.until, **selected)
             if evaluate_rules and runtime_seen:
                 observations = self.evaluate_rules(runtime_seen[0], selected, observations)
@@ -1244,19 +1246,20 @@ class ScorecardGitTrustTests(unittest.TestCase):
             receipt_path.parent.mkdir()
             receipt = {"attestation": fields, "tree": str(sc._REPO_ROOT), "report_sha256": None}
             receipt_path.write_text(json.dumps(receipt))
-            report = sc.score(SHA, runtime_observations(), now=NOW)
+            report = sc.score(SHA, runtime_observations(evaluate_rules=True), now=NOW)
             self.assertIs(report["attested"], True)
             self.assertEqual(report["passed"], 2)
             self.assertEqual(report["percent"], 10)
             self.assertFalse(sc.report_is_attested(report))  # not finalized by launcher
             limitations = " ".join(report["limitations"])
-            self.assertIn("03, 06, 07, 08, 09, 10, 11, 12, 15, 17, 20", limitations)
+            self.assertIn(", ".join(sorted(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE)),
+                          limitations)
             self.assertIn("#313 / PR #327", limitations)
             for key in ("evaluator_sha", "launcher_sha256", "nonce", "tree_id"):
                 with self.subTest(field=key):
                     changed = {**receipt, "attestation": {**fields, key: "tampered"}}
                     receipt_path.write_text(json.dumps(changed))
-                    report = sc.score(SHA, runtime_observations(), now=NOW)
+                    report = sc.score(SHA, runtime_observations(evaluate_rules=True), now=NOW)
                     self.assertIs(report["attested"], False)
                     self.assertEqual(report["passed"], "UNATTESTED")
                     self.assertTrue(sc.render_markdown(report).startswith(self.launcher.UNATTESTED))
@@ -1290,9 +1293,9 @@ class CompletionScorecardTests(unittest.TestCase):
         # Release 879 reported these exact zeros while authoritative plan digests conflicted.
         payload = health()
         payload["langgraph_primary"]["reconciliation_worker_ready"] = False
-        report = sc.score(SHA, runtime_observations(payload), now=NOW)
+        report = sc.score(SHA, runtime_observations(payload, evaluate_rules=True), now=NOW)
         self.assertEqual(report["checks"][6]["status"], "UNKNOWN")
-        self.assertEqual(report["checks"][6]["explanation"], "collector not yet trusted")
+        self.assertIn("health hold counters", report["checks"][6]["explanation"])
         self.assertEqual(report["checks"][18]["status"], "FAIL")
         self.assertIn("trusted-collection follow-up", json.dumps(report["limitations"]))
 
@@ -1362,8 +1365,8 @@ class CompletionScorecardTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sc.collect(SHA, now=NOW, gateway=bad)
 
-    def test_live_without_gateway_leaves_topology_unknown_and_named(self):
-        report = sc.score(SHA, runtime_observations(), now=NOW)
+    def test_rule_without_gateway_leaves_topology_unknown_and_named(self):
+        report = sc.score(SHA, runtime_observations(evaluate_rules=True), now=NOW)
         self.assertEqual([row["status"] for row in report["checks"][:2]], ["UNKNOWN", "UNKNOWN"])
         self.assertIn("--gateway", report["checks"][0]["explanation"])
 
@@ -1437,21 +1440,28 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_native_security_recomputes_indexed_hashes_and_exact_file_coverage(self):
         with tempfile.TemporaryDirectory() as folder:
             scan_id, index, root = native_security_fixture(folder)
+            descriptor = {"version": "director-cli-release-descriptor/v1", "releases": [], "security_base_sha": OTHER}
             with patch.object(sc, "_native_security_index", return_value=index), patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
-                    patch.object(sc, "_compare_status", return_value="ahead"):
+                    patch.object(sc, "_compare_status", return_value="ahead"), \
+                    patch.object(sc, "cli_release_descriptor", return_value=descriptor):
                 observation = sc._security_observation(scan_id, SHA, NOW, OTHER)
                 self.assertEqual(sc.score(SHA, [observation], now=NOW)["checks"][17]["status"], "PASS")
-                # Review 4111174707: the reviewed base is pinned (the descriptor's security_base_sha, else
-                # --security-base), never the merge base (the candidate itself once it is on main).
+                # A CLI base only repeats owner authority; ancestry alone cannot authenticate it.
                 moved = sc._security_observation(scan_id, SHA, NOW, "c" * 40)  # the scan's base is not the pin
                 self.assertEqual(sc.score(SHA, [moved], now=NOW)["checks"][17]["status"], "UNKNOWN")
-                unpinned = sc._security_observation(scan_id, SHA, NOW)
-                self.assertEqual(sc.score(SHA, [unpinned], now=NOW)["checks"][17]["status"], "UNKNOWN")
-                self.assertIn("security base not pinned", unpinned.explanation)
-                descriptor = {"version": "director-cli-release-descriptor/v1", "releases": [], "security_base_sha": OTHER}
-                with patch.object(sc, "cli_release_descriptor", return_value=descriptor):
-                    pinned = sc._security_observation(scan_id, SHA, NOW)
+                self.assertIn("security base not owner-authenticated", moved.explanation)
+                for cli_base in (None, OTHER):
+                    with self.subTest(cli_base=cli_base), patch.object(sc, "cli_release_descriptor", return_value={
+                            "version": "director-cli-release-descriptor/v1", "releases": []}):
+                        unpinned = sc._security_observation(scan_id, SHA, NOW, cli_base)
+                        self.assertIsNone(unpinned.passed)
+                        self.assertIn("security base not owner-authenticated", unpinned.explanation)
+                pinned = sc._security_observation(scan_id, SHA, NOW)
                 self.assertEqual(sc.score(SHA, [pinned], now=NOW)["checks"][17]["status"], "PASS")
+                with patch.object(sc, "cli_release_descriptor", return_value={**descriptor, "security_base_sha": "c" * 40}):
+                    wrong_scan_base = sc._security_observation(scan_id, SHA, NOW)
+                self.assertIsNone(wrong_scan_base.passed)
+                self.assertIn("not the pinned reviewed base", wrong_scan_base.explanation)
                 with patch.object(sc, "_compare_status", return_value="identical"):  # not a strict ancestor
                     same = sc._security_observation(scan_id, SHA, NOW, OTHER)
                 self.assertEqual(sc.score(SHA, [same], now=NOW)["checks"][17]["status"], "UNKNOWN")
@@ -1501,7 +1511,9 @@ class CompletionScorecardTests(unittest.TestCase):
             scan_id, index, _ = native_security_fixture(folder)
             with patch.object(sc, "_native_security_index", return_value=index), \
                     patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0src/unreviewed.py\0"), \
-                    patch.object(sc, "_compare_status", return_value="ahead"):
+                    patch.object(sc, "_compare_status", return_value="ahead"), \
+                    patch.object(sc, "cli_release_descriptor", return_value={
+                        "version": "director-cli-release-descriptor/v1", "releases": [], "security_base_sha": OTHER}):
                 observation = sc._security_observation(scan_id, SHA, NOW, OTHER)
                 self.assertEqual(sc.score(SHA, [observation], now=NOW)["checks"][17]["status"], "FAIL")
 
@@ -1523,8 +1535,8 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(report["reference_files"][0]["status"], "UNVERIFIED_REFERENCE")
             self.assertEqual(len(report["reference_files"][0]["sha256"]), 64)
 
-    def test_runtime_collection_grades_observed_fields_and_keeps_capture_unknown(self):
-        report = sc.score(SHA, runtime_observations(), now=NOW, runtime_sha=SHA, image_id=IMAGE)
+    def test_runtime_rules_grade_observed_fields_and_keep_capture_unknown(self):
+        report = sc.score(SHA, runtime_observations(evaluate_rules=True), now=NOW, runtime_sha=SHA, image_id=IMAGE)
         self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 2)
         self.assertEqual(report["percent"], "UNATTESTED")
         self.assertEqual(report["checks"][11]["status"], "UNKNOWN")
@@ -1541,11 +1553,11 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_missing_runtime_field_is_unknown(self):
         payload = health()
         del payload["langgraph_primary"]["effect_executor_ready"]
-        report = sc.score(SHA, runtime_observations(payload), now=NOW)
+        report = sc.score(SHA, runtime_observations(payload, evaluate_rules=True), now=NOW)
         self.assertEqual(report["checks"][18]["status"], "UNKNOWN")
 
     def test_stale_future_and_excessive_expiry_never_pass(self):
-        observation = runtime_observations()[0]
+        observation = runtime_observations(evaluate_rules=True)[0]
         cases = [dataclasses.replace(observation, expires_at=NOW),
                  dataclasses.replace(observation, observed_at=NOW + timedelta(seconds=1)),
                  dataclasses.replace(observation, expires_at=NOW + timedelta(hours=1)),
@@ -1555,7 +1567,7 @@ class CompletionScorecardTests(unittest.TestCase):
                 self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, [item], now=NOW)["checks"]), 0)
 
     def test_runtime_head_or_image_mismatch_does_not_transfer(self):
-        observed = runtime_observations()
+        observed = runtime_observations(evaluate_rules=True)
         for binding in ({"runtime_sha": OTHER}, {"image_id": "sha256:" + "d" * 64}):
             self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, observed, now=NOW, **binding)["checks"]), 0)
         # A build candidate and runtime may legitimately differ; they stay separate.
@@ -1564,10 +1576,10 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_wrong_project_endpoint_or_container_port_is_not_observed(self):
         wrong = health()
         wrong["environment"] = "edge-engine"
-        self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, runtime_observations(wrong), now=NOW)["checks"]), 0)
+        self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, runtime_observations(wrong, evaluate_rules=True), now=NOW)["checks"]), 0)
         data = containers()
         data[0]["NetworkSettings"]["Ports"]["8080/tcp"][0]["HostIp"] = "0.0.0.0"
-        report = sc.score(SHA, runtime_observations(rows=data), now=NOW)
+        report = sc.score(SHA, runtime_observations(rows=data, evaluate_rules=True), now=NOW)
         self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 0)
 
     def test_command_failure_does_not_disclose_secret_error_or_retry(self):
@@ -2153,13 +2165,13 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_full_selection_reaches_every_live_collector_without_leaking(self):
         world = self.world()
         report = world.report()
-        passing = {"04", "05", "19"}
+        passing = set()
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, passing,
                          [(item["id"], item["status"], item["explanation"]) for item in report["checks"]])
         self.assertEqual(world.opened, [HEALTH])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("03", "06", "07", "08", "09", "10", "11", "12", "15", "17", "20"):
+        for key in sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE:
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
             self.assertIn("Trusted-collection follow-up", row(report, key)["evidence"][0]["source"])
@@ -2190,9 +2202,39 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertIsNone(probe.call_args.args[index])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("03", "06", "07", "08", "09", "10", "11", "12", "15", "17", "20"):
+        for key in sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE:
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
+
+    def test_all_twenty_input_classifications_enforce_live_containment(self):
+        self.assertEqual(set(sc.COLLECTOR_INPUTS), {check.id for check in sc.CHECKS})
+        for key, inputs in sc.COLLECTOR_INPUTS.items():
+            with self.subTest(check=key):
+                self.assertTrue(inputs)
+                self.assertTrue(all(name and trust in {"T", "C"} for name, trust in inputs))
+        candidate = {key for key, inputs in sc.COLLECTOR_INPUTS.items()
+                     if any(trust == "C" for _, trust in inputs)}
+        self.assertEqual(candidate, {"01", "02", "03", "04", "05", "06", "07", "08",
+                                     "09", "10", "11", "12", "15", "17", "19", "20"})
+        self.assertEqual(candidate, set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
+        world = self.world()
+        # Seed every candidate-dependent check with PASS inside collection, including
+        # the shared-health users 01/02/04. No rule-fixture containment bypass here.
+        passing = [sc._observation(key, True, "candidate claims success", "fixture", {}, world.now,
+                                   candidate_sha=SHA, runtime_sha=SHA, image_id=IMAGE) for key in sorted(candidate)]
+        with patch.object(sc, "_topology_observations", return_value=passing), \
+                patch.object(sc, "_status_observation", return_value=next(o for o in passing if o.check_id == "04")):
+            observations = world.observe(topology=True)
+        found = {item.check_id: item for item in observations}
+        self.assertEqual(len(found), len(observations))
+        for key in candidate:
+            with self.subTest(check=key):
+                self.assertIsNone(found[key].passed)
+                self.assertEqual(found[key].explanation, "collector not yet trusted")
+        document = (Path(__file__).resolve().parents[1] / "docs/twenty-check-completion-scorecard.md").read_text(
+            encoding="utf-8")
+        audited = dict(re.findall(r"^\| (\d{2}) \| .* \| (Yes|No) \|$", document, re.MULTILINE))
+        self.assertEqual(audited, {key: "Yes" if key in candidate else "No" for key in sc.COLLECTOR_INPUTS})
 
     def test_live_requires_explicit_deployment_and_never_probes_legacy(self):
         forbidden = Mock(side_effect=AssertionError("no probe may run without --deployment"))
@@ -2214,7 +2256,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                 sc.collect(SHA, now=NOW, **bad)
 
     def test_deployment_discovery_uses_compose_labels_and_loopback_port(self):
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         report = world.report(only_deployment=True)
         self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["PASS", "PASS"])
         first = world.calls[0]
@@ -2224,20 +2266,20 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(world.opened, [HEALTH])
         self.assertEqual(row(report, "05")["evidence"][0]["source"], HEALTH)
         cases = []
-        foreign = self.world()
+        foreign = self.world(evaluate_rules=True)
         foreign.rows[0]["Config"]["Labels"]["com.docker.compose.project"] = "director-orchestrator"
         foreign.ps_override = [DIRECTOR_ID]
         cases.append(foreign)
-        twice = self.world()
+        twice = self.world(evaluate_rules=True)
         twice.rows.append({**json.loads(json.dumps(twice.rows[0])), "Id": "6" * 64})
         cases.append(twice)
-        exposed = self.world()
+        exposed = self.world(evaluate_rules=True)
         exposed.rows[0]["NetworkSettings"]["Ports"]["8080/tcp"][0]["HostIp"] = "0.0.0.0"
         cases.append(exposed)
-        stopped = self.world()
+        stopped = self.world(evaluate_rules=True)
         stopped.rows[0]["State"]["Running"] = False
         cases.append(stopped)
-        wrong_env = self.world()
+        wrong_env = self.world(evaluate_rules=True)
         wrong_env.payload["environment"] = "edge-engine"
         cases.append(wrong_env)
         for case in cases:
@@ -2284,14 +2326,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(row(collect_topology(malformed), "02")["status"], "UNKNOWN")
 
     def test_intake_owner_needs_the_live_writer_lease_05(self):
-        self.assertEqual(self.world().state("05"), "PASS")
-        expired = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("05"), "PASS")
+        expired = self.world(evaluate_rules=True)
         expired.payload["langgraph_primary"]["writer_lease_ready"] = False
         self.assertEqual(expired.state("05"), "FAIL")
 
     def test_paid_runtime_needs_live_activated_providers_19(self):
-        self.assertEqual(self.world().state("19"), "PASS")
-        dormant = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")
+        dormant = self.world(evaluate_rules=True)
         dormant.payload["langgraph_primary"]["provider_activation"]["combined_live_ready"] = False
         self.assertEqual(dormant.state("19"), "FAIL")
 
@@ -2474,7 +2516,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         world.handle.assert_not_called()
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertIn("collector not yet trusted" if key in ("03", "06", "08", "09", "10", "11", "20") else "--channel",
+            self.assertIn("collector not yet trusted",
                           row(report, key)["explanation"])
         self.assertEqual(row(report, "07")["status"], "UNKNOWN")
 
@@ -2613,61 +2655,61 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertNotIn("refusal-4xx", explanation)
 
     def test_status_execution_04(self):
-        self.assertEqual(self.world().state("04"), "PASS")
-        wrong_message = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("04"), "PASS")
+        wrong_message = self.world(evaluate_rules=True)
         wrong_message.threads[STATUS_TS][0]["text"] = "an unrelated post"
         self.assertEqual(wrong_message.state("04"), "FAIL")
         # The newest scheduled run is graded before any older successful post.
-        failing_now = self.world()
+        failing_now = self.world(evaluate_rules=True)
         failing_now.status["latest"] = {"id": "4420", "status": "error", "finished": True,
                                         "startedAt": "2026-09-12T09:59:30+00:00",
                                         "stoppedAt": "2026-09-12T09:59:31+00:00"}
         self.assertEqual(failing_now.state("04"), "FAIL")
-        running = self.world()
+        running = self.world(evaluate_rules=True)
         running.status["latest"] = {"id": "4421", "status": "running", "finished": False,
                                     "startedAt": "2026-09-12T09:59:30+00:00", "stoppedAt": None}
         self.assertEqual(running.state("04"), "UNKNOWN")
-        quiet_success = self.world()
+        quiet_success = self.world(evaluate_rules=True)
         quiet_success.status["latest"] = {"id": "4422", "status": "success", "finished": True,
                                           "startedAt": "2026-09-12T09:59:30+00:00",
                                           "stoppedAt": "2026-09-12T09:59:31+00:00"}
         self.assertEqual(quiet_success.state("04"), "PASS")  # nothing to post, but the workflow is healthy
         # The post must postdate the Post Status credential's latest update, which must be readable.
         for credential_at in ("2026-09-12T09:59:30+00:00", None):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.status["execution"]["credential_updated_at"] = credential_at
             with self.subTest(credential_at=credential_at):
                 self.assertEqual(case.state("04"), "UNKNOWN")
-        future_latest = self.world()
+        future_latest = self.world(evaluate_rules=True)
         future_latest.status["latest"].update(startedAt="2026-09-12T21:00:00+00:00",
                                               stoppedAt="2026-09-12T21:00:01+00:00")
         self.assertEqual(future_latest.state("04"), "UNKNOWN")
-        other_text = self.world()
+        other_text = self.world(evaluate_rules=True)
         run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
             "ok": True, "channel": CHANNEL_FIXTURE, "ts": STATUS_TS,
             "message": {"text": "*STATUS — something else*"}}}]]}}]}}}
         other_text.status["execution"]["data"] = flatted(run)
         self.assertEqual(other_text.state("04"), "FAIL")
-        human = self.world()
+        human = self.world(evaluate_rules=True)
         del human.threads[STATUS_TS][0]["bot_id"]
         self.assertEqual(human.state("04"), "FAIL")
         for status in ({"workflows": 1, "execution": None}, {"workflows": 2, "execution": status_fixture()["execution"]},
                        status_fixture(channel="COTHERCHAN1"), status_fixture(ok=False),
                        status_fixture(ts_value="1789207999.000100"), None, {"workflows": 1, "execution": {"data": "[{}"}}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.status = status
             with self.subTest(status=status):
                 self.assertEqual(case.state("04"), "UNKNOWN")
-        incomplete = self.world()
+        incomplete = self.world(evaluate_rules=True)
         incomplete.failing.add(STATUS_TS)
         self.assertEqual(incomplete.state("04"), "UNKNOWN")
-        edited = self.world()
+        edited = self.world(evaluate_rules=True)
         edited.threads[STATUS_TS][0]["edited"] = {"user": BOT, "ts": ts(90)}
         self.assertEqual(edited.state("04"), "UNKNOWN")
-        inactive = self.world()
+        inactive = self.world(evaluate_rules=True)
         inactive.status["execution"]["workflow_active"] = False
         self.assertEqual(inactive.state("04"), "UNKNOWN")
-        new_n8n = self.world()
+        new_n8n = self.world(evaluate_rules=True)
         new_n8n.rows[1]["Created"] = "2026-09-12T09:59:30Z"
         self.assertEqual(new_n8n.state("04"), "UNKNOWN")
         # The whole active status workflow must be the repository's (only deploy-time fields and the bound
@@ -2685,29 +2727,29 @@ class ScorecardCollectorTests(unittest.TestCase):
                     credentials={"slackOAuth2Api": {"id": "x", "name": "y"}})),
                 ("disabled trigger", lambda nodes: node(nodes, "Every 5 minutes").update(disabled=True)),
                 ("node missing", lambda nodes: nodes.remove(node(nodes, "Diff Readiness")))):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             mutate(case.status["execution"]["active_nodes"])
             with self.subTest(label=label):
                 self.assertEqual(case.state("04"), "UNKNOWN")
-        rewired = self.world()
+        rewired = self.world(evaluate_rules=True)
         rewired.status["execution"]["active_connections"]["Read Health"]["main"][0][0]["node"] = "Post Status"
         self.assertEqual(rewired.state("04"), "UNKNOWN")
         for change in ({"workflow_settings": {**STATUS_WORKFLOW["settings"], "saveDataSuccessExecution": "none"}},
                        {"pin_data": {"Read Health": [{"json": {}}]}}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.status["execution"].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("04"), "UNKNOWN")
         # An execution that stopped after the collection is future-dated.
-        future = self.world()
+        future = self.world(evaluate_rules=True)
         future.now = datetime(2026, 9, 12, 9, 59, 1, tzinfo=timezone.utc)
         self.assertEqual(future.state("04"), "UNKNOWN")
         # Another bot at the correlated ts is not the Director's status post.
-        other_bot = self.world()
+        other_bot = self.world(evaluate_rules=True)
         other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
         self.assertEqual(other_bot.state("04"), "FAIL")
         # n8n's executions are read only from the store n8n itself is configured to use.
-        elsewhere = self.world()
+        elsewhere = self.world(evaluate_rules=True)
         n8n_row = next(item for item in elsewhere.rows if item["Id"] == N8N_ID)
         n8n_row["Config"]["Env"] = [e for e in n8n_row["Config"]["Env"] if not e.startswith("DB_POSTGRESDB_HOST=")] \
             + ["DB_POSTGRESDB_HOST=external-db"]
@@ -2715,20 +2757,20 @@ class ScorecardCollectorTests(unittest.TestCase):
         # The execution must have run the active version.
         for change in ({"execution_version": "v-1"}, {"active_version_at": "2026-09-12T09:59:30+00:00"},
                        {"workflow_updated_at": "2026-09-12T09:59:30+00:00"}, {"active_version_at": None}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.status["execution"].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("04"), "UNKNOWN")
-        recorded = self.world()
+        recorded = self.world(evaluate_rules=True)
         recorded.status["execution"]["execution_version"] = "v-2"
         self.assertEqual(recorded.state("04"), "PASS")
         # n8n resolving orchestrator to another container cannot attest the selected Director.
-        detached = self.world()
+        detached = self.world(evaluate_rules=True)
         detached.rows[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64,
                                                                              "Aliases": ["orchestrator"]}}
         self.assertEqual(detached.state("04"), "UNKNOWN")
         # The execution started at 09:59:00; a container created after it was not the poster.
-        recreated = self.world()
+        recreated = self.world(evaluate_rules=True)
         recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T09:59:30Z"
         report = recreated.report()
         self.assertEqual(row(report, "04")["status"], "UNKNOWN")
@@ -3279,7 +3321,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         real = sc._deployment_state
         # Every container whose state backs evidence: the Director, its primary database, n8n-db and the gateway.
         for restarted in (DIRECTOR_ID, PRIMARY_DB_ID, N8N_ID, N8N_DB_ID, GATEWAY_ID):
-            world, states = self.world(), []
+            world, states = self.world(evaluate_rules=True), []
 
             def restart(project, gateway, world=world, restarted=restarted, states=states):
                 states.append(real(project, gateway))
@@ -3292,15 +3334,15 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(restarted=restarted):
                 self.assertEqual(len(states), 2)
                 self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["UNKNOWN", "UNKNOWN"])
-        steady = self.world()
+        steady = self.world(evaluate_rules=True)
         with patch.object(sc, "_deployment_state", side_effect=real) as probe:
             report = steady.report(only_deployment=True)
         self.assertEqual(probe.call_count, 2)
         self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["PASS", "PASS"])
 
     def test_status_run_before_the_n8n_database_was_recreated_is_unknown_04(self):
-        self.assertEqual(self.world().state("04"), "PASS")
-        recreated = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("04"), "PASS")
+        recreated = self.world(evaluate_rules=True)
         database = next(item for item in recreated.rows if item["Id"] == N8N_DB_ID)
         database["Created"] = "2026-09-12T09:59:30.000000001Z"  # after the saved run (09:59:00-09:59:02)
         self.assertEqual(recreated.state("04"), "UNKNOWN")
@@ -3419,9 +3461,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertNotEqual(unread.state("09"), "PASS")
 
     def test_latest_status_run_needs_both_times_in_order_04(self):
-        self.assertEqual(self.world().state("04"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("04"), "PASS")
         for change in ({"stoppedAt": None}, {"stoppedAt": "2026-09-12T09:58:59+00:00"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.status["latest"].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("04"), "UNKNOWN")
@@ -5097,9 +5139,9 @@ class ScorecardCollectorTests(unittest.TestCase):
             observations = world.observe(**{key: value for key, value in selections.items() if key != "deployment"})
         report = sc.score(SHA, observations, now=world.now)
         self.assertEqual(len(report["checks"]), 20)
-        self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, {"05", "19"})
+        self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, set())
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
-            self.assertIn("collector not yet trusted" if key in ("03", "06", "08", "09", "10", "11", "20") else "--channel",
+            self.assertIn("collector not yet trusted",
                           row(report, key)["explanation"])
         self.assertEqual(len({item.check_id for item in observations}), len(observations))
         text = json.dumps(report)
@@ -5216,3 +5258,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]
