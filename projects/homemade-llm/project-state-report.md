@@ -220,7 +220,6 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 - **Responsible:** Director records the completed O-042 Set B disposition and coordinates the authorized Grok review and CI. Cursor performs its own thorough exact-head/base review and is the eligible merger after all gates; Grok cannot operate GitHub, and neither Claude nor Codex may review or merge #293.
 - **Expected evidence:** Authenticated Set B batch-1 receipt and separate batch-2 ACCEPT, with pr-45 disclosed; local cross-file check; one bounded independent Grok full-diff review at the current head/base; Cursor's own thorough non-contributor review; and six required CI checks green at that head. No review or CI is waived and no PR is merged by these dispositions.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
@@ -241,3 +240,4 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]] -->
