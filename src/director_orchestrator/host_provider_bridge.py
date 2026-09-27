@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
@@ -857,6 +858,24 @@ class _SocketWatch:
             pass
 
 
+# At most this many name lookups may be outstanding at once, counting ones
+# that timed out and still hold a daemon thread in getaddrinfo(); past it a
+# connect fails closed instead of starting another thread.
+_RESOLVER_SLOTS = threading.BoundedSemaphore(8)
+
+
+def _time_left(deadline: float, cap: Any = None) -> float:
+    """Seconds before the monotonic ``deadline``, rounded DOWN to the
+    microsecond and clamped to a numeric ``cap``: ``(t + 0.4) - t`` in floating
+    point can come out as 0.40000000002, and a timeout derived from the
+    deadline must never exceed its cap or the time actually left."""
+
+    left = math.floor((deadline - time.monotonic()) * 1_000_000) / 1_000_000
+    if isinstance(cap, (int, float)) and not isinstance(cap, bool):
+        left = min(float(cap), left)
+    return left
+
+
 def connect_until_deadline(
     address: tuple[str, int], timeout: Any = None, source_address: Any = None, *,
     deadline: float, socket_factory: Callable[..., socket.socket] = socket.socket,
@@ -865,16 +884,19 @@ def connect_until_deadline(
     """Resolve and connect, never past the absolute ``deadline``.
 
     Name resolution runs in a daemon thread given only the time remaining
-    (it cannot otherwise be interrupted); each resolved address is then tried
-    with its connect timeout clamped to what is left, stopping once the
-    deadline passes, where socket.create_connection gives every address the
-    whole timeout again.
+    (it cannot otherwise be interrupted), and at most ``_RESOLVER_SLOTS``
+    lookups may be outstanding; each resolved address is then tried with its
+    connect timeout clamped to what is left, stopping once the deadline
+    passes, where socket.create_connection gives every address the whole
+    timeout again. A socket that connects only after the deadline is closed.
     """
 
     host, port = address
-    remaining = deadline - time.monotonic()
+    remaining = _time_left(deadline)
     if remaining <= 0:
         raise TimeoutError("bridge connect deadline reached before resolving")
+    if not _RESOLVER_SLOTS.acquire(blocking=False):
+        raise TimeoutError("bridge name resolution capacity exhausted")
     found: dict[str, Any] = {}
 
     def lookup() -> None:
@@ -882,9 +904,15 @@ def connect_until_deadline(
             found["infos"] = resolve(host, port, 0, socket.SOCK_STREAM)
         except OSError as exc:
             found["error"] = exc
+        finally:
+            _RESOLVER_SLOTS.release()
 
-    resolver = threading.Thread(target=lookup, daemon=True)
-    resolver.start()
+    try:
+        resolver = threading.Thread(target=lookup, daemon=True)
+        resolver.start()
+    except BaseException:
+        _RESOLVER_SLOTS.release()
+        raise
     resolver.join(remaining)
     if resolver.is_alive():
         raise TimeoutError("bridge name resolution reached its deadline")
@@ -892,7 +920,7 @@ def connect_until_deadline(
         raise found["error"]
     last: OSError | None = None
     for family, kind, protocol, _name, sockaddr in found.get("infos") or ():
-        remaining = deadline - time.monotonic()
+        remaining = _time_left(deadline, timeout)
         if remaining <= 0:
             raise TimeoutError("bridge connect reached its deadline")
         sock = socket_factory(family, kind, protocol)
@@ -905,8 +933,11 @@ def connect_until_deadline(
             last = exc
             sock.close()
             continue
-        left = deadline - time.monotonic()
-        sock.settimeout(max(0.001, left if timeout is None else min(timeout, left)))
+        left = _time_left(deadline, timeout)
+        if left <= 0:
+            sock.close()
+            raise TimeoutError("bridge connect completed after its deadline")
+        sock.settimeout(left)
         return sock
     raise last if last is not None else OSError("bridge host resolved to no address")
 
@@ -1332,3 +1363,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]
