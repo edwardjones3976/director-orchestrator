@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
@@ -99,9 +100,10 @@ whether any operation is permitted. The report always says
 
 Opening a pre-settlement ledger migrates its existing reservations atomically to
 `legacy = 1, serialized = 0`. Unknown charges continue to count at the reserved
-amount on their original UTC day. Only current-day serialized, non-legacy rows
-with unknown charges block admission; day rollover does not erase historical
-exposure or mark those charges reconciled.
+amount on their original UTC day. Serialized, non-legacy rows from any UTC day
+with unknown charges block admission until authoritative cost settlement or
+reconciliation. Legacy rows never block admission; day rollover neither releases
+a non-legacy hold nor erases historical exposure.
 
 For an authoritative legacy charge, an operator can use the existing local
 `ProviderDailySpendLedger.record_charge(provider=..., effect_key=...,
@@ -1333,10 +1335,11 @@ charge through subsequent packet settlement. Packet `usage.cost_usd` is never
 charge authority; only `authoritative_reported_cost` reads native metering.
 With no native reported cost
 the request is settled without a charge, keeps counting at its reservation, and
-is reported as `unreconciled_request_count`, which makes check 15 UNKNOWN. Every
-work reservation is at least the provider's per-request bound
-(`Settings.request_cost_bound_usd`, the same bound the probes reserve); a $0
-estimate with no bound configured is refused. The other spend authorities are
+is reported as `unreconciled_request_count`, which makes check 15 UNKNOWN. A bounded
+Grok API request reserves the maximum of its proven bound, legacy floor, and
+assignment estimate. Other metered routes serialize and reserve all remaining
+daily capacity, including managed Gemini even with configured token prices.
+The other spend authorities are
 separate ledgers with their own settlement: the primary Postgres
 `director_primary_provider_spend` (`antigravity_team` budget authority, settled
 by `record_usage` receipts), the OpenAI Responses admission
@@ -1346,20 +1349,22 @@ bridge reserves nothing.
 
 The runtime admission gates use the same reconciliation
 (`ProviderDailySpendLedger._exposure`, inside `reserve()`'s `BEGIN IMMEDIATE`
-write lock, and the monitor's own probe gate): each reservation counts at the
-larger of its recorded actual charge (`record_charge`, never lowered; a probe
+write lock, and the monitor's own probe gate): each reservation counts at its
+recorded actual charge when known (`record_charge`, never lowered; a probe
 the ledger did not reserve is recorded as its own row at a zero reservation)
-and its reservation, so a probe that cost more than its floor leaves no room
+or its reservation otherwise, so a probe that cost more than its floor leaves no room
 for more work under the cap. Every usage-check probe attempt of a ledger
 provider (gemini, grok, perplexity) is reserved through `reserve()`
 immediately before its request is sent, never ahead (gemini reserves each
 retry inside its own retry loop), each under its own effect key, so probes count against the caps
 before they run; a refused reservation dispatches nothing, and a failed probe
-keeps its reservations. Every probe (and every work request) reserves a nonzero bound: grok its
-`GROK_REQUEST_COST_FLOOR_USD`, gemini `GEMINI_USAGE_PROBE_COST_CEILING_USD`,
-perplexity `PERPLEXITY_USAGE_PROBE_COST_CEILING_USD`; with no positive bound
-configured the probe is refused, never reserved at $0. `record_charge` raises
-a reservation to its actual charge and never lowers it. Each reservation and
+keeps its reservations. A finite monetary bound requires transport enforcement;
+legacy probe ceilings
+and token prices alone cannot supply one. Unbounded requests hold all remaining
+daily capacity and block further admission across UTC days until authoritative
+cost settlement or reconciliation. Known charges replace reserved exposure;
+unknown charges retain it, and repeated actual charges cannot lower a recorded
+charge. Each reservation and
 its matching charge take their accounting timestamp immediately before they
 are written, so a cycle that crosses UTC midnight counts each request on its
 own day. Check 16's trusted
@@ -1626,3 +1631,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->

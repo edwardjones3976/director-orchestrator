@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
@@ -297,13 +298,13 @@ class ProviderDailySpendLedger:
                         "provider daily reservation identity was reused with different accounting"
                     )
             else:
-                # Only serialized reservations of this UTC day hold admission.
+                # Unsettled non-legacy serialized requests hold admission across days.
                 # Legacy and bounded reservations still count in daily exposure.
                 pending = connection.execute(
                     """SELECT 1 FROM provider_daily_spend_reservations
-                    WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL
+                    WHERE provider = ? AND actual_cost_usd IS NULL
                     AND serialized = 1 AND legacy = 0 LIMIT 1""",
-                    (provider.value, utc_day),
+                    (provider.value,),
                 ).fetchone()
                 if pending:
                     raise ProviderDailyLimitExceeded(
@@ -1731,8 +1732,8 @@ def assignment_request_cost_bound(
 ) -> float | None:
     """Only bound transports whose complete input and enforced token cap are known.
 
-    Packet/CLI transports and Perplexity search have hidden input or non-token
-    charges; token prices alone cannot bound them. They use serialized admission.
+    Managed Gemini, packet/CLI transports, and Perplexity search cannot enforce
+    a monetary bound from token prices. They use serialized admission.
     """
     provider = assignment.agent.value
     prices = settings.provider_token_prices(provider)
@@ -1742,20 +1743,6 @@ def assignment_request_cost_bound(
         adapter = GrokAdapter(settings)
         body = adapter.request_body(adapter._input(assignment, context, revision_prompt=revision_prompt))
         return settings.token_request_cost_bound_usd(provider, body, body["max_output_tokens"])
-    if assignment.agent == ProviderName.GEMINI:
-        # The agent-wide cap includes generated/tool/history tokens, not merely
-        # the visible final answer. Price all of it at the more expensive rate.
-        prompt = antigravity_wire_input(
-            assignment, revision=revision_prompt is not None, context=context,
-            revision_prompt=revision_prompt,
-        )
-        total = settings.gemini_max_total_tokens
-        if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
-            raise ValueError("A positive enforced agent token limit is required")
-        bound = (len(prompt.encode("utf-8")) * prices[0] + total * max(prices)) / 1_000_000
-        if not math.isfinite(bound) or bound <= 0:
-            raise ValueError("Provider request cost bound must be finite and positive")
-        return math.nextafter(bound, math.inf)
     return None
 
 
@@ -1787,3 +1774,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]

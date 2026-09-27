@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
@@ -679,19 +680,21 @@ the request envelope. Grok uses the same request-body builder for admission and
 submission, including context, fixed instructions and revision text, and sends
 `GROK_MAX_OUTPUT_TOKENS` to the API. Its request cost floor is never an upper bound.
 
-Gemini managed-agent work instead reserves
-`W = (UTF8_bytes(input) * Pi + GEMINI_MAX_TOTAL_TOKENS * max(Pi, Po)) / 1_000_000`,
-rounded upward. The agent-wide enforced cap covers intermediate/history/tool
-tokens, which are priced at the more expensive rate. In either bounded case,
-the reservation is `max(W, existing_floor, assignment.estimated_cost_usd)`.
+For the bounded Grok API route, the reservation is
+`max(W, existing_floor, assignment.estimated_cost_usd)`.
 The model-authored estimate can only increase the reservation.
+
+Managed Gemini cannot honor a finite per-request monetary bound.
+`GEMINI_MAX_TOTAL_TOKENS` and configured `GEMINI_*_USD_PER_MTOK` prices
+do not establish one; managed work always uses serialized admission.
 
 When prices are missing, or the transport cannot be bounded by those prices,
 admission serializes through the same SQLite `BEGIN IMMEDIATE` transaction:
 at most one unresolved paid request per provider, holding **all remaining daily
 capacity**, never merely a floor. This includes packet/CLI transports whose
 complete request is unavailable here, Perplexity `/search` and agent presets
-with non-token search charges, and Gemini stateless probes without an enforced
+with non-token search charges, managed Gemini work, and Gemini stateless probes
+without an enforced
 output-token cap. Token prices alone do not authorize concurrency on those
 routes. Usage probes share this gate with ordinary work.
 
@@ -883,3 +886,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
