@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
@@ -141,6 +142,66 @@ try {
     $argv = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $shim 'argv.ps1'), 'a b', 'q"t', 'tail\', '') 60)
     if (($argv -join '|') -ne '<a b>|<q"t>|<tail\>|<>|__EXIT__0') { $fail += "argument quoting: got $($argv -join '|')" }
     if (($none -join '|') -ne '__EXIT__3') { $fail += "no output, exit 3: got $($none -join '|')" }
+    # U+2713 is outside CP437: replacement with '?' must never pass as a round-trip.
+    $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'unicode-marker.txt'
+    $oldEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $unicode = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-Command', '[Console]::OutputEncoding.WebName; [Console]::WriteLine([char]0x2713)') 60)
+        if (($unicode -join '|') -cne "utf-8|$([char]0x2713)|__EXIT__0") { $fail += "UTF-8 output: got $($unicode -join '|')" }
+    } catch { $fail += "UTF-8 output: $_" }
+    finally {
+        [Console]::OutputEncoding = $oldEncoding
+        $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
+    }
+    # Start a real windowless console, then detach in a separate run to exercise no console at all.
+    $consoleTest = Join-Path $shim 'console-test.ps1'
+    Set-Content $consoleTest @'
+param([string]$BoundedScript, [string]$Marker, [switch]$Detach)
+$ErrorActionPreference = 'Stop'
+. $BoundedScript
+$GpuMarker = $Marker
+if ([HomemadeLlm.JobTree]::GetConsoleWindow() -ne [IntPtr]::Zero) { throw 'fixture: expected no console window' }
+if ([HomemadeLlm.JobTree]::GetConsoleCP() -eq 0 -and [HomemadeLlm.JobTree]::GetConsoleOutputCP() -eq 0) { throw 'fixture: expected a windowless console' }
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+if ($Detach) {
+    Add-Type -Name ConsoleFixture -Namespace Tests -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern bool FreeConsole();'
+    if (-not [Tests.ConsoleFixture]::FreeConsole()) { throw 'fixture: FreeConsole failed' }
+    if ([HomemadeLlm.JobTree]::GetConsoleCP() -ne 0 -or [HomemadeLlm.JobTree]::GetConsoleOutputCP() -ne 0) { throw 'fixture: console is still attached' }
+    $ran = "$Marker.child-ran"
+    $command = "Set-Content -LiteralPath '$($ran.Replace("'", "''"))' -Value ran; [Console]::WriteLine([char]0x2713)"
+    $refused = $false
+    try { $null = Invoke-Bounded 'pwsh' @('-NoProfile', '-Command', $command) 60 }
+    catch {
+        if ($_.Exception.Message -notlike '*Invoke-Bounded requires an attached console*') { throw }
+        $refused = $true
+    }
+    if (-not $refused -or (Test-Path -LiteralPath $ran)) { throw 'console-less launch was not refused before child execution' }
+} else {
+    $unicode = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-Command', '[Console]::OutputEncoding.WebName; [Console]::WriteLine([char]0x2713)') 60)
+    if (($unicode -join '|') -cne "utf-8|$([char]0x2713)|__EXIT__0") { throw "windowless UTF-8 output: got $($unicode -join '|')" }
+}
+if ((Test-Path -LiteralPath $GpuMarker) -or $BoundedUnconfirmed -or $BoundedGuardMissing) { throw 'console test poisoned the GPU guard' }
+Write-Output 'console-test-ok'
+'@
+    foreach ($detach in $false, $true) {
+        $psi = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application).Source)
+        $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        foreach ($arg in @('-NoProfile', '-File', $consoleTest, '-BoundedScript', (Join-Path $PSScriptRoot 'invoke-bounded.ps1'), '-Marker', (Join-Path $shim "console-$detach-marker.txt"))) { $psi.ArgumentList.Add($arg) }
+        if ($detach) { $psi.ArgumentList.Add('-Detach') }
+        $proc = [Diagnostics.Process]::Start($psi)
+        try {
+            $stdout = $proc.StandardOutput.ReadToEndAsync(); $stderr = $proc.StandardError.ReadToEndAsync()
+            if (-not $proc.WaitForExit(90000)) { throw 'nested pwsh exceeded 90 seconds' }
+            if (-not [Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), 5000)) { throw 'nested pwsh output did not close' }
+            if ($proc.ExitCode -ne 0 -or $stdout.Result.Trim() -ne 'console-test-ok') { throw "exit $($proc.ExitCode): $($stdout.Result) $($stderr.Result)" }
+        } catch { $fail += "no-window console test (detach=$detach): $_" }
+        finally {
+            if (-not $proc.HasExited) { $proc.Kill($true); $null = $proc.WaitForExit(5000) }
+            $proc.Dispose()
+        }
+    }
 } finally {
     $env:PATH = $oldPath
     Get-ShimPing | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }   # only if a check failed
@@ -231,7 +292,7 @@ foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
 $iMark = $ts.IndexOf('launch in flight since'); $iStart = $ts.IndexOf('$job = Start-Job')
 if (-not ($iMark -ge 0 -and $iStart -gt $iMark)) { $fail += 'train-smoke: the in-flight marker must be written before Start-Job' }
 if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# No container was left unconfirmed.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
-if ($ib -notmatch '(?s)CREATE_SUSPENDED \| CREATE_NO_WINDOW.*\$h = \[HomemadeLlm\.JobTree\]::CreateSuspended\(.*Add-BoundedJobMember \$job \$h; \[HomemadeLlm\.JobTree\]::Resume\(\$t\)') { $fail += 'invoke-bounded: the command must be created suspended and join its job before it resumes' }
+if ($ib -notmatch '(?s)if \(GetConsoleCP\(\) == 0 && GetConsoleOutputCP\(\) == 0\) throw new InvalidOperationException\([^\r\n]+;\s*if \(!CreateProcessW\([^\r\n]+true, CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi\).*\$h = \[HomemadeLlm\.JobTree\]::CreateSuspended\(.*Add-BoundedJobMember \$job \$h; \[HomemadeLlm\.JobTree\]::Resume\(\$t\)') { $fail += 'invoke-bounded: refuse a console-less launch; otherwise inherit the console, create suspended and join the job before resuming' }
 if ($ib -notmatch '(?s)if \(-not \$completed -and \$h -ne \[IntPtr\]::Zero\) \{.*\[HomemadeLlm\.JobTree\]::Kill\(\$h\).*\$gone = ') { $fail += 'invoke-bounded: the root must be killed directly too (it may be outside the job) before the wait confirms it' }
 if (-not $ib.Contains('(pid $rootPid)')) { $fail += 'invoke-bounded: the marker must record the root pid' }
 if ($ts -notmatch '(?s)\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a missing marker for an unconfirmed container must keep the lock' }
@@ -269,6 +330,7 @@ Write-Output 'ok  suspended start joins the job first; a failed join still kills
 Write-Output 'ok  root-exited pipe holder times out, is killed, and leaves no poison marker'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code; arguments reach argv exactly'
+Write-Output 'ok  Invoke-Bounded round-trips U+2713 with inherited and windowless consoles; a truly console-less launch is refused without poisoning the GPU guard'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
@@ -278,3 +340,4 @@ exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]

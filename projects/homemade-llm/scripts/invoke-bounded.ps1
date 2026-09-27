@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | BEGIN]]
@@ -32,8 +33,11 @@ public static class JobTree {
     struct StartupInfo { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags; public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
     [StructLayout(LayoutKind.Sequential)]
     struct ProcessInformation { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
-    const uint CREATE_SUSPENDED = 0x00000004, CREATE_NO_WINDOW = 0x08000000;
+    const uint CREATE_SUSPENDED = 0x00000004;
     const int STARTF_USESTDHANDLES = 0x00000100;
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")] public static extern uint GetConsoleCP();
+    [DllImport("kernel32.dll")] public static extern uint GetConsoleOutputCP();
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
@@ -69,7 +73,10 @@ public static class JobTree {
         var si = new StartupInfo(); si.cb = Marshal.SizeOf(typeof(StartupInfo)); si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdInput = stdIn; si.hStdOutput = stdOut; si.hStdError = stdErr;
         ProcessInformation pi;
-        if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, CREATE_SUSPENDED | CREATE_NO_WINDOW, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
+        // Inherit even a windowless console and its code page. A fresh console would use the OEM
+        // code page, which can replace Unicode before our pipe reader ever sees it.
+        if (GetConsoleCP() == 0 && GetConsoleOutputCP() == 0) throw new InvalidOperationException("Invoke-Bounded requires an attached console to preserve child output encoding; no child was started.");
+        if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
         thread = pi.hThread;
         return pi.hProcess;
     }
@@ -169,3 +176,4 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]
