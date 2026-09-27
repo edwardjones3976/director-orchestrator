@@ -1,4 +1,11 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | BEGIN]]
+# Maintenance MX-042
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | BEGIN]]
+# MX-045
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | BEGIN]]
+# MX-043
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | BEGIN]]
@@ -33,7 +40,7 @@ project:
   state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-27T03:10:07Z"
+  updated_at: "2026-09-27T03:39:05Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -270,7 +277,7 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "M0 is closed under O-031, and #293's record reconciliation remains pending. Under the approved M1 plan (O-038) and method (O-039), the Director runs the bounded packets M1-C1 (#296; real -Execute held until its latest exact-head review and green CI), M1-G1 (#295), M1-I1 (#298), and M1-S1a, the scorer fix (#307). D-018 is ratified under O-037, and D-019 to D-022 are documented exceptions under O-040/O-041. Set B batch 1 is authenticated by receipt xai/20260926T225645Z-268799-d4c6.json, with the pr-45 caveat disclosed; Set B has N = 50. Set A's primary N = 14 with 5 recorded exclusions. Merges into protected main follow B2 until #305 and phase-3 production wiring land."
+  action: "M0 is closed under O-031, and #293's record reconciliation remains pending. Under the approved M1 plan (O-038) and method (O-039), the Director runs the bounded packets M1-C1 (#296; real -Execute held until its latest exact-head review and green CI), M1-G1 (#295), M1-I1 (#298), and M1-S1a, the scorer fix (#307). D-018 is ratified under O-037, and D-019 to D-022 are documented exceptions under O-040/O-041. D-023 records the owner-directed, agent-executed protected-main merges of #296 and #298 as a disclosed crossing (see #293). Set B batch 1 is authenticated by receipt xai/20260926T225645Z-268799-d4c6.json, with the pr-45 caveat disclosed; Set B has N = 50. Set A's primary N = 14 with 5 recorded exclusions. Merges into protected main follow B2 until #305 and phase-3 production wiring land."
   responsible_party: "The Director runs the M1 packets. The Codex Director coordinates #293's record reconciliation. Merges go to the thorough non-contributing reviewer under the owner merge law, after all required gates."
   expected_evidence: "Each M1 script's exact-head independent ACCEPT and green CI; the scorer (#307) verifying the pinned manifests with recorded exclusions; M1 receipts within the USD 25 ceiling."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
@@ -293,4 +300,8 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | END]]
