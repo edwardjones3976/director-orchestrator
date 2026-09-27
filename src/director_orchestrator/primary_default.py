@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -3784,9 +3786,13 @@ class DefaultPrimaryActivation:
                     store=handle.claim_store,
                     bindings=bindings,
                     required_providers=settings.langgraph_primary_required_providers,
-                    capture_verifier=capture_verifier_from_environment(
-                        candidate=settings.langgraph_primary_pinned_commit_sha,
-                        tree=settings.langgraph_primary_pinned_tree_sha,
+                    capture_verifier=(
+                        capture_verifier_from_environment(
+                            candidate=settings.langgraph_primary_pinned_commit_sha,
+                            tree=settings.langgraph_primary_pinned_tree_sha,
+                        )
+                        if settings.allow_paid_runs and live_requested
+                        else None
                     ),
                 )
                 if bindings
@@ -5176,7 +5182,6 @@ class DefaultPrimaryActivation:
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
-
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
@@ -5211,3 +5216,5 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
