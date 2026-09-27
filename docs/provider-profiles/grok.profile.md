@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -149,6 +150,8 @@ Strengths:
 
 | Variable | Kind | Settings field | Default | In .env.example | Value recorded |
 | --- | --- | --- | --- | --- | --- |
+| `GROK_INPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `grok_input_usd_per_mtok` | - | yes | no |
+| `GROK_OUTPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `grok_output_usd_per_mtok` | - | yes | no |
 | `GROK_DAILY_BUDGET_USD` | daily_budget_usd | `grok_daily_budget_usd` | `2.0` | yes | no |
 | `GROK_DAILY_REQUEST_LIMIT` | daily_request_limit | `grok_daily_request_limit` | `50` | yes | no |
 | `GROK_REQUEST_COST_FLOOR_USD` | per_request_cost_floor_usd | `grok_request_cost_floor_usd` | `0.01` | yes | no |
@@ -344,3 +347,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->

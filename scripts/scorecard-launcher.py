@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -11,7 +12,8 @@ This repository copy is only the reviewed source. The owner copies it from the r
 
 It reads ``evaluator_sha`` from ``~/.director-scorecard/release-descriptor.json``, requires that commit on
 github/main in <repository>, extracts exactly that commit's tree with ``git archive`` into a fresh temporary
-directory, and runs the archived ``scripts/director-scorecard.py`` with ``PYTHONPATH`` set to the archived ``src``.
+directory, and runs the archived ``scripts/director-scorecard.py`` in the same isolated interpreter,
+adding only the archived ``src`` to its installed standard-library and site-package paths.
 This launch executes no working-checkout code. Candidates can execute their own copies;
 only reports verified against the owner-local receipt count. Git itself is trusted. Standard library only.
 """
@@ -168,8 +170,7 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
         except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError):
             return _refuse("the pinned evaluator tree could not be extracted")
         env = {key: value for key, value in os.environ.items() if not key.upper().startswith("PYTHON")}
-        env.update({"PYTHONPATH": str(tree / "src"), "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-                    TREE_ENV: str(tree), REPO_ENV: str(repo), SHA_ENV: pin})
+        env.update({TREE_ENV: str(tree), REPO_ENV: str(repo), SHA_ENV: pin})
         nonce = secrets.token_hex(32)
         receipt_path = _receipt_path(nonce)
         installed = receipt_path.parent.parent / "launcher.py"
@@ -188,8 +189,15 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
         # launcher seals it after a successful exit and a final descriptor check.
         result_path = Path(folder) / "report.json"
         env["DIRECTOR_SCORECARD_RESULT"] = str(result_path)
-        result = subprocess.run([sys.executable, "-s", str(tree / "scripts" / "director-scorecard.py"), *arguments],
-                                env=env, cwd=here).returncode
+        # -I retains this interpreter's installed dependencies, excluding user site,
+        # caller PYTHONPATH and cwd. Preserve its native-loader environment too.
+        bootstrap = ("import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+                     "script = sys.argv.pop(1); sys.argv[0] = script; "
+                     "runpy.run_path(script, run_name='__main__')")
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", bootstrap, str(tree / "src"),
+             str(tree / "scripts" / "director-scorecard.py"), *arguments],
+            env=env, cwd=here).returncode
         receipt["report_sha256"] = "INVALID"
         receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
         if result:
@@ -236,3 +244,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]

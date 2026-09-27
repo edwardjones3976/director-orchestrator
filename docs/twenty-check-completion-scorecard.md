@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
@@ -93,15 +94,34 @@ independence, authorization, security, budget and activation gates still decide
 whether any operation is permitted. The report always says
 `activation_authorized: false`; no runtime setting is changed by rendering it.
 
+### Legacy supplemental spend reservations
+
+Opening a pre-settlement ledger migrates its existing reservations atomically to
+`legacy = 1, serialized = 0`. Unknown charges continue to count at the reserved
+amount on their original UTC day. Only current-day serialized, non-legacy rows
+with unknown charges block admission; day rollover does not erase historical
+exposure or mark those charges reconciled.
+
+For an authoritative legacy charge, an operator can use the existing local
+`ProviderDailySpendLedger.record_charge(provider=..., effect_key=...,
+actual_cost_usd=..., now=...)` maintenance API against the intended ledger.
+Use the exact existing provider and canonical effect key, after verifying the
+provider's charge. This preserves the original day and legacy marker and never
+lowers an already recorded actual charge. Passing `None` records settlement
+without inventing a cost and retains reserved exposure. Do not fabricate a task
+effect or use `/dispatch-reconciliation` for a legacy probe without one.
+
 ### Collector containment (2026-09-27)
 
 The trusted collector is not available yet. Live collection finishes checks
-**06, 07, 08, 10, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
+**03, 06, 07, 08, 09, 10, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
 "collector not yet trusted" and a source naming the trusted-collection follow-up.
 It supplies no consistency or activation-capture report and never executes
 candidate Python through docker exec. Health, Slack, later observations and
-final collection merging cannot promote these nine checks to PASS. Checks 06
-and 10 retain Slack-side collection, but candidate `/v1/tasks` readback cannot
+final collection merging cannot promote these eleven checks to PASS. Checks 03,
+06, 09 and 10 retain Slack-side collection. Candidate drill readbacks from
+`/v1/slack-thread-bindings`, `/v1/tasks` and `/deliveries` cannot prove
+reserved-5xx, duplicate-input or ambiguous-post outcomes. Candidate `/v1/tasks` readback cannot
 establish trusted checkpoint timing, provider attempts, assignment outcomes or
 zero-call offline execution. Trusted collection moves to #313 / PR #327.
 
@@ -1172,7 +1192,7 @@ and requires the pin to be an ancestor of the candidate. The CLI runs
 `untrusted_checkout` again after the collection, so a descriptor rotated to
 another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
 The report limitations derive the contained check IDs from the same tuples
-used to suppress their collector results: 06, 07, 08, 10, 11, 12, 15, 17 and 20,
+used to suppress their collector results: 03, 06, 07, 08, 09, 10, 11, 12, 15, 17 and 20,
 pending the trusted-collection follow-up in #313 / PR #327.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
@@ -1520,3 +1540,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->

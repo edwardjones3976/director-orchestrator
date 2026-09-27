@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
@@ -706,7 +707,9 @@ class World:
 
         with patch.object(sc, "_runtime", side_effect=runtime_probe), \
                 patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "_http_client", client), \
-                patch.object(sc, "_SlackThreads", side_effect=self.slack):
+                patch.object(sc, "_SlackThreads", side_effect=self.slack), \
+                patch.object(sc, "_CONTAINED_RUNTIME", tuple(
+                    key for key in sc._CONTAINED_RUNTIME if not evaluate_rules or key not in ("03", "09"))):
             observations = sc.collect(SHA, now=self.now, until=self.until, **selected)
             if evaluate_rules and runtime_seen:
                 observations = self.evaluate_rules(runtime_seen[0], selected, observations)
@@ -1050,8 +1053,15 @@ class ScorecardGitTrustTests(unittest.TestCase):
                               env=self.launcher._git_environment(), check=True, capture_output=True,
                               timeout=30).stdout
 
+    def python_environment(self):
+        # Git needs no native Python extension libraries; the CI interpreter does.
+        env = self.launcher._git_environment()
+        if "LD_LIBRARY_PATH" in os.environ:
+            env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
+        return env
+
     def run_launcher(self, extra_env=None, arguments=()):
-        env = {**self.launcher._git_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
+        env = {**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
                **(extra_env or {})}
         return subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo), *arguments],
                               env=env, cwd=self.outside, capture_output=True, text=True, timeout=120)
@@ -1147,6 +1157,13 @@ class ScorecardGitTrustTests(unittest.TestCase):
         shutil.copytree(source / "src", self.repo / "src", ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("director-scorecard.py", "scorecard-launcher.py"):
             (self.repo / "scripts" / name).write_bytes((source / "scripts" / name).read_bytes())
+        script = self.repo / "scripts" / "director-scorecard.py"
+        original = script.read_bytes()
+        script.write_bytes(
+            ("import ctypes, httpx, site, sys\n"
+             "assert sys.flags.isolated and sys.flags.no_user_site\n"
+             "assert site.ENABLE_USER_SITE is False\n"
+             f"assert sys.prefix == {sys.prefix!r}\n").encode() + original)
         self.git("add", ".")
         self.git("commit", "-qm", "real evaluator")
         self.pin = self.git("rev-parse", "HEAD").decode().strip()
@@ -1155,7 +1172,12 @@ class ScorecardGitTrustTests(unittest.TestCase):
                                               "evaluator_sha": self.pin}))
         output = self.outside / "reports"
         arguments = ["--candidate", self.pin, "--output-dir", str(output)]
-        launched = self.run_launcher(arguments=arguments)
+        poison = self.outside / "poison"
+        poison.mkdir()
+        (poison / "ctypes.py").write_text("raise RuntimeError('caller path imported')\n")
+        (poison / "sitecustomize.py").write_text("raise RuntimeError('caller site imported')\n")
+        launched = self.run_launcher(
+            {"PYTHONPATH": str(poison), "PYTHONUSERBASE": str(poison)}, arguments=arguments)
         self.assertEqual(launched.returncode, 0, launched.stderr)
         report_path = output / "completion-scorecard.json"
         report = json.loads(report_path.read_bytes())
@@ -1166,7 +1188,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.assertEqual(report["attestation"]["launcher_sha256"],
                          hashlib.sha256(self.installed.read_bytes()).hexdigest())
         verify = subprocess.run([sys.executable, "-I", str(self.installed), "--verify-report", str(report_path)],
-                                env={**self.launcher._git_environment(), "HOME": str(self.home),
+                                env={**self.python_environment(), "HOME": str(self.home),
                                      "USERPROFILE": str(self.home)},
                                 cwd=self.outside, capture_output=True, text=True, timeout=30)
         self.assertEqual(verify.returncode, 0, verify.stderr)
@@ -1187,14 +1209,15 @@ class ScorecardGitTrustTests(unittest.TestCase):
             receipt_path.write_text(json.dumps(receipt))
             self.assertFalse(sc.report_is_attested(report))
         verify = subprocess.run([sys.executable, "-I", str(self.installed), "--verify-report", str(report_path)],
-                                env={**self.launcher._git_environment(), "HOME": str(self.home),
+                                env={**self.python_environment(), "HOME": str(self.home),
                                      "USERPROFILE": str(self.home)},
                                 cwd=self.outside, capture_output=True, text=True, timeout=30)
         self.assertEqual(verify.returncode, 2, verify.stderr)
         self.assertTrue(verify.stdout.startswith(self.launcher.UNATTESTED))
+        script.write_bytes(original)
         # Candidate supplies all the old environment claims and a completed nonce.
         # It still cannot turn a direct run into a launcher-attested report.
-        env = {**self.launcher._git_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
+        env = {**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
                "PYTHONPATH": str(self.repo / "src"), self.launcher.TREE_ENV: str(self.repo),
                self.launcher.REPO_ENV: str(self.repo), self.launcher.SHA_ENV: self.pin,
                self.launcher.NONCE_ENV: report["attestation"]["nonce"]}
@@ -1227,7 +1250,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
             self.assertEqual(report["percent"], 10)
             self.assertFalse(sc.report_is_attested(report))  # not finalized by launcher
             limitations = " ".join(report["limitations"])
-            self.assertIn("06, 07, 08, 10, 11, 12, 15, 17, 20", limitations)
+            self.assertIn("03, 06, 07, 08, 09, 10, 11, 12, 15, 17, 20", limitations)
             self.assertIn("#313 / PR #327", limitations)
             for key in ("evaluator_sha", "launcher_sha256", "nonce", "tree_id"):
                 with self.subTest(field=key):
@@ -2130,13 +2153,13 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_full_selection_reaches_every_live_collector_without_leaking(self):
         world = self.world()
         report = world.report()
-        passing = {"03", "04", "05", "09", "19"}
+        passing = {"04", "05", "19"}
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, passing,
                          [(item["id"], item["status"], item["explanation"]) for item in report["checks"]])
         self.assertEqual(world.opened, [HEALTH])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
+        for key in ("03", "06", "07", "08", "09", "10", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
             self.assertIn("Trusted-collection follow-up", row(report, key)["evidence"][0]["source"])
@@ -2167,7 +2190,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertIsNone(probe.call_args.args[index])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
+        for key in ("03", "06", "07", "08", "09", "10", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
 
@@ -2233,7 +2256,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                     self.assertNotIn(legacy, text)
 
     def test_private_g_channel_ids_are_accepted(self):
-        report = self.world().report(channel="GPRIVATE12")
+        report = self.world(evaluate_rules=True).report(channel="GPRIVATE12")
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--channel", row(report, "03")["explanation"])
 
@@ -2451,139 +2474,139 @@ class ScorecardCollectorTests(unittest.TestCase):
         world.handle.assert_not_called()
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertIn("collector not yet trusted" if key in ("06", "08", "10", "11", "20") else "--channel",
+            self.assertIn("collector not yet trusted" if key in ("03", "06", "08", "09", "10", "11", "20") else "--channel",
                           row(report, key)["explanation"])
         self.assertEqual(row(report, "07")["status"], "UNKNOWN")
 
     def test_intake_drills_03(self):
-        self.assertEqual(self.world().state("03"), "PASS")
-        refused_with_task = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("03"), "PASS")
+        refused_with_task = self.world(evaluate_rules=True)
         refused_with_task.bindings[ts(100)] = (200, "DIR-LG-5E")
         self.assertEqual(refused_with_task.state("03"), "FAIL")
-        refused_with_receipt = self.world()
+        refused_with_receipt = self.world(evaluate_rules=True)
         refused_with_receipt.threads[ts(100)].append({"ts": ts(102), "thread_ts": ts(100), "user": BOT,
                                                       "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
         self.assertEqual(refused_with_receipt.state("03"), "FAIL")
-        ambiguous_reservation = self.world()
+        ambiguous_reservation = self.world(evaluate_rules=True)
         ambiguous_reservation.bindings[ts(200)] = (409, None)
         self.assertEqual(ambiguous_reservation.state("03"), "FAIL")
-        duplicated = self.world()
+        duplicated = self.world(evaluate_rules=True)
         duplicated.tasks["DIR-LG-5E"]["qualification_evidence"]["task_scope_counters"]["thread_tasks"] = 2
         self.assertEqual(duplicated.state("03"), "FAIL")
-        receipted_5xx = self.world()
+        receipted_5xx = self.world(evaluate_rules=True)
         receipted_5xx.threads[ts(200)].append({"ts": ts(202), "thread_ts": ts(200), "user": BOT,
                                                "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
         self.assertEqual(receipted_5xx.state("03"), "UNKNOWN")
         # Only a reply's header is a BLOCKED notice: a quoted one is not, and two notices are not one refusal.
-        quoted = self.world()
+        quoted = self.world(evaluate_rules=True)
         quoted.threads[ts(100)][1]["text"] = "Result below.\nThe docs mention *DIRECTOR — BLOCKED* replies."
         self.assertEqual(quoted.state("03"), "UNKNOWN")
-        doubled = self.world()
+        doubled = self.world(evaluate_rules=True)
         doubled.threads[ts(100)].append({**doubled.threads[ts(100)][1], "ts": ts(102)})
         self.assertEqual(doubled.state("03"), "UNKNOWN")
-        tagged = self.world()
+        tagged = self.world(evaluate_rules=True)
         tagged.threads[ts(100)][1]["text"] = ("*[[Director Gateway | fixture | 2026-09-12 | 10:00 UTC | BEGIN]]*\n\n"
                                               + tagged.threads[ts(100)][1]["text"])
         self.assertEqual(tagged.state("03"), "PASS")
         # An edited or subtyped owner post is an altered second input: the drill grades nothing.
-        edited_input = self.world()
+        edited_input = self.world(evaluate_rules=True)
         edited_input.threads[ts(100)].append({"ts": ts(103), "thread_ts": ts(100), "user": OWNER, "text": "again",
                                               "edited": {"user": OWNER, "ts": ts(104)}})
         self.assertEqual(edited_input.state("03"), "UNKNOWN")
-        edited_duplicate = self.world()
+        edited_duplicate = self.world(evaluate_rules=True)
         edited_duplicate.threads[ts(300)].append({"ts": ts(305), "thread_ts": ts(300), "user": OWNER, "text": "dup",
                                                   "subtype": "thread_broadcast"})
         self.assertEqual(edited_duplicate.state("09"), "UNKNOWN")
         # A receipt quoted inside another reply is not a second receipt.
-        quoted_receipt = self.world()
+        quoted_receipt = self.world(evaluate_rules=True)
         thread = quoted_receipt.threads[ts(300)]
         thread.remove(next(m for m in thread if m.get("ts") == ts(302)))
         thread.append({"ts": ts(303), "thread_ts": ts(300), "user": BOT,
                        "text": "Note: earlier reply read *DIR-LG-D0 — REQUEST RECEIVED*"})
         self.assertEqual(quoted_receipt.state("09"), "UNKNOWN")
         # Slack intake evidence is bound to the selected gateway: recreated after the drills, or absent.
-        new_gateway = self.world()
+        new_gateway = self.world(evaluate_rules=True)
         new_gateway.rows[-1]["Created"] = "2026-09-12T11:00:00Z"
         self.assertEqual(new_gateway.state("03"), "UNKNOWN")
-        new_n8n = self.world()
+        new_n8n = self.world(evaluate_rules=True)
         new_n8n.rows[1]["Created"] = "2026-09-12T11:00:00Z"
         self.assertEqual(new_n8n.state("03"), "UNKNOWN")
         # Evidence dated after the collection had not happened when it was read.
-        early_collection = self.world()
+        early_collection = self.world(evaluate_rules=True)
         early_collection.now = datetime(2026, 9, 12, 10, 50, tzinfo=timezone.utc)
         report = early_collection.report()
         self.assertEqual([row(report, key)["status"] for key in ("03", "09")], ["UNKNOWN", "UNKNOWN"])
         # A stale drill grades nothing: its negative outcome is UNKNOWN too, not FAIL.
-        stale_failure = self.world()
+        stale_failure = self.world(evaluate_rules=True)
         stale_failure.bindings[ts(100)] = (200, "DIR-LG-5E")
         stale_failure.rows[-1]["Created"] = "2026-09-12T11:00:00Z"
         self.assertEqual(stale_failure.state("03"), "UNKNOWN")
         # The gateway that handled the threads must hold the Director's Slack and bearer identities.
-        foreign_bot = self.world()
+        foreign_bot = self.world(evaluate_rules=True)
         foreign_bot.rows[-1]["Config"]["Env"] = [e for e in foreign_bot.rows[-1]["Config"]["Env"]
                                                  if not e.startswith("SLACK_BOT_TOKEN=")] + ["SLACK_BOT_TOKEN=other-bot"]
         report = foreign_bot.report()
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertNotIn("other-bot", json.dumps(report))
-        report = self.world().report(gateway=None)
+        report = self.world(evaluate_rules=True).report(gateway=None)
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--gateway", row(report, "03")["explanation"])
         # One reply repeating its receipt text is one receipt: duplicate input was not exercised.
-        repeated = self.world()
+        repeated = self.world(evaluate_rules=True)
         thread = repeated.threads[ts(300)]
         thread.remove(next(m for m in thread if m.get("ts") == ts(302)))
         receipt = next(m for m in thread if m.get("ts") == ts(301))
         receipt["text"] = receipt["text"] + "\n" + receipt["text"]
         self.assertEqual(repeated.state("09"), "UNKNOWN")
-        edited_refusal = self.world()
+        edited_refusal = self.world(evaluate_rules=True)
         edited_refusal.threads[ts(100)][1]["edited"] = {"user": BOT, "ts": ts(190)}
         self.assertEqual(edited_refusal.state("03"), "UNKNOWN")
         # Receipt text added by an edit is never parsed, so it cannot turn the drill into a FAIL either.
-        forged = self.world()
+        forged = self.world(evaluate_rules=True)
         forged.threads[ts(100)][1].update(text="*DIR-LG-5E — REQUEST RECEIVED*", edited={"user": BOT, "ts": ts(190)})
         report = forged.report()
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("edited or subtyped", row(report, "03")["explanation"])
-        unreserved = self.world()
+        unreserved = self.world(evaluate_rules=True)
         unreserved.bindings[ts(200)] = (404, None)
         self.assertEqual(unreserved.state("03"), "UNKNOWN")
         # The transport failure is its own path: a reserved task (200, one task) passes, a conflict fails.
-        reserved_transport = self.world()
+        reserved_transport = self.world(evaluate_rules=True)
         # A task this thread's own owner post created (not another drill's task).
         reserved_transport.add(task_entry("DIR-LG-7E", 150, text="DIRECTOR drill"), thread=False)
         reserved_transport.bindings[ts(150)] = (200, "DIR-LG-7E")
         self.assertEqual(reserved_transport.state("03"), "PASS")
-        borrowed_transport = self.world()
+        borrowed_transport = self.world(evaluate_rules=True)
         borrowed_transport.bindings[ts(150)] = (200, "DIR-LG-5E")  # another thread's task: not correlated
         self.assertEqual(borrowed_transport.state("03"), "UNKNOWN")
-        conflicting_transport = self.world()
+        conflicting_transport = self.world(evaluate_rules=True)
         conflicting_transport.bindings[ts(150)] = (409, None)
         self.assertEqual(conflicting_transport.state("03"), "FAIL")
-        answered = self.world()
+        answered = self.world(evaluate_rules=True)
         answered.threads[ts(150)].append({"ts": ts(152), "thread_ts": ts(150), "user": BOT,
                                           "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
         self.assertEqual(answered.state("03"), "UNKNOWN")
-        report = self.world().report(drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200)})
+        report = self.world(evaluate_rules=True).report(drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200)})
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("transport-failure", row(report, "03")["explanation"])
-        report = self.world().report(drill_threads={"refusal-4xx": ts(100)})
+        report = self.world(evaluate_rules=True).report(drill_threads={"refusal-4xx": ts(100)})
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("reserved-5xx", row(report, "03")["explanation"])
-        unavailable = self.world()
+        unavailable = self.world(evaluate_rules=True)
         unavailable.failing.add(ts(100))
         self.assertEqual(unavailable.state("03"), "UNKNOWN")
-        report = self.world().report(channel=None)
+        report = self.world(evaluate_rules=True).report(channel=None)
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--channel", row(report, "03")["explanation"])
         # A drill posted before the running container was created cannot attest it (the 404 drill has no task).
-        recreated = self.world()
+        recreated = self.world(evaluate_rules=True)
         # After every drill thread and its task ran (10:48:20-10:54:05).
         recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T10:55:00Z"
         report = recreated.report()
         self.assertEqual([row(report, key)["status"] for key in ("03", "09")], ["UNKNOWN", "UNKNOWN"])
         self.assertIn("refusal-4xx", row(report, "03")["explanation"])
         # Nor can a drill whose bound task was created before it.
-        early_task = self.world()
+        early_task = self.world(evaluate_rules=True)
         early_task.tasks["DIR-LG-5E"]["qualification_evidence"]["task_created_at"] = "2026-09-12T08:59:00+00:00"
         explanation = row(early_task.report(), "03")["explanation"]
         self.assertIn("reserved-5xx", explanation)
@@ -2959,41 +2982,41 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertIn("consistency command", row(report, "07")["explanation"])
 
     def test_final_reply_drills_09(self):
-        self.assertEqual(self.world().state("09"), "PASS")
-        twice = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("09"), "PASS")
+        twice = self.world(evaluate_rules=True)
         twice.threads[ts(300)].append({"ts": ts(331), "thread_ts": ts(300), "user": BOT, "text": "DIR-LG-D0 — SUCCEEDED"})
         self.assertEqual(twice.state("09"), "FAIL")
-        split = self.world()
+        split = self.world(evaluate_rules=True)
         split.threads[ts(300)][-1]["text"] = "*DIR-LG-5E — REQUEST RECEIVED*"
         self.assertEqual(split.state("09"), "FAIL")
-        unresolved = self.world()
+        unresolved = self.world(evaluate_rules=True)
         terminal = unresolved.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
         # PrimarySlackDelivery's AMBIGUOUS row: claimed, never acknowledged, no Slack ts (4110241987).
         terminal.update(state="AMBIGUOUS", readback_attempts=2, acknowledged_at=None, delivered_at=None, slack_ts=None,
                         last_error="readback_unverified")  # both readbacks spent, as readback() records
         self.assertEqual(unresolved.state("09"), "FAIL")
-        acknowledged = self.world()
+        acknowledged = self.world(evaluate_rules=True)
         acked = acknowledged.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
         acked["acknowledged_at"] = acked["delivered_at"]  # Slack answered the post: no ambiguity to recover
         self.assertEqual(acknowledged.state("09"), "UNKNOWN")
-        unexercised = self.world()
+        unexercised = self.world(evaluate_rules=True)
         unexercised.threads[ts(300)].pop()
         self.assertEqual(unexercised.state("09"), "UNKNOWN")
-        duplicated = self.world()
+        duplicated = self.world(evaluate_rules=True)
         duplicated.tasks["DIR-LG-A0"]["qualification_evidence"]["task_scope_counters"]["thread_tasks"] = 2
         self.assertEqual(duplicated.state("09"), "FAIL")
         # The duplicate-input final reply must be the task's DELIVERED terminal row, read back as native.
         for change in ({"state": "AMBIGUOUS"}, {"slack_ts": None}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             delivery = next(r for r in case.tasks["DIR-LG-D0"]["qualification_evidence"]["slack_deliveries"]
                             if r.get("notification_key") == "terminal")
             delivery.update(change)
             with self.subTest(change=change):
                 self.assertNotEqual(case.state("09"), "PASS")
-        crowded = self.world()
+        crowded = self.world(evaluate_rules=True)
         crowded.threads[ts(400)].append({"ts": ts(405), "thread_ts": ts(400), "user": OWNER, "text": "another input"})
         self.assertEqual(crowded.state("09"), "UNKNOWN")
-        edited_final = self.world()
+        edited_final = self.world(evaluate_rules=True)
         final = next(m for m in edited_final.threads[ts(400)] if m.get("ts") == ts(430))
         final["edited"] = {"user": BOT, "ts": ts(490)}
         self.assertEqual(edited_final.state("09"), "UNKNOWN")
@@ -3167,7 +3190,7 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_drill_final_reply_must_be_the_canonical_rendering_09(self):
         for thread, final in ((ts(300), ts(330)), (ts(400), ts(430))):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             message = next(m for m in case.threads[thread] if m.get("ts") == final)
             message["text"] = message["text"].replace("SUCCEEDED", "SUCCEEDED (see thread)")
             with self.subTest(thread=thread):
@@ -3387,8 +3410,8 @@ class ScorecardCollectorTests(unittest.TestCase):
             attempts=False))
 
     def test_ambiguous_post_requires_a_readback_attempt_09(self):
-        self.assertEqual(self.world().state("09"), "PASS")
-        unread = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("09"), "PASS")
+        unread = self.world(evaluate_rules=True)
         for delivery in (unread.deliveries["DIR-LG-A0"]
                          + unread.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"]):
             if delivery.get("notification_key") == "terminal":
@@ -3429,13 +3452,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertFalse(any(sc._amount(value) for value in (float("nan"), float("inf"), -1, True, "1")))
 
     def test_every_task_backed_drill_needs_the_task_correlation_03_09(self):
-        self.assertEqual([self.world().state(key) for key in ("03", "09")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("03", "09")], ["PASS", "PASS"])
         # The reserved-5xx thread bound to a task another Slack event created.
-        other = self.world()
+        other = self.world(evaluate_rules=True)
         other.tasks["DIR-LG-5E"]["intake"]["source_event_id"] = CHANNEL_FIXTURE + ":" + ts(999)
         self.assertEqual(other.state("03"), "UNKNOWN")
         for task_id in ("DIR-LG-D0", "DIR-LG-A0"):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.tasks[task_id]["intake"]["source_event_id"] = CHANNEL_FIXTURE + ":" + ts(999)
             with self.subTest(task_id=task_id):
                 self.assertNotEqual(case.state("09"), "PASS")
@@ -4182,7 +4205,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         row_of = {"qualification_evidence": {"effect_state": "PROVIDER_EFFECT_RECORDED"}}
         self.assertIsNone(sc._ambiguous_effects(row_of, {**base, **bound}, {"a": {"status": "SUCCEEDED"}}))
         # The graded terminal delivery must name the record's projection (checks 09, 10 and 20 via _final_correlated).
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         terminal_row = next(r for r in world.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"]
                             if r.get("notification_key") == "terminal")
         terminal_row["projection_digest"] = "sha256:" + "0" * 64
@@ -5076,7 +5099,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(len(report["checks"]), 20)
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, {"05", "19"})
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
-            self.assertIn("collector not yet trusted" if key in ("06", "08", "10", "11", "20") else "--channel",
+            self.assertIn("collector not yet trusted" if key in ("03", "06", "08", "09", "10", "11", "20") else "--channel",
                           row(report, key)["explanation"])
         self.assertEqual(len({item.check_id for item in observations}), len(observations))
         text = json.dumps(report)
@@ -5192,3 +5215,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]

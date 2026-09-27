@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 """Atomic worst-case admission; no paid calls or external services."""
@@ -5,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -45,6 +47,48 @@ def priced(provider, **overrides):
 
 
 class ProviderSpendBoundsTests(unittest.TestCase):
+    def test_pre_settlement_upgrade_preserves_exposure_without_pending_hold(self):
+        for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / "spend.sqlite3")
+                now = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
+                old_day = now - timedelta(days=1)
+                with sqlite3.connect(path) as db:
+                    db.execute("""CREATE TABLE provider_daily_spend_reservations (
+                        provider TEXT NOT NULL, effect_key TEXT NOT NULL, utc_day TEXT NOT NULL,
+                        estimated_cost_usd REAL NOT NULL, recorded_at TEXT NOT NULL,
+                        PRIMARY KEY(provider, effect_key))""")
+                    for label, at in (("legacy", now), ("older", old_day)):
+                        db.execute("INSERT INTO provider_daily_spend_reservations VALUES (?, ?, ?, ?, ?)",
+                                   (provider.value, key(label), at.date().isoformat(), 0.75, at.isoformat()))
+                ledger = ProviderDailySpendLedger(path)
+                ledger = ProviderDailySpendLedger(path)  # migration is idempotent
+                with sqlite3.connect(path) as db:
+                    self.assertEqual(db.execute(
+                        "SELECT legacy, serialized, actual_cost_usd FROM provider_daily_spend_reservations"
+                    ).fetchall(), [(1, 0, None), (1, 0, None)])
+                self.assertEqual(ledger.exposure(provider, now=old_day), (1, 0.75))
+                with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                    ledger.reserve(provider=provider, effect_key=key("too-large"), estimated_cost_usd=0.3,
+                                   request_limit=10, budget_usd=1, now=now)
+                self.assertNotEqual(caught.exception.code, "provider_spend_pending_retryable")
+                ledger.reserve(provider=provider, effect_key=key("new"), estimated_cost_usd=0,
+                               request_limit=10, budget_usd=1, serialize=True, now=now)
+                self.assertEqual(ledger.exposure(provider, now=now), (2, 1))
+                ledger.record_charge(provider=provider, effect_key=key("legacy"), actual_cost_usd=0.5, now=now)
+                self.assertEqual(ledger.exposure(provider, now=now), (2, 0.75))
+                # Reopening must not relabel or release a new serialized request.
+                reopened = ProviderDailySpendLedger(path)
+                with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                    reopened.reserve(provider=provider, effect_key=key("blocked"), estimated_cost_usd=0,
+                                     request_limit=10, budget_usd=1, serialize=True, now=now)
+                self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
+                tomorrow = now + timedelta(days=1)
+                reopened.reserve(provider=provider, effect_key=key("tomorrow"), estimated_cost_usd=0,
+                                 request_limit=10, budget_usd=1, serialize=True, now=tomorrow)
+                self.assertEqual(reopened.exposure(provider, now=now), (2, 0.75))
+                self.assertEqual(reopened.exposure(provider, now=tomorrow), (1, 1))
+
     def test_payload_bytes_output_cap_and_prices(self):
         for provider in ("gemini", "grok", "perplexity"):
             with self.subTest(provider=provider):
@@ -196,29 +240,29 @@ class ProviderSpendBoundsTests(unittest.TestCase):
             now = datetime.now(timezone.utc)
             ledger.reserve(provider=ProviderName.GROK, effect_key=key("first"), estimated_cost_usd=0,
                            request_limit=100, budget_usd=1, serialize=True, now=now)
-            for later in (now, now + timedelta(days=1)):
-                for serialized in (False, True):
-                    with self.assertRaisesRegex(ProviderDailyLimitExceeded, "retry after settlement or reconciliation"):
-                        ledger.reserve(provider=ProviderName.GROK, effect_key=key("next"), estimated_cost_usd=0.1,
-                                       request_limit=100, budget_usd=1, serialize=serialized, now=later)
+            for serialized in (False, True):
+                with self.assertRaisesRegex(ProviderDailyLimitExceeded, "retry after settlement or reconciliation"):
+                    ledger.reserve(provider=ProviderName.GROK, effect_key=key("next"), estimated_cost_usd=0.1,
+                                   request_limit=100, budget_usd=1, serialize=serialized, now=now)
             ledger.record_charge(provider=ProviderName.GROK, effect_key=key("first"), actual_cost_usd=None)
             self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 1))
             self.assertEqual(ledger.unreconciled(ProviderName.GROK, stale_after=timedelta(hours=1)), [key("first")])
 
-    def test_known_reservation_settles_lower_and_blocks_unpriced_overlap(self):
+    def test_known_reservation_settles_lower_and_counts_during_unpriced_overlap(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
             ledger.reserve(provider=ProviderName.GROK, effect_key=key("priced"), estimated_cost_usd=0.8,
                            request_limit=10, budget_usd=1)
-            with self.assertRaises(ProviderDailyLimitExceeded):
-                ledger.reserve(provider=ProviderName.GROK, effect_key=key("unpriced"), estimated_cost_usd=0,
-                               request_limit=10, budget_usd=1, serialize=True)
+            ledger.reserve(provider=ProviderName.GROK, effect_key=key("unpriced"), estimated_cost_usd=0,
+                           request_limit=10, budget_usd=1, serialize=True)
+            self.assertAlmostEqual(dict(ledger.reservations(ProviderName.GROK))[key("unpriced")], 0.2)
+            ledger.record_charge(provider=ProviderName.GROK, effect_key=key("unpriced"), actual_cost_usd=0)
             ledger.record_charge(provider=ProviderName.GROK, effect_key=key("priced"), actual_cost_usd=0.2)
             ledger.record_charge(provider=ProviderName.GROK, effect_key=key("priced"), actual_cost_usd=0.1)
-            self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 0.2))
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (2, 0.2))
             ledger.reserve(provider=ProviderName.GROK, effect_key=key("next"), estimated_cost_usd=0.8,
                            request_limit=10, budget_usd=1)
-            self.assertEqual(ledger.exposure(ProviderName.GROK), (2, 1))
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (3, 1))
 
     def test_engine_missing_prices_uses_serialization_for_every_metered_provider(self):
         for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
@@ -353,3 +397,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]

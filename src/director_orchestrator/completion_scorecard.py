@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
@@ -1178,7 +1179,7 @@ _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writ
                     "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
 _CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
 _CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
-_CONTAINED_RUNTIME = ("06", "07", "08", "10", "15", "20")
+_CONTAINED_RUNTIME = ("03", "06", "07", "08", "09", "10", "15", "20")
 _CONTAINED_CAPTURES = ("11", "12")
 _CONTAINED_CANDIDATE = ("17",)
 
@@ -2649,7 +2650,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                 *[_observation(key, None, "collector not yet trusted",
                                _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
                                {}, at, candidate_sha=candidate_sha if key == "17" else None)
-                  for key in ("07", "08", "11", "12", "15", "17", "20")]], None
+                  for key in (*_CONTAINED_RUNTIME, *_CONTAINED_CAPTURES, *_CONTAINED_CANDIDATE)]], None
     try:  # the containers as the deployment probe saw them, re-inspected before the final cutoff
         state: tuple | None = _deployment_state(project, gateway)
         if not any(row[:2] == (runtime.container_id, runtime.image_id) for row in state):
@@ -3695,3 +3696,4 @@ def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) ->
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
@@ -97,6 +98,7 @@ class ProviderDailySpendLedger:
         self.path = sqlite_path
         Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS provider_daily_spend_reservations (
@@ -121,6 +123,11 @@ class ProviderDailySpendLedger:
                     "PRAGMA table_info(provider_daily_spend_reservations)"
                 )
             }
+            pre_settlement = "actual_cost_usd" not in columns
+            if "legacy" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0"
+                )
             if "actual_cost_usd" not in columns:
                 connection.execute(
                     """ALTER TABLE provider_daily_spend_reservations
@@ -138,6 +145,11 @@ class ProviderDailySpendLedger:
                 # Legacy reservations were estimates, not proven maxima.
                 connection.execute(
                     "ALTER TABLE provider_daily_spend_reservations ADD COLUMN serialized INTEGER NOT NULL DEFAULT 1"
+                )
+            if pre_settlement:
+                # Old estimates remain budget exposure, but cannot be reconciled as task effects.
+                connection.execute(
+                    "UPDATE provider_daily_spend_reservations SET legacy = 1, serialized = 0"
                 )
             if "requested_cost_usd" not in columns:
                 connection.execute(
@@ -180,7 +192,9 @@ class ProviderDailySpendLedger:
         recorded. The one path for usage probes and ordinary work (review 4112533824). ``None`` settles a request
         whose provider reported no cost: its reservation keeps counting at its bound, and it stays unreconciled.
         A charge with no reservation (a probe the ledger did not reserve) is recorded as its own row at a zero
-        reservation: the charge was incurred, so it is never refused and always counts."""
+        reservation: the charge was incurred, so it is never refused and always counts.
+        Operators may use this same method for a legacy row after obtaining an authoritative charge;
+        its original UTC day and legacy provenance remain unchanged."""
 
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend charges apply only to supplemental providers")
@@ -283,14 +297,13 @@ class ProviderDailySpendLedger:
                         "provider daily reservation identity was reused with different accounting"
                     )
             else:
-                # Across days and processes: an unpriced in-flight call must not
-                # overlap even after prices are configured. Unknown settlement
-                # or stale ambiguity requires reconciliation, never auto-release.
+                # Only serialized reservations of this UTC day hold admission.
+                # Legacy and bounded reservations still count in daily exposure.
                 pending = connection.execute(
                     """SELECT 1 FROM provider_daily_spend_reservations
-                    WHERE provider = ? AND actual_cost_usd IS NULL
-                    AND (? OR serialized = 1) LIMIT 1""",
-                    (provider.value, serialize),
+                    WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL
+                    AND serialized = 1 AND legacy = 0 LIMIT 1""",
+                    (provider.value, utc_day),
                 ).fetchone()
                 if pending:
                     raise ProviderDailyLimitExceeded(
@@ -1773,3 +1786,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
