@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | BEGIN]]
@@ -156,7 +157,11 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertLessEqual(datetime.fromisoformat(record["start_utc"]), datetime.fromisoformat(record["end_utc"]))
         self.assertEqual(len(self.posts()), 1)
         body = self.posts()[0].args[2]
-        self.assertEqual(json.loads(body["messages"][1]["content"]), self.item)
+        user_message = json.loads(body["messages"][1]["content"])
+        self.assertIsInstance(user_message, dict)
+        self.assertEqual(set(user_message), {"objective", "repository", "title"})
+        self.assertEqual(user_message, {key: self.item[key] for key in ("objective", "repository", "title")})
+        self.assertEqual(body["messages"][0]["content"], gen.SYSTEM_PROMPT)
         self.assertEqual(body["messages"][0]["content"], record["prompt_template"])
         self.assertEqual(record["prompt_template_sha256"], gen.sha256(record["prompt_template"].encode()))
         self.assertNotIn("chat_template_kwargs", body)
@@ -381,3 +386,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]

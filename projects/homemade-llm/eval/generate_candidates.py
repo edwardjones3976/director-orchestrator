@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | BEGIN]]
@@ -370,7 +371,9 @@ def run(args, transport=http_json):
             body = {
                 "model": args.model, "temperature": 0, "n": 1,
                 "messages": [{"role": "system", "content": prompt},
-                             {"role": "user", "content": json.dumps(item, sort_keys=True)}],
+                             {"role": "user", "content": json.dumps(
+                                 {key: item[key] for key in ("objective", "repository", "title")},
+                                 sort_keys=True)}],
                 "response_format": {"type": "json_schema", "json_schema": {
                     "name": "model_work_packet_v1", "strict": True, "schema": schema,
                 }},
@@ -434,3 +437,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
