@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | BEGIN]]
 import importlib.util
 import unittest
@@ -91,25 +92,24 @@ class CiScopeTests(unittest.TestCase):
             "pull_requests": [{"number": 284}],
         }
         jobs = [
-            {
-                "name": name,
-                "conclusion": "success",
-                "steps": (
-                    [{"name": "Run python -m unittest discover -s tests -v", "conclusion": "success"}]
-                    if name.startswith("Python 3.12")
-                    else []
-                ),
-            }
+            {"name": name, "conclusion": "success", "steps": []}
             for name in ci_scope.REQUIRED_JOBS
         ]
-        with patch.object(
-            ci_scope,
-            "api_json",
-            side_effect=[{"workflow_runs": [run]}, {"jobs": jobs}],
+        for step_name in (
+            "Run python -m unittest discover -s tests -v",
+            "python scripts/run-tests-parallel.py",
         ):
-            self.assertTrue(
-                ci_scope.previous_full_run_succeeded("owner/repo", 284, BEFORE, "token")
-            )
+            for job in jobs:
+                if job["name"].startswith("Python 3.12"):
+                    job["steps"] = [{"name": step_name, "conclusion": "success"}]
+            with patch.object(
+                ci_scope,
+                "api_json",
+                side_effect=[{"workflow_runs": [run]}, {"jobs": jobs}],
+            ):
+                self.assertTrue(
+                    ci_scope.previous_full_run_succeeded("owner/repo", 284, BEFORE, "token")
+                )
         jobs[0]["conclusion"] = "skipped"
         with patch.object(
             ci_scope,
@@ -136,3 +136,4 @@ class CiScopeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | END]]

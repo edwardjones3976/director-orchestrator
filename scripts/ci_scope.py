@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | BEGIN]]
 """Select a narrow CI rerun only after a verified full run and base merge."""
 
@@ -60,6 +61,8 @@ FULL_TEST_STEPS = frozenset(
     {
         "Run python -m unittest discover -s tests -v",
         "python -m unittest discover -s tests -v",
+        "Run python scripts/run-tests-parallel.py",
+        "python scripts/run-tests-parallel.py",
     }
 )
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -203,3 +206,4 @@ if __name__ == "__main__":
         raise SystemExit(run_focused(os.environ["CI_FOCUSED_SUITE"]))
     raise SystemExit("usage: ci_scope.py plan | run")
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | END]]
