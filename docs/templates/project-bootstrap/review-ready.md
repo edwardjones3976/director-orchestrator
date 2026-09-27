@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
@@ -78,10 +79,13 @@ Otherwise return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followe
 evidence and actionable findings.
 Do not review a PR candidate whose sole author is you or shares your provider
 family. An assisting contributor may review under the owner rule, subject to
-the material-author gate limitations above. Merge only as the accepting
-reviewer, after an exact-SHA ACCEPT and green checks, and never if you contributed
-counted lines to the PR. Do not deploy, publish, change access, or infer authority
-from this request.
+the material-author gate limitations above. Under the owner's merge law, the
+thorough non-contributing reviewer merges after an exact-SHA ACCEPT and green
+checks; the sole author never merges, nor does anyone with counted lines.
+Temporary B2 hold: until #305 plus phase-3 wiring is live, do not merge into
+protected main unless the owner has directed that specific merge. Otherwise,
+record ACCEPT and the blocker, then stop. All deterministic gates still apply.
+Do not deploy, publish, change access, or infer authority from this request.
 ```
 
 ## Reviewer result
@@ -104,3 +108,4 @@ CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->
