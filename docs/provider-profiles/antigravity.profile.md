@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
@@ -196,7 +197,7 @@ Strengths:
 | `GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS` | retry_delay_seconds | `gemini_usage_max_retry_delay_seconds` | `8` | yes | no |
 
 - Provider daily spend ledger member: yes
-- Not modeled note: none
+- Not modeled note: Managed Gemini cannot honor a finite per-request monetary ceiling, even with configured token prices or GEMINI_MAX_TOTAL_TOKENS. Work and probes serialize, holding all remaining daily capacity; an unresolved non-legacy request blocks admission across UTC days until authoritative cost settlement or reconciliation. Serialization is not a provider-enforced spend ceiling.
 - Shared limits: `MAX_TASK_BUDGET_USD`, `PROVIDER_TIMEOUT_SECONDS`, `PROVIDER_POLL_SECONDS`
 
 ## Allowlists and gating
@@ -375,3 +376,4 @@ Separation of duties:
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:10 UTC | END]] -->

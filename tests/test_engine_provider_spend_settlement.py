@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
@@ -496,6 +497,20 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(store.get_workload_reservation(reservation.reservation_key).final_outcome,
                              WorkloadAttemptOutcome.INVOKED)
 
+    def test_priced_gemini_refuses_second_unsettled_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, _, assignment = self._world(
+                directory, assignment=work_assignment(estimated_cost_usd=0.0))
+            settings = replace(settings, gemini_input_usd_per_mtok=1.0,
+                               gemini_output_usd_per_mtok=1.0)
+            engine = OrchestrationEngine(settings, store)
+            engine._reserve_provider_daily_spend(
+                assignment, effect_key=_key("priced-gemini-first"), context="bounded test request")
+            with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                engine._reserve_provider_daily_spend(
+                    assignment, effect_key=_key("priced-gemini-second"), context="bounded test request")
+            self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
+
     def test_not_created_settles_only_exact_reservation_once(self) -> None:
         from director_orchestrator.approvals import (
             record_provider_effect_observation, reserve_provider_effect,
@@ -505,9 +520,12 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
         for phase, crash in (("dispatch", False), ("revision", False), ("dispatch", True), ("revision", True)):
             with self.subTest(phase=phase, crash=crash), tempfile.TemporaryDirectory() as directory:
                 settings, store, record, assignment = self._world(
-                    directory, assignment=work_assignment(estimated_cost_usd=0.0))
-                settings = replace(settings, gemini_input_usd_per_mtok=1.0,
-                                   gemini_output_usd_per_mtok=1.0)
+                    directory, assignment=Assignment(
+                        sequence=1, agent=ProviderName.GROK, task="Answer one bounded question",
+                        acceptance=["An answer is returned"], estimated_cost_usd=0.0))
+                settings = replace(settings, grok_input_usd_per_mtok=1.0,
+                                   grok_output_usd_per_mtok=1.0, grok_daily_budget_usd=1.0,
+                                   grok_daily_request_limit=50, grok_request_cost_floor_usd=0.01)
                 engine = OrchestrationEngine(settings, store)
                 key = reserve_provider_effect(record, assignment, phase=phase, max_task_budget_usd=10)
                 record_provider_effect_observation(record, assignment, effect_key=key, phase=phase, outcome="ambiguous")
@@ -860,3 +878,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:16 UTC | END]]

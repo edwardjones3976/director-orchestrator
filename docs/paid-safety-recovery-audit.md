@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 # PR #326 recovery audit
 
@@ -60,3 +61,4 @@ There is no `usage_monitor.py` in this checkout; `UsageMonitor` lives in `usage.
 - Existing dispatch/revision, stale-CAS, partial recovery, single-packet, reconciled-readback and parallel-member tests now inspect the engine journal.
 - Python and Docker were not executed under the work-order restriction. Dispatcher must run the focused suites, syntax check, contribution-tag validation and independent exact-head review. The Python site-board check also remains dispatcher-owned.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | END]] -->

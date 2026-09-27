@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
@@ -129,6 +130,22 @@ $labels = @{
 }
 $label = $labels[$key]
 if (-not $label) { exit 1 }
+$plainBash = $bash
+if ($key -eq 'mistral-nemo-base-2407') {
+    if ($bash -cnotmatch "(?s)^set -euo pipefail && python -c '([^']+)' ") { throw 'Nemo must emit the HF tokenizer bootstrap' }
+    $bootstrap = $Matches[1]
+    if (-not $bootstrap.Contains('AutoTokenizer.from_pretrained = PreTrainedTokenizerFast.from_pretrained') -or
+        -not $bootstrap.Contains('sys.argv = sys.argv[1:]') -or
+        -not $bootstrap.Contains('sys.path.insert(0, os.path.dirname(sys.argv[0]))') -or
+        -not $bootstrap.Contains('runpy.run_path(sys.argv[0], run_name="__main__")')) { throw 'incomplete Nemo tokenizer bootstrap' }
+    $plainBash = $bash.Replace("python -c '$bootstrap'", 'python')
+}
+$inSnap = [regex]::Match($bash, '/hf/hub/models--[^ /]+/snapshots/[a-f0-9]{40}').Value
+$expectedBash = "set -euo pipefail && python /opt/unsloth/llama.cpp/convert_hf_to_gguf.py $inSnap --outfile /work/$label-bf16.gguf --outtype bf16 && /opt/unsloth/llama.cpp/llama-quantize /work/$label-bf16.gguf /work/$label-Q4_K_M.gguf Q4_K_M"
+if ($key -eq 'qwen3-8b') { $expectedBash += " && /opt/unsloth/llama.cpp/llama-quantize /work/$label-bf16.gguf /work/$label-Q8_0.gguf Q8_0" }
+if ($plainBash -cne $expectedBash) { throw "unexpected converter or quantizer command for $key" }
+if (($DockerArgs -join ' ') -match 'HF_TOKEN|--env-file' -or ($DockerArgs -join ' ') -notmatch '--network none') { throw 'conversion must stay offline without host credentials' }
+Write-Output "tokenizer route checked: $key"
 New-Item -ItemType Directory -Force -Path $workHost | Out-Null
 $bf16 = Join-Path $workHost "$label-bf16.gguf"
 Set-Content -LiteralPath $bf16 -Value ('b' * 64) -NoNewline
@@ -575,6 +592,9 @@ function Set-Content {
     )
     Remove-Item Env:CONVERT_ORDER_LOG -ErrorAction SilentlyContinue
     Assert ($code -eq 0) 'execute all models exits 0'
+    foreach ($key in $expectedOrder) {
+        Assert ((Out-Text $out).Contains("tokenizer route checked: $key")) "$key emits only its expected tokenizer route and unchanged conversion arguments"
+    }
     $logged = Get-Content -LiteralPath $orderAll
     Assert (($logged -join ',') -eq ($expectedOrder -join ',')) 'execute processes models one-at-a-time in catalog order'
 } finally {
@@ -601,3 +621,4 @@ exit 0
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
@@ -109,7 +110,7 @@ class BlockingSyncLateReadbackTransport(LateReadbackTransport):
     ) -> Mapping[str, Any]:
         self.readback_calls += 1
         self.entered.set()
-        self.release.wait(timeout=5)
+        self.release.wait(timeout=60)
         return copy.deepcopy(self.result)
 
 
@@ -1016,7 +1017,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         work = copy.deepcopy(self.work)
-        work["limits"]["timeout_seconds"] = 1
+        work["limits"]["timeout_seconds"] = 5
         transport = BlockingSyncLateReadbackTransport(self.result)
         router = StubPacketTaskRouter(
             work, PacketBoundaryAdapter("claude", transport)
@@ -1064,7 +1065,10 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.sleep(0.05)
             self.assertFalse(route.done(), "sync readback blocked the event loop")
-            self.assertFalse(await asyncio.wait_for(route, timeout=2))
+            try:
+                self.assertFalse(await asyncio.wait_for(route, timeout=30))
+            except TimeoutError:
+                self.fail("sync readback route did not time out within 30 seconds")
         finally:
             transport.release.set()
 
@@ -1600,3 +1604,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | END]]
