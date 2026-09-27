@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]] -->
+<!-- MX-049 -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:25 UTC | BEGIN]] -->
@@ -105,8 +107,15 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    `dispatch.py codex` is the usual route from this project.
    Under the later owner ruling O-043, Codex's owner-directed maintenance on
    PR #293 is assistance and Claude is its sole author. O-041 remains the
-   historical exception before that ruling. PR #284's repository-wide 52%
-   rule is still proposed until it merges.
+   historical exception before that ruling. AGENTS.md at PR #293's base
+   `4ece6d1` and in the current tree makes the repository-wide 52% sole-author
+   rule effective for maintenance from 2026-09-26, including work in flight.
+   Under the owner ruling on #299, maintenance commits and owner-directed
+   corrections are assistance excluded from authorship shares. Earlier
+   statements that the rule awaited #284 are pre-rule history only; O-041's
+   exception and arithmetic remain recorded, while O-043 governs #293's
+   current classification. Cursor remains its independent reviewer and
+   guarded merger; neither Claude nor Codex may review or merge #293.
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -147,3 +156,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]] -->

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]]
+# MX-049
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Canonical project-local provider roles contract (director-provider-roles/v1).
@@ -343,7 +345,7 @@ this_template_does_not_change:
 project_local_bindings:
   project_id: "homemade-llm"
   recorded_at: "2026-09-24T07:55:00Z"
-  lanes_in_use: ["claude", "grok", "openai", "perplexity"]
+  lanes_in_use: ["claude", "cursor", "grok", "openai", "perplexity"]
   deviations:
     - area: "project_leadership"
       provider: "claude"
@@ -355,3 +357,4 @@ project_local_bindings:
       owner_authorization: "decision-log.md O-026"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]]
