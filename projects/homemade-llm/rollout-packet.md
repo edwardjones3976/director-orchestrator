@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | BEGIN]] -->
@@ -39,7 +40,7 @@ are borrowed from another deployment. No secret values appear here.
   - Any new external effect requires a profile revision first (`fallbacks.changed_scope: reshape_profile_before_dependent_work`).
   - **Prohibited:** Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)
 - **Paid execution:** owner-authorized and gated — USD 25 per milestone ledger; a call that would breach it stops
-- **Automerge/deployment/publication:** disabled; #293's non-author reviewer giving final ACCEPT merges after all gates (O-040); neither Claude nor Codex may merge
+- **Automerge/deployment/publication:** disabled; Cursor is #293's eligible merger only after its own thorough exact-head/base ACCEPT and all gates (O-040). Grok supplies a separate bounded review and cannot operate GitHub; neither Claude nor Codex may review or merge #293.
 
 ## Slack isolation
 
@@ -118,3 +119,4 @@ used as a fallback.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]] -->
