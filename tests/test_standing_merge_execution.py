@@ -1,15 +1,17 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 """Standing authority consumes authenticated evidence and never retries a merge."""
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-import hashlib
-import hmac
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from director_orchestrator.hotl_execution import (
     MERGE_CLASSES, STANDING_MERGE_AUTHORITY, TERMS, MergeExecutionBoundary,
@@ -24,7 +26,11 @@ class StandingMergeExecutionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.now = datetime(2026, 9, 26, 23, 30, tzinfo=timezone.utc)
-        self.key = b"test-only-observer-key-not-a-secret" * 2
+        # Throwaway keys generated in memory; no key material in files.
+        self.private_key = Ed25519PrivateKey.generate()
+        self.public_key = self.private_key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        )
         self.action = ProposedAction("eligible_merge_protected_branch", "example/demo",
                                      "test", HEAD, "reviewer-1")
         evidence = bundle()
@@ -48,7 +54,7 @@ class StandingMergeExecutionTests(unittest.TestCase):
         self.database = str(Path(self.temp.name) / "merge.sqlite3")
         self.boundary = MergeExecutionBoundary(
             repository="example/demo", environment="test", assignment_id="ASSIGN-1", policy=policy(),
-            prohibited_paths=("src/private/*",), observer_key=self.key,
+            prohibited_paths=("src/private/*",), observer_public_key=self.public_key,
             observe=self.observe, merge=self.merge, audit_path=self.database,
             clock=lambda: self.now,
         )
@@ -57,8 +63,8 @@ class StandingMergeExecutionTests(unittest.TestCase):
         self.reads += 1
         observation = self.final if self.reads > 1 and self.final else self.observation
         observation = replace(observation, challenge=challenge)
-        signature = hmac.new(self.key, observation.payload(), hashlib.sha256).hexdigest()
-        return observation, "0" * 64 if self.bad_signature else signature
+        signature = self.private_key.sign(observation.payload()).hex()
+        return observation, "0" * 128 if self.bad_signature else signature
 
     def merge(self, **kwargs):
         # A real durable reservation and final observation precede the mutation.
@@ -161,6 +167,17 @@ class StandingMergeExecutionTests(unittest.TestCase):
         self.assert_hold()
         self.assertEqual(self.reads, 1)
 
+    def test_observation_signed_by_a_different_observer_key_never_executes(self):
+        # Phase 3: the verifier is the observer's PUBLIC key, so only the
+        # matching private half can authenticate; another observer's signature
+        # is refused exactly like a forged one.
+        self.private_key = Ed25519PrivateKey.generate()
+        self.assert_hold()
+
+    def test_a_malformed_signature_string_is_refused_not_raised(self):
+        self.boundary._observe = lambda *args: (self.observation, "not-hex")
+        self.assert_hold()
+
     def test_previously_signed_observation_cannot_be_replayed(self):
         stale = self.observe(self.action, 1, "old-challenge")
         self.boundary._observe = lambda *args: stale
@@ -252,3 +269,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

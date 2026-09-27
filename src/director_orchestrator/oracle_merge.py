@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -1540,11 +1541,16 @@ class OracleMergeService:
         snapshot, unreadable = self._read_snapshot(artifact)
         if unreadable is not None:
             return unreadable
-        if snapshot.base_protected and self._standing_merge_boundary is None:
+        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+        # Issue #306: the boundary is mandatory for protected AND non-protected
+        # bases. Without it no merge path exists at all, so this refuses before
+        # any draft transition, revalidation or mutation can begin.
+        if self._standing_merge_boundary is None:
             decision = self.policy.evaluate(artifact, snapshot)
             decision.status = OracleMergeStatus.REJECTED
             decision.reasons.append("standing merge evidence boundary is not configured")
             return self._complete(decision)
+        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         transitioned_from_draft = snapshot.draft
         if snapshot.draft:
             preflight = self.policy.evaluate(
@@ -1628,31 +1634,32 @@ class OracleMergeService:
 
         try:
             self._renew_claim(artifact)
-            if self._standing_merge_boundary is not None:
-                boundary = self._standing_merge_boundary
-                if boundary.assignment_id != artifact.assignment_id:
-                    raise RuntimeError("standing merge boundary assignment does not match review")
-                action = ProposedAction(
-                    "eligible_merge_protected_branch" if final_snapshot.base_protected
-                    else "eligible_merge_non_protected_branch",
-                    self.policy.repository, boundary.environment, artifact.head_sha,
-                    artifact.reviewer_provider,
-                )
-                execution = boundary.execute(action, artifact.pull_number)
-                if execution.outcome is not Outcome.EXECUTE:
-                    decision.status = OracleMergeStatus.REJECTED
-                    decision.reasons.extend(execution.blockers)
-                    return self._complete(decision)
-                decision.status = OracleMergeStatus.MERGED
-                decision.merge_commit_sha = execution.merged_sha
-                decision.actor = artifact.reviewer_provider
-                return self._complete(decision)
-            if final_snapshot.base_protected is not False:
+            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+            # Issue #306: the standing merge boundary is the only merge route,
+            # for protected and non-protected bases alike. The legacy gateway
+            # merge below is gone; MX-028 stays on the gateway's own legacy
+            # method as defense in depth.
+            boundary = self._standing_merge_boundary
+            if boundary is None:
                 raise RuntimeError("standing merge evidence boundary is not configured")
-            merged = self.github.merge(
-                self.policy.repository, artifact.pull_number,
-                artifact.head_sha, artifact.base_sha,
+            if boundary.assignment_id != artifact.assignment_id:
+                raise RuntimeError("standing merge boundary assignment does not match review")
+            action = ProposedAction(
+                "eligible_merge_protected_branch" if final_snapshot.base_protected
+                else "eligible_merge_non_protected_branch",
+                self.policy.repository, boundary.environment, artifact.head_sha,
+                artifact.reviewer_provider,
             )
+            execution = boundary.execute(action, artifact.pull_number)
+            if execution.outcome is not Outcome.EXECUTE:
+                decision.status = OracleMergeStatus.REJECTED
+                decision.reasons.extend(execution.blockers)
+                return self._complete(decision)
+            decision.status = OracleMergeStatus.MERGED
+            decision.merge_commit_sha = execution.merged_sha
+            decision.actor = artifact.reviewer_provider
+            return self._complete(decision)
+            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         except OracleMergeClaimExpired:
             raise
         except OracleRateLimitError as exc:
@@ -1661,16 +1668,6 @@ class OracleMergeService:
             decision.status = OracleMergeStatus.ERROR
             decision.reasons = [f"GitHub merge failed closed: {type(exc).__name__}"]
             return self._complete(decision)
-        if not merged.merged or not merged.merge_commit_sha:
-            decision.status = OracleMergeStatus.ERROR
-            decision.reasons = ["GitHub refused the exact-SHA merge"]
-            decision.actor = merged.actor
-            return self._complete(decision)
-
-        decision.status = OracleMergeStatus.MERGED
-        decision.merge_commit_sha = merged.merge_commit_sha
-        decision.actor = merged.actor
-        return self._complete(decision)
 
     # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
     def _witness_final_snapshot(
@@ -2331,6 +2328,27 @@ class GitHubOracleGateway:
     def _get_pull(self, repository: str, pull_number: int) -> dict:
         return self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
 
+    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+    def list_reviews(self, repository: str, pull_number: int) -> list[dict]:
+        """Live review records for the merge observer's evidence bundle.
+
+        A read-only endpoint on the same credential every other Oracle read
+        uses; no new credential path. Malformed payloads fail closed.
+        """
+
+        repository = canonical_repository(repository)
+        payload = self._request(
+            "GET",
+            f"/repos/{repository}/pulls/{pull_number}/reviews",
+            params={"per_page": 100},
+        ).json()
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise OracleDiffError("GitHub review evidence is malformed")
+        return payload
+    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
+
     def _get_files(self, repository: str, pull_number: int) -> list[dict]:
         payload = self._request(
             "GET",
@@ -2911,6 +2929,49 @@ class GitHubOracleGateway:
             actor=actor,
         )
 
+    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+    def merge_as_identity(
+        self,
+        repository: str,
+        pull_number: int,
+        expected_head_sha: str,
+        expected_base_sha: str,
+        acting_identity: str,
+        allow_bypass: bool = False,
+    ) -> str:
+        """Identity-bound transport for MergeExecutionBoundary.
+
+        Carries the acting principal explicitly and refuses every bypass
+        request, so protection and ruleset bypass is impossible even if a
+        caller supplies one. Unlike the legacy `merge` above, a protected base
+        is admissible here, because the caller is the boundary, which has
+        already authenticated standing owner authority and SATISFIED
+        protection and ruleset evidence; MX-028 stays on the legacy method.
+        """
+
+        repository = canonical_repository(repository)
+        if not isinstance(acting_identity, str) or not acting_identity.strip():
+            raise RuntimeError("identity-bound merge requires an acting identity")
+        if allow_bypass is not False:
+            raise RuntimeError("identity-bound merge refuses protection bypass")
+        pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
+        if (
+            pull["head"]["sha"] != expected_head_sha
+            or pull["base"]["sha"] != expected_base_sha
+        ):
+            raise RuntimeError("GitHub pull request changed during final merge validation")
+        payload = self._request(
+            "PUT",
+            f"/repos/{repository}/pulls/{pull_number}/merge",
+            mutate=True,
+            json={"sha": expected_head_sha, "merge_method": "merge"},
+        ).json()
+        merged_sha = payload.get("sha")
+        if not payload.get("merged") or not re.fullmatch(r"[0-9a-f]{40}", merged_sha or ""):
+            raise RuntimeError("GitHub refused the exact-SHA identity-bound merge")
+        return str(merged_sha)
+    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
+
     def mark_ready(
         self,
         repository: str,
@@ -2956,3 +3017,4 @@ class GitHubOracleGateway:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:01 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
