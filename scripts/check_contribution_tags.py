@@ -35,7 +35,7 @@ def _git(*args: str) -> str:
     ).stdout.decode("utf-8", errors="strict")
 
 
-def validate_commits(base: str, head: str, default_branch_ref: str = "origin/main") -> list[str]:
+def validate_commits(base: str, head: str, default_branch_ref: str = "origin/main", *, exclude_default: bool = True) -> list[str]:
     """Check new commits outside fetched default-branch history."""
     head = _git("rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}").strip()
     if base == ZERO_SHA:
@@ -53,14 +53,19 @@ def validate_commits(base: str, head: str, default_branch_ref: str = "origin/mai
             "default branch and supply --default-branch-ref (default: origin/main)"
         ]
     errors = []
-    for commit in _git("rev-list", revision_range, "--not", default_head).splitlines():
+    exclusions = ["--not", default_head] if exclude_default else []
+    for commit in _git("rev-list", revision_range, *exclusions).splitlines():
         parents, committer, subject = _git(
             "show", "-s", "--format=%P%n%cn <%ce>%n%s", commit
         ).splitlines()
         if (
             len(parents.split()) == 2
             and committer == "GitHub <noreply@github.com>"
-            and re.fullmatch(r"Merge pull request #[0-9]+ from .+", subject)
+            and re.fullmatch(
+                r"Merge pull request #[0-9]+ from .+|"
+                r"Merge #[0-9]+: reviewer [a-z][a-z0-9_-]* after merge-preflight \(CI [0-9]+\)",
+                subject,
+            )
         ):
             continue
         trailers = _git(
@@ -129,12 +134,17 @@ def main() -> int:
     try:
         errors = []
         head = args.head
+        exclude_default = True
         if args.github_event is not None:
             errors, source_head = _validate_github_event(args.github_event)
+            payload = json.loads(args.github_event.read_text(encoding="utf-8"))
+            # The fetched main ref already contains a push head; subtracting it
+            # would validate no commits. PRs still exclude imported main history.
+            exclude_default = "pull_request" in payload or payload.get("ref") != "refs/heads/main"
             if source_head is not None:
                 # Never select checkout's synthetic PR merge commit.
                 head = source_head
-        errors.extend(validate_commits(args.base, head, args.default_branch_ref))
+        errors.extend(validate_commits(args.base, head, args.default_branch_ref, exclude_default=exclude_default))
     except (OSError, ValueError, subprocess.CalledProcessError):
         # Never echo commit messages, event payloads or subprocess stderr.
         print("ERROR: could not read the commit range or GitHub event", file=sys.stderr)

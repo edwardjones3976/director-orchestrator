@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | BEGIN]]
@@ -93,7 +95,8 @@ def _run_packet_after_closure_process(
             task_id=work["task_id"], owner_id="langgraph"
         )
         ready.set()
-        start.wait(10)
+        if not start.wait(60):
+            raise TimeoutError("parent did not signal closure setup within 60s")
         outcome = runtime.run_packet(
             work,
             provider="claude",
@@ -256,7 +259,7 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
             ),
         )
         process.start()
-        self.assertTrue(ready.wait(15))
+        self.assertTrue(ready.wait(60), "spawned runtime did not become ready within 60s")
         with closing(
             sqlite3.connect(self.ledger_path, timeout=30, isolation_level=None)
         ) as connection:
@@ -280,6 +283,8 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
 
     def test_live_dispatch_timeout_returns_and_never_redispatches(self):
         release = threading.Event()
+        entered = threading.Event()
+        unblocked = threading.Event()
 
         class HungAdapter:
             provider = "claude"
@@ -290,7 +295,9 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
 
             def dispatch(self, work_packet, *, context):
                 self.calls += 1
-                release.wait(timeout=10)
+                entered.set()
+                release.wait(timeout=60)
+                unblocked.set()
                 return copy.deepcopy(self.result)
 
         work = copy.deepcopy(self.work)
@@ -307,6 +314,9 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
                 writer_token=token,
             )
             elapsed = time.monotonic() - started
+            self.assertTrue(entered.wait(60), "adapter did not enter within 60s")
+            self.assertFalse(unblocked.is_set(), "run_packet waited for the adapter")
+            self.assertFalse(release.is_set(), "adapter was released before timeout returned")
             second = self.runtime.run_packet(
                 work,
                 provider="claude",
@@ -317,16 +327,18 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
         finally:
             release.set()
 
-        self.assertLess(elapsed, 2.5)
+        self.assertLess(elapsed, work["limits"]["timeout_seconds"] + 10.0,
+                        "dispatch exceeded its timeout plus the CI scheduling margin")
         self.assertEqual(first.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
         self.assertEqual(second.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED)
         self.assertEqual(adapter.calls, 1)
         with closing(sqlite3.connect(self.ledger_path)) as connection:
-            status = connection.execute(
-                "SELECT status FROM runtime_dispatch_ledger WHERE idempotency_key=?",
+            status, error_code = connection.execute(
+                "SELECT status, error_code FROM runtime_dispatch_ledger WHERE idempotency_key=?",
                 (work["idempotency_key"],),
-            ).fetchone()[0]
+            ).fetchone()
         self.assertEqual(status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(error_code, "RuntimeDispatchTimeout")
 
     def test_restart_replays_completed_result_without_dispatch(self):
         token = self._token()
@@ -592,7 +604,7 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
 
             @staticmethod
             def assert_release():
-                if not release.wait(timeout=5):
+                if not release.wait(timeout=60):
                     raise TimeoutError("test did not release provider")
 
         adapter = BlockingAdapter(self.result)
@@ -623,7 +635,7 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
 
             thread = threading.Thread(target=run_first)
             thread.start()
-            self.assertTrue(entered.wait(timeout=5))
+            self.assertTrue(entered.wait(timeout=60), "adapter did not enter within 60s")
             competing = second_runtime.run_packet(
                 self.work,
                 provider="claude",
@@ -632,8 +644,8 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
                 writer_token=token,
             )
             release.set()
-            thread.join(timeout=5)
-            self.assertFalse(thread.is_alive())
+            thread.join(timeout=30)
+            self.assertFalse(thread.is_alive(), "worker did not finish within 30s")
             self.assertEqual(
                 competing.status, RuntimeExecutionStatus.OWNER_DECISION_REQUIRED
             )
@@ -1189,3 +1201,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:43 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | END]]

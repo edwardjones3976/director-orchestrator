@@ -752,10 +752,10 @@ class GitAttributionTests(unittest.TestCase):
         self.git("merge", "--no-ff", "-m", "Sync main\n\nContributed-by: Codex | GPT-6", main)
         self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
 
-    def test_main_push_github_merge_and_legacy_commits_pass(self):
+    def test_main_push_checks_new_commits_even_when_default_ref_is_head(self):
         main = self.commit("Legacy main change")
         self.git("checkout", "-b", "legacy", self.base)
-        legacy = self.commit("Feature checked under old tag rule")
+        legacy = self.commit("Feature missing trailer")
         self.git("checkout", "-b", "main-push", main)
         with patch.dict(os.environ, {
             "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
@@ -766,6 +766,14 @@ class GitAttributionTests(unittest.TestCase):
         event = self.root / "event.json"
         event.write_text(json.dumps({"ref": "refs/heads/main"}), encoding="utf-8")
         with patch("sys.argv", ["checker", "--base", main, "--head", head,
+                                "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertEqual(self.checker.main(), 1)
+            self.assertIn(legacy, stderr.getvalue())
+        # A later correctly attributed push passes even though origin/main=head.
+        good = self.commit("Follow-up\n\nContributed-by: Codex | GPT-6")
+        self.git("update-ref", "refs/remotes/origin/main", good)
+        with patch("sys.argv", ["checker", "--base", head, "--head", good,
                                 "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(self.checker.main(), 0)
 
@@ -780,17 +788,28 @@ class GitAttributionTests(unittest.TestCase):
         }):
             self.git("merge", "--no-ff", "-m", subject, main)
             self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
-            self.git("commit", "--amend", "-m", "Local integration")
+            self.git("commit", "--amend", "-m", "Merge #123: reviewer cursor after merge-preflight (CI 456)")
+            self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
+            for malformed in (
+                "Local integration",
+                "Merge #123: reviewer cursor after merge-preflight (CI nope)",
+                "Merge #123: reviewer cursor after merge-preflight (CI 456) extra",
+                "prefix Merge #123: reviewer cursor after merge-preflight (CI 456)",
+            ):
+                self.git("commit", "--amend", "-m", malformed)
+                self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
+        for merge_subject in (subject, "Merge #123: reviewer cursor after merge-preflight (CI 456)"):
+            self.git("commit", "--amend", "-m", merge_subject)
             self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
-        self.git("commit", "--amend", "-m", subject)
-        self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
 
     def test_single_parent_github_subject_without_trailer_fails(self):
         with patch.dict(os.environ, {
             "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
         }):
-            head = self.commit("Merge pull request #123 from fixture/feature")
-        self.assertIn(head, self.checker.validate_commits(self.base, head)[0])
+            for subject in ("Merge pull request #123 from fixture/feature",
+                            "Merge #123: reviewer cursor after merge-preflight (CI 456)"):
+                head = self.commit(subject)
+                self.assertTrue(any(head in error for error in self.checker.validate_commits(self.base, head)))
 
     def test_local_merge_with_resolution_without_trailer_fails(self):
         path = self.root / "conflict.txt"
@@ -924,6 +943,10 @@ class GitAttributionTests(unittest.TestCase):
 
     def test_policy_and_templates_use_git_attribution(self):
         root = Path(__file__).resolve().parents[1]
+        prompt = (root / "prompts/director-system.md").read_text(encoding="utf-8")
+        self.assertIn("Contributed-by:", prompt)
+        self.assertIn("do not add contribution tags to files", prompt)
+        self.assertNotIn("Require safe changed", prompt)
         for name in ("AGENTS.md", "CLAUDE.md", "docs/team-operating-charter.md",
                      "docs/contribution-attribution-policy.md", ".github/pull_request_template.md",
                      "docs/templates/contribution-submission.md"):

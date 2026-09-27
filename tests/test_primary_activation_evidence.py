@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -43,6 +45,19 @@ def identity(**changes: str) -> ActivationIdentity:
 
 
 class PrimaryActivationEvidenceTests(unittest.TestCase):
+    def test_actor_identity_is_one_unicode_spelling(self):
+        """Review 4111357781: a decomposed spelling is rejected (not NFC), never a second actor; compatibility
+        forms (full-width letters) compare as their plain form under NFKC with casefold."""
+        from director_orchestrator.primary_activation_evidence import actors_distinct, canonical_actor
+        composed, decomposed = "Jos\u00e9", "Jose\u0301"
+        self.assertEqual(canonical_actor(composed), "jos\u00e9")
+        self.assertIsNone(canonical_actor(decomposed))
+        self.assertFalse(actors_distinct(composed, decomposed))
+        self.assertEqual(canonical_actor("\uff21lice"), "alice")  # full-width A
+        self.assertFalse(actors_distinct("\uff21lice", "alice"))
+        self.assertFalse(actors_distinct("\ufb01nn", "finn"))  # the fi ligature
+        self.assertTrue(actors_distinct(composed, "jose"))
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.identity = identity()
@@ -308,6 +323,10 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             self.acceptance_artifact(ci_conclusion="FAILURE")
         with self.assertRaisesRegex(ActivationEvidenceError, "distinct attributable"):
             self.acceptance_artifact(independent_reviewer="security-bot")
+        # PR #264 review 4102375082: a non-canonical actor is rejected, never normalized into a distinct identity.
+        for actor in (" security-bot ", "security-bot​", "   "):
+            with self.subTest(actor=actor), self.assertRaisesRegex(ActivationEvidenceError, "distinct attributable"):
+                self.acceptance_artifact(independent_reviewer=actor)
         self.accept()
         self.assertEqual(
             ActivationStage.ACCEPTED.value,
@@ -478,3 +497,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]

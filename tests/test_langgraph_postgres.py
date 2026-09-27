@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
@@ -4035,8 +4036,8 @@ class CheckpointOperationDeadlineTests(unittest.TestCase):
             elapsed = monotonic() - started
         finally:
             released.set()
-            holder.join(timeout=10)
-        self.assertFalse(holder.is_alive())
+            holder.join(timeout=30)
+        self.assertFalse(holder.is_alive(), "worker did not finish within 30s")
         self.assertGreater(elapsed, 0.2, "it must have waited for the mutex")
         self.assertLess(elapsed, 3.0, "and stopped at the published cutoff")
         self.assertEqual(0, self.rows("checkpoints"))
@@ -4136,3 +4137,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
