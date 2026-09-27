@@ -1,9 +1,13 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:24 UTC | BEGIN]]
+# MX-050
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:03 UTC | BEGIN]]
 # MX-048
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | BEGIN]]
 # Maintenance MX-042
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]]
+# MX-049
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:57 UTC | BEGIN]]
 # MX-047
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | BEGIN]]
@@ -44,7 +48,7 @@ project:
   state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-27T04:03:02Z"
+  updated_at: "2026-09-27T04:24:58Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -173,6 +177,16 @@ team:
       forbidden_authority:
         - "training-data generation (xAI terms: grading only)"
         - "merge"
+    - id: "review-cursor"
+      provider: "cursor"
+      role: "reviewer"
+      workflow_skill: "cursor-agent-workflow"
+      responsibilities:
+        - "Use the local cursor-agent CLI for non-author exact-head, current-base full-diff review of #293. The thorough reviewer's ACCEPT is the one required review and carries the guarded merge subject to B2 and all deterministic gates."
+      forbidden_authority:
+        - "authoring or maintaining #293"
+        - "reviewing or merging its own work"
+        - "merging without B2 and all required gates satisfied"
     - id: "review-codex"
       provider: "other"
       role: "reviewer"
@@ -307,7 +321,9 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:24 UTC | END]]
