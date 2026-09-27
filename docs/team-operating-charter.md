@@ -760,6 +760,9 @@ Attribution records acknowledge actual contributions only and never imply
 inherited authorship. They never authenticate provider identity, grant authority,
 or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
 
+Cursor records the logical producer and material contributors with the exact
+candidate evidence, using the commit trailers and the PR's Sole author header line.
+
 See [the attribution policy](contribution-attribution-policy.md).
 
 ## Review-to-merge handoff
