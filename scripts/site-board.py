@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 """Display open work and detect exact repository-relative path conflicts."""
 
@@ -99,8 +100,9 @@ def file_index(prs):
 
 
 def inline(value):
-    """Keep remote text on one line and inert in a Markdown comment."""
-    return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(str(value).split())).replace("@", "@\u200d")
+    """Keep remote text inert in terminal output and Markdown comments."""
+    value = re.sub(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", "\ufffd", str(value))
+    return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(value.split())).replace("@", "@\u200d")
 
 
 def render_board(gh, prs):
@@ -193,3 +195,4 @@ def main(argv=None):
 if __name__ == "__main__":
     sys.exit(main())
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | END]]

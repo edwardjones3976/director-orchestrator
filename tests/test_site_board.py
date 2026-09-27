@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 import contextlib
 import importlib.util
@@ -118,6 +119,24 @@ class SiteBoardTests(unittest.TestCase):
             self.assertIn("@\u200d" + mention, body)
         self.assertIn("\\`@\u200dtitle-user\\`", body)
 
+    def test_inline_encodes_all_terminal_and_bidi_controls(self):
+        for codepoint in (*range(0x20), *range(0x7f, 0xa0),
+                          *range(0x202a, 0x202f), *range(0x2066, 0x206a)):
+            with self.subTest(codepoint=codepoint):
+                self.assertEqual(board.inline(chr(codepoint)), "\ufffd")
+        self.assertEqual(board.inline("  plain   `@name`  "), "plain \\`@\u200dname\\`")
+
+    def test_board_encodes_terminal_and_bidi_controls_in_remote_fields(self):
+        remote = "safe\x1b\x07\x08\x85\u202eend"
+        self.prs[0].update(title=remote, headRefName=remote,
+                           body="Session: " + remote)
+        self.files = [{"path": remote, "changeType": "MODIFIED"}]
+        code, output = self.run_board()
+        self.assertEqual(code, 0)
+        self.assertEqual(output.count("safe" + "\ufffd" * 5 + "end"), 6)
+        for control in "\x1b\x07\x08\x85\u202e":
+            self.assertNotIn(control, output)
+
     def test_check_indexes_rename_source_and_destination_with_bounded_calls(self):
         self.files = [{"path": "new.py", "changeType": "RENAMED"}]
         self.rest_files = [{"filename": "new.py", "status": "renamed", "previous_filename": "old.py"}]
@@ -168,3 +187,4 @@ class SiteBoardTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | END]]
