@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
@@ -149,8 +150,10 @@ path first; every other argument goes to the scorecard unchanged:
 python -I $HOME\.director-scorecard\launcher.py <repository> --candidate-sha <full-40-character-sha> --evidence-dir <explicit-evidence-folder> --output-dir <report-folder>
 ```
 
-Running `scripts/director-scorecard.py` directly refuses: "not started by the
-owner-installed launcher from the archived evaluator tree".
+An ordinary direct run refuses the checkout checks. Forging the environment
+claims cannot produce a relied-on score: without a valid launcher receipt,
+the report says **UNATTESTED: not produced by the owner-installed launcher;
+no check may be relied on**, and its counts are `UNATTESTED`.
 
 ### Install the launcher
 
@@ -166,6 +169,39 @@ git -C <repository> show <evaluator_sha>:scripts/scorecard-launcher.py > $HOME\.
 The installed copy is what runs; `scripts/scorecard-launcher.py` in the
 repository is only its reviewed source. Check the installed file's bytes against
 that commit (`git hash-object`) before trusting it.
+
+The launcher writes a per-run receipt in the owner-controlled
+`~/.director-scorecard/attestations/` directory, outside the evaluator tree.
+It contains the pinned `evaluator_sha`, archived `tree_id`, installed
+`launcher_sha256` and a fresh random `nonce`. No signing key is introduced.
+The child reads that receipt through the fixed owner-directory location;
+environment variables only select a nonce, not a trusted file path. After the
+child succeeds, the launcher binds the receipt to the canonical JSON report's
+SHA-256. Failed or incomplete launches have no valid completed receipt.
+
+Every activation, acceptance and issue #81 evidence path must require
+`attested: true` **and** successful verification through the installed launcher:
+
+```powershell
+python -I $HOME\.director-scorecard\launcher.py --verify-report <report-folder>\completion-scorecard.json
+```
+
+Exit 0 verifies origin and unchanged report content; exit 2 means UNATTESTED.
+The Markdown renderer also checks the completed receipt when consuming a
+saved report. A missing field, copied boolean, changed report, malformed
+receipt, changed evaluator pin or changed installed launcher fails closed.
+Do not use a candidate checkout's verifier as evidence. No executable
+activation/acceptance importer currently consumes these saved reports;
+the evidence handoff must include this verification. Markdown alone is not
+verified evidence. Verification does not replace freshness, exact-head review,
+CI or any activation gate; `activation_authorized` stays false.
+
+This is an owner-local file attestation, not a portable signature or protection
+against an actor who can rewrite the owner's installation, descriptor or
+receipt directory. Keep those files under the same owner control as the
+existing descriptor. Copying a report to another host without its trusted
+receipt does not transfer verification. Installing this change and moving the
+owner's pin remain separate owner actions.
 
 The default is offline. It produces `completion-scorecard.json` and
 `completion-scorecard.md`, with UNKNOWN for facts it has not observed (0/20).
@@ -1110,8 +1146,9 @@ not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
 fails the rule. The descriptor is the owner-installed file
 `~/.director-scorecard/release-descriptor.json` (no override; absent, a link,
-over 1 MB, malformed or another version means none). No file of a working checkout ever executes,
-because a checkout cannot be trusted to check itself (review 4112412081). The
+over 1 MB, malformed or another version means none). A candidate can run its own
+code, but only launcher-attested reports count: a checkout cannot be trusted
+to check itself (review 4112412081). The
 owner-installed launcher (`~/.director-scorecard/launcher.py`, reviewed source
 `scripts/scorecard-launcher.py`, standard library only, run with `python -I`)
 reads `evaluator_sha` from the descriptor (missing: refused), requires it to be
@@ -1125,13 +1162,18 @@ every other `PYTHON*` variable removed, and `DIRECTOR_SCORECARD_TREE` /
 the repository and the exact pin the tree was extracted from. git itself is
 trusted and reads every commit from the repository. A modified tracked
 `scripts/director-scorecard.py` or module in the checkout, committed or not,
-therefore never runs. As a second line, the archived CLI refuses (standard
+therefore never runs through this launcher. These environment and ancestry
+checks are consistency checks, not proof of launcher origin. As a second line,
+the archived CLI refuses (standard
 library only, before importing the evaluator) unless it is running from the
 tree the launcher named, the descriptor still pins the revision the launcher
 extracted, and that pin is on `github/main`; `untrusted_checkout` repeats that
 and requires the pin to be an ancestor of the candidate. The CLI runs
 `untrusted_checkout` again after the collection, so a descriptor rotated to
 another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
+The report limitations derive the contained check IDs from the same tuples
+used to suppress their collector results: 06, 07, 08, 10, 11, 12, 15, 17 and 20,
+pending the trusted-collection follow-up in #313 / PR #327.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
 in-image from the batch's assignment rows (assignment_id, sequence,
@@ -1477,3 +1519,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
@@ -1177,6 +1178,9 @@ _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writ
                     "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
 _CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
 _CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
+_CONTAINED_RUNTIME = ("06", "07", "08", "10", "15", "20")
+_CONTAINED_CAPTURES = ("11", "12")
+_CONTAINED_CANDIDATE = ("17",)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -2766,10 +2770,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         if t is not None:
             t.close()
     # Final disposition: health, Slack and evaluator results cannot supply trusted reports.
-    unknown(("06", "07", "08", "10", "15", "20"), "collector not yet trusted", _CONSISTENCY_SOURCE)
-    unknown(("11", "12"), "collector not yet trusted", _CAPTURES_SOURCE)
-    put([_observation("17", None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
-                      candidate_sha=candidate_sha)])
+    unknown(_CONTAINED_RUNTIME, "collector not yet trusted", _CONSISTENCY_SOURCE)
+    unknown(_CONTAINED_CAPTURES, "collector not yet trusted", _CAPTURES_SOURCE)
+    put([_observation(key, None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
+                      candidate_sha=candidate_sha) for key in _CONTAINED_CANDIDATE])
     return list(found.values()), state
 
 
@@ -3463,6 +3467,19 @@ def _file_references(folder: Path | None) -> list[dict[str, str]]:
     return result
 
 
+def _launcher():
+    # Source comes from the evaluator tree. The installed copy remains the only
+    # trust root; its --verify-report entry point independently checks saved reports.
+    spec = importlib.util.spec_from_file_location("scorecard_launcher", _REPO_ROOT / "scripts" / "scorecard-launcher.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def report_is_attested(report: dict[str, Any]) -> bool:
+    return _launcher().report_is_attested(report)
+
+
 def score(candidate_sha: str, observations: list[Observation] | None = None, *,
           now: datetime | None = None, runtime_sha: str | None = None,
           image_id: str | None = None, evidence_dir: Path | None = None) -> dict[str, Any]:
@@ -3508,14 +3525,22 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                                 "candidate_sha": item.candidate_sha, "runtime_sha": item.runtime_sha, "image_id": item.image_id}]
         rows.append(row)
     passed = sum(row["status"] == "PASS" for row in rows)
+    launcher = _launcher()
+    attestation = launcher.run_attestation(_REPO_ROOT)
+    attested = attestation is not None
     return {"schema": "director-completion-scorecard/v1", "generated_at": at.isoformat(),
+            "attested": attested, "attestation": attestation,
+            "origin": "Owner-installed launcher" if attested else launcher.UNATTESTED,
             "candidate_sha": candidate_sha, "runtime_sha": runtime_sha, "image_id": image_id,
-            "passed": passed, "total": 20, "percent": passed * 5, "all_checks_verified": passed == 20,
+            "passed": passed if attested else "UNATTESTED", "total": 20,
+            "percent": passed * 5 if attested else "UNATTESTED", "all_checks_verified": attested and passed == 20,
             "activation_authorized": False, "readiness": "NOT_AUTHORIZED_BY_SCORECARD",
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Checks 07, 08, 11, 12, 15, 17 and 20 remain UNKNOWN pending the trusted-collection follow-up; other missing selections or unavailable sources also stay UNKNOWN.",
+                            "Checks " + ", ".join(sorted(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)) +
+                            " are contained by the trusted-collection follow-up (#313 / PR #327); "
+                            "other missing selections or unavailable sources also stay UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
@@ -3524,9 +3549,8 @@ TRUSTED_CHECKOUT_REFUSAL = "scorecard not run from the pinned evaluator checkout
 
 
 def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | None:
-    """The operating rule (added by the author of this change, not an owner ruling) that makes the scorecard a
-    trusted evaluator: it grades only from the OWNER-PINNED evaluator revision (the release descriptor's
-    ``evaluator_sha``), never from code the candidate controls. The owner-installed launcher
+    """Check evaluator/candidate consistency, not launcher origin (environment claims are forgeable).
+    Attestation is checked separately. The owner-installed launcher
     (scripts/scorecard-launcher.py) extracts exactly that commit's tree with git archive and runs it; this code must
     be running from that tree (DIRECTOR_SCORECARD_TREE), the pin must be on github/main and an ancestor of (or equal
     to) the candidate graded as data. None when it holds, else why not."""
@@ -3559,17 +3583,26 @@ def refuse_untrusted(report: dict[str, Any], reason: str) -> dict[str, Any]:
     """Every check UNKNOWN: an evaluator the candidate could control grades nothing."""
     for row in report["checks"]:
         row.update(status="UNKNOWN", explanation=f"{TRUSTED_CHECKOUT_REFUSAL}: {reason}.", evidence=[])
-    report.update(passed=0, percent=0, all_checks_verified=False)
+    report.update(passed=0 if report.get("attested") is True else "UNATTESTED",
+                  percent=0 if report.get("attested") is True else "UNATTESTED", all_checks_verified=False)
     return report
 
 
-def render_markdown(report: dict[str, Any]) -> str:
+def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) -> str:
     def escape(value: Any) -> str:
         return str(value).replace("|", "\\|").replace("\n", " ").replace("<", "&lt;").replace(">", "&gt;")
-    lines = ["# Director completion scorecard", "", f"**{report['passed']}/20 verified ({report['percent']}%)**",
+    launcher = _launcher()
+    pending = launcher.run_attestation(_REPO_ROOT) if _pending_launch else None
+    attested = report_is_attested(report) or (pending is not None and report.get("attested") is True and
+                                            pending == report.get("attestation"))
+    lines = ["# Director completion scorecard" if attested else launcher.UNATTESTED, "",
+             f"**{report['passed']}/20 verified ({report['percent']}%)**" if attested else "**Counts: UNATTESTED**",
              "", f"Observed: {report['generated_at']}", f"Candidate: `{report['candidate_sha']}`", "",
              "This is a progress display. It grants no activation, spending or merge authority.", "",
              "| # | Required outcome | State | Evidence or next action |", "|---|---|---|---|"]
+    if attested:
+        lines[4:4] = ["Attested: true; verify the completed JSON receipt with the owner-installed launcher.",
+                      "Attestation: `" + escape(json.dumps(report["attestation"], sort_keys=True)) + "`", ""]
     for row in report["checks"]:
         detail = row["explanation"] + (" Next: " + row["action"] if row["status"] != "PASS" else "")
         lines.append(f"| {row['id']} | {escape(row['title'])} | **{row['status']}** | {escape(detail)} |")
@@ -3661,3 +3694,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]

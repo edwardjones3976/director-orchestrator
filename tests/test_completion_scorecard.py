@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
@@ -1028,7 +1029,12 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.git("commit", "--allow-empty", "-qm", "parent")
         self.parent = self.git("rev-parse", "HEAD").decode().strip()
         self.script = self.repo / "scripts" / "director-scorecard.py"
-        self.script.write_text("print('clean evaluator reached')\n", encoding="utf-8")
+        self.script.write_text(
+            "import json, os\nfrom pathlib import Path\n"
+            "receipt = Path.home() / '.director-scorecard' / 'attestations' / (os.environ['DIRECTOR_SCORECARD_NONCE'] + '.json')\n"
+            "attestation = json.loads(receipt.read_bytes())['attestation']\n"
+            "Path(os.environ['DIRECTOR_SCORECARD_RESULT']).write_text(json.dumps({'attested': True, 'attestation': attestation}))\n"
+            "print('clean evaluator reached')\n", encoding="utf-8")
         self.git("add", ".")
         self.git("commit", "-qm", "evaluator")
         self.pin = self.git("rev-parse", "HEAD").decode().strip()
@@ -1044,10 +1050,10 @@ class ScorecardGitTrustTests(unittest.TestCase):
                               env=self.launcher._git_environment(), check=True, capture_output=True,
                               timeout=30).stdout
 
-    def run_launcher(self, extra_env=None):
+    def run_launcher(self, extra_env=None, arguments=()):
         env = {**self.launcher._git_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
                **(extra_env or {})}
-        return subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo)],
+        return subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo), *arguments],
                               env=env, cwd=self.outside, capture_output=True, text=True, timeout=120)
 
     def assert_metadata_refused(self, reason):
@@ -1118,15 +1124,119 @@ class ScorecardGitTrustTests(unittest.TestCase):
         def launch(arguments, **options):
             if arguments[0] == "git":
                 return run(arguments, **options)
+            env = options["env"]
+            receipt = json.loads(self.launcher._receipt_path(env[self.launcher.NONCE_ENV]).read_bytes())
+            Path(env["DIRECTOR_SCORECARD_RESULT"]).write_text(json.dumps(
+                {"attested": True, "attestation": receipt["attestation"]}))
             return subprocess.CompletedProcess(arguments, 0)
 
         with patch.object(self.launcher, "_git", wraps=self.launcher._git) as git, \
                 patch.object(self.launcher.subprocess, "run", side_effect=launch), \
-                patch.object(self.launcher.Path, "cwd", return_value=self.outside):
+                patch.object(self.launcher.Path, "cwd", return_value=self.outside), \
+                patch.object(self.launcher.Path, "home", return_value=self.home), \
+                patch.object(self.launcher, "__file__", str(self.installed)):
             self.assertEqual(self.launcher.launch(self.repo, [], self.descriptor), 0)
         git.assert_any_call(self.repo, "rev-parse", "--verify", f"{self.pin}^{{tree}}")
         git.assert_any_call(self.repo, "archive", "--format=tar", tree_id)
         self.assertNotEqual(tree_id, self.pin)
+
+    def test_launcher_attests_real_report_and_consumers_reject_tampering(self):
+        import shutil
+
+        source = Path(__file__).resolve().parents[1]
+        shutil.copytree(source / "src", self.repo / "src", ignore=shutil.ignore_patterns("__pycache__"))
+        for name in ("director-scorecard.py", "scorecard-launcher.py"):
+            (self.repo / "scripts" / name).write_bytes((source / "scripts" / name).read_bytes())
+        self.git("add", ".")
+        self.git("commit", "-qm", "real evaluator")
+        self.pin = self.git("rev-parse", "HEAD").decode().strip()
+        self.git("update-ref", "refs/remotes/github/main", self.pin)
+        self.descriptor.write_text(json.dumps({"version": self.launcher.DESCRIPTOR_VERSION,
+                                              "evaluator_sha": self.pin}))
+        output = self.outside / "reports"
+        arguments = ["--candidate", self.pin, "--output-dir", str(output)]
+        launched = self.run_launcher(arguments=arguments)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        report_path = output / "completion-scorecard.json"
+        report = json.loads(report_path.read_bytes())
+        self.assertIs(report["attested"], True)
+        self.assertEqual(report["passed"], 0)
+        self.assertEqual(report["attestation"]["tree_id"],
+                         self.git("rev-parse", f"{self.pin}^{{tree}}").decode().strip())
+        self.assertEqual(report["attestation"]["launcher_sha256"],
+                         hashlib.sha256(self.installed.read_bytes()).hexdigest())
+        verify = subprocess.run([sys.executable, "-I", str(self.installed), "--verify-report", str(report_path)],
+                                env={**self.launcher._git_environment(), "HOME": str(self.home),
+                                     "USERPROFILE": str(self.home)},
+                                cwd=self.outside, capture_output=True, text=True, timeout=30)
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+        with patch.object(Path, "home", return_value=self.home):
+            self.assertTrue(sc.report_is_attested(report))
+            self.assertIn("0/20 verified", sc.render_markdown(report))
+            for field, value in (("attested", False), ("passed", 20), ("attestation", {})):
+                changed = {**report, field: value}
+                self.assertFalse(sc.report_is_attested(changed))
+                text = sc.render_markdown(changed)
+                self.assertTrue(text.startswith(self.launcher.UNATTESTED))
+                self.assertNotIn("/20 verified", text)
+            legacy = {k: v for k, v in report.items() if k != "attested"}
+            self.assertFalse(sc.report_is_attested(legacy))
+            receipt_path = self.launcher._receipt_path(report["attestation"]["nonce"])
+            receipt = json.loads(receipt_path.read_bytes())
+            receipt["attestation"]["tree_id"] = "0" * 40
+            receipt_path.write_text(json.dumps(receipt))
+            self.assertFalse(sc.report_is_attested(report))
+        verify = subprocess.run([sys.executable, "-I", str(self.installed), "--verify-report", str(report_path)],
+                                env={**self.launcher._git_environment(), "HOME": str(self.home),
+                                     "USERPROFILE": str(self.home)},
+                                cwd=self.outside, capture_output=True, text=True, timeout=30)
+        self.assertEqual(verify.returncode, 2, verify.stderr)
+        self.assertTrue(verify.stdout.startswith(self.launcher.UNATTESTED))
+        # Candidate supplies all the old environment claims and a completed nonce.
+        # It still cannot turn a direct run into a launcher-attested report.
+        env = {**self.launcher._git_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
+               "PYTHONPATH": str(self.repo / "src"), self.launcher.TREE_ENV: str(self.repo),
+               self.launcher.REPO_ENV: str(self.repo), self.launcher.SHA_ENV: self.pin,
+               self.launcher.NONCE_ENV: report["attestation"]["nonce"]}
+        for nonce in ("", report["attestation"]["nonce"], "../invalid"):
+            env[self.launcher.NONCE_ENV] = nonce
+            direct = subprocess.run([sys.executable, str(self.script), *arguments], env=env,
+                                    cwd=self.outside, capture_output=True, text=True, timeout=120)
+            self.assertEqual(direct.returncode, 0, direct.stderr)
+            self.assertTrue(direct.stdout.startswith(self.launcher.UNATTESTED))
+            unattested = json.loads(report_path.read_bytes())
+            self.assertIs(unattested["attested"], False)
+            self.assertEqual(unattested["passed"], "UNATTESTED")
+            self.assertFalse(unattested["all_checks_verified"])
+            self.assertFalse(unattested["activation_authorized"])
+            self.assertTrue(all(item["status"] == "UNKNOWN" for item in unattested["checks"]))
+
+    def test_score_attestation_and_containment_limitations(self):
+        nonce = "a" * 64
+        fields = {"nonce": nonce, "evaluator_sha": self.pin, "tree_id": "b" * 40,
+                  "launcher_sha256": hashlib.sha256(self.installed.read_bytes()).hexdigest()}
+        with patch.object(Path, "home", return_value=self.home), patch.dict(os.environ, {
+                self.launcher.NONCE_ENV: nonce, self.launcher.SHA_ENV: self.pin}):
+            receipt_path = self.launcher._receipt_path(nonce)
+            receipt_path.parent.mkdir()
+            receipt = {"attestation": fields, "tree": str(sc._REPO_ROOT), "report_sha256": None}
+            receipt_path.write_text(json.dumps(receipt))
+            report = sc.score(SHA, runtime_observations(), now=NOW)
+            self.assertIs(report["attested"], True)
+            self.assertEqual(report["passed"], 2)
+            self.assertEqual(report["percent"], 10)
+            self.assertFalse(sc.report_is_attested(report))  # not finalized by launcher
+            limitations = " ".join(report["limitations"])
+            self.assertIn("06, 07, 08, 10, 11, 12, 15, 17, 20", limitations)
+            self.assertIn("#313 / PR #327", limitations)
+            for key in ("evaluator_sha", "launcher_sha256", "nonce", "tree_id"):
+                with self.subTest(field=key):
+                    changed = {**receipt, "attestation": {**fields, key: "tampered"}}
+                    receipt_path.write_text(json.dumps(changed))
+                    report = sc.score(SHA, runtime_observations(), now=NOW)
+                    self.assertIs(report["attested"], False)
+                    self.assertEqual(report["passed"], "UNATTESTED")
+                    self.assertTrue(sc.render_markdown(report).startswith(self.launcher.UNATTESTED))
 
     def test_every_git_transport_disables_replacements_and_uses_minimal_environment(self):
         # Do not let mocks at _run_bytes conceal a missing subprocess-level defense.
@@ -1375,7 +1485,7 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_exactly_twenty_unique_fixed_checks_and_missing_is_unknown(self):
         self.assertEqual([f"{number:02}" for number in range(1, 21)], [item.id for item in sc.CHECKS])
         report = sc.score(SHA, now=NOW)
-        self.assertEqual((report["passed"], report["percent"]), (0, 0))
+        self.assertEqual((report["passed"], report["percent"]), ("UNATTESTED", "UNATTESTED"))
         self.assertEqual({row["status"] for row in report["checks"]}, {"UNKNOWN"})
         self.assertFalse(report["activation_authorized"])
 
@@ -1386,14 +1496,14 @@ class CompletionScorecardTests(unittest.TestCase):
             path = Path(folder) / "accepted.json"
             path.write_text(json.dumps({"check": "19", "verified": True, "signature": "fake", "PASS": True}))
             report = sc.score(SHA, [fake, {"check_id": "19", "passed": True}], now=NOW, evidence_dir=Path(folder))
-            self.assertEqual(report["passed"], 0)
+            self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 0)
             self.assertEqual(report["reference_files"][0]["status"], "UNVERIFIED_REFERENCE")
             self.assertEqual(len(report["reference_files"][0]["sha256"]), 64)
 
     def test_runtime_collection_grades_observed_fields_and_keeps_capture_unknown(self):
         report = sc.score(SHA, runtime_observations(), now=NOW, runtime_sha=SHA, image_id=IMAGE)
-        self.assertEqual(report["passed"], 2)
-        self.assertEqual(report["percent"], 10)
+        self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 2)
+        self.assertEqual(report["percent"], "UNATTESTED")
         self.assertEqual(report["checks"][11]["status"], "UNKNOWN")
         self.assertFalse(report["activation_authorized"])
         self.assertEqual(report["checks"][4]["evidence"][0]["runtime_sha"], SHA)
@@ -1419,23 +1529,23 @@ class CompletionScorecardTests(unittest.TestCase):
                  dataclasses.replace(observation, observed_at=NOW.replace(tzinfo=None))]
         for item in cases:
             with self.subTest(item=item):
-                self.assertEqual(sc.score(SHA, [item], now=NOW)["passed"], 0)
+                self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, [item], now=NOW)["checks"]), 0)
 
     def test_runtime_head_or_image_mismatch_does_not_transfer(self):
         observed = runtime_observations()
         for binding in ({"runtime_sha": OTHER}, {"image_id": "sha256:" + "d" * 64}):
-            self.assertEqual(sc.score(SHA, observed, now=NOW, **binding)["passed"], 0)
+            self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, observed, now=NOW, **binding)["checks"]), 0)
         # A build candidate and runtime may legitimately differ; they stay separate.
-        self.assertEqual(sc.score(OTHER, observed, now=NOW, runtime_sha=SHA)["passed"], 2)
+        self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(OTHER, observed, now=NOW, runtime_sha=SHA)["checks"]), 2)
 
     def test_wrong_project_endpoint_or_container_port_is_not_observed(self):
         wrong = health()
         wrong["environment"] = "edge-engine"
-        self.assertEqual(sc.score(SHA, runtime_observations(wrong), now=NOW)["passed"], 0)
+        self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, runtime_observations(wrong), now=NOW)["checks"]), 0)
         data = containers()
         data[0]["NetworkSettings"]["Ports"]["8080/tcp"][0]["HostIp"] = "0.0.0.0"
         report = sc.score(SHA, runtime_observations(rows=data), now=NOW)
-        self.assertEqual(report["passed"], 0)
+        self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 0)
 
     def test_command_failure_does_not_disclose_secret_error_or_retry(self):
         with patch.object(sc, "_run_bytes", return_value=DIRECTOR_ID.encode()), \
@@ -1873,7 +1983,7 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_markdown_keeps_pending_actions_and_reference_limitations(self):
         report = sc.score(SHA, now=NOW)
         text = sc.render_markdown(report)
-        self.assertIn("0/20 verified (0%)", text)
+        self.assertIn("Counts: UNATTESTED", text)
         self.assertIn("unknown cost is not zero", text.lower())
         self.assertIn("Next:", text)
         self.assertIn("do not contribute points", text)
@@ -1975,7 +2085,7 @@ class CompletionScorecardTests(unittest.TestCase):
                     patch("builtins.print")):
                 self.assertEqual(cli.main(), 0)
             report = json.loads((Path(folder) / "completion-scorecard.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["passed"], 0)
+            self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 0)
             self.assertTrue(all(item["status"] == "UNKNOWN" and "no longer pins" in item["explanation"]
                                 for item in report["checks"]))
 
@@ -2109,7 +2219,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         cases.append(wrong_env)
         for case in cases:
             observed = case.report(only_deployment=True)
-            self.assertEqual(observed["passed"], 0)
+            self.assertEqual(sum(item["status"] == "PASS" for item in observed["checks"]), 0)
             self.assertEqual(row(observed, "19")["status"], "UNKNOWN")
         self.assertEqual(stopped.opened, [])
 
@@ -3178,7 +3288,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         single = sc.score(SHA, observed, now=first.now)
         # Without binding arguments the single binding every runtime observation carries is inferred and reported.
         self.assertEqual((single["runtime_sha"], single["image_id"]), (SHA, IMAGE))
-        self.assertEqual(single["passed"], first.report()["passed"])
+        self.assertEqual(sum(item["status"] == "PASS" for item in single["checks"]),
+                         sum(item["status"] == "PASS" for item in first.report()["checks"]))
         # A second deployment on another image: combining both collect() outputs scores no runtime check.
         other = "sha256:" + "e" * 64
         second = self.world()
@@ -4258,7 +4369,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                         {**clean, ("merge-base", SHA): ValueError("not an ancestor")}, [])):
                     self.assertIn("not an ancestor of the candidate", sc.untrusted_checkout(SHA))
         report = sc.refuse_untrusted(sc.score(SHA, [], now=NOW), "evaluator revision not pinned")
-        self.assertEqual(report["passed"], 0)
+        self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 0)
         self.assertTrue(all(item["status"] == "UNKNOWN" and item["explanation"].startswith(sc.TRUSTED_CHECKOUT_REFUSAL)
                             and "evaluator revision not pinned" in item["explanation"] for item in report["checks"]))
 
@@ -4955,7 +5066,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                 patch.object(sc, "_native_security_index", return_value=world.root / "missing-index.sqlite3"):
             report = sc.score(SHA, sc.collect(SHA, now=NOW, **selections), now=NOW)
         self.assertEqual(len(report["checks"]), 20)
-        self.assertEqual(report["passed"], 0)
+        self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 0)
         # The runtime answers, but every other source is down or refuses.
         world.consistency = world.captures = world.status = None
         world.slack_down = True
@@ -5080,3 +5191,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]

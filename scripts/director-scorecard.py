@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
@@ -21,7 +22,7 @@ import os
 import subprocess
 from pathlib import Path
 
-# This file runs only from the evaluator tree that the owner-installed launcher (scripts/scorecard-launcher.py,
+# Trusted reports come only from the evaluator tree that the owner-installed launcher (scripts/scorecard-launcher.py,
 # installed at ~/.director-scorecard/launcher.py) extracted from the pinned evaluator_sha with git archive; a working
 # checkout's copy of this file is never trusted to check itself (review 4112412081). The check below is a second
 # line against a direct run, standard library only, before any repository module is imported.
@@ -146,10 +147,14 @@ def main() -> int:
     if refusal is not None:
         parser.error("scorecard not run from the pinned evaluator checkout: " + refusal)
     from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
-                                                           untrusted_checkout)
+                                                           untrusted_checkout, _launcher)
     try:
-        # Second line, now that the evaluator is trusted: the same rule, and the candidate's ancestry.
+        launcher = _launcher()
+        attestation = launcher.run_attestation(ROOT)
+        # Consistency checks and candidate ancestry; only the owner-local receipt proves origin.
         refused = untrusted_checkout(args.candidate_sha)
+        if attestation is None:
+            refused = refused or launcher.UNATTESTED
         observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel,
                                                   owner=args.owner, github=args.github,
                                ledger_path=args.ledger, gateway=args.gateway, security_scan_id=args.security_scan,
@@ -161,15 +166,20 @@ def main() -> int:
         report = score(args.candidate_sha, observations, evidence_dir=args.evidence_dir,
                        runtime_sha=runtime.runtime_sha if runtime else None, image_id=runtime.image_id if runtime else None)
         # The descriptor is read again once the collection is done: a pin rotated mid-run refuses the whole run.
-        refused = refused or untrusted_checkout(args.candidate_sha)
+        refused = untrusted_checkout(args.candidate_sha) or refused
         if refused:
             report = refuse_untrusted(report, refused)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         json_path = args.output_dir / "completion-scorecard.json"
         md_path = args.output_dir / "completion-scorecard.md"
         json_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        md_path.write_text(render_markdown(report), encoding="utf-8")
-        print(json.dumps({"score": f"{report['passed']}/20", "json": str(json_path.resolve()),
+        md_path.write_text(render_markdown(report, _pending_launch=True), encoding="utf-8")
+        if report["attested"] is True:
+            Path(os.environ["DIRECTOR_SCORECARD_RESULT"]).write_text(json.dumps(report), encoding="utf-8")
+        else:
+            print(launcher.UNATTESTED)
+        print(json.dumps({"score": f"{report['passed']}/20" if report["attested"] else "UNATTESTED",
+                          "attested": report["attested"], "json": str(json_path.resolve()),
                           "markdown": str(md_path.resolve()), "activation_authorized": False}))
     except (OSError, ValueError) as error:
         parser.error(str(error))
@@ -194,3 +204,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
