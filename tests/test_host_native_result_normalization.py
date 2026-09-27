@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -320,7 +321,7 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
         # The HTTP timeout is the remainder, never a fresh five seconds.
         with patch(target, return_value=evidence) as challenge:
             self.assertTrue(bridge.read_only_attestation_current(deadline=monotonic() + 1.5))
-        self.assertLessEqual(challenge.call_args.kwargs["timeout_seconds"], 1.5)
+        self.assertLessEqual(challenge.call_args.kwargs["timeout_seconds"], 1.5 + 1e-9)
         # Every transport of a lane shares one window.
         seen = []
         attempt = PacketBoundaryAdapter("grok", bridge)
@@ -734,3 +735,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | END]]

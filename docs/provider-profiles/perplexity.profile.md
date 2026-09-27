@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -139,6 +140,8 @@ Strengths:
 
 | Variable | Kind | Settings field | Default | In .env.example | Value recorded |
 | --- | --- | --- | --- | --- | --- |
+| `PERPLEXITY_INPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `perplexity_input_usd_per_mtok` | - | yes | no |
+| `PERPLEXITY_OUTPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `perplexity_output_usd_per_mtok` | - | yes | no |
 | `PERPLEXITY_DAILY_BUDGET_USD` | daily_budget_usd | `perplexity_daily_budget_usd` | `2.0` | yes | no |
 | `PERPLEXITY_DAILY_REQUEST_LIMIT` | daily_request_limit | `perplexity_daily_request_limit` | `100` | yes | no |
 | `PERPLEXITY_USAGE_PROBE_COST_CEILING_USD` | per_request_cost_floor_usd | `perplexity_usage_probe_cost_ceiling_usd` | - | yes | no |
@@ -306,3 +309,4 @@ Separation of duties:
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->

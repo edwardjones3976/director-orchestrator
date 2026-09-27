@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
@@ -51,6 +52,12 @@ The [completion scorecard](twenty-check-completion-scorecard.md) contains twenty
 fixed outcomes covering routing, intake, Slack delivery, primary ownership,
 recovery, independent evidence, workload, budgets and a successful paid result.
 It generates a readable report and matching JSON from one bounded collection.
+Activation, acceptance and issue #81 evidence consumers require `attested: true`
+and a successful `python -I <owner-installed-launcher> --verify-report <report.json>`
+check against the owner-local completed receipt. Missing or invalid attestation
+means UNATTESTED with no usable pass total; a candidate's verifier or a copied
+boolean is not proof. See the scorecard document for installation and receipt
+boundaries. Attestation grants no activation or acceptance authority.
 
 Each check is **PASS**, **FAIL** or **UNKNOWN**. Only a fresh observation from an
 implemented source collector can earn a point. An unavailable collector, copied
@@ -95,3 +102,4 @@ existing policy, security, exact-candidate and spending gates.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
