@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -25,6 +28,7 @@ SPEC.loader.exec_module(runner)
 
 class ParallelRunnerTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"DIRECTOR_CI_PG_LANE": ""}))
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -159,6 +163,18 @@ class ParallelRunnerTests(unittest.TestCase):
             self.assertEqual(3 if not partial else 2, connect.call_count)
             self.assertFalse(any("DROP" in str(call) for call in connection.execute.call_args_list))
 
+    def test_disposable_ci_lane_uses_container_removal_for_cleanup(self):
+        import psycopg
+        setup = MagicMock()
+        setup.__enter__.return_value = setup
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "DIRECTOR_CI_PG_LANE": "owned-lane|47001"}), \
+                patch.object(psycopg, "connect", return_value=setup) as connect:
+            with self.assertRaisesRegex(RuntimeError, "shard failure"):
+                with runner.shard_databases("dbname=fixture", 2):
+                    raise RuntimeError("shard failure")
+        connect.assert_called_once()
+        self.assertFalse(any("DROP" in str(call) for call in setup.execute.call_args_list))
+
     def test_discovery_failure_is_loud(self):
         self.module("test_parallel_broken", "raise ImportError('private diagnostic')\n")
         original_path = sys.path[:]
@@ -218,31 +234,54 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertNotIn("private diagnostic", str(caught.exception))
         self.assertNotIn("dbname", str(caught.exception))
 
-    def test_cleanup_reconnects_once_after_connection_failure(self):
+    def test_cleanup_retries_transient_errors_up_to_three_attempts(self):
         import psycopg
-        for recover in (True, False):
-            with self.subTest(recover=recover):
-                setup, broken, retry = (MagicMock() for _ in range(3))
-                for connection in (setup, broken, retry):
-                    connection.__enter__.return_value = connection
-                broken.execute.side_effect = [None, psycopg.OperationalError("private diagnostic")]
-                if not recover:
-                    retry.__enter__.side_effect = psycopg.OperationalError("private diagnostic")
-                with patch.object(psycopg, "connect", side_effect=[setup, broken, retry]) as connect, \
-                        patch.object(runner.time, "sleep") as sleep:
-                    def exercise():
-                        with runner.shard_databases("dbname=fixture", 1):
-                            setup.__exit__.assert_called_once()
-                            self.assertEqual(1, connect.call_count)
-                    if recover:
-                        exercise()
-                        self.assertIn('DROP DATABASE IF EXISTS "director_test_s0"', retry.execute.call_args.args[0].as_string())
-                    else:
-                        with self.assertRaisesRegex(runner.RunnerError, "director_test_s0: OperationalError") as caught:
+        for error_type in (psycopg.OperationalError, psycopg.InterfaceError, psycopg.errors.QueryCanceled):
+            for failures in (1, 2, 3):
+                with self.subTest(error_type=error_type.__name__, failures=failures):
+                    attempts = min(failures + 1, 3)
+                    setup = MagicMock()
+                    cleanup = [MagicMock() for _ in range(attempts)]
+                    for connection in [setup, *cleanup]:
+                        connection.__enter__.return_value = connection
+                    for connection in cleanup[:failures]:
+                        connection.execute.side_effect = [None, error_type("private diagnostic")]
+                    with patch.object(psycopg, "connect", side_effect=[setup, *cleanup]) as connect, \
+                            patch.object(runner.time, "sleep") as sleep:
+                        def exercise():
+                            with runner.shard_databases("dbname=fixture", 1):
+                                setup.__exit__.assert_called_once()
+                                self.assertEqual(1, connect.call_count)
+                        if failures < 3:
                             exercise()
-                        self.assertNotIn("private diagnostic", str(caught.exception))
-                    self.assertEqual(3, connect.call_count)
-                    sleep.assert_called_once_with(0.2)
+                        else:
+                            with self.assertRaisesRegex(
+                                    runner.RunnerError, f"director_test_s0: {error_type.__name__}") as caught:
+                                exercise()
+                            self.assertNotIn("private diagnostic", str(caught.exception))
+                            self.assertNotIn("dbname", str(caught.exception))
+                        self.assertEqual(1 + attempts, connect.call_count)
+                        self.assertEqual([((0.2,), {})] * (attempts - 1), sleep.call_args_list)
+                    setup.execute.assert_any_call("SET statement_timeout = '30s'")
+                    for connection in cleanup:
+                        self.assertEqual("SET statement_timeout = '120s'", connection.execute.call_args_list[0].args[0])
+                        self.assertEqual('DROP DATABASE IF EXISTS "director_test_s0" WITH (FORCE)',
+                                         connection.execute.call_args_list[1].args[0].as_string())
+
+    def test_cleanup_deadline_records_remaining_databases_without_connecting(self):
+        import psycopg
+        setup = MagicMock()
+        setup.__enter__.return_value = setup
+        with patch.object(psycopg, "connect", return_value=setup) as connect, \
+                patch.object(runner.time, "monotonic", side_effect=[0, 300, 301]):
+            with self.assertRaises(runner.RunnerError) as caught:
+                with runner.shard_databases("dbname=fixture", 2):
+                    connect.reset_mock()
+            connect.assert_not_called()
+        self.assertEqual(
+            "Shard database cleanup failed (director_test_s1: CleanupDeadline; "
+            "director_test_s0: CleanupDeadline); remove the disposable lane",
+            str(caught.exception))
 
     def test_report_precedes_cleanup_failure(self):
         for failed in (False, True):
@@ -306,3 +345,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:18 UTC | END]]
