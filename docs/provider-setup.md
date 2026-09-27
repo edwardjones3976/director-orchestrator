@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]] -->
@@ -656,14 +658,76 @@ separate decision.
 
 ## Gemini Interactions API contract
 
+### Daily spend admission for metered providers
+
+Owner configuration can supply `GEMINI_INPUT_USD_PER_MTOK`,
+`GEMINI_OUTPUT_USD_PER_MTOK`, `GROK_INPUT_USD_PER_MTOK`,
+`GROK_OUTPUT_USD_PER_MTOK`, `PERPLEXITY_INPUT_USD_PER_MTOK`, and
+`PERPLEXITY_OUTPUT_USD_PER_MTOK`. Each supplied price must be positive and
+finite; invalid settings refuse startup without echoing the value. Both prices
+are required for pricing readiness. `/health` reports only the per-provider
+booleans under `provider_prices`. Readiness does not attest the configured prices
+match the provider tariff: the owner must cover the selected model, input-size
+tiers, and all billed token categories, and update them before a tariff change.
+
+For a bounded token-only request, let `B` be the byte length of the complete
+JSON request serialized with ASCII escaping, `O` its enforced maximum output
+tokens, and `Pi` / `Po` the owner prices per million tokens. The upper bound is
+`W = (B * Pi + O * Po) / 1_000_000`, rounded upward to the next representable
+float. One token per encoded byte conservatively sizes text input, including
+the request envelope. Grok uses the same request-body builder for admission and
+submission, including context, fixed instructions and revision text, and sends
+`GROK_MAX_OUTPUT_TOKENS` to the API. Its request cost floor is never an upper bound.
+
+Gemini managed-agent work instead reserves
+`W = (UTF8_bytes(input) * Pi + GEMINI_MAX_TOTAL_TOKENS * max(Pi, Po)) / 1_000_000`,
+rounded upward. The agent-wide enforced cap covers intermediate/history/tool
+tokens, which are priced at the more expensive rate. In either bounded case,
+the reservation is `max(W, existing_floor, assignment.estimated_cost_usd)`.
+The model-authored estimate can only increase the reservation.
+
+When prices are missing, or the transport cannot be bounded by those prices,
+admission serializes through the same SQLite `BEGIN IMMEDIATE` transaction:
+at most one unresolved paid request per provider, holding **all remaining daily
+capacity**, never merely a floor. This includes packet/CLI transports whose
+complete request is unavailable here, Perplexity `/search` and agent presets
+with non-token search charges, and Gemini stateless probes without an enforced
+output-token cap. Token prices alone do not authorize concurrency on those
+routes. Usage probes share this gate with ordinary work.
+
+Further admissions return `provider_spend_pending_retryable` and instruct the
+caller to retry after settlement or reconciliation. The hold spans processes,
+UTC rollover, and subsequent price configuration. Known settlement replaces the
+reserved exposure with the actual charge; repeated charge records cannot lower
+an already recorded charge. Unknown settlement retains the reservation. Stale
+requests remain visible as unreconciled and require reconciliation before new
+paid work; aging is not evidence that a request stopped or incurred no charge.
+Serialized Gemini probes make one attempt until that reconciliation.
+
+The hold applies only to new admissions of different effects. An already-bound
+packet resumes without repeating spend admission, including after UTC rollover
+or a pricing change; authenticated readback and terminal settlement still run.
+Owner `/dispatch-reconciliation` with `not_created` closes the exact ambiguous
+effect and records zero spend. The durable closure is replayed on restart if the
+process stops between saving the task and settling spend. A `created` resolution
+retains the hold until the recovered run supplies authoritative terminal cost;
+unknown cost does not become zero. Retry the waiting task after reconciliation.
+
+Serialization prevents overlapping unknown charges; it cannot prove that one
+unpriced request costs less than the remaining budget. A strict monetary bound
+for such a route additionally requires an enforced provider-side spend ceiling
+or a defensible tariff bound for its non-token charges. Do not treat token-price
+readiness or serialization as that evidence.
+
 The Gemini adapter uses the REST Interactions API; it does not call the legacy
 `generateContent` endpoint. `GEMINI_AGENT` names the managed Antigravity agent and
 is sent as the request's `agent` field. New runs use `environment=remote`, while a
 revision reuses the `environment_id` returned by the prior interaction together
 with `previous_interaction_id`. Availability checks instead use the low-cost
 `GEMINI_USAGE_MODEL=gemini-3.5-flash-lite` statelessly with `store=false`; they do
-not provision an Antigravity sandbox. Explicit 429 responses receive at most
-`GEMINI_USAGE_MAX_ATTEMPTS` bounded attempts, and the final normalized quota code
+not provision an Antigravity sandbox. The adapter supports at most
+`GEMINI_USAGE_MAX_ATTEMPTS` bounded attempts, but daily admission limits unpriced
+probes to one attempt pending reconciliation. The final normalized quota code
 is persisted without provider response text or credentials.
 
 Managed-agent Gemini calls are bounded background interactions with `store=true`.
@@ -817,3 +881,5 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]] -->

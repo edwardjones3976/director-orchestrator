@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -40,6 +41,7 @@ from .models import (
 from .providers import (
     ProviderDailyLimitExceeded,
     GeminiAdapter,
+    GrokAdapter,
     ProviderAdapter,
     ProviderDailySpendLedger,
     ProviderError,
@@ -321,7 +323,7 @@ class UsageMonitor:
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
         """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts
-        at the larger of its actual charge (a probe's reported cost) and its reservation; a work reservation with no
+        at its actual charge when known, otherwise its reservation; a work reservation with no
         actual charge yet counts at its reservation; a probe the ledger does not reserve counts at its reported cost.
         max(total reported, total reserved) would understate a probe that cost more than its floor beside work."""
         actual = {_probe_key(record.cycle_id, provider): record.reported_cost_usd or 0.0 for record in attempted}
@@ -342,9 +344,8 @@ class UsageMonitor:
         sent, never ahead (review 4111996174): a probe that succeeds first time holds one slot, and a refused
         reservation raises before its request, so nothing unreserved is dispatched and no reservation outlives a
         request that was not sent. Returns (None, None) for a provider the ledger does not account (it has no cap)."""
-        # Every paid probe reserves a nonzero monetary bound before it is sent (review 4112206668): the configured
-        # probe cost ceiling (grok: its per-request floor). With no bound configured the probe is refused, never
-        # reserved at $0; record_charge later raises a reservation to its actual charge, never below the bound.
+        # Probes share admission with work; a floor cannot let them bypass an
+        # outstanding serialized request or under-reserve concurrent API calls.
         limits = {
             "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd),
             "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd),
@@ -354,13 +355,14 @@ class UsageMonitor:
             return None, None
         request_limit, budget_usd = limits[provider]
         floor_usd = self.settings.request_cost_bound_usd(provider)
-        if floor_usd is None:
-            raise ProviderDailyLimitExceeded(f"{provider} usage probes have no configured cost ceiling")
+        self.settings.provider_token_prices(provider)
+        bound = None
+        if provider == "grok":
+            body = GrokAdapter(self.settings).request_body(USAGE_CHECK_PROMPT)
+            bound = self.settings.token_request_cost_bound_usd(provider, body, body["max_output_tokens"])
+        # Gemini's stateless probe has no enforced output cap; Perplexity's
+        # preset may add search charges. Neither is bounded by token prices alone.
         attempts = 1
-        if provider == "gemini":
-            remaining = self._supplemental_remaining_requests(provider, now)
-            attempts = max(1, min(self.settings.gemini_usage_max_attempts, _PROBE_ATTEMPTS_MAX,
-                                  remaining if isinstance(remaining, int) else _PROBE_ATTEMPTS_MAX))
 
         def reserve(attempt: int) -> None:
             if not 1 <= attempt <= attempts:
@@ -368,11 +370,12 @@ class UsageMonitor:
             self.provider_spend.reserve(
                 provider=ProviderName(provider),
                 effect_key=_probe_key(cycle_id, provider, attempt),
-                estimated_cost_usd=floor_usd,
+                estimated_cost_usd=max(bound, floor_usd or 0.0) if bound is not None else 0.0,
                 request_limit=request_limit,
                 budget_usd=budget_usd,
                 # The accounting day of THIS request, read immediately before it (review 4112206672).
                 now=datetime.now(timezone.utc),
+                serialize=bound is None,
             )
 
         return attempts, reserve
@@ -385,7 +388,7 @@ class UsageMonitor:
         if isinstance(request_limit, int) and accounting["request_count"] >= request_limit:
             return "Provider daily request limit reached"
         budget = accounting["daily_budget_usd"]
-        # The reconciled exposure (each reservation at the larger of its charge and its reservation).
+        # Known actual charges replace reservations; unknown charges retain them.
         accounted_cost = accounting["exposure_usd"]
         if isinstance(budget, (int, float)) and accounted_cost >= budget:
             return "Provider daily cost limit reached"
@@ -849,3 +852,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]

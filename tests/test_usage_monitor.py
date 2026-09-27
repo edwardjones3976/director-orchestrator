@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -44,10 +45,10 @@ from director_orchestrator.usage import (
 )
 
 
-# Gemini and perplexity probes now reserve a configured nonzero cost ceiling before each request, and are refused
-# without one (review 4112206668): every fixture here configures the bound.
+# Grok has a bounded token-only request. Other probes serialize until reconciled.
 BOUNDED_SETTINGS = replace(Settings(), gemini_usage_probe_cost_ceiling_usd=0.01,
-                           perplexity_usage_probe_cost_ceiling_usd=0.01)
+                           perplexity_usage_probe_cost_ceiling_usd=0.01,
+                           grok_input_usd_per_mtok=0.000001, grok_output_usd_per_mtok=0.000001)
 
 
 class SuccessfulCursorProbe:
@@ -484,10 +485,8 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             accounting = monitor.health()["daily_accounting"]["grok"]
             self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
 
-    async def test_every_paid_probe_reserves_a_nonzero_bound_or_is_refused(self):
-        """Review 4112206668: a gemini or perplexity probe reserves its configured cost ceiling before it is sent;
-        with no ceiling configured it is refused and nothing is dispatched. A lower reported charge never lowers
-        the reservation."""
+    async def test_unbounded_probe_serializes_and_settlement_releases_capacity(self):
+        """An unbounded request holds remaining capacity; only a known charge releases it."""
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "tasks.sqlite3")
             ledger = ProviderDailySpendLedger(database)
@@ -498,20 +497,19 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                                 sqlite_path=database, slack_bot_token="")
             records = await UsageMonitor(unbounded, TaskStore(database),
                                          adapters={ProviderName.GEMINI: adapter}).run_once(force=True)
-            self.assertEqual(adapter.calls, 0)
+            self.assertEqual(adapter.calls, 1)
             self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
-            self.assertIn("no configured cost ceiling", records[0].error or "")
-            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (0, 0.0))
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, unbounded.gemini_daily_budget_usd))
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "tasks.sqlite3")
             ledger = ProviderDailySpendLedger(database)
             bounded = replace(unbounded, gemini_usage_probe_cost_ceiling_usd=0.05, sqlite_path=database)
             await UsageMonitor(bounded, TaskStore(database),
                                adapters={ProviderName.GEMINI: QuotaFailingGeminiProbe()}).run_once(force=True)
-            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.05))  # no reported cost: the bound holds
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, bounded.gemini_daily_budget_usd))
             [(key, _)] = ledger.reservations(ProviderName.GEMINI)
             ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.01)
-            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.05))  # never below the bound
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.01))
             ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.2)
             self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.2))
 
@@ -532,10 +530,9 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ledger.exposure(ProviderName.GROK, now=after_midnight)[0], 1)
             self.assertEqual(ledger.exposure(ProviderName.GROK, now=started)[0], 0)
 
-    async def test_each_gemini_retry_is_reserved_immediately_before_it_is_sent(self):
-        """Review 4111996174: each retry is reserved through reserve() immediately before its request, never ahead.
-        A probe that succeeds first time holds one slot; one that is retried holds one per request actually sent."""
-        for statuses, expected in (([200], [1]), ([429, 429, 200], [1, 2, 3])):
+    async def test_unpriced_gemini_probe_does_not_retry_before_reconciliation(self):
+        """A request without a cost bound cannot repeat before its first charge is reconciled."""
+        for statuses, expected in (([200], [1]), ([429, 429, 200], [1])):
             with self.subTest(statuses=statuses), tempfile.TemporaryDirectory() as directory:
                 database = str(Path(directory) / "tasks.sqlite3")
                 ledger = ProviderDailySpendLedger(database)
@@ -562,7 +559,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                         patch("director_orchestrator.providers.asyncio.sleep", new=AsyncMock()):
                     await monitor.run_once(force=True)
                 self.assertEqual(held, expected)
-                self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], len(statuses))
+                self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], 1)
 
     async def test_every_probe_attempt_is_reserved_before_dispatch(self):
         """Review 4111508051 (as refined by 4111996174): a usage check's attempt is reserved in the spend ledger,
@@ -848,7 +845,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 settings.gemini_daily_request_limit,
             )
 
-    async def test_gemini_transport_failure_preserves_all_attempted_requests(self):
+    async def test_unpriced_gemini_stops_before_a_second_transport_attempt(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
@@ -893,13 +890,13 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             ):
                 records = await monitor.run_once(force=True)
 
-            self.assertEqual(outbound_calls, 2)
+            self.assertEqual(outbound_calls, 1)
             self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
-            self.assertEqual(records[0].attempt_count, 2)
-            self.assertEqual(records[0].provider_error_code, "transport_error")
+            self.assertEqual(records[0].attempt_count, 1)
+            self.assertEqual(records[0].provider_error_code, "resource_exhausted")
             self.assertEqual(
                 monitor.health()["daily_accounting"]["gemini"]["request_count"],
-                2,
+                1,
             )
 
     async def test_health_distinguishes_claude_prompt_from_completed_response(self):
@@ -1334,3 +1331,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]

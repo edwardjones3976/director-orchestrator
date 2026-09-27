@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
@@ -132,16 +134,25 @@ class ProviderDailySpendLedger:
                 connection.execute(
                     "ALTER TABLE provider_daily_spend_reservations ADD COLUMN settled_at TEXT"
                 )
+            if "serialized" not in columns:
+                # Legacy reservations were estimates, not proven maxima.
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN serialized INTEGER NOT NULL DEFAULT 1"
+                )
+            if "requested_cost_usd" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN requested_cost_usd REAL"
+                )
 
     @staticmethod
     def _exposure(connection: sqlite3.Connection, provider: ProviderName, utc_day: str) -> tuple[int, float]:
         """The one reconciliation of the day's spend (review 4111357778), for the admission gate and every report:
-        each reservation counts at the larger of its actual charge and its reservation. Called inside the caller's
+        each reservation counts at its actual charge when known, otherwise its reservation. Called inside the caller's
         transaction, so reserve() compares and inserts under one BEGIN IMMEDIATE write lock."""
 
         count, exposure = connection.execute(
             """SELECT COUNT(*),
-                      COALESCE(SUM(MAX(estimated_cost_usd, COALESCE(actual_cost_usd, 0))), 0)
+                      COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd)), 0)
             FROM provider_daily_spend_reservations
             WHERE provider = ? AND utc_day = ?""",
             (provider.value, utc_day),
@@ -243,6 +254,7 @@ class ProviderDailySpendLedger:
         request_limit: int,
         budget_usd: float,
         now: datetime | None = None,
+        serialize: bool = False,
     ) -> tuple[int, float]:
         if provider not in self._SUPPORTED:
             raise ValueError(
@@ -250,45 +262,73 @@ class ProviderDailySpendLedger:
             )
         if not self._EFFECT_KEY.fullmatch(effect_key):
             raise ValueError("provider spend reservation requires a canonical effect key")
-        if request_limit < 1 or budget_usd <= 0 or estimated_cost_usd < 0:
+        if (request_limit < 1 or not math.isfinite(budget_usd) or budget_usd <= 0
+                or not math.isfinite(estimated_cost_usd) or estimated_cost_usd < 0):
             raise ValueError("provider daily ceilings must be positive")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         utc_day = observed_at.date().isoformat()
+        requested_cost_usd = estimated_cost_usd
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                """SELECT utc_day, estimated_cost_usd
+                """SELECT utc_day, COALESCE(requested_cost_usd, estimated_cost_usd), serialized
                 FROM provider_daily_spend_reservations
                 WHERE provider = ? AND effect_key = ?""",
                 (provider.value, effect_key),
             ).fetchone()
             if existing is not None:
-                if existing[0] != utc_day or abs(float(existing[1]) - estimated_cost_usd) > 1e-9:
+                if (existing[0] != utc_day or bool(existing[2]) != serialize
+                        or abs(float(existing[1]) - requested_cost_usd) > 1e-9):
                     raise ProviderReservationIdentityConflict(
                         "provider daily reservation identity was reused with different accounting"
                     )
             else:
+                # Across days and processes: an unpriced in-flight call must not
+                # overlap even after prices are configured. Unknown settlement
+                # or stale ambiguity requires reconciliation, never auto-release.
+                pending = connection.execute(
+                    """SELECT 1 FROM provider_daily_spend_reservations
+                    WHERE provider = ? AND actual_cost_usd IS NULL
+                    AND (? OR serialized = 1) LIMIT 1""",
+                    (provider.value, serialize),
+                ).fetchone()
+                if pending:
+                    raise ProviderDailyLimitExceeded(
+                        f"{provider.value} has an unsettled or unreconciled paid request; "
+                        "retry after settlement or reconciliation. Allow authenticated readback "
+                        "to finish, or use /dispatch-reconciliation for an ambiguous dispatch; "
+                        "unknown charges require authoritative cost reconciliation before retry",
+                        code="provider_spend_pending_retryable",
+                    )
                 # The reconciled exposure, not the sum of reservation estimates: a probe that cost more than its
                 # floor must not leave room for more work under the cap (review 4111357778).
                 count, reserved = self._exposure(connection, provider, utc_day)
+                if serialize:
+                    # No price maximum: hold ALL remaining capacity, never a floor.
+                    remaining = budget_usd - reserved
+                    if remaining <= 0 or estimated_cost_usd > remaining:
+                        raise ProviderDailyLimitExceeded(f"{provider.value} daily assignment budget reached")
+                    estimated_cost_usd = remaining
                 if int(count) + 1 > request_limit:
                     raise ProviderDailyLimitExceeded(
                         f"{provider.value} daily assignment request limit reached"
                     )
-                if float(reserved) + estimated_cost_usd > budget_usd + 1e-9:
+                if float(reserved) + estimated_cost_usd > budget_usd:
                     raise ProviderDailyLimitExceeded(
                         f"{provider.value} daily assignment budget reached"
                     )
                 connection.execute(
                     """INSERT INTO provider_daily_spend_reservations(
-                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at
-                    ) VALUES (?, ?, ?, ?, ?)""",
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, serialized, requested_cost_usd
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         provider.value,
                         effect_key,
                         utc_day,
                         estimated_cost_usd,
                         observed_at.isoformat(),
+                        int(serialize),
+                        requested_cost_usd,
                     ),
                 )
             return self._exposure(connection, provider, utc_day)
@@ -1484,14 +1524,17 @@ class GrokAdapter(ProviderAdapter):
             if prompt_path is not None:
                 prompt_path.unlink(missing_ok=True)
 
-    async def _submit(self, input_text: str) -> ProviderRun:
-        body = {
+    def request_body(self, input_text: str) -> dict[str, Any]:
+        return {
             "model": self.settings.grok_model,
             "input": input_text,
             "max_output_tokens": self.settings.grok_max_output_tokens,
             "tools": [],
             "store": False,
         }
+
+    async def _submit(self, input_text: str) -> ProviderRun:
+        body = self.request_body(input_text)
         async with httpx.AsyncClient(timeout=self.settings.grok_timeout_seconds) as client:
             await self._ensure_model_allowed(client)
             response = await client.post(
@@ -1669,6 +1712,40 @@ class PerplexityAdapter(ProviderAdapter):
         return self._run(payload)
 
 
+def assignment_request_cost_bound(
+    settings: Settings, assignment: Assignment, context: str | None,
+    *, revision_prompt: str | None = None,
+) -> float | None:
+    """Only bound transports whose complete input and enforced token cap are known.
+
+    Packet/CLI transports and Perplexity search have hidden input or non-token
+    charges; token prices alone cannot bound them. They use serialized admission.
+    """
+    provider = assignment.agent.value
+    prices = settings.provider_token_prices(provider)
+    if prices is None or context is None:
+        return None
+    if assignment.agent == ProviderName.GROK and not GrokAdapter._requires_cli(assignment):
+        adapter = GrokAdapter(settings)
+        body = adapter.request_body(adapter._input(assignment, context, revision_prompt=revision_prompt))
+        return settings.token_request_cost_bound_usd(provider, body, body["max_output_tokens"])
+    if assignment.agent == ProviderName.GEMINI:
+        # The agent-wide cap includes generated/tool/history tokens, not merely
+        # the visible final answer. Price all of it at the more expensive rate.
+        prompt = antigravity_wire_input(
+            assignment, revision=revision_prompt is not None, context=context,
+            revision_prompt=revision_prompt,
+        )
+        total = settings.gemini_max_total_tokens
+        if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
+            raise ValueError("A positive enforced agent token limit is required")
+        bound = (len(prompt.encode("utf-8")) * prices[0] + total * max(prices)) / 1_000_000
+        if not math.isfinite(bound) or bound <= 0:
+            raise ValueError("Provider request cost bound must be finite and positive")
+        return math.nextafter(bound, math.inf)
+    return None
+
+
 def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]:
     return {
         ProviderName.CURSOR: CursorAdapter(settings),
@@ -1694,3 +1771,5 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
