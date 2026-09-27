@@ -1,9 +1,10 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 """Runner contracts using small disposable unittest modules and mocked DBs."""
 from collections import Counter
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import importlib.util
 import io
 import json
@@ -207,7 +208,7 @@ class ParallelRunnerTests(unittest.TestCase):
         setup, broken, cleanup = (MagicMock() for _ in range(3))
         for connection in (setup, broken, cleanup):
             connection.__enter__.return_value = connection
-        broken.execute.side_effect = [None, RuntimeError("private diagnostic")]
+        broken.execute.side_effect = [None, None, None, None, RuntimeError("private diagnostic")]
         with patch.object(psycopg, "connect") as connect:
             connect.side_effect = [setup, broken, cleanup]
             with self.assertRaisesRegex(runner.RunnerError, "cleanup failed") as caught:
@@ -218,63 +219,106 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertNotIn("private diagnostic", str(caught.exception))
         self.assertNotIn("dbname", str(caught.exception))
 
-    def test_cleanup_reconnects_once_after_connection_failure(self):
+    def test_cleanup_retries_transient_drop_failure_once(self):
         import psycopg
-        for recover in (True, False):
-            with self.subTest(recover=recover):
-                setup, broken, retry = (MagicMock() for _ in range(3))
-                for connection in (setup, broken, retry):
-                    connection.__enter__.return_value = connection
-                broken.execute.side_effect = [None, psycopg.OperationalError("private diagnostic")]
-                if not recover:
-                    retry.__enter__.side_effect = psycopg.OperationalError("private diagnostic")
-                with patch.object(psycopg, "connect", side_effect=[setup, broken, retry]) as connect, \
-                        patch.object(runner.time, "sleep") as sleep:
-                    def exercise():
-                        with runner.shard_databases("dbname=fixture", 1):
-                            setup.__exit__.assert_called_once()
-                            self.assertEqual(1, connect.call_count)
-                    if recover:
-                        exercise()
-                        self.assertIn('DROP DATABASE IF EXISTS "director_test_s0"', retry.execute.call_args.args[0].as_string())
-                    else:
-                        with self.assertRaisesRegex(runner.RunnerError, "director_test_s0: OperationalError") as caught:
+        for error_type in (psycopg.errors.QueryCanceled, psycopg.OperationalError,
+                           psycopg.errors.LockNotAvailable, psycopg.InterfaceError):
+            for recover in (True, False):
+                with self.subTest(error=error_type.__name__, recover=recover):
+                    setup, broken, retry = (MagicMock() for _ in range(3))
+                    for connection in (setup, broken, retry):
+                        connection.__enter__.return_value = connection
+                    broken.execute.side_effect = [None] * 4 + [error_type("private diagnostic")]
+                    if not recover:
+                        retry.execute.side_effect = [None] * 4 + [error_type("private diagnostic")]
+                    with patch.object(psycopg, "connect", side_effect=[setup, broken, retry]) as connect, \
+                            patch.object(runner.time, "sleep") as sleep:
+                        def exercise():
+                            with runner.shard_databases("dbname=fixture", 1):
+                                setup.__exit__.assert_called_once()
+                                self.assertEqual(1, connect.call_count)
+                        if recover:
                             exercise()
-                        self.assertNotIn("private diagnostic", str(caught.exception))
-                    self.assertEqual(3, connect.call_count)
-                    sleep.assert_called_once_with(0.2)
+                        else:
+                            with self.assertRaises(runner.CleanupError) as caught:
+                                exercise()
+                            self.assertIn(f"director_test_s0: {error_type.__name__}", str(caught.exception))
+                            self.assertNotIn("private diagnostic", str(caught.exception))
+                        self.assertEqual(3, connect.call_count)
+                        sleep.assert_called_once_with(0.2)
+                    for connection in (broken, retry):
+                        calls = connection.execute.call_args_list
+                        self.assertEqual(5, len(calls))
+                        self.assertEqual(("SET statement_timeout = '30s'",), calls[0].args)
+                        self.assertEqual(("SET lock_timeout = '10s'",), calls[1].args)
+                        self.assertEqual((
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                            "WHERE datname = %s AND pid <> pg_backend_pid()", ("director_test_s0",)),
+                            calls[2].args)
+                        self.assertEqual(("SET statement_timeout = '5min'",), calls[3].args)
+                        self.assertEqual('DROP DATABASE IF EXISTS "director_test_s0" WITH (FORCE)',
+                                         calls[4].args[0].as_string())
+                    self.assertEqual("SET statement_timeout = '30s'", setup.execute.call_args_list[0].args[0])
 
-    def test_report_precedes_cleanup_failure(self):
+    def test_report_precedes_cleanup_failure_and_exit_classification(self):
         for failed in (False, True):
-            with self.subTest(failed=failed):
-                output = io.StringIO()
-                result = dict(index=0, counts=dict(tests=2, failures=int(failed), errors=int(failed), skips=0),
-                              failures=[("FAIL", "test_a.Example.test_a"), ("ERROR", "test_a.Example.test_b")] if failed else [],
-                              progress=[("test_a.Example.test_a", "FAIL" if failed else "ok")],
-                              durations=[], status="complete", failed=failed,
-                              tail=["AssertionError: [message redacted]"] if failed else [])
+            for warn in (False, True):
+                with self.subTest(failed=failed, warn=warn):
+                    output = io.StringIO()
+                    result = dict(index=0, counts=dict(tests=2, failures=int(failed), errors=0, skips=0),
+                                  failures=[("FAIL", "test_a.Example.test_a")] if failed else [],
+                                  progress=[("test_a.Example.test_a", "FAIL" if failed else "ok")],
+                                  durations=[], status="complete", failed=failed,
+                                  tail=["AssertionError: [message redacted]"] if failed else [])
 
+                    @contextmanager
+                    def databases(*args):
+                        yield [None]
+                        self.assertIn("TOTAL: tests=2", output.getvalue())
+                        raise runner.CleanupError("Shard database cleanup failed")
+
+                    original_path = sys.path[:]
+                    try:
+                        with patch.object(runner, "discover_modules", return_value={"test_a": ["a", "b"]}), \
+                                patch.object(runner, "run_shard", return_value=result), \
+                                patch.object(runner, "shard_databases", databases), \
+                                redirect_stdout(output), redirect_stderr(output):
+                            args = ["--shards", "1"] + (["--cleanup-failure-warn"] if warn else [])
+                            self.assertEqual(0 if warn and not failed else 1, runner.main(args))
+                    finally:
+                        sys.path[:] = original_path
+                    rendered = output.getvalue()
+                    self.assertIn("[s0] complete: tests=2", rendered)
+                    self.assertIn("[s0] test_a.Example.test_a ...", rendered)
+                    classification = "TESTS FAILED" if failed else "TESTS PASSED"
+                    level = "WARNING" if warn and not failed else "ERROR"
+                    self.assertIn(f"{level}: {classification}; cleanup failed", rendered)
+                    self.assertLess(rendered.index("TOTAL:"), rendered.index("cleanup failed"))
+                    if failed:
+                        self.assertIn("FAIL: test_a.Example.test_a", rendered)
+                        self.assertIn("AssertionError: [message redacted]", rendered)
+
+    def test_warn_mode_does_not_hide_setup_or_execution_failure(self):
+        for stage in ("setup", "execution"):
+            with self.subTest(stage=stage):
                 @contextmanager
                 def databases(*args):
-                    yield [None]
-                    self.assertIn("TOTAL: tests=2", output.getvalue())
-                    raise runner.RunnerError("Shard database cleanup failed")
+                    try:
+                        if stage == "setup":
+                            raise RuntimeError("private setup diagnostic")
+                        yield [None]
+                    finally:
+                        raise runner.CleanupError("Shard database cleanup failed")
 
                 original_path = sys.path[:]
                 try:
-                    with patch.object(runner, "discover_modules", return_value={"test_a": ["a", "b"]}), \
-                            patch.object(runner, "run_shard", return_value=result), \
-                            patch.object(runner, "shard_databases", databases), redirect_stdout(output):
-                        with self.assertRaisesRegex(runner.RunnerError, "cleanup failed"):
-                            runner.main(["--shards", "1"])
+                    with patch.object(runner, "discover_modules", return_value={"test_a": ["a"]}), \
+                            patch.object(runner, "run_shard", side_effect=RuntimeError("private execution diagnostic")), \
+                            patch.object(runner, "shard_databases", databases), redirect_stdout(io.StringIO()):
+                        with self.assertRaises(runner.CleanupError):
+                            runner.main(["--shards", "1", "--cleanup-failure-warn"])
                 finally:
                     sys.path[:] = original_path
-                self.assertIn("[s0] complete: tests=2", output.getvalue())
-                self.assertIn("[s0] test_a.Example.test_a ...", output.getvalue())
-                if failed:
-                    self.assertIn("FAIL: test_a.Example.test_a", output.getvalue())
-                    self.assertIn("ERROR: test_a.Example.test_b", output.getvalue())
-                    self.assertIn("AssertionError: [message redacted]", output.getvalue())
 
     def test_tail_retains_locations_but_redacts_arbitrary_values(self):
         output = "old line\n" * 65 + (
@@ -306,3 +350,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:10 UTC | END]]

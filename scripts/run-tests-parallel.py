@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -27,6 +28,10 @@ DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 
 class RunnerError(RuntimeError):
     """Messages authored here contain no child output or connection details."""
+
+
+class CleanupError(RunnerError):
+    """Only shard database cleanup failed."""
 
 
 def test_ids(suite):
@@ -115,10 +120,17 @@ def shard_databases(dsn, count):
                     # drop/retry; IF EXISTS tolerates a lost successful reply.
                     with psycopg.connect(dsn, autocommit=True, connect_timeout=15) as cleanup:
                         cleanup.execute("SET statement_timeout = '30s'")
+                        cleanup.execute("SET lock_timeout = '10s'")
+                        cleanup.execute(
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                            "WHERE datname = %s AND pid <> pg_backend_pid()", (name,))
+                        cleanup.execute("SET statement_timeout = '5min'")
                         cleanup.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
                     break
                 except Exception as error:
-                    if attempt == 0 and isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError)):
+                    if attempt == 0 and isinstance(error, (
+                            psycopg.OperationalError, psycopg.InterfaceError,
+                            psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable)):
                         time.sleep(0.2)
                         continue
                     # Type only: libpq messages and server diagnostics can
@@ -126,7 +138,7 @@ def shard_databases(dsn, count):
                     failures.append(f"{name}: {type(error).__name__}")
                     break
         if failures:
-            raise RunnerError("Shard database cleanup failed (" + "; ".join(failures)
+            raise CleanupError("Shard database cleanup failed (" + "; ".join(failures)
                               + "); remove the disposable lane") from None
 
 
@@ -255,6 +267,9 @@ def main(argv=None):
                         default=os.environ.get("DIRECTOR_TEST_SHARDS", str(max(1, min(8, (os.cpu_count() or 1) // 4)))))
     parser.add_argument("--timeout", type=positive_int, default=1800, help="seconds per shard")
     parser.add_argument("--serial", action="store_true")
+    parser.add_argument("--cleanup-failure-warn", action="store_true",
+                        help="warn on database cleanup failure only when all tests passed; "
+                             "use only when the disposable database lane is removed afterward")
     parser.add_argument("--record-durations", action="store_true")
     parser.add_argument("--docs-only", nargs=2, metavar=("BASE", "HEAD"))
     args = parser.parse_args(argv)
@@ -289,33 +304,44 @@ def main(argv=None):
                 os.environ["SQLITE_PATH"] = original
         shards = make_shards(modules, args.shards, durations)
         print(f"Discovery parity: {sum(map(len, modules.values()))} tests; {len(modules)} modules; {len(shards)} shards", flush=True)
-        with shard_databases(os.environ.get(DSN_VARIABLE), len(shards)) as dsns:
-            with ThreadPoolExecutor(max_workers=len(shards)) as pool:
-                futures = [pool.submit(run_shard, i, shard, dsns[i], args.timeout, args.record_durations,
-                                       expected_count=sum(len(modules[m]) for m in shard))
-                           for i, shard in enumerate(shards)]
-                results = [future.result() for future in futures]
-            total = Counter()
-            measured = Counter()
-            for result in results:
-                index = result["index"]
-                counts = result["counts"]
-                total.update(counts)
-                for identity, outcome in result["progress"]:
-                    print(f"[s{index}] {identity} ... {outcome}")
-                print(f"[s{index}] {result['status']}: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
-                for kind, identity in result["failures"]:
-                    print(f"[s{index}] {kind}: {identity}")
-                if result["failed"] and result.get("tail"):
-                    print(f"[s{index}] stdout/stderr tail (sanitized, last 60 lines):")
-                    for line in result["tail"]:
-                        print(f"[s{index}] {line}")
-                owners = {identity: module for module in shards[index] for identity in modules[module]}
-                for seconds, _, identity in result["durations"]:
-                    if identity in owners:
-                        measured[owners[identity]] += float(seconds)
-            print("TOTAL: " + ", ".join(f"{k}={v}" for k, v in total.items()), flush=True)
-            failed = any(result["failed"] for result in results)
+        failed = None
+        try:
+            with shard_databases(os.environ.get(DSN_VARIABLE), len(shards)) as dsns:
+                with ThreadPoolExecutor(max_workers=len(shards)) as pool:
+                    futures = [pool.submit(run_shard, i, shard, dsns[i], args.timeout, args.record_durations,
+                                           expected_count=sum(len(modules[m]) for m in shard))
+                               for i, shard in enumerate(shards)]
+                    results = [future.result() for future in futures]
+                total = Counter()
+                measured = Counter()
+                for result in results:
+                    index = result["index"]
+                    counts = result["counts"]
+                    total.update(counts)
+                    for identity, outcome in result["progress"]:
+                        print(f"[s{index}] {identity} ... {outcome}")
+                    print(f"[s{index}] {result['status']}: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+                    for kind, identity in result["failures"]:
+                        print(f"[s{index}] {kind}: {identity}")
+                    if result["failed"] and result.get("tail"):
+                        print(f"[s{index}] stdout/stderr tail (sanitized, last 60 lines):")
+                        for line in result["tail"]:
+                            print(f"[s{index}] {line}")
+                    owners = {identity: module for module in shards[index] for identity in modules[module]}
+                    for seconds, _, identity in result["durations"]:
+                        if identity in owners:
+                            measured[owners[identity]] += float(seconds)
+                print("TOTAL: " + ", ".join(f"{k}={v}" for k, v in total.items()), flush=True)
+                failed = any(result["failed"] for result in results)
+        except CleanupError as error:
+            if failed is None:
+                raise
+            if not failed:
+                level = "WARNING" if args.cleanup_failure_warn else "ERROR"
+                print(f"{level}: TESTS PASSED; cleanup failed. {error}", file=sys.stderr)
+                return 0 if args.cleanup_failure_warn else 1
+            print(f"ERROR: TESTS FAILED; cleanup failed. {error}", file=sys.stderr)
+            return 1
     if args.record_durations and not failed:
         duration_path.write_text(json.dumps(dict(sorted(measured.items())), indent=2) + "\n", encoding="utf-8")
     return int(failed)
@@ -334,3 +360,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:10 UTC | END]]
