@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]] -->
@@ -48,7 +49,7 @@ before a fresh Start, preventing replacement of another active caller.
 Run the full suite from the worktree in PowerShell:
 
 ```powershell
-.\scripts\windows-postgres-test-lane.ps1 -Action Test -Parallel 8 -Python C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Parallel 8 -Python .\.venv\Scripts\python.exe
 ```
 
 Without `-Parallel N`, local execution remains serial. Parallel mode requires
@@ -78,7 +79,8 @@ No module is currently assigned a serial tail. Static inspection found no
 confirmed cross-module conflict after database/temp isolation; full-suite
 parallel compatibility and wall-time improvement still require CI validation.
 
-Only Compose/build and recovery-probe jobs skip docs-only PRs. The classifier
+Compose/build and recovery-probe jobs succeed as explicit no-ops for docs-only
+PRs; only their expensive steps are skipped. The classifier
 uses the merge-base diff including both sides of renames: `docs/**` and Markdown
 qualify, except `AGENTS.md` and `CLAUDE.md`; `n8n/workflows/*.json` do not qualify.
 Unit tests, attribution and secret hygiene always run. Main pushes and
@@ -91,3 +93,4 @@ appended. These local files are not admission authority.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]] -->

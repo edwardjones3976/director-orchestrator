@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | BEGIN]]
@@ -521,7 +522,26 @@ process.stdout.write(JSON.stringify({outputs, store}));
             self.assertIn(f"    name: {name}\n", jobs[job])
             if job in {"containers", "recovery-probe"}:
                 self.assertIn("    needs: changes\n", jobs[job])
-                self.assertIn("always() && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true')", jobs[job])
+                self.assertRegex(jobs[job], r"(?m)^    if: \$\{\{ always\(\) \}\}$")
+                steps = re.split(r"(?m)^      - ", jobs[job].split("    steps:\n", 1)[1])[1:]
+                self.assertGreater(len(steps), 1)
+                self.assertIn("name: Docs-only no-op\n", steps[0])
+                self.assertIn(
+                    "if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}",
+                    steps[0],
+                )
+                self.assertIn(
+                    f'echo "docs-only: {name} not applicable; succeeded as a no-op"',
+                    steps[0],
+                )
+                for step in steps[1:]:
+                    self.assertRegex(
+                        step,
+                        r"(?m)^        if: .*github.event_name != 'pull_request'"
+                        r" \|\| needs.changes.outputs.docs_only != 'true'",
+                    )
+                if job == "containers":
+                    self.assertIn("if: always() && runner.environment == 'self-hosted' &&", steps[-1])
             else:
                 self.assertNotRegex(jobs[job], r"(?m)^    (if|needs):")
         self.assertIn('echo "docs_only=false"', jobs["changes"])
@@ -675,3 +695,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]]
