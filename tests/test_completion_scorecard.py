@@ -1,8 +1,11 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -770,6 +773,11 @@ class World:
             put([sc._acceptance_observation(at, SHA, consistency)])
             put([sc._paid_observation(at, runtime, paid, selected.get("paid_rubric_path"),
                                      consistency, t.m.LABEL if t is not None else "")])
+            if t is not None and verified is True:
+                try:
+                    put([sc._trial_observation(at, runtime, t, selected.get("trials"), selected.get("rubric_path"))])
+                except sc._SOURCE_ERRORS:
+                    pass
             cost = sc._settled_cost(consistency, paid)[0] if paid is not None else None
             put([sc._monetary_observation(at, runtime, paid, consistency, cost)])
             if verified is not True or t is None:
@@ -2619,8 +2627,10 @@ class ScorecardCollectorTests(unittest.TestCase):
                 patch.object(sc, "_trial_observation", return_value=passing("10")), \
                 patch.object(sc, "_acceptance_observation", return_value=passing("17")) as acceptance, \
                 patch.object(sc, "_paid_observation", return_value=passing("20")) as paid, \
+                patch.object(sc, "_trial_observation", return_value=passing("10")) as trials, \
                 patch.object(sc, "_monetary_observation", return_value=passing("15")) as monetary:
             report = world.report()
+        trials.assert_called_once()
         for probe, index in ((consistency, 2), (captures, 2), (approval, 4),
                              (acceptance, 2), (paid, 4), (monetary, 3)):
             self.assertIsNone(probe.call_args.args[index])
@@ -3350,9 +3360,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = recreated.report()
         self.assertEqual(row(report, "08")["status"], "UNKNOWN")
         self.assertIn("before the running Director container", row(report, "08")["explanation"])
-        report = self.world(evaluate_rules=True).report(approval_task=None)
-        self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
-        self.assertIn("--approval-task", row(report, "06")["explanation"])
+        report = self.world().report(approval_task=None)
+        for key in ("06", "08"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN")
+            self.assertEqual(row(report, key)["explanation"],
+                             "No --approval-task was supplied." if key == "06" else "Trusted collection unavailable")
         missing = self.world(evaluate_rules=True)
         del missing.tasks[APPROVAL_TASK]
         report = missing.report()
@@ -3603,7 +3615,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = other_image.report()
         for key in ("07", "11", "12", "17"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
-        gateway_image = self.world()
+            self.assertEqual(row(report, key)["explanation"], "Trusted collection unavailable", key)
+        gateway_image = self.world(evaluate_rules=True)
         gateway_image.rows[-1]["Image"] = "sha256:" + "e" * 64
         report = gateway_image.report()
         for key in ("03", "08", "09", "10", "20"):
@@ -5645,8 +5658,11 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:23 UTC | END]]

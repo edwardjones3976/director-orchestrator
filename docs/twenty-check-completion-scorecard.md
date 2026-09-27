@@ -1,6 +1,7 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
@@ -137,11 +138,15 @@ whether any operation is permitted. The report always says
 
 The pinned evaluator computes consistency and activation-capture reports using
 its own code, interpreter and dependencies. No candidate Python is executed.
-Checks **07, 08, 11, 12, 15, 17 and 20** can use these reports; unavailable or
-invalid owner inputs, stores, signatures or snapshots never earn a PASS.
-Image, candidate, generation, collection-window and final deployment-state gates
-still apply. Check 07 also counts OWNER_DECISION_REQUIRED assignments on settled
-tasks as open, including when their pending dependents are correctly blocked.
+Live collection never uses candidate-served readbacks as evidence for checks
+**06, 07, 08, 10, 11, 12, 15, 17 or 20**. Trusted collection over a verified-TLS
+lane may lift **07, 12 and 17** to PASS. Checks **06, 08, 10, 11, 15 and 20**
+remain UNKNOWN until trusted task-history readback and their required lifecycle
+evidence are available; missing --channel and --approval-task diagnostics remain.
+Unavailable or invalid owner inputs, stores, signatures or snapshots never earn
+a PASS. Image, candidate, generation, collection-window and final deployment-state
+gates still apply. Check 07 also counts OWNER_DECISION_REQUIRED assignments on
+settled tasks as open, including when their pending dependents are correctly blocked.
 
 The owner-installed `~/.director-scorecard/release-descriptor.json` selects
 `trusted_collection_inputs_env`: the name of an evaluator environment variable
@@ -1250,9 +1255,13 @@ packets (each `run_packet` call, a replay included, settles in its own
 `finally`), legacy dispatch and revision runs polled to a terminal state
 (including a resumed run), and an owner-reconciled "created" run, which settles
 the reservation of the ambiguous dispatch it resolves. Callback-delivered
-results come only from Claude, which the daily ledger does not account. Settlement records the
-provider-reported cost (the result packet's `usage.cost_usd`, else the run's
-reported `usage.cost`) against the request's reservation; with no reported cost
+results come only from Claude, which the daily ledger does not account. Gemini,
+Grok and Perplexity packet transports record native envelope metering against
+the exact dispatch intent before normalizing ordinary, parallel or authenticated
+late-readback results. The same idempotent `record_charge` update retains that
+charge through subsequent packet settlement. Packet `usage.cost_usd` is never
+charge authority; only `authoritative_reported_cost` reads native metering.
+With no native reported cost
 the request is settled without a charge, keeps counting at its reservation, and
 is reported as `unreconciled_request_count`, which makes check 15 UNKNOWN. Every
 work reservation is at least the provider's per-request bound
@@ -1582,6 +1591,7 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]] -->
