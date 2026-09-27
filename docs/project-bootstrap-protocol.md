@@ -1,4 +1,5 @@
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
@@ -197,6 +198,14 @@ project-local fit here and link back for authority boundaries.
 
 Each row summarizes the canonical role definitions in
 [`team-operating-charter.md`](team-operating-charter.md#roles).
+
+Whichever lane directs a project, maintenance (review-finding fixes, record and
+document inconsistencies, CI fixes, provider connection or plumbing problems)
+goes to OpenAI Codex, through the Codex CLI or the ChatGPT/Codex Director
+thread, under the charter's
+[Director maintenance routing](team-operating-charter.md#director-maintenance-routing),
+and Codex's edits are assistance that leaves the PR's sole author unchanged
+(the sole-author rule, PR #284).
 
 Select and freeze an [approved allocation profile](provider-allocation-profiles.md)
 before approval; Engineering is the default. All nine lanes have explicit targets;
@@ -531,4 +540,5 @@ project-specific control.
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
