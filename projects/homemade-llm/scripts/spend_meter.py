@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:18 UTC | BEGIN]]
@@ -14,10 +15,12 @@ under "unattributed" rather than silently dropped or wrongly claimed.
 --purpose-prefix filters paid receipts by their top-level purpose. Receipts with
 no valid label are split into inferred and unknown buckets. Unknown costs count
 against the milestone's conservative USD 25 upper bound, including with --project.
+--unpriced-bound applies a positive USD cap to each receipt with no recorded cost;
+without it, the upper bound is unknown and the budget check stops.
 
     python spend_meter.py                  # last 7 days, every project
     python spend_meter.py --days 28 --json
-    python spend_meter.py --purpose-prefix 'homemade-llm M1' --json
+    python spend_meter.py --purpose-prefix 'homemade-llm M1' --unpriced-bound 1.00 --json
     python spend_meter.py --self-test
 
 Costs recorded in receipts:
@@ -138,7 +141,9 @@ UNATTRIBUTED = ("xai", "perplexity")  # provider-level receipt folders with no p
 
 
 def meter(root: Path, since: float, project_only: bool, purpose_prefix: str | None = None,
-          budget: float = 25.0) -> dict:
+          budget: float = 25.0, unpriced_bound: float | None = None) -> dict:
+    if unpriced_bound is not None and (not math.isfinite(unpriced_bound) or unpriced_bound <= 0):
+        raise ValueError("--unpriced-bound must be positive and finite")
     target = PREFIX.fullmatch(purpose_prefix) if purpose_prefix is not None else None
     if purpose_prefix is not None and target is None:
         raise ValueError("--purpose-prefix must be '<project> <M-number|->'")
@@ -197,13 +202,13 @@ def meter(root: Path, since: float, project_only: bool, purpose_prefix: str | No
         known = sum(row["usd"] for name in ("labelled", "inferred") for row in buckets[name].values())
         unknown = sum(row["usd"] for row in buckets["unknown"].values())
         uncosted = sum(row["uncosted"] for rows in buckets.values() for row in rows.values())
-        upper = round(known + unknown, 4) if not uncosted else None
+        upper = round(known + unknown + uncosted * (unpriced_bound or 0), 4) if unpriced_bound is not None or not uncosted else None
         reasons = []
         if window is None:
             reasons.append("milestone window is not recorded")
         elif since > window[0]:
             reasons.append("--days excludes part of the milestone window")
-        if uncosted:
+        if uncosted and unpriced_bound is None:
             reasons.append("uncosted receipts make the upper bound unknown")
         if upper is not None and upper >= budget:
             reasons.append("upper bound meets or exceeds budget")
@@ -224,6 +229,7 @@ def meter(root: Path, since: float, project_only: bool, purpose_prefix: str | No
             "upper_bound_usd": upper,
             "unlabelled": unlabelled,
             "uncosted_receipts": uncosted,
+            "unpriced_bound_usd": unpriced_bound,
             "budget_usd": budget,
             "budget_status": "STOP" if reasons else "OK",
             "stop_reasons": reasons,
@@ -295,7 +301,12 @@ def self_test() -> None:
         assert receipt_cost(root / "xai/20260927T200002Z.json", {"usage": {"cost_in_usd_ticks": -1}}) == ("xai", None)
         bad = root / "xai/20260927T200003Z.json"
         bad.write_text("{", encoding="utf-8")
-        assert meter(root, 0, project_only=False, purpose_prefix="homemade-llm M1")["budget_status"] == "STOP"
+        default = meter(root, 0, project_only=False, purpose_prefix="homemade-llm M1")
+        assert default["budget_status"] == "STOP" and default["upper_bound_usd"] is None, default
+        bounded = meter(root, 0, project_only=False, purpose_prefix="homemade-llm M1", unpriced_bound=1.0)
+        assert bounded["uncosted_receipts"] == 1 and bounded["unpriced_bound_usd"] == 1.0, bounded
+        assert bounded["upper_bound_usd"] == round(bounded["upper_known_usd"] + 1.0, 4) and bounded["budget_status"] == "OK", bounded
+        assert meter(root, 0, False, "homemade-llm M1", budget=bounded["upper_bound_usd"], unpriced_bound=1.0)["budget_status"] == "STOP"
         assert meter(root, time.time() + 60, project_only=False)["providers"] == {}
         assert meter(root, time.time() + 60, project_only=False, purpose_prefix="homemade-llm M1")["matched_receipts"] == 0
     print("spend_meter self-test: ok")
@@ -307,12 +318,15 @@ def main() -> int:
     parser.add_argument("--project", action="store_true", help="only this project's worktree receipts")
     parser.add_argument("--purpose-prefix", help="project and milestone, e.g. 'homemade-llm M1'")
     parser.add_argument("--budget", type=float, default=25.0, help="milestone USD stop threshold (default: 25)")
+    parser.add_argument("--unpriced-bound", type=float, metavar="USD", help="positive USD cap per receipt with no recorded cost")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--receipts", type=Path, default=RECEIPTS)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if not math.isfinite(args.days) or args.days < 0 or not math.isfinite(args.budget) or args.budget <= 0:
         parser.error("--days must be nonnegative and --budget must be positive; both must be finite")
+    if args.unpriced_bound is not None and (not math.isfinite(args.unpriced_bound) or args.unpriced_bound <= 0 or args.purpose_prefix is None):
+        parser.error("--unpriced-bound requires --purpose-prefix and a positive finite USD amount")
     if args.self_test:
         self_test()
         return 0
@@ -320,7 +334,7 @@ def main() -> int:
         print(f"receipts directory not found: {args.receipts}", file=sys.stderr)
         return 1
     try:
-        report = meter(args.receipts, time.time() - args.days * 86400, args.project, args.purpose_prefix, args.budget)
+        report = meter(args.receipts, time.time() - args.days * 86400, args.project, args.purpose_prefix, args.budget, args.unpriced_bound)
     except ValueError as error:
         parser.error(str(error))
     if args.json:
@@ -336,10 +350,12 @@ def main() -> int:
             print(f"  inference {rule_id}: {count} receipts")
         upper = report["upper_bound_usd"]
         print(f"  lower USD {report['lower_bound_usd']:.4f}; upper USD {upper if upper is not None else 'UNKNOWN'} (known subtotal USD {report['upper_known_usd']:.4f}); budget USD {report['budget_usd']:.4f}")
+        if args.unpriced_bound is not None:
+            print(f"  --unpriced-bound USD {args.unpriced_bound:.2f} x {report['uncosted_receipts']} unpriced receipts")
         print(f"  unlabelled {report['unlabelled']}; budget {report['budget_status']}")
         if report["stop_reasons"]:
             print("  stop reasons: " + "; ".join(report["stop_reasons"]))
-        print("  All unknown receipts count toward the upper bound. Only verified labels can lower that allocation; missing costs still force STOP.")
+        print("  All unknown receipts count toward the upper bound. Only verified labels can lower that allocation; unpriced costs force STOP unless bounded.")
         return 2 if report["budget_status"] == "STOP" else 0
     for name, row in report["providers"].items():
         print(f"  {name:<11} {row['calls']:>4} calls  USD {row['usd']:>8.4f}  uncosted {row['uncosted']}")
@@ -355,3 +371,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:15 UTC | END]]
