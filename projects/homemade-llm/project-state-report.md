@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | BEGIN]] -->
+<!-- MX-045 -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | BEGIN]] -->
@@ -104,6 +106,26 @@ All 19 figures are provider-reported and were read by the Director `[verified, r
 | `xai/20260926T212214Z-473705-2b06` | 0.1052 |
 | `xai/20260926T213433Z-666070-7d76` | 0.18124 |
 | **Total (19 receipts)** | **2.610416** |
+
+#### MX-045 ledger extension (2026-09-27, through 03:34 UTC)
+
+This update supersedes the 19-receipt #293 subtotal and M0 totals above; the original ledger and D-022 history are retained. The timeout was already mentioned elsewhere in this report but was not included in the ledger; none of these seven receipts was in the reconciliation table. Costs below were read directly from each receipt (`usage.cost_in_usd_ticks` / 10^10) [verified, receipt].
+
+| Receipt | Reviewed head / disposition | USD |
+|---|---|---|
+| `xai/20260927T012044Z-651962-151c.json` | 0d4bc4f | 0.149052 |
+| `xai/20260927T013948Z-066570-564b.json` | 57b90d2; timed out, HTTP 0 | unknown (uncosted, not USD 0) |
+| `xai/20260927T023124Z-793705-3279.json` | 9c8934b | 0.150858 |
+| `xai/20260927T031149Z-909115-a41c.json` | 67e5955; ACCEPT | 0.182568 |
+| `xai/20260927T032200Z-865613-f621.json` | ce46d06; ACCEPT | 0.112020 |
+| `xai/20260927T033028Z-269732-a61f.json` | 5fc3e4e; REJECT, false quote-character finding later withdrawn | 0.132048 |
+| `xai/20260927T033409Z-630065-2c2e.json` | 5fc3e4e; reconsideration ACCEPT, response 8dc691f1-1c5b-945c-bcc8-72ef549b3408 | 0.102460 |
+| **Additional costed total (6 costed, 1 uncosted)** | | **0.829006** |
+
+- Additional charged cost: 0.149052 + 0.150858 + 0.182568 + 0.112020 + 0.132048 + 0.102460 = **USD 0.829006**. #293 now has **25 costed receipts totaling USD 3.439422** (2.610416 + 0.829006), plus one uncosted timeout.
+- **M0 charged total: USD 5.77430556** (2.33488356 + 3.439422 = 4.94529956 + 0.829006), still a lower bound.
+- The HTTP-0 attempt `xai/20260927T013948Z-066570-564b.json` has no recorded cost and joins the three earlier uncosted HTTP-0 attempts: **4 uncosted attempts**. Extend the original USD 1.00 reserve for three attempts proportionally and round up to cents: ceil((1.00 / 3) x 4 x 100) / 100 = **USD 1.34**. This exceeds 4 x the previously recorded largest single M0 call (4 x 0.33195356 = 1.32781424).
+- **Conservative upper bound for M0: USD 7.33536156** (5.77430556 charged + 0.221056 untagged + 1.34 reserve; equivalently 6.16635556 + 0.829006 + 0.34). Both totals remain within USD 25. The reserve is a conservative estimate, not confirmed billing for the timed-out requests [verified, receipt; arithmetic].
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
@@ -254,3 +276,4 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | END]] -->
