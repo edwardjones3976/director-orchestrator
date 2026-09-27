@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
@@ -155,12 +156,16 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   reviewed merge-base SHA (`merge_base_sha`) and head SHA:
   `git log <merge-base>..<head> --no-merges --format='%H %an' -p -w --ignore-blank-lines --no-color --no-ext-diff --no-textconv --no-renames`,
   counting only `+` and `-` lines inside patch hunks (not file headers), per
-  commit and authenticated identity. After removing the diff prefix, exclude
-  any line matching `\[\[.* \| .* \| \d{4}-\d{2}-\d{2} \| \d{2}:\d{2} UTC \| (BEGIN|END)\]\]`.
-  The whitespace flags exclude whitespace-only changes, including blank lines;
-  the regex excludes contribution envelopes. Maintenance commits (Codex MX-*
-  packets or owner-directed maintenance) are assistance and do not count toward
-  authorship shares; exclude them from both the numerator and denominator.
+  commit and authenticated identity. After removing the `+` or `-` diff prefix,
+  skip empty or whitespace-only content: `-w` and `--ignore-blank-lines` do not
+  remove those lines inside mixed hunks. Exclude only whole-line, comment-style
+  contribution envelopes matching `^[ \t]*(?:#|<!--|//|\*\*)[ \t]*\[\[[^|\[\]\r\n]+ \| [^|\[\]\r\n]+ \| \d{4}-\d{2}-\d{2} \| \d{2}:\d{2} UTC \| (?:BEGIN|END)\]\][ \t]*(?:-->|#|//|\*\*)?[ \t]*$`.
+  Tag-like substrings inside strings, fixtures, or examples stay counted.
+  Maintenance lines are assistance, excluded from both numerator and denominator
+  only when an MX packet receipt or owner directive explicitly identifies the
+  commit hash, or the commit message carries a `Contributed-by:` trailer and a
+  matching MX-NNN reference listed in the PR's recorded share table. Self-asserted
+  prose alone is insufficient.
   A line counts for an identity only when an authenticated record ties it to the
   identity that produced it: a provider-dispatch receipt or an authenticated
   provider run record. A human's lines count only when that human, from their
@@ -258,3 +263,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
