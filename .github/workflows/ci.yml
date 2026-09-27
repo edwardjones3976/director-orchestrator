@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:09 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:13 UTC | BEGIN]]
@@ -133,15 +135,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # The self-hosted Linux and Windows runners share one 32-CPU host, so Windows gets fewer shards.
         include:
           - os: ubuntu-latest
+            shards: 8
             self_hosted: '["self-hosted","Linux","director"]'
           - os: windows-latest
+            shards: 4
             self_hosted: '["self-hosted","Windows","director"]'
     env:
       PYTHONPATH: src
       # Windows: per-process long-path support (no global git config change).
-      DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || 8 }}
+      DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || matrix.shards }}
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: core.longpaths
       GIT_CONFIG_VALUE_0: "true"
@@ -371,7 +376,7 @@ jobs:
             }
           }
       - name: Stop disposable PostgreSQL (self-hosted Linux, test lane)
-        if: always() && runner.environment == 'self-hosted' && runner.os == 'Linux'
+        if: always() && runner.environment == 'self-hosted' && runner.os == 'Linux' && env.DIRECTOR_CI_PG_LANE != ''
         shell: pwsh
         run: |
           if ($env:DIRECTOR_CI_PG_LANE) {
@@ -379,7 +384,7 @@ jobs:
             & ./scripts/windows-postgres-test-lane.ps1 -Action Stop -ContainerName $name -HostPort ([int]$port)
           }
       - name: Stop disposable PostgreSQL (self-hosted Windows, test lane)
-        if: always() && runner.environment == 'self-hosted' && runner.os == 'Windows'
+        if: always() && runner.environment == 'self-hosted' && runner.os == 'Windows' && env.DIRECTOR_CI_PG_LANE != ''
         shell: powershell
         run: |
           if ($env:DIRECTOR_CI_PG_LANE) {
@@ -533,4 +538,6 @@ jobs:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:09 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:38 UTC | END]]

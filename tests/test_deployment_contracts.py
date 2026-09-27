@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:09 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
@@ -509,7 +511,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertIn("ubuntu-latest", workflow)
         self.assertIn("windows-latest", workflow)
         self.assertEqual(3, workflow.count("python scripts/run-tests-parallel.py\n"))
-        self.assertIn("DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || 8 }}", workflow)
+        self.assertIn("DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || matrix.shards }}", workflow)
         jobs = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)", workflow.split("\njobs:\n", 1)[1], re.MULTILINE | re.DOTALL))
         expected_names = {
             "contribution-attribution": "Contribution attribution",
@@ -548,6 +550,13 @@ process.stdout.write(JSON.stringify({outputs, store}));
                 self.assertRegex(jobs[job], r"(?m)^    if: \$\{\{ always\(\) && !cancelled\(\) \}\}$")
             else:
                 self.assertNotRegex(jobs[job], r"(?m)^    (if|needs):")
+        for system in ("Linux", "Windows"):
+            self.assertIn(
+                f"      - name: Stop disposable PostgreSQL (self-hosted {system}, test lane)\n"
+                f"        if: always() && runner.environment == 'self-hosted' && runner.os == '{system}'"
+                " && env.DIRECTOR_CI_PG_LANE != ''\n",
+                jobs["python"],
+            )
         self.assertIn("    name: CI scope\n", jobs["scope"])
         self.assertIn('echo "docs_only=false"', jobs["changes"])
         self.assertIn('python scripts/run-tests-parallel.py --docs-only "$BASE_SHA" "$HEAD_SHA"', jobs["changes"])
@@ -701,4 +710,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:09 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:38 UTC | END]]
