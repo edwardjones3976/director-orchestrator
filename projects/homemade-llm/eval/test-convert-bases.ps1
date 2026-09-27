@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
@@ -231,6 +232,35 @@ function Set-Content {
     # Exercise quotes, Unicode and CRLF through the same bounded native argv route.
     . (Join-Path $PSScriptRoot '..\scripts\invoke-bounded.ps1')
     $ast = [Management.Automation.Language.Parser]::ParseFile($script, [ref]$null, [ref]$null)
+    # Exercise the real online branch with API-shaped data and no network or script side effects.
+    & {
+        $OfflineExpected = $null
+        function Invoke-RestMethod($Uri, $Method) {
+            $null = Assert ($Uri -eq 'https://huggingface.co/api/models/Qwen/Qwen3-8B/revision/test-revision?blobs=true' -and $Method -eq 'Get') 'online manifest requests pinned revision with blobs'
+            $response
+        }
+        foreach ($name in @('Get-OfflineManifest', 'Get-ExpectedBlobMap')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $response = @'
+{"siblings":[{"rfilename":"config.json","blobId":"1111111111111111111111111111111111111111","size":10},{"rfilename":"model.safetensors","blobId":"2222222222222222222222222222222222222222","size":4096,"lfs":{"sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","size":4096,"pointerSize":129}}]}
+'@ | ConvertFrom-Json
+        $map = Get-ExpectedBlobMap 'Qwen/Qwen3-8B' 'test-revision'
+        Assert ($map.Count -eq 1 -and $map.ContainsKey('model.safetensors')) 'online map uses rfilename and excludes non-LFS siblings'
+        Assert ($map['model.safetensors'].sha256 -ceq ('a' * 64) -and $map['model.safetensors'].size -eq 4096) 'online map retains LFS sha256 and size'
+        $siblings = $response.siblings
+        foreach ($case in @('Missing', 'Duplicate')) {
+            if ($case -eq 'Missing') {
+                $response.siblings = @($siblings[1], [pscustomobject]@{ blobId = '3333333333333333333333333333333333333333'; size = 10 })
+            } else {
+                $response.siblings = @($siblings[0], $siblings[1], $siblings[0])
+            }
+            $message = ''
+            try { $null = Get-ExpectedBlobMap 'Qwen/Qwen3-8B' 'test-revision' } catch { $message = $_.Exception.Message }
+            Assert ($message -like "$case sibling rfilename*Qwen/Qwen3-8B@test-revision*") "$case rfilename fails closed with repo and revision"
+        }
+    }
     $encoder = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertTo-BashCommand' }, $true)
     . ([scriptblock]::Create($encoder.Extent.Text))
     $sample = "printf '%s|%s\\n' `"a'b`" 'caf$([char]0xe9)'`r`nprintf '%s\\n' '`$HOME'"
@@ -622,3 +652,4 @@ exit 0
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:12 UTC | END]]
