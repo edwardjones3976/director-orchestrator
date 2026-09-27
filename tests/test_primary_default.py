@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -1219,6 +1222,24 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertFalse(self.exercise(self.application(
             allowed_starting_refs=("main", "release/x")), record))
 
+    def test_a_page_is_parsed_within_the_readers_deadline(self):
+        import time as time_module
+        import director_orchestrator.store as store_module
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        real = store_module.parse_record
+
+        def slow(value):
+            time_module.sleep(0.3)
+            return real(value)
+
+        with patch.object(store_module, "parse_record", side_effect=slow), \
+                self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.delegation_audit_records(
+                limit=10, deadline=time_module.monotonic() + 0.1)
+
     def test_a_history_at_exactly_the_ceiling_is_read_whole(self):
         """Ten full pages and an empty eleventh are the whole history; one
         record past the ceiling is refused."""
@@ -2366,6 +2387,32 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             "ALLOW_PAID_RUNS is enabled.*LIVE_PROVIDER_DISPATCH_ENABLED is disabled",
         ):
             DefaultPrimaryActivation(settings)
+
+    def test_paid_off_startup_does_not_load_live_capture_enrollment(self):
+        settings = replace(Settings(), langgraph_primary_enabled=True,
+                           allow_paid_runs=False,
+                           langgraph_primary_live_provider_dispatch_enabled=False)
+        handle = SimpleNamespace(claim_store=object(), close=lambda: None)
+        services = SimpleNamespace(handlers=lambda: {}, application_projection=lambda *_: {})
+        provider_activation = object()
+        with (
+            patch("director_orchestrator.primary_default.resolve_default_primary_authority"),
+            patch("director_orchestrator.primary_default.build_typed_external_effect_grant"),
+            patch("director_orchestrator.acceptance_journal.require_runtime_acceptance", return_value=None),
+            patch("director_orchestrator.acceptance_journal.bind_runtime_database"),
+            patch("director_orchestrator.primary_default.open_postgres_control_plane", return_value=handle),
+            patch.object(Settings, "primary_provider_activation_bindings", return_value={"openai": object()}),
+            patch("director_orchestrator.primary_default.PrimaryProviderActivationService",
+                  return_value=provider_activation) as activation_service,
+            patch("director_orchestrator.provider_validation.capture_verifier_from_environment") as capture,
+            patch("director_orchestrator.primary_default.DefaultDryRunServices", return_value=services),
+            patch("director_orchestrator.primary_default.PrimaryTaskCoordinator"),
+            patch("director_orchestrator.primary_default.DefaultPrimaryApplication"),
+        ):
+            activation = DefaultPrimaryActivation(settings)
+        capture.assert_not_called()
+        self.assertIs(activation.provider_activation, provider_activation)
+        self.assertIsNone(activation_service.call_args.kwargs["capture_verifier"])
 
     def test_reconciliation_readiness_is_not_sticky_after_failed_pass(self):
         activation = object.__new__(DefaultPrimaryActivation)
@@ -6141,3 +6188,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]

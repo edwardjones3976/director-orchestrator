@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -827,7 +829,8 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 class _SocketWatch:
     """The sockets one bridge request opened, and whether its deadline fired."""
 
-    def __init__(self) -> None:
+    def __init__(self, deadline: float) -> None:
+        self.deadline = deadline
         self.fired = threading.Event()
         self._sockets: list[socket.socket] = []
         self._lock = threading.Lock()
@@ -855,12 +858,99 @@ class _SocketWatch:
             pass
 
 
+# At most this many name lookups may be outstanding at once, counting ones
+# that timed out and still hold a daemon thread in getaddrinfo(); past it a
+# connect fails closed instead of starting another thread.
+_RESOLVER_SLOTS = threading.BoundedSemaphore(8)
+
+
+def _time_left(deadline: float, cap: Any = None) -> float:
+    """Seconds before the monotonic ``deadline``, rounded DOWN to the
+    microsecond and clamped to a numeric ``cap``: ``(t + 0.4) - t`` in floating
+    point can come out as 0.40000000002, and a timeout derived from the
+    deadline must never exceed its cap or the time actually left."""
+
+    left = math.floor((deadline - time.monotonic()) * 1_000_000) / 1_000_000
+    if isinstance(cap, (int, float)) and not isinstance(cap, bool):
+        left = min(float(cap), left)
+    return left
+
+
+def connect_until_deadline(
+    address: tuple[str, int], timeout: Any = None, source_address: Any = None, *,
+    deadline: float, socket_factory: Callable[..., socket.socket] = socket.socket,
+    resolve: Callable[..., Any] = socket.getaddrinfo,
+) -> socket.socket:
+    """Resolve and connect, never past the absolute ``deadline``.
+
+    Name resolution runs in a daemon thread given only the time remaining
+    (it cannot otherwise be interrupted), and at most ``_RESOLVER_SLOTS``
+    lookups may be outstanding; each resolved address is then tried with its
+    connect timeout clamped to what is left, stopping once the deadline
+    passes, where socket.create_connection gives every address the whole
+    timeout again. A socket that connects only after the deadline is closed.
+    """
+
+    host, port = address
+    remaining = _time_left(deadline)
+    if remaining <= 0:
+        raise TimeoutError("bridge connect deadline reached before resolving")
+    if not _RESOLVER_SLOTS.acquire(blocking=False):
+        raise TimeoutError("bridge name resolution capacity exhausted")
+    found: dict[str, Any] = {}
+
+    def lookup() -> None:
+        try:
+            found["infos"] = resolve(host, port, 0, socket.SOCK_STREAM)
+        except OSError as exc:
+            found["error"] = exc
+        finally:
+            _RESOLVER_SLOTS.release()
+
+    try:
+        resolver = threading.Thread(target=lookup, daemon=True)
+        resolver.start()
+    except BaseException:
+        _RESOLVER_SLOTS.release()
+        raise
+    resolver.join(remaining)
+    if resolver.is_alive():
+        raise TimeoutError("bridge name resolution reached its deadline")
+    if "error" in found:
+        raise found["error"]
+    last: OSError | None = None
+    for family, kind, protocol, _name, sockaddr in found.get("infos") or ():
+        remaining = _time_left(deadline, timeout)
+        if remaining <= 0:
+            raise TimeoutError("bridge connect reached its deadline")
+        sock = socket_factory(family, kind, protocol)
+        try:
+            sock.settimeout(remaining)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+        except OSError as exc:
+            last = exc
+            sock.close()
+            continue
+        left = _time_left(deadline, timeout)
+        if left <= 0:
+            sock.close()
+            raise TimeoutError("bridge connect completed after its deadline")
+        sock.settimeout(left)
+        return sock
+    raise last if last is not None else OSError("bridge host resolved to no address")
+
+
 def _watched(connection_class: type, watch: _SocketWatch) -> Callable[..., Any]:
     def build(*args: Any, **kwargs: Any) -> Any:
         connection = connection_class(*args, **kwargs)
-        create = connection._create_connection
-        # The raw TCP socket, registered before any TLS handshake or header.
-        connection._create_connection = lambda *a, **k: watch.register(create(*a, **k))
+        # Resolution and connect spend the request's absolute deadline, and
+        # the raw TCP socket is registered with the watchdog before any TLS
+        # handshake or header.
+        connection._create_connection = lambda address, timeout=None, source_address=None: (
+            watch.register(connect_until_deadline(
+                address, timeout, source_address, deadline=watch.deadline)))
         return connection
     return build
 
@@ -896,7 +986,7 @@ def _bridge_opener(deadline: float):
     failure (or any short result) is the deadline, never a success.
     """
 
-    watch = _SocketWatch()
+    watch = _SocketWatch(deadline)
     timer = threading.Timer(max(0.0, deadline - time.monotonic()), watch.fire)
     timer.daemon = True
     timer.start()
@@ -1071,12 +1161,6 @@ class HostBridgePacketTransport:
         idempotency_key = str(packet.get("idempotency_key", ""))
         if not idempotency_key:
             raise RuntimeError("host bridge packet lacks idempotency")
-        # The final authority recheck, after the host cutoff challenge and
-        # before the outbound bytes are chosen: nothing that could see
-        # different authority runs between choosing them and the request.
-        authority_recheck = getattr(context, "authority_recheck", None)
-        if callable(authority_recheck):
-            authority_recheck()
         work_packet_digest = ""
         outbound = work_packet_json
         if self.outbound_payload_builder is not None:
@@ -1086,6 +1170,12 @@ class HostBridgePacketTransport:
             if not outbound or len(outbound) > _MAX_PACKET_BYTES:
                 raise RuntimeError("host bridge redacted payload is not bounded")
             work_packet_digest = _digest(work_packet_json)
+        # The final authority recheck, after the outbound bytes are built (a
+        # cache miss may read files) and immediately before they are signed
+        # and sent: nothing slow runs between it and the request.
+        authority_recheck = getattr(context, "authority_recheck", None)
+        if callable(authority_recheck):
+            authority_recheck()
         # The transport signature binds the exact bytes that leave this process.
         packet_digest = _digest(outbound)
         # A small read-only task's packet (read tool only, no effect) binds the
@@ -1272,3 +1362,5 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]

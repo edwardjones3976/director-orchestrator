@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -427,7 +429,10 @@ class HostProviderBridgeTests(unittest.TestCase):
                            context=SimpleNamespace(timeout_seconds=1, fencing_generation=7))
         self.assertLess(time_module.monotonic() - started, 2.5)
 
-    def test_the_bridge_rechecks_authority_before_it_chooses_its_bytes(self) -> None:
+    def test_the_bridge_builds_its_bytes_then_rechecks_then_sends(self) -> None:
+        """Nothing slow (a cache-miss rebuild reads files) runs between the
+        final authority recheck and the request."""
+
         from director_orchestrator.host_provider_bridge import HostBridgePacketTransport
         from director_orchestrator.packet_routing import validated_compact_view
 
@@ -450,7 +455,112 @@ class HostProviderBridgeTests(unittest.TestCase):
         with patch("director_orchestrator.host_provider_bridge.urllib.request.build_opener",
                    return_value=opener), self.assertRaises(RuntimeError):
             transport.send(canonical_json_bytes(work), context=context)
-        self.assertEqual(["recheck", "build", "send"], order)
+        self.assertEqual(["build", "recheck", "send"], order)
+
+    def test_resolve_and_connect_spend_one_absolute_deadline(self) -> None:
+        import socket as socket_module
+        import time as time_module
+        from director_orchestrator.host_provider_bridge import connect_until_deadline
+
+        def slow_resolve(*args, **kwargs):
+            time_module.sleep(3)
+            return []
+
+        started = time_module.monotonic()
+        with self.assertRaises(TimeoutError):
+            connect_until_deadline(("bridge.invalid", 443), 30, deadline=started + 0.3,
+                                   resolve=slow_resolve)
+        self.assertLess(time_module.monotonic() - started, 1.0)
+
+        timeouts = []
+
+        class Stalling:
+            def __init__(self, *args):
+                self.timeout = None
+
+            def settimeout(self, value):
+                self.timeout = value
+
+            def connect(self, address):
+                timeouts.append(self.timeout)
+                time_module.sleep(self.timeout)
+                raise socket_module.timeout("connect timed out")
+
+            def close(self):
+                pass
+
+        addresses = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("192.0.2.1", 443))] * 4
+        started = time_module.monotonic()
+        with self.assertRaises((TimeoutError, OSError)):
+            connect_until_deadline(("bridge", 443), 30, deadline=started + 0.4,
+                                   resolve=lambda *a, **k: addresses, socket_factory=Stalling)
+        self.assertLess(time_module.monotonic() - started, 1.0)
+        self.assertLessEqual(timeouts[0], 0.4)
+        self.assertLess(len(timeouts), 4)
+
+    def test_socket_connected_after_the_deadline_is_closed_not_returned(self) -> None:
+        import socket as socket_module
+        import time as time_module
+        from director_orchestrator.host_provider_bridge import connect_until_deadline
+
+        closed = []
+
+        class Late:
+            def __init__(self, *args):
+                pass
+
+            def settimeout(self, value):
+                pass
+
+            def connect(self, address):
+                time_module.sleep(0.3)
+
+            def close(self):
+                closed.append(True)
+
+        addresses = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("192.0.2.1", 443))]
+        with self.assertRaises(TimeoutError):
+            connect_until_deadline(("bridge", 443), 30, deadline=time_module.monotonic() + 0.1,
+                                   resolve=lambda *a, **k: addresses, socket_factory=Late)
+        self.assertEqual([True], closed)
+
+    def test_timed_out_lookups_are_capped_and_fail_closed(self) -> None:
+        import threading as threading_module
+        import time as time_module
+        from director_orchestrator import host_provider_bridge as bridge
+
+        release = threading_module.Event()
+        calls = []
+
+        def stalled(*args, **kwargs):
+            calls.append(args)
+            release.wait(5)
+            return []
+
+        with patch.object(bridge, "_RESOLVER_SLOTS", threading_module.BoundedSemaphore(1)):
+            try:
+                with self.assertRaises(TimeoutError):
+                    bridge.connect_until_deadline(("bridge", 443), 30,
+                                                  deadline=time_module.monotonic() + 0.1,
+                                                  resolve=stalled)
+                started = time_module.monotonic()
+                with self.assertRaisesRegex(TimeoutError, "capacity"):
+                    bridge.connect_until_deadline(("bridge", 443), 30,
+                                                  deadline=time_module.monotonic() + 5,
+                                                  resolve=stalled)
+                self.assertLess(time_module.monotonic() - started, 0.5)
+                self.assertEqual(1, len(calls))
+            finally:
+                release.set()
+            deadline = time_module.monotonic() + 5
+            while not bridge._RESOLVER_SLOTS.acquire(blocking=False):
+                self.assertLess(time_module.monotonic(), deadline)
+                time_module.sleep(0.01)
+            bridge._RESOLVER_SLOTS.release()
+            with self.assertRaisesRegex(OSError, "no address"):
+                bridge.connect_until_deadline(("bridge", 443), 30,
+                                              deadline=time_module.monotonic() + 1,
+                                              resolve=lambda *a, **k: [])
 
     def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
         import time as time_module
@@ -1674,3 +1784,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]
