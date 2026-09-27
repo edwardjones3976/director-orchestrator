@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
@@ -20,6 +21,7 @@ class ActiveDocumentationTests(unittest.TestCase):
             ROOT / "docs/director-user-guide.md",
             ROOT / "docs/langgraph-primary-operations.md",
             ROOT / "docs/project-bootstrap-protocol.md",
+            ROOT / "prompts/codex-engineering.md",
             *sorted(bootstrap.glob("*")),
         ]
         for path in surfaces:
@@ -30,7 +32,8 @@ class ActiveDocumentationTests(unittest.TestCase):
                 for stale in (
                     "claude is the director", "claude is the acting director",
                     "claude holds all three functions", "claude owns moderator",
-                    "claude as second in command", "acting project director | claude",
+                    "claude as second in command", "acting claude director",
+                    "acting project director | claude",
                     "single existing claude advisory vote", "claude's one vote",
                 ):
                     self.assertNotIn(stale, text)
@@ -134,3 +137,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | END]]
