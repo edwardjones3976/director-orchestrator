@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -25,6 +26,8 @@
 
 
 These rules apply to every AI coding agent working in this repository.
+
+For draft-PR claims, the work board, check-before-edit, and foreman coordination, follow [Site coordination](docs/site-coordination.md).
 
 ## INVESTIGATOR responsibility
 
@@ -262,3 +265,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]] -->
