@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
@@ -100,11 +101,21 @@ $env:PYTHONPATH = "src"
 py -3.12 scripts/check_contribution_tags.py --base <base-sha> --head <head-sha>
 ```
 
-Pull-request CI also validates the tagged PR description. Push CI validates the
-commit submission envelope. Use
+CI runs on `pull_request` and pushes to `main` only; feature branches do not
+also trigger push runs. New PR heads cancel older runs for the same PR. Main
+pushes use unique concurrency groups with cancellation disabled, so they queue
+for runner capacity without replacing one another.
+
+Pull-request CI validates both the tagged PR description and the exact source
+head commit's submission envelope, read from Git using the event's head SHA
+(not the synthetic merge commit). Supported trailing Git trailers remain
+permitted. This retains the commit check formerly supplied by branch-push CI.
+Main-push CI retains changed-file validation and its existing exemption for
+GitHub-generated merge commit envelopes. Use
 [`docs/templates/contribution-submission.md`](templates/contribution-submission.md)
 or the repository pull-request template instead of inventing another format.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]] -->
