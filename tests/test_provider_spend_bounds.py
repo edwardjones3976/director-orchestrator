@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from contextlib import closing
 import tempfile
 import threading
 import unittest
@@ -53,7 +54,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                 path = str(Path(directory) / "spend.sqlite3")
                 now = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
                 old_day = now - timedelta(days=1)
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     db.execute("""CREATE TABLE provider_daily_spend_reservations (
                         provider TEXT NOT NULL, effect_key TEXT NOT NULL, utc_day TEXT NOT NULL,
                         estimated_cost_usd REAL NOT NULL, recorded_at TEXT NOT NULL,
@@ -63,7 +64,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                                    (provider.value, key(label), at.date().isoformat(), 0.75, at.isoformat()))
                 ledger = ProviderDailySpendLedger(path)
                 ledger = ProviderDailySpendLedger(path)  # migration is idempotent
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     self.assertEqual(db.execute(
                         "SELECT legacy, serialized, actual_cost_usd FROM provider_daily_spend_reservations"
                     ).fetchall(), [(1, 0, None), (1, 0, None)])
