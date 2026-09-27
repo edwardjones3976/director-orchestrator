@@ -1,4 +1,4 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:19 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
@@ -1420,6 +1420,43 @@ class CompactProviderViewTests(unittest.TestCase):
                 blob_read_deadline(time_module.monotonic() - 1):
             self.assertIsNone(reader("a" * 40))
 
+    def test_blob_cleanup_retries_a_timed_out_wait(self) -> None:
+        self._check_blob_cleanup_wait_timeout(always_timeout=False)
+
+    def test_blob_cleanup_refuses_when_both_waits_time_out(self) -> None:
+        self._check_blob_cleanup_wait_timeout(always_timeout=True)
+
+    def _check_blob_cleanup_wait_timeout(self, *, always_timeout: bool) -> None:
+        import io
+        import subprocess as subprocess_module
+        from unittest.mock import Mock, call
+        from director_orchestrator.packet_routing import git_blob_reader
+
+        process = Mock(stdout=io.BytesIO(b"blob"), stderr=io.BytesIO(), returncode=None)
+        process.poll.return_value = None
+
+        def wait(*, timeout):
+            if always_timeout or process.wait.call_count == 1:
+                raise subprocess_module.TimeoutExpired("git", timeout)
+            process.returncode = -9
+            return process.returncode
+
+        process.wait.side_effect = wait
+        sized = subprocess_module.CompletedProcess((), 0, stdout=b"4\n", stderr=b"")
+        with patch("director_orchestrator.packet_routing.subprocess.run", return_value=sized), \
+                patch("director_orchestrator.packet_routing.subprocess.Popen", return_value=process), \
+                patch("director_orchestrator.packet_routing.logging.getLogger") as logger:
+            self.assertIsNone(git_blob_reader(".")("a" * 40))
+        self.assertEqual(2, process.kill.call_count)
+        self.assertEqual([call(timeout=1.0), call(timeout=1.0)], process.wait.call_args_list)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+        self.assertEqual(None if always_timeout else -9, process.returncode)
+        if always_timeout:
+            logger.return_value.warning.assert_called_once_with("Git blob child cleanup failed")
+        else:
+            logger.return_value.warning.assert_not_called()
+
     def test_a_small_task_view_is_prepared_once_and_sent_as_prepared(self) -> None:
         """The transport sends the prepared bytes; without them it rebuilds with
         contents required and refuses rather than ship hashes only."""
@@ -1700,4 +1737,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | END]]
