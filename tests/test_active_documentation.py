@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]]
@@ -59,6 +60,9 @@ class ActiveDocumentationTests(unittest.TestCase):
             "only under the owner's explicit appointment of Claude as second in command",
             "owner directive, 2026-09-22",
             "only while the ChatGPT/Codex Director is unavailable",
+            "This appointment is current and scoped",
+            "in effect until the owner revokes or replaces it",
+            "This later owner appointment takes precedence, for that scope only, over the general no-standing-assignment statement in docs/project-leadership.md",
             "never removes deterministic gates or permits self-approval or self-merge",
             "Every lane routing still passes capability, authority, availability, budget, repository, and independence checks",
             "Without that appointment, decisions wait for the ChatGPT/Codex Director or the owner",
@@ -175,3 +179,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:41 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:59 UTC | END]]
