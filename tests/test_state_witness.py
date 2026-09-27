@@ -293,12 +293,10 @@ class WitnessGateWiringTests(unittest.TestCase):
         return fixtures, FakeGitHub
 
     def _service(self, fixtures, github, **kw):
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Issue #306 removed the legacy no-boundary merge, so the wiring goes
         # through the phase 3 harness: a pinned, Ed25519-signed standing
         # boundary whose merge transport is this fixture's gateway.
         return fixtures.service(github, **kw)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def _checks_oracle(self, api):
         return lambda repo, sha: gh_checks_green(

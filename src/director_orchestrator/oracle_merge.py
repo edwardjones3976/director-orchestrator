@@ -1541,7 +1541,6 @@ class OracleMergeService:
         snapshot, unreadable = self._read_snapshot(artifact)
         if unreadable is not None:
             return unreadable
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Issue #306: the boundary is mandatory for protected AND non-protected
         # bases. Without it no merge path exists at all, so this refuses before
         # any draft transition, revalidation or mutation can begin.
@@ -1550,7 +1549,6 @@ class OracleMergeService:
             decision.status = OracleMergeStatus.REJECTED
             decision.reasons.append("standing merge evidence boundary is not configured")
             return self._complete(decision)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         transitioned_from_draft = snapshot.draft
         if snapshot.draft:
             preflight = self.policy.evaluate(
@@ -1634,7 +1632,6 @@ class OracleMergeService:
 
         try:
             self._renew_claim(artifact)
-            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
             # Issue #306: the standing merge boundary is the only merge route,
             # for protected and non-protected bases alike. The legacy gateway
             # merge below is gone; MX-028 stays on the gateway's own legacy
@@ -1659,7 +1656,6 @@ class OracleMergeService:
             decision.merge_commit_sha = execution.merged_sha
             decision.actor = artifact.reviewer_provider
             return self._complete(decision)
-            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         except OracleMergeClaimExpired:
             raise
         except OracleRateLimitError as exc:
@@ -2328,7 +2324,6 @@ class GitHubOracleGateway:
     def _get_pull(self, repository: str, pull_number: int) -> dict:
         return self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
 
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     def list_reviews(self, repository: str, pull_number: int) -> list[dict]:
         """Live review records for the merge observer's evidence bundle.
 
@@ -2347,7 +2342,6 @@ class GitHubOracleGateway:
         ):
             raise OracleDiffError("GitHub review evidence is malformed")
         return payload
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def _get_files(self, repository: str, pull_number: int) -> list[dict]:
         payload = self._request(
@@ -2929,7 +2923,6 @@ class GitHubOracleGateway:
             actor=actor,
         )
 
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     def merge_as_identity(
         self,
         repository: str,
@@ -2970,7 +2963,6 @@ class GitHubOracleGateway:
         if not payload.get("merged") or not re.fullmatch(r"[0-9a-f]{40}", merged_sha or ""):
             raise RuntimeError("GitHub refused the exact-SHA identity-bound merge")
         return str(merged_sha)
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def mark_ready(
         self,

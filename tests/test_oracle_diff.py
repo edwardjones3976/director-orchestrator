@@ -2883,7 +2883,6 @@ class WriteMutationRateLimitTests(unittest.TestCase):
         self.harness.setUp()
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Issue #306 removed the legacy no-boundary merge, so the write
         # mutations under test travel through a working standing boundary.
         # The phase 3 harness supplies it (throwaway in-memory Ed25519 keys);
@@ -2893,7 +2892,6 @@ class WriteMutationRateLimitTests(unittest.TestCase):
         self.fixtures = OracleMergeGateTests("setUp")
         self.fixtures.setUp()
         self.addCleanup(self.fixtures.temporary.cleanup)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         self.settings = Settings(
             sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
             oracle_automerge_enabled=True,
@@ -2950,7 +2948,6 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             return self.harness.handler(request)
 
         store = OracleMergeStore(self.settings.sqlite_path)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # The same gateway now merges only through the standing boundary; a
         # 429 on the mutation is held by the boundary as an ambiguous outcome.
         service = self.fixtures.service(
@@ -2960,7 +2957,6 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             settings=self.settings,
             store=store,
         )
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         first = service.process(artifact)
         self.assertEqual(first.status, OracleMergeStatus.REJECTED)
         self.assertTrue(any("merge boundary refused or result ambiguous" in item for item in first.reasons))
@@ -3000,7 +2996,6 @@ class WriteMutationRateLimitTests(unittest.TestCase):
                 return httpx.Response(429, headers={"retry-after": "3600"})
             return self.harness.handler(request)
 
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # The rate limit now surfaces inside the boundary, which holds every
         # transport failure as an ambiguous outcome: terminal, never retried,
         # and still no mutation is attempted.
@@ -3011,7 +3006,6 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             settings=self.settings,
             store=OracleMergeStore(self.settings.sqlite_path),
         )
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         result = service.process(artifact)
         self.assertEqual(result.status, OracleMergeStatus.REJECTED)
         self.assertTrue(any("merge boundary refused or result ambiguous" in item for item in result.reasons))
@@ -3036,12 +3030,10 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Held means terminal: the attempt records its verdict instead of
         # releasing the artifact for a retry.
         self.assertNotEqual(row[0], "RECOVERABLE")
         self.assertIsNotNone(row[1])
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
 
 class OracleMergeStoreSchemaTests(unittest.TestCase):

@@ -722,7 +722,6 @@ class Settings:
     oracle_automerge_antigravity_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_ANTIGRAVITY_ACTORS", ""
     )
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     # Standing merge boundary (merge-law phase 3). The observer is a separate
     # local process; only it ever loads the Ed25519 private key. This process
     # needs just the public half, the loopback observer endpoint, a durable
@@ -757,7 +756,6 @@ class Settings:
     oracle_standing_merge_security_actors: tuple[str, ...] = _csv(
         "ORACLE_STANDING_MERGE_SECURITY_ACTORS", ""
     )
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
@@ -2420,7 +2418,6 @@ class Settings:
     def oracle_github_credential_configured(self) -> bool:
         return self.oracle_merge_readiness()["github_credential_configured"]
 
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     def standing_merge_boundary_readiness(self) -> dict[str, bool]:
         """Every input the merge boundary needs before it may be built.
 
@@ -2442,7 +2439,6 @@ class Settings:
 
     def standing_merge_boundary_configured(self) -> bool:
         return all(self.standing_merge_boundary_readiness().values())
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def provider_strategy(self) -> dict[str, dict[str, object]]:
         return {

@@ -131,7 +131,6 @@ class FakeGitHub:
             merged=True, merge_commit_sha="c" * 40, actor="test-merger"
         )
 
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     def merge_as_identity(
         self,
         *,
@@ -153,7 +152,6 @@ class FakeGitHub:
         if not result.merged or not result.merge_commit_sha:
             raise RuntimeError("GitHub refused the exact-SHA identity-bound merge")
         return str(result.merge_commit_sha)
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def mark_ready(
         self, repository: str, pull_number: int, expected_sha: str, expected_base_sha: str
@@ -165,7 +163,6 @@ class FakeGitHub:
         return True
 
 
-# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 class PinnedStandingBoundary(MergeExecutionBoundary):
     """Test double for the production boundary: the assignment pin follows the
     artifact under review so one harness serves the suite's many artifacts.
@@ -198,7 +195,6 @@ class BoundaryPinnedService(OracleMergeService):
         if pin is not None:
             pin(artifact)
         return super().process(artifact)
-# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
 
 class OracleMergeGateTests(unittest.TestCase):
@@ -207,7 +203,6 @@ class OracleMergeGateTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.database = str(Path(self.temporary.name) / "oracle.sqlite3")
         self.sleeps: list[float] = []
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Throwaway observer keys, generated in memory per test; never files.
         self.observer_private_key = Ed25519PrivateKey.generate()
         self.observer_public_key = (
@@ -216,7 +211,6 @@ class OracleMergeGateTests(unittest.TestCase):
             )
         )
         self.standing_boundaries = itertools.count()
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         self.settings = Settings(
             sqlite_path=self.database,
             oracle_automerge_enabled=True,
@@ -311,7 +305,6 @@ class OracleMergeGateTests(unittest.TestCase):
         values.update(changes)
         return OraclePullRequestSnapshot.model_validate(values)
 
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     def standing_boundary(self, github: FakeGitHub) -> PinnedStandingBoundary:
         """A working Ed25519 observer: signs fresh observations for whatever
         artifact the service pins, merges only through the identity-bound
@@ -440,7 +433,6 @@ class OracleMergeGateTests(unittest.TestCase):
             standing_merge_boundary=boundary,
             **kwargs,
         )
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def bind_verified_interaction(
         self, record: TaskRecord, run: ProviderRun
@@ -874,11 +866,9 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_accepted_exact_sha_merges_and_records_append_only_audit(self):
         github = FakeGitHub(self.snapshot())
         store = OracleMergeStore(self.database)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Issue #306: the merge goes through the standing boundary; the actor
         # is the boundary-bound acting identity, not the transport's login.
         result = self.service(github, store=store).process(self.artifact())
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(result.merge_commit_sha, "c" * 40)
@@ -1282,13 +1272,11 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_base_advance_during_final_merge_validation_fails_closed(self):
         github = FakeGitHub(self.snapshot(), advance_base_on_merge=True)
         result = self.service(github).process(self.artifact())
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # The identity-bound transport reports the refused merge as an error,
         # and the boundary converts it into a held, reserved attempt.
         self.assertEqual(result.status, OracleMergeStatus.REJECTED)
         self.assertIsNone(result.merge_commit_sha)
         self.assertIn("merge boundary refused or result ambiguous", result.reasons[0])
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def test_invalid_signature_stops_before_github_or_audit(self):
         github = FakeGitHub(self.snapshot())
@@ -1339,7 +1327,6 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.reasons, [])
         self.assertEqual(result.serious_safety_reasons, [])
 
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     def test_no_boundary_refuses_every_base_class_without_a_legacy_fallback(self):
         """Issue #306: with no boundary there is no merge path at all, for a
         protected base, a non-protected base, or an unverified one."""
@@ -1367,7 +1354,6 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(github.merge_calls, 0)
         self.assertIn("base branch protection is unverified", result.reasons)
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def test_protected_project_branch_is_not_a_blanket_policy_prohibition(self):
         result = OracleMergePolicy(self.settings).evaluate(
@@ -1388,14 +1374,12 @@ class OracleMergeGateTests(unittest.TestCase):
 
         artifact = self.artifact()
         github = FakeGitHub(self.snapshot(base_protected=protected))
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Throwaway Ed25519 keys in memory; the boundary holds the public half.
         observer_key = Ed25519PrivateKey.generate()
         observer_public_key = observer_key.public_key().public_bytes(
             Encoding.Raw, PublicFormat.Raw
         )
         now = datetime.now(timezone.utc)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
         reviewer = replace(review("claude", "standing"), verdict="ACCEPT")
         security = review("security", "security-standing")
         checks = (check("ci"), check("security"))
@@ -1426,9 +1410,7 @@ class OracleMergeGateTests(unittest.TestCase):
                 attempts_used=0, attempt_limit=1, hops_used=0, hop_limit=1,
                 base_protected=protected,
             )
-            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
             return observation, observer_key.sign(observation.payload()).hex()
-            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
         calls = []
         def transport(**kwargs):
@@ -1439,10 +1421,8 @@ class OracleMergeGateTests(unittest.TestCase):
             repository=artifact.repository, environment="test", assignment_id=artifact.assignment_id,
             policy=policy(allowed_base_refs=(artifact.base_ref,), allowed_path_globs=("oracle/*",),
                           required_check_names=("ci", "security"), required_branch_prefix="oracle/"),
-            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
             prohibited_paths=(), observer_public_key=observer_public_key,
             observe=observe, merge=transport,
-            # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
             audit_path=self.database + ".standing", clock=lambda: now,
         )
         service = self.service(github)
@@ -2423,13 +2403,11 @@ class OracleMergeGateTests(unittest.TestCase):
 
         failed = self.service(github, store=store).process(artifact)
 
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # The boundary catches the transport error and holds; the attempt is
         # reserved and the mutation is never replayed.
         self.assertEqual(failed.status, OracleMergeStatus.REJECTED)
         self.assertIn("merge boundary refused or result ambiguous", failed.reasons[0])
         self.assertEqual(github.merge_calls, 1)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
         duplicate = self.service(github, store=store).process(artifact)
 
@@ -2454,11 +2432,9 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_branch_protection_or_github_refusal_is_recorded_as_error(self):
         github = FakeGitHub(self.snapshot(), merge_error=True)
         result = self.service(github).process(self.artifact())
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Through the boundary the refusal is a hold, never a retry.
         self.assertEqual(result.status, OracleMergeStatus.REJECTED)
         self.assertIn("merge boundary refused or result ambiguous", result.reasons[0])
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 
     def test_kill_switch_stops_before_any_github_call(self):
         github = FakeGitHub(self.snapshot())

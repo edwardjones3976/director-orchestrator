@@ -122,9 +122,7 @@ from .oracle_merge import (
     OracleMergeService,
     OracleMergeStore,
 )
-# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 from .merge_observer import build_standing_merge_boundary
-# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -248,7 +246,6 @@ oracle_github = (
 )
 oracle_merge_service = OracleMergeService(
     oracle_merge_policy, oracle_merge_store, oracle_github,
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
     # Issue #306: the boundary is mandatory on every Oracle merge path. An
     # enabled gate that cannot build it from Settings fails startup with an
     # explicit error instead of ever constructing a legacy no-boundary merge.
@@ -257,7 +254,6 @@ oracle_merge_service = OracleMergeService(
         if oracle_github is not None
         else None
     ),
-    # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
 )
 engine = OrchestrationEngine(
     settings,

@@ -40,7 +40,6 @@ def build_service(settings: Settings, database: str):
         and settings.oracle_github_credential_configured()
     ):
         github = GitHubOracleGateway.from_settings(settings)
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
         # Issue #306: this gate merges only through the standing boundary.
         # Unbuildable configuration is an explicit error and no merge at all,
         # never a legacy no-boundary fallback.
@@ -50,7 +49,6 @@ def build_service(settings: Settings, database: str):
             )
         except RuntimeError as exc:
             return None, f"oracle merge gate failed closed: {exc}"
-        # [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
     service = OracleMergeService(
         policy, store, github, standing_merge_boundary=standing_boundary
     )
