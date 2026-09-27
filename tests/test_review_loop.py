@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
@@ -170,6 +171,23 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
                 self.assertIn(f"{name}: symlink or path outside repository", errors)
                 self.assertFalse(any("antigravity-blanket-write-denial" in error for error in errors))
 
+            # Glob prefixes and project wildcard directories must be checked before descent.
+            outside_dir = Path(directory) / "outside_dir"
+            outside_dir.mkdir()
+            (outside_dir / "CLAUDE.md").write_text("Antigravity may not write project files.", encoding="utf-8")
+            (outside_dir / "leak.md").write_text("Antigravity may not write project files.", encoding="utf-8")
+            nested = Path(directory) / "nested_repo"
+            nested.mkdir()
+            for link in (nested / ".agents", nested / "docs", nested / "projects/demo"):
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(outside_dir, target_is_directory=True)
+            surface_errors = guard.check_instruction_surfaces(nested)
+            tree_errors = guard.check_tree(nested)
+            self.assertIn(".agents: symlink or path outside repository", surface_errors)
+            self.assertIn("projects/demo: symlink or path outside repository", surface_errors)
+            self.assertIn("docs: symlink or path outside repository", tree_errors)
+            self.assertFalse(any("antigravity-blanket-write-denial" in error for error in surface_errors + tree_errors))
+
     def test_local_agent_file_mode_is_explicit_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             clean = Path(directory) / "clean.md"
@@ -195,3 +213,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | END]]

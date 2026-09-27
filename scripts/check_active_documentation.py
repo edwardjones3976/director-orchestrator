@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
@@ -57,7 +58,7 @@ GOVERNANCE_TOPIC = re.compile(r"\b(?:allocation|dispatch|(?<!git )merge(?!-)|rev
 # Surfaces whose job is to point at the canonical rules; each must carry a pointer.
 POINTER_SURFACES = ("CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md")
 # Topic rule files and skills may mention merge but may not copy the rules.
-RULE_SURFACE_GLOBS = (".cursor/rules/**/*.mdc", ".agents/**/*.md", ".claude/**/*.md", "projects/*/CLAUDE.md", "projects/*/GEMINI.md")
+RULE_SURFACE_GLOBS = ((".cursor/rules", "**/*.mdc"), (".agents", "**/*.md"), (".claude", "**/*.md"))
 
 
 def _active_paragraphs(text: str) -> tuple[list[str], list[str]]:
@@ -148,11 +149,15 @@ def _inside_repo(path: Path, root: Path) -> bool:
 
 def check_tree(root: Path) -> list[str]:
     paths = set()
-    for directory in ("docs", "prompts"):
-        for extension in ("*.md", "*.yaml", "*.yml"):
-            paths.update((root / directory).rglob(extension))
-    paths.update(root / name for name in ("README.md", "AGENTS.md", "CLAUDE.md"))
     errors = []
+    for directory in ("docs", "prompts"):
+        base = root / directory
+        if not _inside_repo(base, root):
+            errors.append(f"{directory}: symlink or path outside repository")
+            continue
+        for extension in ("*.md", "*.yaml", "*.yml"):
+            paths.update(base.rglob(extension))
+    paths.update(root / name for name in ("README.md", "AGENTS.md", "CLAUDE.md"))
     for path in sorted(paths):
         relative = path.relative_to(root)
         if relative.parts[:2] == ("docs", "archive"):
@@ -174,9 +179,26 @@ def _surface_findings(text: str, pointer: str) -> list[str]:
 
 def check_instruction_surfaces(root: Path) -> list[str]:
     surfaces = {root / name: "always" for name in POINTER_SURFACES}
-    for pattern in RULE_SURFACE_GLOBS:
-        surfaces.update((path, "never") for path in root.glob(pattern) if path not in surfaces)
     errors = []
+    for directory, pattern in RULE_SURFACE_GLOBS:
+        base = root / directory
+        if not _inside_repo(base, root):
+            errors.append(f"{directory}: symlink or path outside repository")
+            continue
+        surfaces.update((path, "never") for path in base.glob(pattern) if path not in surfaces)
+    projects = root / "projects"
+    if not _inside_repo(projects, root):
+        errors.append("projects: symlink or path outside repository")
+    elif projects.is_dir():
+        for project in projects.iterdir():
+            if not _inside_repo(project, root):
+                errors.append(f"{project.relative_to(root).as_posix()}: symlink or path outside repository")
+                continue
+            if project.is_dir():
+                for name in ("CLAUDE.md", "GEMINI.md"):
+                    path = project / name
+                    if path.is_file() or path.is_symlink():
+                        surfaces[path] = "never"
     for path in sorted(surfaces):
         relative = path.relative_to(root).as_posix()
         if not _inside_repo(path, root):
@@ -227,3 +249,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | END]]
