@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]] -->
@@ -90,6 +91,27 @@ independence, authorization, security, budget and activation gates still decide
 whether any operation is permitted. The report always says
 `activation_authorized: false`; no runtime setting is changed by rendering it.
 
+### Collector containment (2026-09-27)
+
+The trusted collector is not available yet. Live collection finishes checks
+**07, 08, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
+"collector not yet trusted" and a source naming the trusted-collection follow-up.
+It supplies no consistency or activation-capture report and never executes
+candidate Python through docker exec. Health, Slack, later observations and
+final collection merging cannot promote these seven checks to PASS.
+
+The planned trusted-collection follow-up will run independently pinned collector
+code outside the candidate image, use independently enforced read-only data
+access, and return bounded, sanitized evidence. It must bind that evidence to
+the exact running image, commit, tree and generation, validate freshness and
+activation attestations independently, and expose no credentials or raw
+parallel-batch rows. This design is follow-up work, not implemented here.
+
+The evaluation rules below remain documented and tested directly with fixtures;
+descriptions of consistency and capture reports specify their evidence contract,
+not a currently trusted live collection path. The existing producer modules are
+retained for the stacked PR.
+
 | # | Required outcome | Evidence needed |
 |---|---|---|
 | 01 | Correct project route and channel | Selected deployment's loopback Director and n8n ports, --channel, correlated route |
@@ -98,7 +120,7 @@ whether any operation is permitted. The report always says
 | 04 | Status really delivered | Saved successful director-status execution correlated with Slack readback |
 | 05 | Primary owns intake | Database-derived ownership, disabled legacy intake, positive fencing generation |
 | 06 | Durable restart | Approval task resumed across the current process start without redispatch |
-| 07 | Reconciliation clear | In-image read-only consistency command bound to the running generation |
+| 07 | Reconciliation clear | Trusted independent consistency evidence (collector pending) |
 | 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision; the owner's approval command receipt re-read and matched |
 | 09 | Durable final reply | duplicate-input and ambiguous-post drills plus one final result |
 | 10 | Ten offline Slack runs | Ten consecutive actual-owner --trial threads (the only top-level owner posts from the first to the last), the committed structural rubric (pipeline proof, not answer correctness) and measured time, zero operational provider calls from task evidence |
@@ -373,15 +395,15 @@ failure from a refusal or a reserved 5xx, so 03's PASS says the transport
 failure itself is operator-attested, not observed. The drill procedures
 themselves are operator actions and are not automated here.
 
-### In-image commands
+### Retained producer commands (not invoked by the scorecard)
 
 ```text
 python -m director_orchestrator.primary_generation consistency [--task DIR-LG-… (up to twelve)]
 python -m director_orchestrator.primary_generation activation-captures
 ```
 
-The scorecard runs both through `docker exec <Director container ID>` with a
-45-second bound. Each first verifies the running generation exactly as
+The scorecard does not invoke either command. The retained producer code first
+verifies the running generation exactly as
 `verify` does (`require_generation`, never reserving) and prints one JSON
 document. They never call `require_runtime_off`: they run beside an active
 runtime and write nothing.
@@ -915,11 +937,12 @@ trusts the named local host and service; its in-process marker is not a security
 sandbox against arbitrary Python code, and it does not attest an uncompromised
 host or validate image-label supply-chain provenance.
 
-Health counters alone can only fail 07 and 12: a reported historical hold, hold
+In the retained evaluators, health counters alone can only fail 07 and 12: a reported historical hold, hold
 reason or ambiguous effect fails 07 even when other health fields are missing,
 and a false `combined_live_ready` fails 12. Zero counters and a true readiness
-flag prove nothing; 07 and 12 pass only from the in-image commands. Worker
-readiness is separate in 19. CI reuses `state_witness.gh_checks_green`,
+flag prove nothing. Live collection overrides these evaluator results with
+UNKNOWN until trusted collection is available. Worker readiness is separate
+in 19. CI reuses `state_witness.gh_checks_green`,
 including its actual-step and required-job checks. Its temporary ledger is
 diagnostic and does not imply that production merge/approval composition has
 injected the Witness Ledger.
@@ -1444,3 +1467,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->

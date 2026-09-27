@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
@@ -532,7 +533,7 @@ class World:
         self.captures = captures_fixture()
         self.status = status_fixture()
         self.ps_override = None
-        self.calls, self.exec_timeouts, self.consistency_tasks = [], [], None
+        self.calls = []
         self.threads, self.tasks, self.deliveries, self.bindings = {}, {}, {}, {}
         self.failing, self.slack_down = set(), False
         self.incomplete = set()
@@ -605,13 +606,8 @@ class World:
         if args[:2] == ["docker", "inspect"]:
             return json.dumps([item for item in self.rows
                                if item["Id"] in args[2:] or item.get("Name", "").lstrip("/") in args[2:]]).encode()
-        if args[:2] == ["docker", "exec"] and args[2] == DIRECTOR_ID and args[3:6] == ["python", "-m", "director_orchestrator.primary_generation"]:
-            self.exec_timeouts.append(timeout)
-            if args[6] == "consistency":
-                self.consistency_tasks = [args[index + 1] for index in range(7, len(args), 2)]
-                return self.reply(self.consistency)
-            if args[6] == "activation-captures":
-                return self.reply(self.captures)
+        if args[:2] == ["docker", "exec"] and "director_orchestrator.primary_generation" in args:
+            raise AssertionError("candidate code must never execute")
         if args[:2] == ["docker", "exec"] and args[2] == N8N_DB_ID and args[-1] == sc._ACTIVE_INTAKE:
             return self.reply(self.workflow)
         if args[:2] == ["docker", "exec"] and args[2] == N8N_DB_ID and args[-1] == sc._STATUS_EXECUTION:
@@ -678,7 +674,7 @@ class World:
         return REAL_SLACK_THREADS(runtime, channel, owner, client=httpx.Client(
             transport=httpx.MockTransport(self.handle), follow_redirects=False, trust_env=False))
 
-    def observe(self, only_deployment=False, **options):
+    def observe(self, only_deployment=False, evaluate_rules=False, **options):
         selected = dict(deployment=DEPLOYMENT)
         if not only_deployment:
             selected.update(channel=CHANNEL_FIXTURE, owner=OWNER, approval_task=APPROVAL_TASK, trials=list(self.trials),
@@ -697,11 +693,80 @@ class World:
         def client():
             return httpx.Client(transport=httpx.MockTransport(health_server), follow_redirects=False, trust_env=False)
 
-        with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "_http_client", client), \
+        runtime_seen = []
+        original_runtime = sc._runtime
+
+        def runtime_probe(*args, **kwargs):
+            result = original_runtime(*args, **kwargs)
+            runtime_seen.append(result[1])
+            return result
+
+        with patch.object(sc, "_runtime", side_effect=runtime_probe), \
+                patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "_http_client", client), \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack):
             observations = sc.collect(SHA, now=self.now, until=self.until, **selected)
+            if evaluate_rules and runtime_seen:
+                observations = self.evaluate_rules(runtime_seen[0], selected, observations)
         self.opened = opened
         return observations
+
+    def evaluate_rules(self, runtime, selected, observations):
+        """Direct evaluator fixtures only: these reports never enter live collection."""
+        at = self.now
+        found = {item.check_id: item for item in observations}
+
+        def put(items):
+            found.update((item.check_id, item) for item in items)
+
+        consistency, captures = self.consistency, self.captures
+        if consistency is not None and not runtime.read_in_window(consistency.get("captured_at")):
+            consistency = None
+        if captures is not None and not runtime.read_in_window(captures.get("observed_at")):
+            captures = None
+        if consistency is None:
+            captures = None
+        try:
+            runtime = sc._gateway_bound(runtime, selected["gateway"])
+            verified, activated = sc._intake_route_verified(runtime, selected["gateway"])
+            if activated is not None:
+                runtime = dataclasses.replace(runtime, created_at=max(runtime.created_at, activated))
+        except (KeyError, *sc._SOURCE_ERRORS):
+            verified = None
+        t = None
+        paid = None
+        try:
+            if selected.get("channel") is not None:
+                try:
+                    t = self.slack(runtime, selected["channel"], selected.get("owner"))
+                except sc._SOURCE_ERRORS:
+                    pass
+            if t is not None:
+                if selected.get("paid_thread") is not None:
+                    try:
+                        paid = sc._paid_facts(t, selected["paid_thread"], runtime.runtime_sha)
+                    except sc._SOURCE_ERRORS:
+                        pass
+                if selected.get("approval_task") is not None:
+                    try:
+                        put(sc._approval_observations(at, runtime, t, selected["approval_task"], consistency))
+                    except sc._SOURCE_ERRORS:
+                        pass
+            put([sc._reconciliation_observation(at, runtime, consistency)])
+            put(sc._capture_observations(at, runtime, captures, paid))
+            put([sc._acceptance_observation(at, SHA, consistency)])
+            put([sc._paid_observation(at, runtime, paid, selected.get("paid_rubric_path"),
+                                     consistency, t.m.LABEL if t is not None else "")])
+            cost = sc._settled_cost(consistency, paid)[0] if paid is not None else None
+            put([sc._monetary_observation(at, runtime, paid, consistency, cost)])
+            if verified is not True or t is None:
+                for key in ("08", "20"):
+                    found[key] = next(item for item in observations if item.check_id == key)
+            if t is None:
+                found["11"] = next(item for item in observations if item.check_id == "11")
+        finally:
+            if t is not None:
+                t.close()
+        return sc._finalize(list(found.values()), self.until or self.now)
 
     def report(self, **options):
         return sc.score(SHA, self.observe(**options), now=self.until or self.now, runtime_sha=SHA, image_id=IMAGE)
@@ -710,7 +775,7 @@ class World:
         return row(self.report(**options), check)["status"]
 
 
-def runtime_observations(payload=None, rows=None):
+def runtime_observations(payload=None, rows=None, *, evaluate_rules=False):
     # Substitute external I/O, not the score's trust check or predicates.
     world = World()
     world.payload = payload if payload is not None else health()
@@ -719,7 +784,7 @@ def runtime_observations(payload=None, rows=None):
     if rows is not None:
         world.rows = rows
     try:
-        return world.observe(only_deployment=True)
+        return world.observe(only_deployment=True, evaluate_rules=evaluate_rules)
     finally:
         world._folder.cleanup()
 
@@ -1087,9 +1152,9 @@ class CompletionScorecardTests(unittest.TestCase):
         payload["langgraph_primary"]["reconciliation_worker_ready"] = False
         report = sc.score(SHA, runtime_observations(payload), now=NOW)
         self.assertEqual(report["checks"][6]["status"], "UNKNOWN")
-        self.assertIn("consistency command", report["checks"][6]["explanation"])
+        self.assertEqual(report["checks"][6]["explanation"], "collector not yet trusted")
         self.assertEqual(report["checks"][18]["status"], "FAIL")
-        self.assertIn("health counters alone can only fail 07 and 12", json.dumps(report["limitations"]))
+        self.assertIn("trusted-collection follow-up", json.dumps(report["limitations"]))
 
     def test_reported_reconciliation_blocker_fails(self):
         for change in ({"ambiguous_effect_count": 2}, {"reconciliation_hold_reason": "plan digest conflict"},
@@ -1097,10 +1162,10 @@ class CompletionScorecardTests(unittest.TestCase):
             payload = health()
             payload["langgraph_primary"].update(change)
             with self.subTest(change=change):
-                self.assertEqual(sc.score(SHA, runtime_observations(payload), now=NOW)["checks"][6]["status"], "FAIL")
+                self.assertEqual(sc.score(SHA, runtime_observations(payload, evaluate_rules=True), now=NOW)["checks"][6]["status"], "FAIL")
         payload = health()
         del payload["langgraph_primary"]["reconciliation_hold_reason"]
-        self.assertEqual(sc.score(SHA, runtime_observations(payload), now=NOW)["checks"][6]["status"], "UNKNOWN")
+        self.assertEqual(sc.score(SHA, runtime_observations(payload, evaluate_rules=True), now=NOW)["checks"][6]["status"], "UNKNOWN")
 
     def test_reported_blocker_still_fails_with_other_health_fields_missing(self):
         for fields in ({"ambiguous_effect_count": 1}, {"historical_parallel_plan_hold_count": 1},
@@ -1108,7 +1173,7 @@ class CompletionScorecardTests(unittest.TestCase):
             payload = health()
             payload["langgraph_primary"] = fields
             with self.subTest(fields=fields):
-                report = sc.score(SHA, runtime_observations(payload), now=NOW)
+                report = sc.score(SHA, runtime_observations(payload, evaluate_rules=True), now=NOW)
                 self.assertEqual(report["checks"][6]["status"], "FAIL")
 
     def test_topology_and_single_gateway_ignore_api_copy_of_token_without_exposure(self):
@@ -1330,7 +1395,7 @@ class CompletionScorecardTests(unittest.TestCase):
         payload = health()
         payload["langgraph_primary"].update(historical_parallel_plan_hold_count=1, primary_runtime_active="true")
         payload["langgraph_primary"]["provider_activation"]["combined_live_ready"] = False
-        report = sc.score(SHA, runtime_observations(payload), now=NOW)
+        report = sc.score(SHA, runtime_observations(payload, evaluate_rules=True), now=NOW)
         self.assertEqual([report["checks"][index]["status"] for index in (6, 11, 18)], ["FAIL"] * 3)
 
     def test_missing_runtime_field_is_unknown(self):
@@ -1938,22 +2003,54 @@ class CompletionScorecardTests(unittest.TestCase):
 class ScorecardCollectorTests(unittest.TestCase):
     """Every collector: a positive case, a negative control and UNKNOWN on a missing source."""
 
-    def world(self):
-        return World(self)
+    def world(self, evaluate_rules=False):
+        world = World(self)
+        if evaluate_rules:
+            original_observe = world.observe
+            world.observe = lambda **options: original_observe(evaluate_rules=True, **options)
+        return world
 
     def test_full_selection_reaches_every_live_collector_without_leaking(self):
         world = self.world()
         report = world.report()
-        passing = {"03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "15", "17", "19", "20"}
+        passing = {"03", "04", "05", "06", "09", "10", "19"}
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, passing,
                          [(item["id"], item["status"], item["explanation"]) for item in report["checks"]])
         self.assertEqual(world.opened, [HEALTH])
-        self.assertEqual(world.consistency_tasks, [PAID_TASK, APPROVAL_TASK])
-        self.assertEqual(world.exec_timeouts, [45, 45])
+        self.assertFalse(any(call[:2] == ["docker", "exec"]
+                             and "director_orchestrator.primary_generation" in call for call in world.calls))
+        for key in ("07", "08", "11", "12", "15", "17", "20"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN")
+            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
+            self.assertIn("Trusted-collection follow-up", row(report, key)["evidence"][0]["source"])
+
         text = json.dumps(report)
         for secret in (*SECRETS, CHANNEL_FIXTURE, OWNER, BOT):
             self.assertNotIn(secret, text)
         self.assertFalse(report["activation_authorized"])
+
+    def test_untrusted_collectors_cannot_be_promoted_by_passing_evaluators(self):
+        world = self.world()
+
+        def passing(key):
+            return sc._observation(key, True, "otherwise passing evidence", "fixture", {}, world.now,
+                                   candidate_sha=SHA, runtime_sha=SHA, image_id=IMAGE)
+
+        with patch.object(sc, "_reconciliation_observation", return_value=passing("07")) as consistency, \
+                patch.object(sc, "_capture_observations", return_value=[passing("11"), passing("12")]) as captures, \
+                patch.object(sc, "_approval_observations", return_value=[passing("06"), passing("08")]) as approval, \
+                patch.object(sc, "_acceptance_observation", return_value=passing("17")) as acceptance, \
+                patch.object(sc, "_paid_observation", return_value=passing("20")) as paid, \
+                patch.object(sc, "_monetary_observation", return_value=passing("15")) as monetary:
+            report = world.report()
+        for probe, index in ((consistency, 2), (captures, 2), (approval, 4),
+                             (acceptance, 2), (paid, 4), (monetary, 3)):
+            self.assertIsNone(probe.call_args.args[index])
+        self.assertFalse(any(call[:2] == ["docker", "exec"]
+                             and "director_orchestrator.primary_generation" in call for call in world.calls))
+        for key in ("07", "08", "11", "12", "15", "17", "20"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN")
+            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
 
     def test_live_requires_explicit_deployment_and_never_probes_legacy(self):
         forbidden = Mock(side_effect=AssertionError("no probe may run without --deployment"))
@@ -2235,8 +2332,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         world.handle.assert_not_called()
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertIn("--channel", row(report, key)["explanation"])
-        self.assertEqual(row(report, "07")["status"], "PASS")
+            self.assertIn("collector not yet trusted" if key in ("08", "11", "20") else "--channel",
+                          row(report, key)["explanation"])
+        self.assertEqual(row(report, "07")["status"], "UNKNOWN")
 
     def test_intake_drills_03(self):
         self.assertEqual(self.world().state("03"), "PASS")
@@ -2512,9 +2610,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertIn("Post Status", {node["name"] for node in workflow["nodes"]})
 
     def test_approval_restart_06_08(self):
-        report = self.world().report()
+        report = self.world(evaluate_rules=True).report()
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["PASS", "PASS"])
-        redispatched = self.world()
+        redispatched = self.world(evaluate_rules=True)
         readback = redispatched.tasks[APPROVAL_TASK]["qualification_evidence"]
         # A second dispatch, in the product's order: attempt 1 failed, attempt 2 ran after it and succeeded, then
         # the assignment settled (the shared lifecycle and settlement rules refuse any other order).
@@ -2535,19 +2633,19 @@ class ScorecardCollectorTests(unittest.TestCase):
         readback["provider_usage"].append({**readback["provider_usage"][0], "attempt_digest": "sha256:" + "3" * 64})
         tf.recount(readback)
         self.assertEqual(redispatched.state("06"), "FAIL")
-        early = self.world()
+        early = self.world(evaluate_rules=True)
         early.add(approval_entry(decided=iso(1789210000 + 30002)))
         # A decision before its prompt breaks the shared delivery rule (decision_follows_prompt, 4110553569): the
         # readback carrying it is refused, so 08 cannot be graded on it, and the global count fails 07.
         self.assertEqual(early.state("08"), "UNKNOWN")
-        impostor = self.world()
+        impostor = self.world(evaluate_rules=True)
         impostor.threads[ts(30000)][2]["user"] = OWNER
         self.assertEqual(impostor.state("08"), "FAIL")
-        stale_impostor = self.world()
+        stale_impostor = self.world(evaluate_rules=True)
         stale_impostor.threads[ts(30000)][2]["user"] = OWNER
         stale_impostor.rows[-1]["Created"] = "2026-09-12T19:06:42Z"  # the gateway, recreated after the task
         self.assertEqual([row(stale_impostor.report(), key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
-        reworded = self.world()
+        reworded = self.world(evaluate_rules=True)
         section = reworded.threads[ts(30000)][2]["blocks"][0]["text"]
         # A line no stock phrase covers: only the exact rendering catches it.
         assert "Approve or reject this exact request" in section["text"]
@@ -2555,7 +2653,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(reworded.state("08"), "UNKNOWN")
         # An external-effect approval renders its persisted effect grant: equal with it, unknown without it.
         grant = {"action": "github.pr.comment", "target": "edwardjones3976/director-orchestrator#1"}
-        effect = self.world()
+        effect = self.world(evaluate_rules=True)
         effect_entry = effect.add(approval_entry(kind="external_effect", grant=grant))
         effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
         # The graph's effect approval binding names the effect this request authorized (director_primary_effect_
@@ -2564,11 +2662,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         effect.consistency["tasks"][APPROVAL_TASK]["effect_approval_bindings"] = [
             {"effect_key_digest": effect_key, "approval_request_digest": "sha256:" + "8" * 64}]
         self.assertEqual(effect.state("08"), "PASS")
-        unbound_effect = self.world()
+        unbound_effect = self.world(evaluate_rules=True)
         unbound_effect.add(approval_entry(kind="external_effect", grant=grant))
         unbound_effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
         self.assertEqual(unbound_effect.state("08"), "UNKNOWN")  # no binding names the approved effect
-        early_effect = self.world()
+        early_effect = self.world(evaluate_rules=True)
         early_entry = early_effect.add(approval_entry(kind="external_effect", grant=grant))
         early_effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
         early_effect.consistency["tasks"][APPROVAL_TASK]["effect_approval_bindings"] = [
@@ -2576,7 +2674,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         started = early_entry["task"]["qualification_evidence"]["effects"][0]
         started.update(reserved_at=iso(1789210000 + 30006), execution_started_at=iso(1789210000 + 30007))
         self.assertEqual(early_effect.state("08"), "FAIL")  # executed before its approval was authorized
-        early_run = self.world()
+        early_run = self.world(evaluate_rules=True)
         early_run.tasks[APPROVAL_TASK]["qualification_evidence"]["provider_attempts"][0]["recorded_at"] = iso(
             1789210000 + 30008.5)  # the first attempt began before the execution approval (claimed at 30009)
         early_run.tasks[APPROVAL_TASK]["qualification_evidence"]["assignments"][0]["reserved_at"] = iso(
@@ -2586,7 +2684,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         effect.consistency["tasks"][APPROVAL_TASK]["application"] = stripped
         self.assertEqual(effect.state("08"), "UNKNOWN")
         # Every block field counts; only Slack's own block_id and plain_text emoji flag are ignored.
-        slack_added = self.world()
+        slack_added = self.world(evaluate_rules=True)
         blocks = slack_added.threads[ts(30000)][2]["blocks"]
         for index, block in enumerate(blocks):
             block["block_id"] = f"slack-{index}"
@@ -2601,15 +2699,15 @@ class ScorecardCollectorTests(unittest.TestCase):
                                                                                             "text": "Sure?"}})),
                 ("button url", lambda b: b[-1]["elements"][0].update(url="https://example.test")),
                 ("button style", lambda b: b[-1]["elements"][0].update(style="danger"))):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             mutate(case.threads[ts(30000)][2]["blocks"])
             with self.subTest(label=label):
                 self.assertEqual(case.state("08"), "UNKNOWN")
-        partial = self.world()
+        partial = self.world(evaluate_rules=True)
         partial.incomplete.add(ts(30000))
         self.assertEqual(partial.state("08"), "UNKNOWN")
         for change in ("wrong button", "wrong kind text"):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             prompt = case.threads[ts(30000)][2]
             if change == "wrong button":
                 prompt["blocks"][1]["elements"][0]["value"] = prompt["blocks"][1]["elements"][0]["value"].replace(
@@ -2618,24 +2716,24 @@ class ScorecardCollectorTests(unittest.TestCase):
                 prompt["blocks"][0]["text"]["text"] = "Something else entirely"
             with self.subTest(change=change):
                 self.assertEqual(case.state("08"), "UNKNOWN")
-        edited_prompt = self.world()
+        edited_prompt = self.world(evaluate_rules=True)
         edited_prompt.threads[ts(30000)][2]["edited"] = {"user": BOT, "ts": ts(30020)}
         self.assertEqual(edited_prompt.state("08"), "UNKNOWN")
-        unscoped = self.world()
+        unscoped = self.world(evaluate_rules=True)
         # record_owner_decision writes decision, time and command together (4110399587): with none of them the
         # control plane's receipt belongs to no approved delivery, which fails (review 4100880210) ...
         unscoped.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1].update(
             owner_decision=None, owner_decision_at=None, owner_command_id=None)
         self.assertEqual(unscoped.state("08"), "FAIL")
         # ... and a decision missing only its command is not the producer's row: the readback is refused.
-        partial = self.world()
+        partial = self.world(evaluate_rules=True)
         partial.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["owner_command_id"] = None
         self.assertEqual(partial.state("08"), "UNKNOWN")
         # The decision must match a control-plane approval_resume receipt, re-read, not only the delivery row.
-        unreceipted = self.world()
+        unreceipted = self.world(evaluate_rules=True)
         unreceipted.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = []
         self.assertEqual(unreceipted.state("08"), "UNKNOWN")
-        retimed = self.world()
+        retimed = self.world(evaluate_rules=True)
         retimed.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = [approval_receipt(iso(1789210000 + 30011))]
         self.assertEqual(retimed.state("08"), "FAIL")  # a receipt no delivery accounts for
         # The receipt must join the owner's durable, signature-verified command authorization.
@@ -2644,40 +2742,40 @@ class ScorecardCollectorTests(unittest.TestCase):
                        {"authorization_claimed_at": iso(1789210000 + 30011)},
                        {"authorization_proof_expires_at": iso(1789210000 + 30009)},
                        {"authorization_claimed_at": None}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("08"), "FAIL")  # the unverifiable receipt is unaccounted for
-        other_command = self.world()
+        other_command = self.world(evaluate_rules=True)
         other_command.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["command_id_sha256"] = "0" * 64
         self.assertEqual(other_command.state("08"), "FAIL")
-        no_snapshot = self.world()
+        no_snapshot = self.world(evaluate_rules=True)
         no_snapshot.consistency = None
         self.assertEqual([row(no_snapshot.report(), key)["status"] for key in ("06", "08")], ["PASS", "UNKNOWN"])
-        queued_only = self.world()
+        queued_only = self.world(evaluate_rules=True)
         queued_only.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["created_at"] = (
             iso(1789210000 + 30010))  # enqueued only after the restart
         self.assertEqual(queued_only.state("06"), "UNKNOWN")
         # A terminal notification enqueued after the restart is not a resume without a post-start graph step.
-        notification_only = self.world()
+        notification_only = self.world(evaluate_rules=True)
         readback = notification_only.tasks[APPROVAL_TASK]["qualification_evidence"]
         for event in readback["provider_attempts"]:
             event["recorded_at"] = "2026-09-12T09:25:00+00:00"
         readback["task_updated_at"] = "2026-09-12T09:26:00+00:00"
         self.assertEqual(notification_only.state("06"), "UNKNOWN")
-        late_start = self.world()
+        late_start = self.world(evaluate_rules=True)
         late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T19:30:00Z"  # after the approval task ran (~19:07)
         self.assertEqual(late_start.state("06"), "UNKNOWN")
         # An approval task created before the running container cannot attest it.
-        recreated = self.world()
+        recreated = self.world(evaluate_rules=True)
         recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T19:06:42Z"
         report = recreated.report()
         self.assertEqual(row(report, "08")["status"], "UNKNOWN")
         self.assertIn("before the running Director container", row(report, "08")["explanation"])
-        report = self.world().report(approval_task=None)
+        report = self.world(evaluate_rules=True).report(approval_task=None)
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
         self.assertIn("--approval-task", row(report, "06")["explanation"])
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         del missing.tasks[APPROVAL_TASK]
         report = missing.report()
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
@@ -2697,7 +2795,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = world.report()
         for key in ("07", "11", "12", "17"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
-        self.assertIn("running container", row(report, "07")["explanation"])
+        self.assertEqual(row(report, "07")["explanation"], "collector not yet trusted")
         # The generation manifest the snapshot was verified against must be the one the container pins (#4107814604).
         other_manifest = self.world()
         other_manifest.consistency["generation"]["manifest_sha256"] = "0" * 64
@@ -2706,35 +2804,35 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
 
     def test_consistency_07(self):
-        self.assertEqual(self.world().state("07"), "PASS")
-        conflicted = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("07"), "PASS")
+        conflicted = self.world(evaluate_rules=True)
         conflicted.consistency["counts"]["projection_batch_digest_conflicts"] = 1
         self.assertEqual(conflicted.state("07"), "FAIL")
-        blocked = self.world()
+        blocked = self.world(evaluate_rules=True)
         blocked.payload["langgraph_primary"]["historical_parallel_plan_hold_count"] = 1
         self.assertEqual(blocked.state("07"), "FAIL")
-        busy = self.world()
+        busy = self.world(evaluate_rules=True)
         busy.consistency["counts"]["live_writer_claims"] = 1
         self.assertEqual(busy.state("07"), "UNKNOWN")
-        future_snapshot = self.world()
+        future_snapshot = self.world(evaluate_rules=True)
         future_snapshot.consistency["captured_at"] = "2026-09-12T21:00:00+00:00"
         self.assertEqual(future_snapshot.state("07"), "UNKNOWN")
-        held = self.world()
+        held = self.world(evaluate_rules=True)
         held.consistency["counts"]["pending_owner_decisions"] = 1
         self.assertEqual(held.state("07"), "UNKNOWN")
         for key in ("succeeded_projections_with_unsucceeded_assignments", "projections_missing_batch",
                     "batches_without_projection"):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency["counts"][key] = 1
             with self.subTest(key=key):
                 self.assertEqual(case.state("07"), "FAIL")
         for change in ({"generation": {**consistency_fixture()["generation"], "manifest_sha256": "0" * 64}},
                        {"intake_fencing_generation": 82}, {"counts": {"projection_batch_digest_conflicts": 0}}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency.update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("07"), "UNKNOWN")
-        unavailable = self.world()
+        unavailable = self.world(evaluate_rules=True)
         unavailable.consistency = None
         report = unavailable.report()
         self.assertEqual(row(report, "07")["status"], "UNKNOWN")
@@ -2800,7 +2898,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                 ("inactive intake", lambda w: w.workflow.update(active=False)),
                 ("gateway relay elsewhere", lambda w: w.rows[-1]["Config"]["Env"].__setitem__(
                     3, "N8N_DIRECTOR_WEBHOOK_URL=http://elsewhere:5678/webhook/director-intake"))):
-            world = self.world()
+            world = self.world(evaluate_rules=True)
             mutate(world)
             report = world.report()
             with self.subTest(label=label):
@@ -2810,12 +2908,12 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_every_verdict_timestamp_is_bounded(self):
         # A future-dated terminal reply or delivery is not current, though the root and task are.
-        future_final = self.world()
+        future_final = self.world(evaluate_rules=True)
         delivery = next(r for r in future_final.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"]
                         if r.get("notification_key") == "terminal")
         delivery["delivered_at"] = "2026-09-12T21:00:00+00:00"
         self.assertEqual(future_final.state("09"), "UNKNOWN")
-        future_paid = self.world()
+        future_paid = self.world(evaluate_rules=True)
         terminal = next(r for r in future_paid.tasks[PAID_TASK]["qualification_evidence"]["slack_deliveries"]
                         if r.get("notification_key") == "terminal")
         terminal["acknowledged_at"] = "2026-09-12T21:00:00+00:00"
@@ -2823,7 +2921,7 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_unsettled_attempt_is_not_zero_ambiguous_20(self):
         # A paid attempt still STARTED is unsettled: its effect is unknown, never zero.
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         for event in world.tasks[PAID_TASK]["qualification_evidence"]["provider_attempts"]:
             event["status"] = "STARTED"
         self.assertNotEqual(world.state("20"), "PASS")
@@ -2857,24 +2955,24 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(self.world().state("10", rubric_path=None), "UNKNOWN")
 
     def test_persisted_execution_mode_decides_the_run_kind_10_20(self):
-        live_trial = self.world()
+        live_trial = self.world(evaluate_rules=True)
         live_trial.tasks["DIR-LG-7A03"]["qualification_evidence"]["execution_mode"] = "live"
         self.assertEqual(live_trial.state("10"), "UNKNOWN")
-        offline_paid = self.world()
+        offline_paid = self.world(evaluate_rules=True)
         offline_paid.tasks[PAID_TASK]["qualification_evidence"]["execution_mode"] = "paid_off"
         self.assertEqual(offline_paid.state("20"), "UNKNOWN")
 
     def test_graded_outcome_joins_the_paid_attempt_20(self):
-        forged = self.world()
+        forged = self.world(evaluate_rules=True)
         forged.tasks[PAID_TASK]["assignment_outcomes"][0]["provider_result_digest"] = "e" * 64
         self.assertEqual(forged.state("20"), "FAIL")
-        resequenced = self.world()
+        resequenced = self.world(evaluate_rules=True)
         resequenced.tasks[PAID_TASK]["assignment_outcomes"][0]["assignment_sequence"] = 2
         self.assertEqual(resequenced.state("20"), "FAIL")
 
     def test_snapshots_read_during_the_collection_are_current_07(self):
         # A normal snapshot is captured while the collection runs, after its start: it must PASS.
-        during = self.world()
+        during = self.world(evaluate_rules=True)
         during.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
         during.consistency["captured_at"] = "2026-09-12T20:02:00+00:00"
         during.captures["observed_at"] = "2026-09-12T20:02:30+00:00"
@@ -2882,21 +2980,21 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual([row(report, key)["status"] for key in ("07", "12")], ["PASS", "PASS"])
         # Read after the collection ended, or before it began: not this collection's snapshot.
         for captured in ("2026-09-12T20:06:00+00:00", "2026-09-12T19:59:00+00:00"):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
             case.consistency["captured_at"] = captured
             with self.subTest(captured=captured):
                 self.assertEqual(case.state("07"), "UNKNOWN")
-        late_captures = self.world()
+        late_captures = self.world(evaluate_rules=True)
         late_captures.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
         late_captures.captures["observed_at"] = "2026-09-12T20:06:00+00:00"
         self.assertEqual(late_captures.state("12"), "UNKNOWN")
 
     def test_every_drill_reply_and_effect_time_is_bounded(self):
-        future_blocked = self.world()
+        future_blocked = self.world(evaluate_rules=True)
         future_blocked.threads[ts(100)][1]["ts"] = "1789290000.100000"  # a BLOCKED reply dated after collection
         self.assertEqual(future_blocked.state("03"), "UNKNOWN")
-        future_effect = self.world()
+        future_effect = self.world(evaluate_rules=True)
         effect = future_effect.tasks[PAID_TASK]["qualification_evidence"]["effects"][0]
         effect["terminal_recorded_at"] = "2026-09-12T21:00:00+00:00"
         self.assertEqual(future_effect.state("20"), "UNKNOWN")
@@ -2937,7 +3035,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(row(collect_topology(rows), "01")["status"], "FAIL")
 
     def test_time_limited_pass_is_revalidated_at_the_final_cutoff(self):
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         obs12 = next(o for o in world.observe() if o.check_id == "12")
         self.assertEqual(obs12.passed, True)
         self.assertEqual(obs12.valid_until, datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc) - sc.FRESH_FOR)
@@ -2955,37 +3053,37 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertNotEqual(case.state("09"), "PASS")
 
     def test_probed_providers_are_capped_by_their_signed_budget_15(self):
-        self.assertEqual(self.world().state("15"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("15"), "PASS")
         # The monitor's own usage-check probes are never attempts, whatever they cost (usage.py reports them apart).
-        probed = self.world()
+        probed = self.world(evaluate_rules=True)
         probed.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
             request_count=4, usage_check_count=4, reported_cost_usd=0.5, cost_visibility_complete=False)
         probed.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(probed.state("15"), "PASS")
         # Review 4110798529: a real provider request is an attempt before the cap and price tests; with no monitor
         # budget, no signed enrolled budget and unknown cost the provider is uncapped and unpriced, never neither.
-        requested = self.world()
+        requested = self.world(evaluate_rules=True)
         requested.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
             request_count=4, usage_check_count=2, provider_request_count=2, cost_visibility_complete=False)
         requested.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(requested.state("15"), "UNKNOWN")
         # A monitor that does not report its probes apart is not monitored accounting.
-        unseparated = self.world()
+        unseparated = self.world(evaluate_rules=True)
         for value in unseparated.payload["usage_monitor"]["daily_accounting"].values():
             value.pop("provider_request_count")
         self.assertNotEqual(unseparated.state("15"), "PASS")
         # Real requests on a provider with neither a monitor budget nor a signed enrolled budget are uncapped.
-        spent = self.world()
+        spent = self.world(evaluate_rules=True)
         spent.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
             request_count=4, provider_request_count=1, reported_cost_usd=0.5)
         spent.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(spent.state("15"), "UNKNOWN")
         # Review 4112533824: a settled work request with no recorded actual charge leaves exposure a lower bound.
-        unreconciled = self.world()
+        unreconciled = self.world(evaluate_rules=True)
         unreconciled.payload["usage_monitor"]["daily_accounting"]["grok"]["unreconciled_request_count"] = 1
         self.assertEqual(unreconciled.state("15"), "UNKNOWN")
         self.assertIn("no recorded actual charge", row(unreconciled.report(), "15")["explanation"])
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         for value in missing.payload["usage_monitor"]["daily_accounting"].values():
             value.pop("unreconciled_request_count")
         self.assertNotEqual(missing.state("15"), "PASS")
@@ -3000,12 +3098,12 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertEqual(sql.count(cast), count, cast)
 
     def test_approval_prompt_fallback_text_must_be_the_canonical_rendering_08(self):
-        self.assertEqual(self.world().state("08"), "PASS")
-        flattened = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("08"), "PASS")
+        flattened = self.world(evaluate_rules=True)
         prompt = next(m for m in flattened.threads[ts(30000)] if m.get("ts") == ts(30005))
         prompt["text"] = prompt["text"].replace("\n", " ")  # Slack may flatten newlines, as readback allows
         self.assertEqual(flattened.state("08"), "PASS")
-        altered = self.world()
+        altered = self.world(evaluate_rules=True)
         prompt = next(m for m in altered.threads[ts(30000)] if m.get("ts") == ts(30005))
         prompt["text"] = "Approve anything?"  # canonical blocks, different notification text
         self.assertNotEqual(altered.state("08"), "PASS")
@@ -3026,7 +3124,7 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_final_reply_blocks_must_be_the_canonical_rendering_09_20(self):
         for thread, final, check in ((ts(300), ts(330), "09"), (ts(400), ts(430), "09"), (ts(20000), ts(20030), "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             message = next(m for m in case.threads[thread] if m.get("ts") == final)
             # Same fallback text, different visible blocks: Slack shows the blocks.
             message["blocks"] = [{"type": "section", "text": {"type": "mrkdwn", "text": "Unrelated reply"}}]
@@ -3087,11 +3185,11 @@ class ScorecardCollectorTests(unittest.TestCase):
                             if any(o.check_id == item["id"] for o in observed)))
 
     def test_paid_outcome_must_equal_the_persisted_result_artifact_20(self):
-        self.assertEqual(self.world().state("20"), "PASS")
-        edited = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("20"), "PASS")
+        edited = self.world(evaluate_rules=True)
         edited.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["outcome"] = "The persisted answer is 41"
         self.assertEqual(edited.state("20"), "FAIL")
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
         # A live roster success always persists its packet (missing_result_packets, 4110553565): its absence fails.
         self.assertEqual(missing.state("20"), "FAIL")
@@ -3119,7 +3217,7 @@ class ScorecardCollectorTests(unittest.TestCase):
              "task": {"assignment_outcomes": [{"assignment_sequence": 1}]}}, "x"))
 
     def test_owner_authorizes_only_a_posted_prompt_08(self):
-        early = self.world()
+        early = self.world(evaluate_rules=True)
         # Claimed before the prompt (ts 30005) was posted, receipt recorded and decision taken afterward.
         early.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["authorization_claimed_at"] = iso(
             1789210000 + 30004)
@@ -3184,11 +3282,11 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertEqual(case.state("04"), "UNKNOWN")
 
     def test_lifecycles_must_be_chronological_06_20(self):
-        self.assertEqual([self.world().state(key) for key in ("06", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("06", "20")], ["PASS", "PASS"])
         for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
             for change in ({"terminal_recorded_at": "2026-09-12T10:00:26+00:00"},
                            {"execution_started_at": "2026-09-12T10:00:25+00:00"}):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 case.tasks[task_id]["qualification_evidence"]["effects"][0].update(change)
                 with self.subTest(check=key, change=change):
                     self.assertNotEqual(case.state(key), "PASS")
@@ -3202,7 +3300,7 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_usage_amounts_must_be_finite_and_non_negative_15(self):
         for key, value in (("daily_budget_usd", float("nan")), ("daily_budget_usd", float("inf")),
                            ("reported_cost_usd", float("nan")), ("reserved_cost_usd", -0.1)):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.payload["usage_monitor"]["daily_accounting"]["grok"][key] = value
             with self.subTest(key=key, value=value):
                 self.assertEqual(case.state("15"), "UNKNOWN")
@@ -3234,7 +3332,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         for change in ({"delivered_at": "2026-09-12T10:00:18+00:00"}, {"claimed_at": "2026-09-12T10:00:32+00:00"},
                        {"readback_attempts": 0}, {"claimed_at": None}):
             for task_id, key in (("DIR-LG-A0", "09"), ("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 terminal = next(r for r in case.tasks[task_id]["qualification_evidence"]["slack_deliveries"]
                                 if r["notification_key"] == "terminal")
                 terminal.update(change)
@@ -3246,27 +3344,27 @@ class ScorecardCollectorTests(unittest.TestCase):
                                               "delivered_at": "2026-09-12T10:01:31+00:00", "readback_attempts": 2}))
 
     def test_readback_capture_time_is_inside_the_collection(self):
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         for captured in ("2026-09-12T20:00:01+00:00", "2026-09-12T19:00:00+00:00"):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.readback_captured = captured  # after the collection's end, or before it began
             with self.subTest(captured=captured):
                 self.assertEqual([case.state(key) for key in ("06", "10", "20")], ["UNKNOWN"] * 3)
 
     def test_accounting_covers_exactly_the_configured_providers_15(self):
-        self.assertEqual(self.world().state("15"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("15"), "PASS")
         for providers in (["grok", "claude", "gemini"], ["grok"], ["grok", "claude", "claude"], ["grok", "Claude!"],
                           None):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.payload["usage_monitor"]["providers"] = providers
             with self.subTest(providers=providers):
                 self.assertEqual(case.state("15"), "UNKNOWN")
 
     def test_slack_post_lies_inside_the_delivery_lifecycle_09_20(self):
-        self.assertEqual([self.world().state(key) for key in ("09", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("09", "20")], ["PASS", "PASS"])
         for task_id, key in (("DIR-LG-A0", "09"), (PAID_TASK, "20")):
             for moment in ("claimed_at", "delivered_at"):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 terminal = next(r for r in case.tasks[task_id]["qualification_evidence"]["slack_deliveries"]
                                 if r["notification_key"] == "terminal")
                 posted = float(terminal["slack_ts"])
@@ -3276,10 +3374,10 @@ class ScorecardCollectorTests(unittest.TestCase):
                     self.assertNotEqual(case.state(key), "PASS")
 
     def test_attempt_events_lie_inside_their_assignment_06_20(self):
-        self.assertEqual([self.world().state(key) for key in ("06", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("06", "20")], ["PASS", "PASS"])
         for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
             for field, delta in (("completed_at", -30), ("reserved_at", +5)):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 readback = case.tasks[task_id]["qualification_evidence"]
                 assignment = readback["assignments"][0]
                 # Settled before its terminal attempt, or reserved after its first attempt started.
@@ -3290,14 +3388,14 @@ class ScorecardCollectorTests(unittest.TestCase):
                     self.assertNotEqual(case.state(key), "PASS")
 
     def test_terminal_rows_need_their_required_moments_06_10_20(self):
-        self.assertEqual([self.world().state(key) for key in ("06", "10", "20")], ["PASS", "PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("06", "10", "20")], ["PASS", "PASS", "PASS"])
         for task_id, key in ((APPROVAL_TASK, "06"), ("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.tasks[task_id]["qualification_evidence"]["assignments"][0]["completed_at"] = None
             with self.subTest(check=key, row="assignment"):
                 self.assertNotEqual(case.state(key), "PASS")
         for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.tasks[task_id]["qualification_evidence"]["effects"][0]["execution_started_at"] = None
             with self.subTest(check=key, row="effect"):
                 self.assertNotEqual(case.state(key), "PASS")
@@ -3328,9 +3426,9 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_attempt_ordinals_must_start_at_one_and_be_contiguous_06_20(self):
         """4100381664: an assignment that shows only attempt 2 (or 1 and 3) is missing attempt rows; its ordinals
         are not dispatch evidence, so neither the restart (06) nor the paid join (20) passes."""
-        self.assertEqual([self.world().state(key) for key in ("06", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("06", "20")], ["PASS", "PASS"])
         for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             readback = case.tasks[task_id]["qualification_evidence"]
             for event in readback["provider_attempts"]:
                 event["attempt_ordinal"] = 2  # the only attempt the readback shows is the second
@@ -3345,9 +3443,9 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_outcome_provider_joins_the_assignment_and_its_packet_10_20(self):
         """4100381670: the projected outcome's provider is the assignment's (lane mapped to its agent, as
         primary_default records both) and, for a paid run, the revalidated result packet's."""
-        self.assertEqual([self.world().state(key) for key in ("10", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("10", "20")], ["PASS", "PASS"])
         for task_id, key in (("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             readback = case.tasks[task_id]["qualification_evidence"]
             readback["assignments"][0]["provider_id"] = "openai"  # the ledger ran another provider
             for event in readback["provider_attempts"] + readback["provider_usage"]:
@@ -3356,7 +3454,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(check=key, side="assignment"):
                 # An unjoined offline run has no mode (UNKNOWN, as for every join gap); a paid one is wrong.
                 self.assertEqual(case.state(key), "UNKNOWN" if key == "10" else "FAIL")
-        packet = self.world()
+        packet = self.world(evaluate_rules=True)
         packet.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["provider"] = "openai"
         self.assertEqual(packet.state("20"), "FAIL")
         # The lane-to-agent mapping: an antigravity ledger row carries a gemini outcome.
@@ -3376,25 +3474,25 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_invalid_attached_packets_are_a_global_conflict_07(self):
         """4101181027: check 07 counts attached packets that fail revalidation or disagree with their assignment
         (result_artifacts_invalid), and an over-cap count (None) is malformed, never zero."""
-        self.assertEqual(self.world().state("07"), "PASS")
-        invalid = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("07"), "PASS")
+        invalid = self.world(evaluate_rules=True)
         invalid.consistency["counts"]["result_artifacts_invalid"] = 1
         self.assertEqual(invalid.state("07"), "FAIL")
-        capped = self.world()
+        capped = self.world(evaluate_rules=True)
         capped.consistency["counts"]["result_artifacts_invalid"] = None
         self.assertEqual(capped.state("07"), "UNKNOWN")
 
     def test_result_packets_equal_the_durable_assignment_set_07_20(self):
         """4100381678: a result packet for no durable assignment is a conflict, for the task (20) and globally (07)."""
-        self.assertEqual([self.world().state(key) for key in ("07", "20")], ["PASS", "PASS"])
-        orphan = self.world()
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("07", "20")], ["PASS", "PASS"])
+        orphan = self.world(evaluate_rules=True)
         artifacts = orphan.consistency["tasks"][PAID_TASK]["result_artifacts"]
         artifacts.append({**artifacts[0], "assignment_id": PAID_TASK + "-A9"})
         self.assertEqual(orphan.state("20"), "FAIL")
-        counted = self.world()
+        counted = self.world(evaluate_rules=True)
         counted.consistency["counts"]["result_artifacts_invalid"] = 1  # the global count now folds orphans in
         self.assertEqual(counted.state("07"), "FAIL")
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
         # A live roster success always persists its packet (missing_result_packets, 4110553565): its absence fails.
         self.assertEqual(missing.state("20"), "FAIL")
@@ -3404,12 +3502,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         director_primary_intake_auth_claim row whose digests are its own intake's."""
         cases = (("DIR-LG-5E", "03"), (APPROVAL_TASK, "08"), ("DIR-LG-D0", "09"), ("DIR-LG-7A01", "10"),
                  (PAID_TASK, "20"))
-        self.assertEqual([self.world().state(key) for _, key in cases], ["PASS"] * len(cases))
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for _, key in cases], ["PASS"] * len(cases))
         for task_id, key in cases:
             for name, change in (("no claim", lambda claims: claims.clear()),
                                  ("another intake's claim", lambda claims: claims[0].update(
                                      payload_digest="sha256:" + "0" * 64))):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 change(case.tasks[task_id]["qualification_evidence"]["intake_auth_claims"])
                 with self.subTest(check=key, case=name):
                     self.assertNotEqual(case.state(key), "PASS")
@@ -3422,7 +3520,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         for task_id, key in cases:
             for name, moment in (("before the post", lambda post, created: post - timedelta(seconds=1)),
                                  ("after the task", lambda post, created: created + timedelta(seconds=1))):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 task = case.tasks[task_id]
                 readback = task["qualification_evidence"]
                 post = datetime.fromtimestamp(float(task["intake"]["thread_ts"]), timezone.utc)
@@ -3435,14 +3533,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         """4100588384: n8n-db (the active intake workflow) and langgraph-primary-db (every readback) bound the
         Slack-derived and Director-readback checks by their creation, as 04 bounds n8n's executions."""
         after_all = "2026-09-12T19:30:00Z"  # after every drill, trial, paid and approval task in the world
-        n8n_store = self.world()
+        n8n_store = self.world(evaluate_rules=True)
         next(item for item in n8n_store.rows if item["Id"] == N8N_DB_ID)["Created"] = after_all
         self.assertEqual([n8n_store.state(key) for key in ("03", "08", "09", "10", "20")], ["UNKNOWN"] * 5)
-        primary_store = self.world()
+        primary_store = self.world(evaluate_rules=True)
         next(item for item in primary_store.rows if item["Id"] == PRIMARY_DB_ID)["Created"] = after_all
         self.assertEqual([primary_store.state(key) for key in ("06", "08", "10", "20")], ["UNKNOWN"] * 4)
         # The Director's DSN must name that store: another host leaves the Director's identity unverified.
-        elsewhere = self.world()
+        elsewhere = self.world(evaluate_rules=True)
         elsewhere.rows[0]["Config"]["Env"] = [
             "LANGGRAPH_PRIMARY_POSTGRES_DSN=postgresql://director_primary@other-db:5432/director_primary"
             if entry.startswith("LANGGRAPH_PRIMARY_POSTGRES_DSN=") else entry for entry in elsewhere.rows[0]["Config"]["Env"]]
@@ -3451,13 +3549,13 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_captures_are_the_registrys_validated_chain_11_12(self):
         """4100588387: a surface counts only through the registry's validated chain (chain_valid), lapses with its
         earliest-expiring stage, and was persisted after it was observed and before the collection's end."""
-        self.assertEqual([self.world().state(key) for key in ("11", "12")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("11", "12")], ["PASS", "PASS"])
         for name, change in (("invalid chain", {"chain_valid": False}),
                              # before the paid attempts (~16:20) though the latest stage is valid until tomorrow
                              ("an earlier stage expired", {"chain_expires_at": "2026-09-12T12:00:00+00:00"}),
                              ("persisted before observed", {"recorded_at": "2026-09-12T09:29:59+00:00"}),
                              ("persisted after the collection", {"recorded_at": "2026-09-12T20:30:00+00:00"})):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.captures["lanes"]["claude"]["surfaces"]["app"].update(change)
             with self.subTest(name):
                 self.assertEqual(case.state("12"), "FAIL")
@@ -3467,10 +3565,10 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_result_packet_is_recorded_inside_its_assignment_20(self):
         """4100588392: each packet's own recorded_at lies between its assignment's reservation and completion (both
         inside the freshness window), as primary_default persists it before settling the assignment."""
-        self.assertEqual(self.world().state("20"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("20"), "PASS")
         for name, value in (("before the reservation", iso(1789210000 + 20000 + 2)),
                             ("after the completion", iso(1789210000 + 20000 + 40)), ("missing", None)):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["recorded_at"] = value
             with self.subTest(name):
                 self.assertEqual(case.state("20"), "FAIL")
@@ -3479,11 +3577,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         """Sweep (durable-timestamp class): a spend row's budget_day is the day it was reserved, between its
         assignment's reservation and its attempt's first event; and every readback timestamp (status receipts,
         reconciliation events, intake claims) lies inside the freshness window."""
-        self.assertEqual(self.world().state("20"), "PASS")
-        day = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("20"), "PASS")
+        day = self.world(evaluate_rules=True)
         day.consistency["tasks"][PAID_TASK]["spend"][0]["budget_day"] = "2026-09-11"
         self.assertEqual(day.state("20"), "UNKNOWN")
-        future = self.world()
+        future = self.world(evaluate_rules=True)
         future.tasks[PAID_TASK]["qualification_evidence"]["reconciliation_events"] = [
             {"event_id": 1, "claim_key": "sha256:" + "5" * 64, "state": "RESOLVED",
              "evidence_digest": "sha256:" + "d" * 64, "recorded_at": "2026-09-12T21:00:00+00:00"}]
@@ -3493,10 +3591,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         """4100880189: the readback's own terminal row names the native final's client_msg_id and Slack ts, and the
         /deliveries receipts and the readback's delivery rows are one set, both ways."""
         cases = (("DIR-LG-A0", "09"), (APPROVAL_TASK, "06"), ("DIR-LG-7A01", "10"), (PAID_TASK, "20"))
-        self.assertEqual([self.world().state(key) for _, key in cases], ["PASS"] * len(cases))
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for _, key in cases], ["PASS"] * len(cases))
         for task_id, key in cases:
             for name in ("another client_msg_id", "another slack_ts", "an extra readback delivery"):
-                case = self.world()
+                case = self.world(evaluate_rules=True)
                 readback = case.tasks[task_id]["qualification_evidence"]
                 terminal = next(r for r in readback["slack_deliveries"] if r["notification_key"] == "terminal")
                 if name == "another client_msg_id":
@@ -3513,11 +3611,11 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_accounting_day_comes_from_the_monitor_15(self):
         """4100880194: the monitor names its accounting day (usage.py health); budgets and charges are graded on
         that day, so a snapshot read after UTC midnight never pairs with the previous day's rows."""
-        self.assertEqual(self.world().state("15"), "PASS")
-        after_midnight = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("15"), "PASS")
+        after_midnight = self.world(evaluate_rules=True)
         after_midnight.payload["usage_monitor"]["accounting_day"] = "2026-09-13"
         self.assertNotEqual(after_midnight.state("15"), "PASS")
-        undated = self.world()
+        undated = self.world(evaluate_rules=True)
         del undated.payload["usage_monitor"]["accounting_day"]
         self.assertNotEqual(undated.state("15"), "PASS")
 
@@ -3550,25 +3648,25 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_approval_receipts_and_prompts_join_their_deliveries_one_to_one_08(self):
         """4100880210: every approval_resume receipt is the one receipt of exactly one approved delivery, and every
         posted approval prompt is an approval delivery; anything left over fails."""
-        self.assertEqual(self.world().state("08"), "PASS")
-        extra = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("08"), "PASS")
+        extra = self.world(evaluate_rules=True)
         receipts = extra.consistency["tasks"][APPROVAL_TASK]["approval_receipts"]
         receipts.append({**receipts[0], "command_id_sha256": hashlib.sha256(b"owner-command-2").hexdigest()})
         self.assertEqual(extra.state("08"), "FAIL")
-        twice = self.world()
+        twice = self.world(evaluate_rules=True)
         receipts = twice.consistency["tasks"][APPROVAL_TASK]["approval_receipts"]
         receipts.append(dict(receipts[0]))  # one delivery, two receipts that both match it
         self.assertEqual(twice.state("08"), "FAIL")
-        stray = self.world()
+        stray = self.world(evaluate_rules=True)
         prompt = next(m for m in stray.threads[ts(30000)] if m.get("ts") == ts(30005))
         stray.threads[ts(30000)].append({**prompt, "ts": ts(30007), "client_msg_id": "approval-client-2"})
         self.assertEqual(stray.state("08"), "FAIL")
 
     def test_outcomes_and_ledger_rows_are_a_bijection_10_20(self):
         """Sweep (one-directional joins): outcomes and assignments pair one-to-one by sequence, both ways."""
-        self.assertEqual([self.world().state(key) for key in ("10", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("10", "20")], ["PASS", "PASS"])
         for task_id, key in (("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             outcomes = case.tasks[task_id]["assignment_outcomes"]
             outcomes.append({**outcomes[0], "assignment_sequence": 2})  # an outcome with no ledger row
             with self.subTest(check=key):
@@ -3648,27 +3746,27 @@ class ScorecardCollectorTests(unittest.TestCase):
         """4101181025: a thread handled before the active intake workflow version existed (imported or activated
         without recreating n8n) ran a previous version; the version's time joins the freshness bound."""
         cases = ("03", "08", "09", "10", "20")
-        self.assertEqual([self.world().state(key) for key in cases], ["PASS"] * len(cases))
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in cases], ["PASS"] * len(cases))
         for field in ("active_version_at", "workflow_updated_at"):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.workflow[field] = "2026-09-12T19:30:00+00:00"  # after every thread in the world
             with self.subTest(field=field):
                 self.assertEqual([case.state(key) for key in cases], ["UNKNOWN"] * len(cases))
-        unknown = self.world()
+        unknown = self.world(evaluate_rules=True)
         unknown.workflow["active_version_at"] = None
         self.assertEqual([unknown.state(key) for key in cases], ["UNKNOWN"] * len(cases))
 
     def test_adoption_actors_are_canonical_and_distinct_17(self):
         """4102375082: check 17 and the adoption loader share one identity rule (canonical_actor): a padded, empty
         or control-character actor is never normalized into a distinct identity; canonical ones compare casefolded."""
-        self.assertEqual(self.world().state("17"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("17"), "PASS")
         for name, changes, expected in (
                 ("padded author as reviewer", {"independent_reviewer": " author-login "}, "UNKNOWN"),
                 ("empty after strip", {"security_reviewer": "   "}, "UNKNOWN"),
                 ("control character", {"security_reviewer": "security-login​"}, "UNKNOWN"),
                 ("case-folded author", {"security_reviewer": "Author-Login"}, "FAIL"),
                 ("reviewers are one identity", {"security_reviewer": "REVIEWER-login"}, "FAIL")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency["generation"]["adoption"].update(changes)
             with self.subTest(name):
                 self.assertEqual(case.state("17"), expected)
@@ -4155,11 +4253,11 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_both_activation_surfaces_must_classify_as_the_product_11(self):
         """4111508065: the lane's product counts only when its app and runtime-adapter captures both classify as it."""
-        self.assertEqual(self.world().state("11"), "PASS")
-        split = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("11"), "PASS")
+        split = self.world(evaluate_rules=True)
         split.captures["lanes"]["claude"]["surfaces"]["app"]["product"] = "anthropic-claude-unattested"
         self.assertNotEqual(split.state("11"), "PASS")
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         missing.captures["lanes"]["claude"]["surfaces"]["app"].pop("product")
         self.assertNotEqual(missing.state("11"), "PASS")
 
@@ -4190,23 +4288,23 @@ class ScorecardCollectorTests(unittest.TestCase):
                              ("for no assignment", {"work_packets": [packet, {**packet, "assignment_id": "other"}]})):
             with self.subTest(name):
                 self.assertIsNotNone(work_packet_error({**sections, **change}))
-        self.assertEqual(self.world().state("20"), "PASS")
-        orphaned = self.world()  # 4111174699: terminal evidence whose claim no reservation holds
+        self.assertEqual(self.world(evaluate_rules=True).state("20"), "PASS")
+        orphaned = self.world(evaluate_rules=True)  # 4111174699: terminal evidence whose claim no reservation holds
         orphaned.consistency["tasks"][PAID_TASK]["terminal_evidence_without_reservation"] = 1
         self.assertEqual(orphaned.state("20"), "FAIL")
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         missing.consistency["tasks"][PAID_TASK]["work_packets"] = []
         self.assertEqual(missing.state("20"), "FAIL")
-        unread = self.world()
+        unread = self.world(evaluate_rules=True)
         del unread.consistency["tasks"][PAID_TASK]["work_packets"]
         self.assertEqual(unread.state("20"), "UNKNOWN")
 
     def test_success_needs_the_products_own_classification_to_status_mapping_10_20(self):
         """4106903245: DONE with a non-success terminal classification is not a success, by the product's own
         mapping (DefaultPrimaryApplication._record_from_projection)."""
-        self.assertEqual([self.world().state(key) for key in ("10", "20")], ["PASS", "PASS"])
+        self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("10", "20")], ["PASS", "PASS"])
         for task_id, key in (("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             task = case.tasks[task_id]
             readback = task["qualification_evidence"]
             readback["terminal_classification"] = "POLICY_BLOCKED"
@@ -4222,9 +4320,9 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertNotEqual(case.state(key), "PASS")
 
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
-        self.assertEqual(self.world().state("15"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("15"), "PASS")
         for rows in (("budgets",), ("spend",), ("budgets", "spend")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             for name in rows:
                 for item in case.consistency["tasks"][PAID_TASK][name]:
                     item["day" if name == "budgets" else "budget_day"] = "2026-09-11"  # the day before
@@ -4358,9 +4456,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(no_history.state("10"), "UNKNOWN")
 
     def test_real_products_11(self):
-        self.assertEqual(self.world().state("11"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("11"), "PASS")
         for lane, product in (("cursor", None), ("grok", None), ("openai", "xai-grok-cli")):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             readback = case.tasks[PAID_TASK]["qualification_evidence"]
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(
                 json.loads(json.dumps(readback).replace('"claude"', f'"{lane}"')))
@@ -4371,7 +4469,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         # Owner ruling 2026-09-26 ("Bind to pinned release"): grok and Claude CLI captures are held to Codex's
         # standard. Unattested: UNKNOWN on their own CLI transport, a substitution on another product's.
         def cli_lane(lane, product, transport):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
                 json.dumps(case.tasks[PAID_TASK]["qualification_evidence"]).replace('"claude"', f'"{lane}"')
                 .replace('"native-cli"', f'"{transport}"')))
@@ -4388,7 +4486,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertEqual(cli_lane(lane, product, "some-proxy"), "UNKNOWN")
         self.assertEqual(cli_lane("grok", "xai-grok-responses", "native-cli"), "FAIL")  # no longer a product
         def openai_lane(product, transport):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             readback = json.dumps(case.tasks[PAID_TASK]["qualification_evidence"])
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
                 readback.replace('"claude"', '"openai"').replace('"native-cli"', f'"{transport}"')))
@@ -4411,13 +4509,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
         # Captures must be the ones that gated the paid attempts, under the running bindings.
         for required in (["claude", "grok", "openai", "cursor"], ["claude", "grok"], None):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.captures["required_providers"] = required
             with self.subTest(required=required):
                 self.assertEqual(case.state("12"), "FAIL")
         # Freshness is measured from the collection's end: a capture observed during collection is current,
         # and one expiring within FRESH_FOR of the end is not.
-        during = self.world()
+        during = self.world(evaluate_rules=True)
         during.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
         for lane in during.captures["lanes"].values():
             lane["surfaces"]["app"]["observed_at"] = "2026-09-12T20:03:00+00:00"
@@ -4425,67 +4523,67 @@ class ScorecardCollectorTests(unittest.TestCase):
         during.captures["observed_at"] = "2026-09-12T20:04:00+00:00"
         during.consistency["captured_at"] = "2026-09-12T20:04:00+00:00"
         self.assertEqual(during.state("12"), "PASS")
-        expiring = self.world()
+        expiring = self.world(evaluate_rules=True)
         expiring.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
         expiring.captures["observed_at"] = expiring.consistency["captured_at"] = "2026-09-12T20:04:00+00:00"
         expiring.captures["lanes"]["claude"]["surfaces"]["app"]["expires_at"] = "2026-09-12T20:07:00+00:00"
         self.assertEqual(expiring.state("12"), "FAIL")
-        future_capture = self.world()
+        future_capture = self.world(evaluate_rules=True)
         for lane in future_capture.captures["lanes"].values():
             lane["surfaces"]["app"]["observed_at"] = "2026-09-12T21:00:00+00:00"
         self.assertNotEqual(future_capture.state("12"), "PASS")
         # Both surfaces gate the attempt: an app capture persisted after it does not attest the lane.
-        late_app = self.world()
+        late_app = self.world(evaluate_rules=True)
         first_attempt = late_app.tasks[PAID_TASK]["qualification_evidence"]["provider_attempts"][0]["recorded_at"]
         late_app.captures["lanes"]["claude"]["surfaces"]["app"]["recorded_at"] = (
             datetime.fromisoformat(first_attempt) + timedelta(seconds=4)).isoformat()
         self.assertEqual(late_app.state("11"), "UNKNOWN")
-        minted_later = self.world()
+        minted_later = self.world(evaluate_rules=True)
         minted_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"] = (
             datetime.fromisoformat(first_attempt) + timedelta(seconds=4)).isoformat()
         self.assertEqual(minted_later.state("11"), "UNKNOWN")
-        expired_during = self.world()
+        expired_during = self.world(evaluate_rules=True)
         expired_during.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["expires_at"] = (
             datetime.fromisoformat(first_attempt) + timedelta(seconds=14)).isoformat()
         self.assertEqual(expired_during.state("11"), "UNKNOWN")
         # A backdated observed_at does not help: the row's persisted insertion time must precede the attempts too.
-        published_later = self.world()
+        published_later = self.world(evaluate_rules=True)
         published_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = (
             datetime.fromisoformat(first_attempt) + timedelta(seconds=4)).isoformat()
         self.assertEqual(published_later.state("11"), "UNKNOWN")
-        unrecorded = self.world()
+        unrecorded = self.world(evaluate_rules=True)
         unrecorded.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = None
         self.assertEqual(unrecorded.state("11"), "UNKNOWN")
-        undated = self.world()
+        undated = self.world(evaluate_rules=True)
         del undated.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"]
         self.assertEqual(undated.state("11"), "UNKNOWN")
-        recreated = self.world()
+        recreated = self.world(evaluate_rules=True)
         recreated.rows[0]["Created"] = "2026-09-12T16:30:00Z"  # after the paid attempt (~16:20)
         self.assertEqual(recreated.state("11"), "UNKNOWN")
-        rebound = self.world()
+        rebound = self.world(evaluate_rules=True)
         rebound.captures["provider_bindings_sha256"] = "0" * 64
         self.assertEqual(rebound.state("11"), "UNKNOWN")
-        regenerated = self.world()
+        regenerated = self.world(evaluate_rules=True)
         regenerated.captures["generation_manifest_sha256"] = "0" * 64
         self.assertEqual(regenerated.state("11"), "UNKNOWN")
         # A capture that no longer verifies reports no product: stale evidence, not a substitution.
-        unverified = self.world()
+        unverified = self.world(evaluate_rules=True)
         unverified.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"] = False
         set_product(unverified.captures, "claude", None)
         self.assertEqual(unverified.state("11"), "UNKNOWN")
         # A verified, bound capture that names no product is still a substitution.
-        productless = self.world()
+        productless = self.world(evaluate_rules=True)
         set_product(productless.captures, "claude", None)
         self.assertEqual(productless.state("11"), "FAIL")
-        report = self.world().report(paid_thread=None, paid_rubric_path=None)
+        report = self.world(evaluate_rules=True).report(paid_thread=None, paid_rubric_path=None)
         self.assertEqual(row(report, "11")["status"], "UNKNOWN")
-        unavailable = self.world()
+        unavailable = self.world(evaluate_rules=True)
         unavailable.captures = None
         self.assertEqual(unavailable.state("11"), "UNKNOWN")
 
     def test_activation_captures_12(self):
-        self.assertEqual(self.world().state("12"), "PASS")
-        expiring = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("12"), "PASS")
+        expiring = self.world(evaluate_rules=True)
         expiring.captures["lanes"]["openai"]["surfaces"]["runtime_adapter"]["expires_at"] = "2026-09-12T10:01:00+00:00"
         self.assertEqual(expiring.state("12"), "FAIL")
         for mutate in (lambda c: c["lanes"]["claude"]["surfaces"].update(app=None),
@@ -4493,16 +4591,16 @@ class ScorecardCollectorTests(unittest.TestCase):
                        lambda c: c["lanes"]["grok"]["surfaces"]["app"].update(stage="DRY_RUN_OK"),
                        lambda c: c["lanes"]["openai"].update(binding_digest="not-a-digest"),
                        lambda c: c.update(provider_bindings_sha256="0" * 64)):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             mutate(case.captures)
             self.assertEqual(case.state("12"), "FAIL")
-        unbound = self.world()
+        unbound = self.world(evaluate_rules=True)
         unbound.captures["generation_manifest_sha256"] = "0" * 64
         self.assertEqual(unbound.state("12"), "UNKNOWN")
-        unavailable = self.world()
+        unavailable = self.world(evaluate_rules=True)
         unavailable.captures = None
         self.assertEqual(unavailable.state("12"), "UNKNOWN")
-        refused = self.world()
+        refused = self.world(evaluate_rules=True)
         refused.payload["langgraph_primary"]["provider_activation"]["combined_live_ready"] = False
         self.assertEqual(refused.state("12"), "FAIL")
 
@@ -4552,30 +4650,30 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertFalse(missing.exists())
 
     def test_monetary_15(self):
-        self.assertEqual(self.world().state("15"), "PASS")
-        over_budget = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("15"), "PASS")
+        over_budget = self.world(evaluate_rules=True)
         over_budget.consistency["tasks"][PAID_TASK]["budgets"][0]["day_held_microusd"] = 5000001
         self.assertEqual(over_budget.state("15"), "FAIL")
-        over_monitor = self.world()
+        over_monitor = self.world(evaluate_rules=True)
         over_monitor.payload["usage_monitor"]["daily_accounting"]["grok"].update(reserved_cost_usd=5.5, exposure_usd=5.5)
         # Review 4111174705: exposure is reconciled per reservation by the monitor ($0.50 probe over its $0.01 floor
         # plus a $0.75 work reservation is $1.25), never max(reported, reserved) = $0.76.
-        reconciled = self.world()
+        reconciled = self.world(evaluate_rules=True)
         reconciled.payload["usage_monitor"]["daily_accounting"]["grok"].update(
             daily_budget_usd=1.0, reported_cost_usd=0.5, reserved_cost_usd=0.76, exposure_usd=1.25)
         self.assertEqual(reconciled.state("15"), "FAIL")
         self.assertEqual(over_monitor.state("15"), "FAIL")
-        unsettled = self.world()
+        unsettled = self.world(evaluate_rules=True)
         unsettled.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = None
         self.assertEqual(unsettled.state("15"), "UNKNOWN")
         for change in ({"enabled": False}, {"paid_run_gate_open": False}, {"gate_state": "usage_disabled"},
                        {"missing_or_stale_providers": ["claude"]}, {"unsupported_providers": ["x"]},
                        {"all_configured_have_recent_signal": False}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.payload["usage_monitor"].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("15"), "UNKNOWN")
-        uncapped = self.world()
+        uncapped = self.world(evaluate_rules=True)
         # Real requests on a provider with no monitor budget and no signed enrolled budget (probes alone never are).
         uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(
             request_count=2, provider_request_count=1, reported_cost_usd=0.4)
@@ -4585,42 +4683,42 @@ class ScorecardCollectorTests(unittest.TestCase):
         for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"},
                        {"authority_digest": "e" * 64}, {"project_id": "other-project"}, {"day": "2026-09-11"},
                        {"task_id": "DIR-LG-OTHER"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency["tasks"][PAID_TASK]["budgets"][0].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("15"), "UNKNOWN")
         # An unverified usage receipt is no actual cost, for 15 and 20 alike.
-        unmetered = self.world()
+        unmetered = self.world(evaluate_rules=True)
         unmetered.consistency["tasks"][PAID_TASK]["spend"][0]["usage_verified"] = False
         report = unmetered.report()
         self.assertEqual([row(report, key)["status"] for key in ("15", "20")], ["UNKNOWN", "UNKNOWN"])
-        uncorrelated = self.world()
+        uncorrelated = self.world(evaluate_rules=True)
         uncorrelated.consistency["tasks"][PAID_TASK]["spend"][0]["request_correlated"] = False
         self.assertEqual(uncorrelated.state("15"), "UNKNOWN")
-        unmonitored = self.world()
+        unmonitored = self.world(evaluate_rules=True)
         del unmonitored.payload["usage_monitor"]
         self.assertEqual(unmonitored.state("15"), "UNKNOWN")
         # reported_cost_usd sums known costs only: attempts with unknown, unreserved cost are not zero.
-        unpriced = self.world()
+        unpriced = self.world(evaluate_rules=True)
         unpriced.payload["usage_monitor"]["daily_accounting"]["grok"].update(
             request_count=3, provider_request_count=3, cost_visibility_complete=False, reported_cost_usd=0.0,
             reserved_cost_usd=None)
         report = unpriced.report()
         self.assertEqual(row(report, "15")["status"], "UNKNOWN")
         self.assertIn("grok", row(report, "15")["explanation"])
-        idle = self.world()
+        idle = self.world(evaluate_rules=True)
         idle.payload["usage_monitor"]["daily_accounting"]["grok"].update(
             request_count=0, provider_request_count=0, cost_visibility_complete=False, reported_cost_usd=0.0,
             reserved_cost_usd=None)
         self.assertEqual(idle.state("15"), "PASS")
         # Probes alone (request_count, no real request) are never unpriced attempts either.
-        probes_only = self.world()
+        probes_only = self.world(evaluate_rules=True)
         probes_only.payload["usage_monitor"]["daily_accounting"]["grok"].update(
             request_count=3, usage_check_count=3, provider_request_count=0, cost_visibility_complete=False,
             reported_cost_usd=0.0, reserved_cost_usd=None)
         self.assertEqual(probes_only.state("15"), "PASS")
-        self.assertEqual(self.world().state("15", paid_thread=None, paid_rubric_path=None), "UNKNOWN")
-        unavailable = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("15", paid_thread=None, paid_rubric_path=None), "UNKNOWN")
+        unavailable = self.world(evaluate_rules=True)
         unavailable.consistency = None
         self.assertEqual(unavailable.state("15"), "UNKNOWN")
 
@@ -4749,60 +4847,60 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertEqual(row(report, "16")["status"], "PASS")
 
     def test_adopted_acceptance_17(self):
-        self.assertEqual(self.world().state("17"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("17"), "PASS")
         for change in ({"independent_reviewer": "Author-Login"}, {"security_reviewer": "AUTHOR-LOGIN"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.consistency["generation"]["adoption"].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("17"), "FAIL")
-        other = self.world()
+        other = self.world(evaluate_rules=True)
         other.consistency["generation"]["adoption"]["reviewed_source_commit"] = OTHER
         self.assertEqual(other.state("17"), "UNKNOWN")
-        fork = self.world()
+        fork = self.world(evaluate_rules=True)
         fork.consistency["generation"]["adoption"]["repository"] = "someone-else/director-orchestrator"
         self.assertEqual(fork.state("17"), "UNKNOWN")
-        provider = self.world()
+        provider = self.world(evaluate_rules=True)
         provider.consistency["generation"]["acceptance_mode"] = "provider-v2"
         self.assertEqual(provider.state("17"), "UNKNOWN")
-        unavailable = self.world()
+        unavailable = self.world(evaluate_rules=True)
         unavailable.consistency = None
         self.assertEqual(unavailable.state("17"), "UNKNOWN")
 
     def test_paid_run_20(self):
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         report = world.report()
         self.assertEqual(row(report, "20")["status"], "PASS")
         record = row(report, "20")["evidence"][0]["facts"]["records"][0]
         self.assertEqual((record["actual_cost_usd"], record["wall_seconds"]), (0.3, 30.0))
-        expensive = self.world()
+        expensive = self.world(evaluate_rules=True)
         expensive.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = 1200000
         self.assertEqual(expensive.state("20"), "FAIL")
-        slow = self.world()
+        slow = self.world(evaluate_rules=True)
         slow.add(task_entry(PAID_TASK, 20000, offline=False, text=slow.paid_text, answer="The audit answer is 42",
                             final_offset=65))
         self.assertEqual(slow.state("20"), "FAIL")
-        incorrect = self.world()
+        incorrect = self.world(evaluate_rules=True)
         incorrect.add(task_entry(PAID_TASK, 20000, offline=False, text=incorrect.paid_text, answer="No idea"))
         self.assertEqual(incorrect.state("20"), "FAIL")
-        edited = self.world()
+        edited = self.world(evaluate_rules=True)
         final = next(m for m in edited.threads[ts(20000)] if m.get("ts") == ts(20030))
         final["edited"] = {"user": BOT, "ts": ts(20090)}
         self.assertEqual(edited.state("20"), "UNKNOWN")
-        edited_receipt = self.world()
+        edited_receipt = self.world(evaluate_rules=True)
         edited_receipt.threads[ts(20000)][1]["edited"] = {"user": BOT, "ts": ts(20090)}
         self.assertEqual(edited_receipt.state("20"), "UNKNOWN")
         # Only the persisted provider answer is graded: the Slack text around it is not.
-        wrapped = self.world()
+        wrapped = self.world(evaluate_rules=True)
         wrapped.add(task_entry(PAID_TASK, 20000, offline=False, text=wrapped.paid_text, answer="The audit answer is 42"))
         wrapped.tasks[PAID_TASK]["assignment_outcomes"][0]["result"] = "No idea"
         self.assertNotEqual(wrapped.state("20"), "PASS")  # the reply is no longer the record's rendering
         # Answer text cut by the renderer's truncation never reached the owner: not graded.
-        truncated = self.world()
+        truncated = self.world(evaluate_rules=True)
         truncated.add(task_entry(PAID_TASK, 20000, offline=False, text=truncated.paid_text,
                                  answer="x" * 2600 + " The audit answer is 42"))
         self.assertEqual(truncated.state("20"), "FAIL")
         # A renderer that is not the candidate's cannot certify the rendering: unknown.
-        foreign_renderer = self.world()
+        foreign_renderer = self.world(evaluate_rules=True)
         foreign_renderer.candidate_files["src/director_orchestrator/primary_slack_delivery.py"] = b"# other"
         self.assertEqual(foreign_renderer.state("20"), "UNKNOWN")
         self.assertEqual(foreign_renderer.state("08"), "UNKNOWN")
@@ -4810,27 +4908,27 @@ class ScorecardCollectorTests(unittest.TestCase):
         wrapper_rubric = {"schema": "director-paid-answer-rubric/v1", "rubric_id": "fixture-wrapper",
                           "declared_at": "2020-01-01T00:00:00+00:00", "expected_answer_substrings": ["Actual USD cost"]}
         raw = json.dumps(wrapper_rubric).encode()
-        wrapper_world = self.world()
+        wrapper_world = self.world(evaluate_rules=True)
         wrapper_world.paid_rubric_path.write_bytes(raw)
         text = "DIRECTOR What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
         wrapper_world.add(task_entry(PAID_TASK, 20000, offline=False, text=text,
                                      answer="Actual USD cost: not recorded"))
         self.assertEqual(wrapper_world.state("20"), "FAIL")
         # A rubric the question already answers is satisfied by quoting it: not correctness.
-        quoted = self.world()
+        quoted = self.world(evaluate_rules=True)
         quoted.add(task_entry(PAID_TASK, 20000, offline=False, text=quoted.paid_text + " Is the answer is 42?",
                               answer="You asked: Is the answer is 42?"))
         self.assertEqual(quoted.state("20"), "FAIL")
-        simulated = self.world()
+        simulated = self.world(evaluate_rules=True)
         simulated.add(task_entry(PAID_TASK, 20000, text=simulated.paid_text))
         self.assertEqual(simulated.state("20"), "FAIL")
-        unsettled = self.world()
+        unsettled = self.world(evaluate_rules=True)
         unsettled.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = None
         report = unsettled.report()
         self.assertEqual(row(report, "20")["status"], "UNKNOWN")
         self.assertIn("actual_cost_usd", row(report, "20")["explanation"])
-        self.assertEqual(self.world().state("20", paid_rubric_path=None), "UNKNOWN")
-        unreadable = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("20", paid_rubric_path=None), "UNKNOWN")
+        unreadable = self.world(evaluate_rules=True)
         unreadable.failing.add(ts(20000))
         self.assertEqual(unreadable.state("20"), "UNKNOWN")
 
@@ -4856,7 +4954,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(len(report["checks"]), 20)
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, {"05", "19"})
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
-            self.assertIn("--channel", row(report, key)["explanation"])
+            self.assertIn("collector not yet trusted" if key in ("08", "11", "20") else "--channel",
+                          row(report, key)["explanation"])
         self.assertEqual(len({item.check_id for item in observations}), len(observations))
         text = json.dumps(report)
         for secret in (*SECRETS, CHANNEL_FIXTURE, OWNER, BOT):
@@ -4967,3 +5066,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]

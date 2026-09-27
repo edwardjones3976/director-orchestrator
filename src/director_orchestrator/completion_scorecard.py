@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
@@ -1173,8 +1174,8 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
                     "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
                     "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
-_CONSISTENCY_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation consistency (READ ONLY)"
-_CAPTURES_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation activation-captures"
+_CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
+_CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -2639,7 +2640,11 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         runtime_rows, runtime = _runtime(at, project, collection_end)
     except _SOURCE_ERRORS:
         return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
-                             "Docker Compose labels and Director /health", {}, at)], None
+                             "Docker Compose labels and Director /health", {}, at),
+                *[_observation(key, None, "collector not yet trusted",
+                               _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
+                               {}, at, candidate_sha=candidate_sha if key == "17" else None)
+                  for key in ("07", "08", "11", "12", "15", "17", "20")]], None
     try:  # the containers as the deployment probe saw them, re-inspected before the final cutoff
         state: tuple | None = _deployment_state(project, gateway)
         if not any(row[:2] == (runtime.container_id, runtime.image_id) for row in state):
@@ -2713,41 +2718,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                     paid = _paid_facts(t, paid_thread, runtime.runtime_sha)
                 except _SOURCE_ERRORS:
                     paid = None
-        task_ids = list(dict.fromkeys(x for x in ((paid or {}).get("task_id"), approval_task)
-                                      if isinstance(x, str) and _TASK.fullmatch(x)))[:12]
-
-        def in_image(command: str, *extra: str) -> dict | None:
-            try:
-                value = _run_json(["docker", "exec", runtime.container_id, "python", "-m",
-                                   "director_orchestrator.primary_generation", command, *extra], timeout=45)
-            except _SOURCE_ERRORS:
-                return None
-            return value if isinstance(value, dict) else None
-
-        consistency = in_image("consistency", *[part for task_id in task_ids for part in ("--task", task_id)])
-        captures = in_image("activation-captures")
-        # The in-image commands verify the generation manifest; its commit, not the image label,
-        # is what their evidence belongs to. Unverified or different: none of it attests this runtime.
-        generation = (consistency or {}).get("generation")
-        verified_commit = generation.get("candidate_commit") if isinstance(generation, dict) else None
-        verified_tree = generation.get("candidate_tree") if isinstance(generation, dict) else None
-        # The manifest-verified image must be the one Docker says is running, not only the same commit and tree.
-        verified_image = generation.get("image_id") if isinstance(generation, dict) else None
-        # Every binding the document carries, before any dependent check (08, 15, 17, 20) reads it: the verified
-        # commit, tree and image, the generation manifest the running container pins, and a read time inside this
-        # collection.
-        pin = runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
-        unbound = consistency is not None and not (
-            _same(verified_commit, runtime.runtime_sha) and _same(verified_tree, runtime.runtime_tree)
-            and _same(verified_image, runtime.image_id)
-            and _same(_commit_tree(runtime.runtime_sha), runtime.runtime_tree)
-            and _same((generation if isinstance(generation, dict) else {}).get("manifest_sha256"), pin)
-            and runtime.read_in_window(consistency.get("captured_at")))
-        if captures is not None and not (runtime.read_in_window(captures.get("observed_at"))
-                                         and _same(captures.get("generation_manifest_sha256"), pin)):
-            captures = None  # a captures report not read during this collection, or for another generation
-        if unbound or consistency is None:
-            consistency = captures = None  # captures carry no commit: without the snapshot they are unbound
+        consistency = captures = None
         if t is not None:
             try:
                 if approval_task is None:
@@ -2778,13 +2749,6 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             put([_monetary_observation(at, runtime, paid, consistency, cost)])
         except _SOURCE_ERRORS:
             unknown(("15",), "The monetary sources could not be evaluated; no retry was made.", _CONSISTENCY_SOURCE)
-        if unbound:
-            reason = ("The in-image generation commit, tree, image or manifest is unverified or differs from the "
-                      "running container (or the labelled commit's tree), or the snapshot was not read during this "
-                      "collection, so its "
-                      "consistency, acceptance, capture and settlement evidence cannot attest this runtime.")
-            unknown(("07", "08", "11", "12", "15", "20"), reason, _CONSISTENCY_SOURCE)
-            put([_observation("17", None, reason, _CONSISTENCY_SOURCE, {}, at, candidate_sha=candidate_sha)])
         if gateway_unbound and t is not None:
             unknown(("03", "08", "09", "10", "20"), "No running --gateway and single n8n of this deployment were "
                     "resolved, so Slack intake evidence cannot be bound to the relay that handled it.", _SLACK_SOURCE)
@@ -2800,6 +2764,11 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     finally:
         if t is not None:
             t.close()
+    # Final disposition: health, Slack and evaluator results cannot supply trusted reports.
+    unknown(("07", "08", "15", "20"), "collector not yet trusted", _CONSISTENCY_SOURCE)
+    unknown(("11", "12"), "collector not yet trusted", _CAPTURES_SOURCE)
+    put([_observation("17", None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
+                      candidate_sha=candidate_sha)])
     return list(found.values()), state
 
 
@@ -3114,16 +3083,6 @@ def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Obs
                          "and Ubuntu replica receipt, diffed against a main ancestor, shows no failure beyond the base's "
                          "failure set."),
                         str(source.resolve()), facts, at, candidate_sha=candidate)
-
-
-def _commit_tree(sha: str) -> str | None:
-    """GitHub's tree for a commit (GET only); None when unreadable."""
-    try:
-        value = _run_json(["gh", "api", f"repos/{REPOSITORY}/git/commits/{sha}", "--jq", "{tree: .tree.sha}"])
-    except _SOURCE_ERRORS:
-        return None
-    tree = value.get("tree") if isinstance(value, dict) else None
-    return tree if isinstance(tree, str) and re.fullmatch(r"[a-f0-9]{40}", tree) else None
 
 
 def _compare_status(base: str, head: str) -> str:
@@ -3555,7 +3514,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Collectors cover all twenty checks when their sources and selections are supplied; a missing selection or unavailable source stays UNKNOWN, and health counters alone can only fail 07 and 12.",
+                            "Checks 07, 08, 11, 12, 15, 17 and 20 remain UNKNOWN pending the trusted-collection follow-up; other missing selections or unavailable sources also stay UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
@@ -3699,3 +3658,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
