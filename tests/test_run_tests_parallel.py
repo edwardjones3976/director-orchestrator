@@ -1,4 +1,3 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -296,28 +295,6 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertIn("AssertionError: [message redacted]", rendered)
         self.assertIn("FAILED (failures=1)", rendered)
 
-    def test_platform_shard_defaults_and_overrides(self):
-        parse_args = runner.argparse.ArgumentParser.parse_args
-        for platform in ("nt", "posix"):
-            for cpus, windows, linux in ((None, 1, 1), (1, 1, 1), (16, 2, 4), (32, 4, 8), (64, 4, 8)):
-                for environment, arguments, expected in (
-                    ({}, [], windows if platform == "nt" else linux),
-                    ({"DIRECTOR_TEST_SHARDS": "3"}, [], 3),
-                    ({"DIRECTOR_TEST_SHARDS": "3"}, ["--shards", "5"], 5),
-                ):
-                    with self.subTest(platform=platform, cpus=cpus, environment=environment, arguments=arguments):
-                        def check_args(parser, argv):
-                            parsed = parse_args(parser, argv)
-                            self.assertEqual(expected, parsed.shards)
-                            return parsed
-
-                        with patch.object(runner.os, "name", platform), \
-                                patch.object(runner.os, "cpu_count", return_value=cpus), \
-                                patch.dict(runner.os.environ, environment, clear=True), \
-                                patch.object(runner.argparse.ArgumentParser, "parse_args", check_args), \
-                                patch.object(runner.subprocess, "call", return_value=0):
-                            self.assertEqual(0, runner.main(["--serial", *arguments]))
-
     def test_serial_escape_hatch_is_exact(self):
         with patch.object(runner.subprocess, "call", return_value=7) as call:
             self.assertEqual(7, runner.main(["--serial"]))
@@ -329,4 +306,3 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:20 UTC | END]]

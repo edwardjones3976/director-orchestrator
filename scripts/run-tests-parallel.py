@@ -1,4 +1,3 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -251,12 +250,9 @@ def positive_int(value):
 
 
 def main(argv=None):
-    # Windows spawns need headroom while Linux shards share the same host.
-    cpu_count = os.cpu_count() or 1
-    default_shards = max(1, min(4, cpu_count // 8)) if os.name == "nt" else max(1, min(8, cpu_count // 4))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shards", type=positive_int,
-                        default=os.environ.get("DIRECTOR_TEST_SHARDS", str(default_shards)))
+                        default=os.environ.get("DIRECTOR_TEST_SHARDS", str(max(1, min(8, (os.cpu_count() or 1) // 4)))))
     parser.add_argument("--timeout", type=positive_int, default=1800, help="seconds per shard")
     parser.add_argument("--serial", action="store_true")
     parser.add_argument("--record-durations", action="store_true")
@@ -338,4 +334,3 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:20 UTC | END]]
