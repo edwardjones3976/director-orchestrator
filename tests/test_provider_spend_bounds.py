@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
@@ -335,6 +337,7 @@ class UnpricedRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def test_owner_not_created_reconciliation_releases_only_its_effect(self):
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = settlement.ProviderSpendSettlementTests()._world(directory)
+            settings = replace(settings, gemini_daily_request_limit=1)
             engine = OrchestrationEngine(settings, store)
             effect = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
             record_provider_effect_observation(record, assignment, effect_key=effect,
@@ -361,13 +364,14 @@ class UnpricedRecoveryTests(unittest.IsolatedAsyncioTestCase):
             restarted = OrchestrationEngine(settings, store)
             restarted._settle_reconciled_spend(store.get(record.task_id))
             restarted._settle_reconciled_spend(store.get(record.task_id))
-            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 0))
+            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (0, 0))
+            self.assertEqual(len(restarted.provider_spend.reservations(assignment.agent)), 1)
             self.assertEqual(restarted.provider_spend.exposure(ProviderName.GROK), (1, 0.5))
             record = store.get(record.task_id)
             next_effect = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
             self.assertNotEqual(next_effect, effect)
             restarted._reserve_provider_daily_spend(assignment, effect_key=next_effect)
-            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (2, 1))
+            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 1))
 
     def test_owner_created_resolution_keeps_hold_until_terminal_settlement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -404,3 +408,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]

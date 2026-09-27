@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
@@ -135,6 +137,7 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(phase=phase, failure=failure), tempfile.TemporaryDirectory() as directory:
                     settings, store, record, assignment = self._world(
                         directory, max_hops=4, max_revisions=1)
+                    settings = replace(settings, openai_api_key="")
                     engine = OrchestrationEngine(settings, store)
                     engine._status_post = AsyncMock()
                     adapter = AsyncMock()
@@ -171,20 +174,210 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
                     key = stopped.error.split(":", 1)[1]
                     self.assertIn(key, engine.provider_spend.unreconciled(assignment.agent, stale_after=timedelta(0)))
-                    contact = stopped.provider_contact_attempts[-1]
-                    self.assertEqual(contact.phase, phase)
-                    self.assertEqual(contact.outcome, "ambiguous_dispatch")
                     if failure != "ambiguous_submit":
                         expected = original if phase == "dispatch" else revised
-                        self.assertEqual(contact.run_id, expected.run_id)
+                        self.assertEqual(stopped.provider_runs[-1].run_id, expected.run_id)
                         self.assertEqual(stopped.provider_runs[-1].result, expected.result)
+                        self.assertTrue(stopped.provider_runs[-1].raw["spend_settlements"][key]["pending"])
+                        self.assertFalse(any(item.outcome == "ambiguous_dispatch"
+                                             for item in stopped.provider_contact_attempts))
+                    else:
+                        self.assertEqual(stopped.provider_contact_attempts[-1].outcome, "ambiguous_dispatch")
                     self.assertFalse(await engine._execute_assignment(stopped, assignment))
                     await engine.run(record.task_id)
-                    self.assertEqual(store.get(record.task_id).status, TaskStatus.OWNER_DECISION_REQUIRED)
-                    self.assertIn(key, engine.provider_spend.unreconciled(
-                        assignment.agent, stale_after=timedelta(0)))
+                    recovered = store.get(record.task_id)
+                    if failure != "ambiguous_submit":
+                        self.assertFalse(recovered.provider_runs[-1].raw["spend_settlements"][key]["pending"])
+                        # Exercise the preserved outcome through ordinary acceptance
+                        # after run() has repaired accounting, with no new provider call.
+                        engine.director.review = AsyncMock(side_effect=_ReviewOutOfScope())
+                        with self.assertRaises(_ReviewOutOfScope):
+                            await engine._execute_assignment(recovered, assignment)
+                        self.assertEqual(engine.director.review.call_args.args[1], expected.result)
+                    else:
+                        self.assertTrue(recovered.error.startswith("spend_settlement_failed:"))
                     adapter.dispatch.assert_awaited_once()
                     self.assertEqual(adapter.revise.await_count, int(phase == "revision"))
+
+    async def test_workload_finalization_failure_retains_submitted_run_and_spend(self):
+        from director_orchestrator.models import ReviewDecision, ReviewVerdict
+
+        for phase in ("dispatch", "revision"):
+            for failure in (False, RuntimeError("workload storage unavailable")):
+                with self.subTest(phase=phase, failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                    settings, store, record, assignment = self._world(directory, max_hops=4, max_revisions=1)
+                    settings = replace(settings, openai_api_key="")
+                    engine = OrchestrationEngine(settings, store)
+                    engine._status_post = AsyncMock()
+                    adapter = AsyncMock()
+                    adapter.dispatch.return_value = ProviderRun(
+                        provider=assignment.agent, run_id="initial", status="completed",
+                        result="initial evidence", raw={"usage": {"cost": 0.1}})
+                    adapter.revise.return_value = ProviderRun(
+                        provider=assignment.agent, run_id="revised", status="completed",
+                        result="revised evidence", raw={"usage": {"cost": 0.2}})
+                    engine.providers[assignment.agent] = adapter
+                    engine.director.review = AsyncMock(return_value=ReviewDecision(
+                        verdict=ReviewVerdict.REVISE, summary="Need evidence",
+                        revision_prompt="Add independent fixture evidence",
+                        retry_basis={
+                            "failed_acceptance_indexes": [0],
+                            "prior_result_digest": _key("initial evidence"),
+                            "corrected_approach": "Add independent fixture evidence",
+                            "evidence_refs": [{"acceptance_index": 0, "evidence_index": 0,
+                                               "evidence_digest": _key("new fixture")}],
+                        }))
+                    engine._workload_policy_applies = lambda _: True
+                    engine._reserve_workload_dispatch = AsyncMock(return_value=object())
+                    outcomes = [failure] if phase == "dispatch" else [True, failure]
+                    engine._finalize_workload_dispatch = AsyncMock(side_effect=outcomes)
+                    with patch("director_orchestrator.engine.evaluate_retry", return_value=SimpleNamespace(violations=())):
+                        if isinstance(failure, Exception):
+                            with self.assertRaises(RuntimeError):
+                                await engine._execute_assignment(record, assignment)
+                        else:
+                            self.assertFalse(await engine._execute_assignment(record, assignment))
+                    saved = store.get(record.task_id)
+                    submitted = saved.provider_runs[-1]
+                    self.assertEqual(submitted.run_id, "initial" if phase == "dispatch" else "revised")
+                    self.assertEqual(submitted.evidence_source, "provider_authenticated")
+                    effects = [item.effect_key for item in saved.task_effect_ledger
+                               if item.kind == "provider_intent" and item.phase == phase]
+                    self.assertEqual(len(effects), 1)
+                    # Settled without a known charge remains unreconciled immediately,
+                    # even before the stale-reservation timeout has elapsed.
+                    self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR), effects)
+                    adapter.dispatch.assert_awaited_once()
+                    self.assertEqual(adapter.revise.await_count, int(phase == "revision"))
+                    self.assertEqual(len(saved.provider_runs), 1 + int(phase == "revision"))
+
+    def test_hold_cas_merges_current_record_and_binds_reconciliation(self):
+        from director_orchestrator.approvals import reserve_provider_effect, StaleApproval
+        from director_orchestrator.models import AmbiguousDispatchResolution
+
+        for stale_writes in (1, 2):
+            with self.subTest(stale_writes=stale_writes), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                store.save(record)
+                run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                                  run_id="acknowledged-run", status="completed", result="preserved evidence")
+                real_save = store.save
+                conflicts = 0
+
+                def race(candidate):
+                    nonlocal conflicts
+                    if conflicts < stale_writes:
+                        conflicts += 1
+                        current = store.get(record.task_id)
+                        current.revision_count = conflicts
+                        real_save(current)
+                    return real_save(candidate)
+
+                with patch.object(store, "save", side_effect=race), patch.object(
+                    engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")
+                ):
+                    self.assertFalse(engine._charge_spend(assignment.agent, key, 0.25,
+                                                         record=record, assignment=assignment, run=run))
+                held = store.get(record.task_id)
+                self.assertEqual(held.revision_count, stale_writes)
+                self.assertEqual(held.provider_runs[-1].result, run.result)
+                for resolution, run_id in (("created", "different-run"), ("not_created", None)):
+                    with self.assertRaises(StaleApproval):
+                        engine.apply_dispatch_reconciliation(held, AmbiguousDispatchResolution(
+                            owner_user_id=held.intake.user_id, assignment_sequence=assignment.sequence,
+                            resolution=resolution, run_id=run_id, note="Owner supplied reconciliation evidence"))
+                engine.apply_dispatch_reconciliation(held, AmbiguousDispatchResolution(
+                    owner_user_id=held.intake.user_id, assignment_sequence=assignment.sequence,
+                    resolution="created", run_id=run.run_id, note="Owner confirmed the same request"))
+                self.assertEqual(len(held.provider_runs), 1)
+                self.assertTrue(engine._retry_spend_settlements(held))
+                self.assertIsNone(held.error)
+                self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0.25))
+
+    def test_charge_commit_before_hold_clear_is_idempotent(self):
+        from director_orchestrator.approvals import reserve_provider_effect
+        from director_orchestrator.store import StaleTaskWrite
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                              run_id="retained-run", status="completed", result="retained result")
+            with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
+                self.assertFalse(engine._charge_spend(assignment.agent, key, 0.25,
+                                                     record=record, assignment=assignment, run=run))
+            with patch.object(store, "save", side_effect=StaleTaskWrite("concurrent update")):
+                self.assertFalse(engine._retry_spend_settlements(store.get(record.task_id)))
+            restarted = OrchestrationEngine(settings, store)
+            held = store.get(record.task_id)
+            self.assertTrue(held.provider_runs[-1].raw["spend_settlements"][key]["pending"])
+            self.assertTrue(restarted._retry_spend_settlements(held))
+            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 0.25))
+            self.assertEqual(held.provider_runs[-1].result, "retained result")
+
+    def test_multiple_holds_survive_partial_recovery_and_restart(self):
+        from director_orchestrator.approvals import reserve_provider_effect
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            for phase, cost in (("dispatch", None), ("revision", 0.25)):
+                key = reserve_provider_effect(record, assignment, phase=phase, max_task_budget_usd=10)
+                engine.provider_spend.reserve(provider=assignment.agent, effect_key=key,
+                                              estimated_cost_usd=0.1, request_limit=2, budget_usd=1)
+                run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                                  run_id=phase + "-run", status="completed", result=phase + " evidence")
+                with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
+                    self.assertFalse(engine._charge_spend(assignment.agent, key, cost,
+                                                         record=record, assignment=assignment, run=run))
+            real_charge = engine.provider_spend.record_charge
+
+            def partial(**kwargs):
+                if kwargs["actual_cost_usd"] is not None:
+                    raise sqlite3.OperationalError("locked")
+                return real_charge(**kwargs)
+
+            with patch.object(engine.provider_spend, "record_charge", side_effect=partial):
+                self.assertFalse(engine._retry_spend_settlements(record))
+            restarted = OrchestrationEngine(settings, store)
+            held = store.get(record.task_id)
+            with patch.object(restarted.provider_spend, "record_charge", wraps=restarted.provider_spend.record_charge) as charge:
+                self.assertTrue(restarted._retry_spend_settlements(held))
+            self.assertEqual(charge.call_count, 1)
+            self.assertEqual(charge.call_args.kwargs["actual_cost_usd"], 0.25)
+            self.assertIsNone(held.error)
+            self.assertEqual([run.result for run in held.provider_runs], ["dispatch evidence", "revision evidence"])
+
+    def test_preexisting_acknowledged_hold_recovers_without_owner_reconciliation(self):
+        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+        from director_orchestrator.models import ProviderContactAttempt
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            record_provider_effect_observation(record, assignment, effect_key=key,
+                                               phase="dispatch", outcome="ambiguous")
+            run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                              run_id="old-acknowledged-run", status="completed", result="old preserved evidence",
+                              raw={"usage": {"cost": 0.25}})
+            record.provider_runs.append(run)
+            record.error = "spend_settlement_failed:" + key
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.provider_contact_attempts.append(ProviderContactAttempt(
+                assignment_sequence=assignment.sequence, provider=assignment.agent, ordinal=1,
+                phase="dispatch", outcome="ambiguous_dispatch", run_id=run.run_id, error=record.error))
+            store.save(record)
+            self.assertTrue(engine._retry_spend_settlements(record))
+            self.assertEqual(record.provider_runs[-1].result, run.result)
+            self.assertIsNone(record.error)
+            self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0.25))
 
     def test_not_created_settles_only_exact_reservation_once(self) -> None:
         from director_orchestrator.approvals import (
@@ -220,8 +413,9 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                         # Spend commits, but the task receipt does not: replay must
                         # update the same reservation and append only one receipt.
                         with patch.object(store, "save", side_effect=sqlite3.OperationalError("locked")):
-                            with self.assertRaises(sqlite3.OperationalError):
-                                engine._settle_reconciled_spend(record)
+                            self.assertFalse(engine._settle_reconciled_spend(record))
+                        # Returning normally lets dispatch-reconciliation schedule run().
+                        self.assertEqual(store.get(record.task_id).status, TaskStatus.QUEUED)
                     self.assertTrue(engine._settle_reconciled_spend(store.get(record.task_id)))
                     self.assertTrue(engine._settle_not_created_dispatches(store.get(record.task_id)))
                 self.assertEqual(charge.call_count, 2 if crash else 1)
@@ -537,3 +731,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]

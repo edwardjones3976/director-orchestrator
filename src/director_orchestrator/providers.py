@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
@@ -87,8 +89,8 @@ class ProviderDailySpendLedger:
     """Reserve daily supplemental-provider requests before paid submission.
 
     Reservations are conservative and idempotent by external-effect key. They are
-    never released after a failed or ambiguous call because the provider may have
-    accepted work and because under-counting is less safe than over-counting.
+    retained after a failed or ambiguous call. Only confirmed not-created
+    requests are released, with their original rows retained for audit.
     """
 
     _EFFECT_KEY = re.compile(r"^[0-9a-f]{64}$")
@@ -155,6 +157,10 @@ class ProviderDailySpendLedger:
                 connection.execute(
                     "ALTER TABLE provider_daily_spend_reservations ADD COLUMN requested_cost_usd REAL"
                 )
+            if "released_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE provider_daily_spend_reservations ADD COLUMN released_at TEXT"
+                )
 
     @staticmethod
     def _exposure(connection: sqlite3.Connection, provider: ProviderName, utc_day: str) -> tuple[int, float]:
@@ -166,7 +172,7 @@ class ProviderDailySpendLedger:
             """SELECT COUNT(*),
                       COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd)), 0)
             FROM provider_daily_spend_reservations
-            WHERE provider = ? AND utc_day = ?""",
+            WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
             (provider.value, utc_day),
         ).fetchone()
         return int(count), float(exposure)
@@ -217,9 +223,10 @@ class ProviderDailySpendLedger:
             updated = connection.execute(
                 """UPDATE provider_daily_spend_reservations
                 SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
+                    released_at = CASE WHEN ? > 0 THEN NULL ELSE released_at END,
                     settled_at = COALESCE(settled_at, ?)
                 WHERE provider = ? AND effect_key = ?""",
-                (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
+                (float(actual_cost_usd), float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
             ).rowcount
             if not updated:
                 connection.execute(
@@ -229,6 +236,25 @@ class ProviderDailySpendLedger:
                     (provider.value, effect_key, observed_at.date().isoformat(),
                      observed_at.isoformat(), float(actual_cost_usd), observed_at.isoformat()),
                 )
+
+    def release_not_created(self, *, provider: ProviderName, effect_key: str) -> None:
+        """Exclude a confirmed absent request from both ceilings, retaining its row."""
+        if provider not in self._SUPPORTED or not self._EFFECT_KEY.fullmatch(effect_key):
+            raise ValueError("release requires a supplemental provider and canonical effect key")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT actual_cost_usd FROM provider_daily_spend_reservations
+                WHERE provider = ? AND effect_key = ?""", (provider.value, effect_key),
+            ).fetchone()
+            if row is None or row[0] != 0:
+                raise ValueError("not-created release requires an existing zero-charge reservation")
+            connection.execute(
+                """UPDATE provider_daily_spend_reservations
+                SET released_at = COALESCE(released_at, ?)
+                WHERE provider = ? AND effect_key = ?""",
+                (datetime.now(timezone.utc).isoformat(), provider.value, effect_key),
+            )
 
     def unreconciled(
         self, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
@@ -243,7 +269,7 @@ class ProviderDailySpendLedger:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL""",
+                WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL AND released_at IS NULL""",
                 (provider.value, observed_at.date().isoformat()),
             ).fetchall()
         return [str(key) for key, settled_at, recorded_at in rows
@@ -285,12 +311,14 @@ class ProviderDailySpendLedger:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                """SELECT utc_day, COALESCE(requested_cost_usd, estimated_cost_usd), serialized
+                """SELECT utc_day, COALESCE(requested_cost_usd, estimated_cost_usd), serialized, released_at
                 FROM provider_daily_spend_reservations
                 WHERE provider = ? AND effect_key = ?""",
                 (provider.value, effect_key),
             ).fetchone()
             if existing is not None:
+                if existing[3] is not None:
+                    raise ProviderReservationIdentityConflict("Released requests require a new effect key")
                 if (existing[0] != utc_day or bool(existing[2]) != serialize
                         or abs(float(existing[1]) - requested_cost_usd) > 1e-9):
                     raise ProviderReservationIdentityConflict(
@@ -302,7 +330,7 @@ class ProviderDailySpendLedger:
                 pending = connection.execute(
                     """SELECT 1 FROM provider_daily_spend_reservations
                     WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL
-                    AND serialized = 1 AND legacy = 0 LIMIT 1""",
+                    AND serialized = 1 AND legacy = 0 AND released_at IS NULL LIMIT 1""",
                     (provider.value, utc_day),
                 ).fetchone()
                 if pending:
@@ -361,7 +389,7 @@ class ProviderDailySpendLedger:
             count, reserved = connection.execute(
                 """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
                 FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ?""",
+                WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
                 (provider.value, observed_at.date().isoformat()),
             ).fetchone()
         return int(count), float(reserved)
@@ -1787,3 +1815,5 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]

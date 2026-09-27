@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
@@ -55,7 +57,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.packet_results import PacketResultProgression
+from director_orchestrator.packet_results import DirectorPacketResultConsumer, PacketResultProgression
 from director_orchestrator.packet_contracts import load_json_document
 from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.parallel_dispatch import MemberState
@@ -357,6 +359,18 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(consumer.calls, 0)
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertFalse(await engine._route_live_dispatch(stopped, assignment))
+        self.assertEqual(transport.sends, 1)
+        self.assertTrue(engine._retry_spend_settlements(stopped))
+        with patch.object(activation.runtime, "run_packet", side_effect=AssertionError("must consume preserved result")), patch.object(
+            consumer, "consume", side_effect=DirectorPacketResultConsumer().consume
+        ) as consume, patch.object(engine.provider_spend, "record_charge") as recharged:
+            await engine._route_live_dispatch(stopped, assignment)
+        self.assertEqual(consume.call_count, 1)
+        recharged.assert_not_called()
+        self.assertIsNone(store.get(record.task_id).error)
+        recovered = store.get(record.task_id).provider_runs[-1]
+        self.assertEqual(recovered.run_id, result["run_reference"])
+        self.assertEqual(recovered.raw["packet_result_digest"], document_digest(result))
         self.assertEqual(transport.sends, 1)
 
     async def test_missing_packet_authority_fails_closed_without_legacy_dispatch(
@@ -961,6 +975,9 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         store.save(late)
+        original_reservations = dict(engine.provider_spend.reservations(assignment.agent))
+        self.assertEqual(len(original_reservations), 2)
+        packet_key, = set(original_reservations) - {other}
         real_charge = engine.provider_spend.record_charge
 
         def charge(**kwargs):
@@ -978,6 +995,21 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertEqual(transport.sends, 1)
         self.assertEqual(consumer.calls, 0)
+        self.assertEqual(stopped.provider_runs[-1].raw["settlement_result_packet"], result)
+        with patch.object(engine.provider_spend, "record_charge", wraps=real_charge) as retry_charge:
+            self.assertTrue(engine._retry_spend_settlements(stopped))
+        retry_charge.assert_called_once()
+        self.assertEqual(retry_charge.call_args.kwargs["effect_key"], packet_key)
+        self.assertEqual(retry_charge.call_args.kwargs["actual_cost_usd"], 0.60)
+        with patch.object(activation.runtime, "run_packet", side_effect=AssertionError("must not reconcile again")), patch.object(
+            engine.provider_spend, "reserve", side_effect=AssertionError("must reuse original reservation")
+        ):
+            await engine._route_live_dispatch(stopped, assignment)
+        self.assertEqual(consumer.calls, 1)
+        self.assertEqual(dict(engine.provider_spend.reservations(assignment.agent)), original_reservations)
+        # The unrelated $0.50 hold remains; only the original packet is charged $0.60.
+        self.assertEqual(engine.provider_spend.exposure(assignment.agent), (2, 1.10))
+        self.assertEqual(transport.sends, 1)
 
     async def test_blocking_sync_readback_times_out_without_freezing_or_redispatch(
         self,
@@ -1172,6 +1204,12 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine.director.plan.assert_not_awaited()
 
     async def test_parallel_settlement_failure_keeps_result_and_stops_replay(self):
+        await self._parallel_settlement_failure()
+
+    async def test_parallel_cancellation_propagates_when_settlement_fails(self):
+        await self._parallel_settlement_failure(cancel=True)
+
+    async def _parallel_settlement_failure(self, *, cancel=False):
         assignments = [
             Assignment(
                 sequence=1,
@@ -1264,6 +1302,16 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         engine._publish_delegation = AsyncMock(return_value=True)
         stored, _ = store.create(record)
 
+        if cancel:
+            with patch("director_orchestrator.engine.asyncio.to_thread", new=AsyncMock(side_effect=asyncio.CancelledError)), patch.object(
+                engine, "_settle_packet_spend", return_value=False
+            ) as settle:
+                with self.assertRaises(asyncio.CancelledError):
+                    await engine._dispatch_parallel_packet_batch(stored)
+            self.assertGreater(settle.call_count, 0)
+            self.assertEqual(consumer.calls, 0)
+            return
+
         with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
             self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
         stopped = store.get(record.task_id)
@@ -1273,6 +1321,19 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("settlement_result_packet", stopped.provider_runs[-1].raw)
         self.assertEqual(consumer.calls, 0)
         self.assertFalse(await engine._dispatch_parallel_packet_batch(stopped))
+        self.assertEqual(transports["gemini"].sends, 1)
+        self.assertEqual(transports["openai"].sends, 1)
+        batch = engine.parallel_dispatch.find_latest_batch(record.task_id, tuple(
+            hashlib.sha256(work["idempotency_key"].encode()).hexdigest() for work in packets.values()
+        ))
+        self.assertIsNotNone(batch)
+        self.assertTrue(all(member.state == MemberState.SUCCEEDED for member in batch.members))
+        self.assertTrue(engine._retry_spend_settlements(stopped))
+        # The terminal FAILED packet remains a terminal execution result: both
+        # members succeeded in returning evidence, and accounting cannot change it.
+        self.assertFalse(await engine._dispatch_parallel_packet_batch(stopped))
+        self.assertEqual(consumer.calls, 2)
+        self.assertEqual(store.get(record.task_id).status, TaskStatus.BLOCKED)
         self.assertEqual(transports["gemini"].sends, 1)
         self.assertEqual(transports["openai"].sends, 1)
 
@@ -1535,3 +1596,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
