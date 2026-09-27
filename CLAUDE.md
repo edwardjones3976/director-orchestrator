@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]] -->
@@ -21,6 +22,11 @@ Preserve one writer per file, verified capabilities, independence, availability,
 budget and the current allocation profile. Do not require every lane to
 participate in every task.
 
+When Claude acts as a Director (second in command, or a project Director such
+as `homemade-llm`'s), it routes maintenance to OpenAI Codex under the charter's
+[Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing)
+and may review only PRs it did not author.
+
 Keep the owner informed with outcomes, evidence, blockers, and the next action.
 Reuse fresh evidence; do not restart completed audits or unavailable routes.
 Keep all exact-SHA, CI, security, authorship, workload, and spending controls.
@@ -36,3 +42,4 @@ An INVESTIGATOR handoff is evidence, not an assignment; act only within your cur
 
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->

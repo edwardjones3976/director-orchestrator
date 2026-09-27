@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:16 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]] -->
@@ -154,7 +155,7 @@ All 19 figures are provider-reported and were read by the Director `[verified, r
 |---|---|---|
 | 1 | Project and assignment IDs | Top of this report |
 | 2 | Objective, scope, categorized status | Top of this report and the M0 table |
-| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's base `052553f`; current `main` `c432722` (PR #288, merged 2026-09-26 21:20 UTC) `[verified, git]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
+| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's starting base `052553f`; prior reconciliation base `c432722` (PR #288, merged 2026-09-26 21:20 UTC); current `main` `0ead1cb` after #297 merged `[verified, git 2026-09-27 01:26 UTC]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
 | 4 | Provider participation, unavailable providers, drafts or simulations | Every paid call has a receipt (M0 paid spend table). Unavailable during M0: Grok Build CLI (HTTP 402, D-009) and GitHub Copilot (out of quota, D-005). No draft, simulation or predicted-position content. |
 | 5 | Target and actual provider ledgers (assignment and rolling 20) | **Unavailable.** The engineering-workload ledger stops at 2026-09-12, so the rolling-20 mix is UNKNOWN. |
 | 6 | Moderator, Participant and Director actions, OpenAI vote | Director actions are recorded in the decision log (O-, D- rows). **Not applicable:** no committee vote was held in M0, and no OpenAI vote was cast. |
@@ -243,3 +244,4 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:16 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]] -->
