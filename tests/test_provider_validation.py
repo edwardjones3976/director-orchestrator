@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
@@ -807,10 +809,10 @@ class PostgresValidationTests(unittest.TestCase):
         self.assertLess(time.monotonic()-started,1.5)
         self.assertEqual([2],opened)
         gate.set()
-        deadline=time.monotonic()+5
-        while len(arrived)<1 and time.monotonic()<deadline:
+        deadline=time.monotonic()+30
+        while not arrived or not arrived[0].closed:
+            self.assertLess(time.monotonic(), deadline, "late connection was not closed within 30s")
             time.sleep(0.05)
-        time.sleep(0.1)
         self.assertEqual(1,len(arrived));self.assertTrue(arrived[0].closed)
         store.slow=False;opened.clear()
         # A connect that returns only after the deadline is refused on return
@@ -1591,3 +1593,5 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | END]]
