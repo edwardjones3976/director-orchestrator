@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
@@ -35,7 +36,7 @@ never post them to Slack.
 
 ## Director maintenance routing
 
-Every Director (the ChatGPT/Codex Director, Claude as second in command, and any
+Every Director (the ChatGPT/Codex Director and any explicitly owner-appointed
 project Director) sends maintenance, meaning review-finding fixes, record and
 document inconsistencies, CI fixes, and provider connection or plumbing
 problems, to OpenAI Codex, handed over through the Codex CLI (`codex exec` with a
@@ -232,3 +233,4 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]] -->

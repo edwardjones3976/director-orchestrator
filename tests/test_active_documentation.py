@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]]
@@ -13,6 +14,44 @@ SPEC.loader.exec_module(guard)
 
 
 class ActiveDocumentationTests(unittest.TestCase):
+    def test_bootstrap_and_pr246_docs_do_not_assign_claude_standing_leadership(self):
+        bootstrap = ROOT / "docs/templates/project-bootstrap"
+        surfaces = [
+            ROOT / "docs/director-user-guide.md",
+            ROOT / "docs/langgraph-primary-operations.md",
+            ROOT / "docs/project-bootstrap-protocol.md",
+            *sorted(bootstrap.glob("*")),
+        ]
+        for path in surfaces:
+            if not path.is_file():
+                continue
+            text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+            with self.subTest(surface=path.name):
+                for stale in (
+                    "claude is the director", "claude is the acting director",
+                    "claude holds all three functions", "claude owns moderator",
+                    "claude as second in command", "acting project director | claude",
+                    "single existing claude advisory vote", "claude's one vote",
+                ):
+                    self.assertNotIn(stale, text)
+        for name in ("intake.md", "project-profile.yaml"):
+            with self.subTest(template=name):
+                text = (bootstrap / name).read_text(encoding="utf-8")
+                self.assertIn("project-bootstrap-protocol.md#provider-fit-menu", text)
+                self.assertIn("<ChatGPT/Codex Director or owner-appointed project Director>", text)
+        profile = (bootstrap / "project-profile.yaml").read_text(encoding="utf-8")
+        director = profile.split("\n  director:\n", 1)[1].split("\n  lanes:", 1)[0]
+        self.assertNotIn('provider: "claude"', director)
+
+    def test_owner_local_adoption_is_documented_as_owner_signed(self):
+        text = " ".join((ROOT / "docs/langgraph-primary-operations.md").read_text(
+            encoding="utf-8"
+        ).split())
+        self.assertIn("owner-signed, not provider-signed `owner-local-evidence-v1`", text)
+        self.assertNotIn("unsigned `owner-local-evidence-v1`", text)
+        self.assertIn("`load_pinned_owner_local_adoption` rejects unsigned documents", text)
+        self.assertIn("`owner_adoption` attestation", text)
+
     def test_current_active_documents(self):
         self.assertEqual([], guard.check_tree(ROOT))
 
@@ -94,3 +133,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]]
