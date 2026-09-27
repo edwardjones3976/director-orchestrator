@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | BEGIN]]
 """Select a narrow CI rerun only after a verified full run and base merge."""
@@ -37,6 +38,7 @@ SCORER_FILES = frozenset(
     }
 )
 POLICY_TESTS = (
+    "test_active_documentation.py",
     "test_contribution_tags.py",
     "test_director_schema.py",
     "test_human_out_of_the_loop_authority.py",
@@ -188,11 +190,8 @@ def run_focused(suite_name: str) -> int:
         for pattern in POLICY_TESTS:
             suite.addTests(loader.discover("tests", pattern=pattern))
     elif suite_name == "scorer":
-        suite.addTests(
-            loader.discover(
-                "projects/homemade-llm/eval", pattern="test_score_packets.py"
-            )
-        )
+        for pattern in ("test_score_packets.py", "test_generate_candidates.py"):
+            suite.addTests(loader.discover("projects/homemade-llm/eval", pattern=pattern))
     else:
         raise ValueError(f"unknown focused suite: {suite_name}")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
@@ -207,3 +206,4 @@ if __name__ == "__main__":
     raise SystemExit("usage: ci_scope.py plan | run")
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:56 UTC | END]]

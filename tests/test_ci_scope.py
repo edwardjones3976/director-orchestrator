@@ -1,6 +1,8 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | BEGIN]]
 import importlib.util
+import io
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +53,34 @@ class CiScopeTests(unittest.TestCase):
             mode, suite, reason = ci_scope.classify(EVENT, "token", "owner/repo")
             self.assertEqual((mode, suite), ("focused", "policy"))
             self.assertIn(f"full run 123 at {BEFORE}", reason)
+
+    def test_mapped_changes_propagate_direct_consumer_failures(self):
+        for paths, expected_suite, consumer in (
+            (ci_scope.POLICY_FILES, "policy", "test_active_documentation.py"),
+            (ci_scope.SCORER_FILES, "scorer", "test_generate_candidates.py"),
+        ):
+            for path in sorted(paths):
+                with self.subTest(path=path):
+                    def discover(directory, pattern):
+                        def broken_contract():
+                            self.fail("Direct consumer rejected the changed input")
+                        return unittest.TestSuite(
+                            [unittest.FunctionTestCase(broken_contract)]
+                            if pattern == consumer else [unittest.FunctionTestCase(lambda: None)]
+                        )
+
+                    with (
+                        patch.object(ci_scope, "git_output", side_effect=[
+                            f"{AFTER} {BEFORE} {BASE}\n".encode(),
+                            path.encode() + b"\0",
+                        ]),
+                        patch.object(ci_scope, "previous_full_run_succeeded", return_value=123),
+                        patch.object(ci_scope.unittest.TestLoader, "discover", side_effect=discover),
+                        patch("sys.stderr", new_callable=io.StringIO),
+                    ):
+                        mode, suite, _ = ci_scope.classify(EVENT, "token", "owner/repo")
+                        self.assertEqual((mode, suite), ("focused", expected_suite))
+                        self.assertEqual(ci_scope.run_focused(suite), 1)
 
     def test_no_previous_full_success_falls_back(self):
         with (
@@ -137,3 +167,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:56 UTC | END]]
