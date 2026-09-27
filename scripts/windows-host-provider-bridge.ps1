@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
@@ -239,7 +240,7 @@ if ($pinnedEnvironmentFile -and -not (Test-Path -LiteralPath $pinnedEnvironmentF
 }
 # A pinned bridge forwards only the lane credentials this profile names, with
 # this profile's values; Python drops every other inherited lane credential.
-$laneAuthNames = @("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")
+$laneAuthNames = @("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "ZAI_API_KEY")
 $profileAuthNames = @(([string]$values["DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"]).Split(",", [StringSplitOptions]::RemoveEmptyEntries))
 foreach ($name in $profileAuthNames) {
     if ($name -cnotin $laneAuthNames -or [string]::IsNullOrWhiteSpace([string]$values[$name])) {
@@ -262,7 +263,7 @@ foreach ($otherSecret in @(
 
 $commands = $values["DIRECTOR_HOST_PROVIDER_COMMANDS_JSON"] | ConvertFrom-Json -AsHashtable
 foreach ($provider in $commands.Keys) {
-    if ($provider -notin @("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")) {
+    if ($provider -notin @("openai", "claude", "cursor", "grok", "antigravity", "github-copilot", "zai")) {
         throw "The host bridge command map contains an unallowlisted provider."
     }
     $argv = @($commands[$provider])
@@ -426,3 +427,4 @@ finally {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

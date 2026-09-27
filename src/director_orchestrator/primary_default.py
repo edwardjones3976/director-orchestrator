@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
@@ -1744,7 +1745,8 @@ def build_automatic_primary_live_dependencies(
         ),
         # Every production readiness check, not merely a key: see
         # Settings.zai_production_readiness.
-        "zai": settings.zai_native_config() is not None,
+        "zai": settings.zai_native_config() is not None
+        or settings.zai_bridge_expectation() is not None,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -1777,6 +1779,7 @@ def build_automatic_primary_live_dependencies(
         host_bridge_challenge=bridge_challenge,
         host_bridge_attested_argv=settings.host_bridge_attested_argv(),
         zai=settings.zai_native_config(),
+        zai_bridge=settings.zai_bridge_expectation(),
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -5225,3 +5228,4 @@ class DefaultPrimaryActivation:
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

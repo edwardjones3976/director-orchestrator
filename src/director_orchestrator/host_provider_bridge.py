@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -64,7 +65,7 @@ from .packet_contracts import canonical_json_bytes
 
 BRIDGE_PROTOCOL = "director-host-provider-bridge/v1"
 SUPPORTED_HOST_LANES = frozenset(
-    {"openai", "claude", "cursor", "grok", "antigravity", "github-copilot"}
+    {"openai", "claude", "cursor", "grok", "antigravity", "github-copilot", "zai"}
 )
 _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
@@ -90,6 +91,9 @@ _LANE_AUTH_ENV = {
     "grok": frozenset({"XAI_API_KEY"}),
     "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
     "github-copilot": frozenset({"GH_TOKEN", "GITHUB_TOKEN"}),
+    # Read by the bridge process only: the Z.ai route passes it to its child as
+    # ANTHROPIC_AUTH_TOKEN after checking the pinned key ID; never by this name.
+    "zai": frozenset({"ZAI_API_KEY"}),
 }
 
 
@@ -99,6 +103,18 @@ class HostProviderBridgeError(RuntimeError):
 
 class HostProviderBridgeAmbiguous(HostProviderBridgeError):
     """An external attempt may have happened and cannot be resent."""
+
+
+class HostProviderBridgeRefused(HostProviderBridgeError):
+    """The executor proved it started nothing (for example an unsupported grant).
+
+    Settled as REFUSED and answered with a signed refusal, like an attestation
+    mismatch, so the Director can tell it apart from an ambiguous attempt.
+    """
+
+
+class HostBridgeRefusedBeforeExecution(RuntimeError):
+    """The bridge authenticated that it refused the request before running anything."""
 
 
 class HostProviderBridgeAttestationMismatch(HostProviderBridgeError):
@@ -296,6 +312,9 @@ class HostBridgeChallengeEvidence:
     # lane -> argv digest, for lanes whose reported argv this side re-checked
     # and found carrying its whole read-only restriction set.
     read_only_attested: Mapping[str, str] | None = None
+    # lane -> the exact argv the signed challenge reported for it (for example
+    # the Z.ai lane's executable, GLM model, bounds and key-ID digest).
+    lane_argv: Mapping[str, tuple[str, ...]] | None = None
 
 
 def challenge_host_provider_bridge(
@@ -381,6 +400,7 @@ def challenge_host_provider_bridge(
     attestations = decoded.get("lane_attestations")
     attestation_digest = ""
     attested: dict[str, str] = {}
+    reported: dict[str, tuple[str, ...]] = {}
     if attestations is not None:
         from .bridge_attestation import argv_digest, read_only_attested
         if not isinstance(attestations, dict):
@@ -393,6 +413,7 @@ def challenge_host_provider_bridge(
             if (not isinstance(argv, list) or not all(isinstance(value, str) for value in argv)
                     or item.get("argv_digest") != argv_digest(argv)):
                 raise HostProviderBridgeError("host bridge lane attestation is malformed")
+            reported[lane] = tuple(argv)
             # Re-checked here: the host's own verdict is required, never
             # trusted, and the lane must also enforce the attempt limits.
             # Whether the command also enforces the attempt limits before
@@ -406,8 +427,9 @@ def challenge_host_provider_bridge(
     )
     if not hmac.compare_digest(proof, expected):
         raise HostProviderBridgeError("host bridge challenge authentication failed")
+    # Reported argv is trusted only after the proof above binds it.
     return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp, clock_value,
-                                       clock_id, attested)
+                                       clock_id, attested, reported)
 
 
 @dataclass(frozen=True, slots=True)
@@ -687,14 +709,64 @@ class WindowsHostProviderExecutor:
             if len(command) != 2:
                 raise ValueError("OpenAI host command must be [native executable, model]")
             self.native_codex = NativeCodexPacketTransport(*command)
+        self.native_zai = None
+        if "zai" in normalized:
+            # Like native Codex: the entry configures an in-process transport
+            # (the GLM-verifying Z.ai native transport), never a generic child.
+            from .zai_native import ZaiHostCommand
+            self.native_zai = ZaiHostCommand.parse(normalized["zai"])
         self.commands = normalized
         self.writer_fence_verifier = writer_fence_verifier
+
+    def _zai_config(self):
+        """The host's Z.ai configuration, or None when its key, key ID or CLI is unusable."""
+        if self.native_zai is None:
+            return None
+        return self.native_zai.config(os.environ.get("ZAI_API_KEY", ""),
+                                      timeout_seconds=self.timeout_seconds)
 
     def available_providers(self) -> list[str]:
         providers = sorted(self.commands)
         if self.native_codex is not None and not self.native_codex.authenticated():
             providers.remove("openai")
+        if self.native_zai is not None and self._zai_config() is None:
+            providers.remove("zai")
         return providers
+
+    def _execute_zai(self, request: BridgeRequest, *, cutoff: float, execution_observer=None) -> bytes:
+        """Run the Z.ai lane once through its GLM-verifying native transport."""
+        from types import SimpleNamespace
+        from .packet_contracts import PacketContractError, validate_packet
+        from .zai_native import ZaiNativePacketTransport, tool_arguments
+
+        config = self._zai_config()
+        if config is None:
+            raise HostProviderBridgeRefused("the Z.ai host binding is unavailable")
+        try:
+            work = validate_packet("work", json.loads(request.packet))
+        except (PacketContractError, ValueError) as exc:
+            raise HostProviderBridgeRefused("the Z.ai work packet is invalid") from exc
+        context = SimpleNamespace(
+            fencing_generation=request.writer_generation,
+            timeout_seconds=max(1, min(self.timeout_seconds, int(work["limits"]["timeout_seconds"]))),
+            budget_usd=Decimal(request.attempt_budget_usd) if request.attempt_budget_usd else None,
+            total_token_limit=int(request.total_token_limit) if request.total_token_limit else None,
+            allowed_tools=tuple(work["allowed_tools"]),
+            allowed_external_effects=tuple(work["allowed_external_effects"]),
+            execution_observer=execution_observer,
+            deadline=cutoff,
+        )
+        try:
+            # The same refusals the transport applies, first: nothing launches.
+            tool_arguments(work, context, allow_repository_write=config.allow_repository_write)
+            transport = ZaiNativePacketTransport(config, cwd=self.cwd)
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise HostProviderBridgeRefused("the Z.ai request is outside this host's grant") from exc
+        try:
+            result = transport.send(request.packet, context=context)
+        except (RuntimeError, OSError, ValueError) as exc:
+            raise HostProviderBridgeAmbiguous("Z.ai outcome is unavailable or ambiguous") from exc
+        return canonical_json_bytes(result)
 
     def execute(self, request: BridgeRequest, *, execution_observer=None) -> bytes:
         cutoff = time.monotonic() + self.timeout_seconds
@@ -745,6 +817,8 @@ class WindowsHostProviderExecutor:
             except (RuntimeError, OSError, ValueError) as exc:
                 raise HostProviderBridgeAmbiguous("native Codex outcome is unavailable or ambiguous") from exc
             return canonical_json_bytes(result)
+        if request.provider == "zai":
+            return self._execute_zai(request, cutoff=cutoff, execution_observer=execution_observer)
         environment = {
             name: value
             for name, value in os.environ.items()
@@ -1054,15 +1128,20 @@ class HostBridgePacketTransport:
         ]
         | None = None,
         read_only_argv_digest: str | None = None,
+        request_guard: Callable[[Mapping[str, Any], Any], None] | None = None,
     ) -> None:
         if provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
         # A redacted lane still requires both halves of its closed boundary.
         # Claude/Grok can also return native envelopes after seeing the full
         # packet; normalize those replies without changing the outbound bytes.
+        # Z.ai returns its host-verified result for the full packet and is
+        # re-checked by its own normalizer.
         native_full_packet = (
-            provider in {"claude", "grok"} and outbound_payload_builder is None
+            provider in {"claude", "grok", "zai"} and outbound_payload_builder is None
         )
+        if provider == "zai" and (result_normalizer is None or request_guard is None):
+            raise ValueError("the Z.ai bridge lane requires its guard and result normalizer")
         if ((outbound_payload_builder is None) != (result_normalizer is None)
                 and not native_full_packet):
             raise ValueError(
@@ -1102,6 +1181,8 @@ class HostBridgePacketTransport:
         # Set only from a fresh authenticated attestation whose argv digest
         # equals the Director's pinned binding for this lane.
         self.read_only_argv_digest = read_only_argv_digest
+        # Director-side refusals checked before anything is signed or sent.
+        self.request_guard = request_guard
 
     def read_only_attestation_current(self, *, deadline: float | None = None) -> bool:
         """Re-challenge the bridge: the lane is still attested with the same argv.
@@ -1151,10 +1232,13 @@ class HostBridgePacketTransport:
         return cutoff, evidence.clock_id + ":" + float(evidence.host_monotonic + remaining).hex()
 
     def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
-        cutoff, host_deadline = (self._host_cutoff(context)
-            if getattr(context, "deadline", None) is not None else (None, ""))
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
             raise RuntimeError("host bridge work packet is not bounded")
+        if self.request_guard is not None:
+            # Refused here, nothing is challenged, signed or sent.
+            self.request_guard(json.loads(work_packet_json), context)
+        cutoff, host_deadline = (self._host_cutoff(context)
+            if getattr(context, "deadline", None) is not None else (None, ""))
         packet = json.loads(work_packet_json)
         task_id = _require_token(str(packet.get("task_id", "")), "task id")
         assignment_id = _require_token(str(packet.get("assignment_id", "")), "assignment id")
@@ -1256,8 +1340,9 @@ class HostBridgePacketTransport:
                 if watch.fired.is_set():
                     raise TimeoutError("host bridge response reached its deadline")
         except urllib.error.HTTPError as exc:
-            # Only an authenticated refusal of the argv proves nothing ran.
-            if exc.code == 403 and attested_argv_digest:
+            # Only an authenticated refusal proves nothing ran: an attested
+            # argv mismatch, or a signed refusal before execution.
+            if exc.code == 403:
                 try:
                     body = read_until_deadline(exc, limit=4095, deadline=read_deadline)
                 except (TimeoutError, OSError):
@@ -1266,12 +1351,19 @@ class HostBridgePacketTransport:
                 proof = bridge_response_signature(
                     self.secret, nonce=nonce, idempotency_digest=idempotency_digest,
                     response_digest=_digest(body))
-                if (exc.headers.get("X-Director-Response-Digest", "") == _digest(body)
-                        and hmac.compare_digest(
-                            exc.headers.get("X-Director-Response-Proof", ""), proof)
-                        and json.loads(body).get("reason") == "attestation_mismatch"):
+                signed = (exc.headers.get("X-Director-Response-Digest", "") == _digest(body)
+                          and hmac.compare_digest(
+                              exc.headers.get("X-Director-Response-Proof", ""), proof))
+                try:
+                    reason = json.loads(body).get("reason") if signed else None
+                except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                    reason = None
+                if reason == "attestation_mismatch" and attested_argv_digest:
                     raise HostBridgeAttestationStale(
                         "the bridge refused an argv other than the attested one") from exc
+                if reason == "refused_before_execution":
+                    raise HostBridgeRefusedBeforeExecution(
+                        "the bridge refused the request before running anything") from exc
             raise RuntimeError("host provider bridge outcome is ambiguous") from exc
         except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
             # The deadline watchdog, or any transport failure after the
@@ -1302,7 +1394,7 @@ class HostBridgePacketTransport:
         normalized = self.result_normalizer(packet, decoded)
         if not isinstance(normalized, Mapping):
             raise RuntimeError("host provider bridge normalization is malformed")
-        if self.provider in {"claude", "grok"}:
+        if self.provider in {"claude", "grok", "zai"}:
             return _enforce_native_result_attempt_limits(normalized, context=context)
         return dict(normalized)
 
@@ -1323,7 +1415,7 @@ def dispatch_bridge_request(
         return replay
     try:
         result = executor.execute(request)
-    except HostProviderBridgeAttestationMismatch:
+    except (HostProviderBridgeAttestationMismatch, HostProviderBridgeRefused):
         # Raised before any process starts: a clean, replayable refusal, never
         # an ambiguous attempt.
         store.settle(request.idempotency_digest, response=None, refused=True)
@@ -1364,3 +1456,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

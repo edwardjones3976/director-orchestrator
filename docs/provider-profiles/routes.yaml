@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
@@ -771,7 +772,7 @@ routes:
       - document: "docs/provider-setup.md"
         anchor: "The owner enrolled Z.ai (GLM Coding Plan) as its own production lane `zai` on"
       - document: "docs/provider-setup.md"
-        anchor: "issuer. The transport is `src/director_orchestrator/zai_native.py`."
+        anchor: "issuer. The worker is `src/director_orchestrator/zai_native.py`."
       - document: "docs/providers/zai-welcome-aboard.md"
         anchor: "Code may host your session; it does not change your provider identity to Claude."
     enforced_by:
@@ -816,9 +817,10 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "host_bridge" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, github-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, github-copilot, zai]
     carries:
       - "a validated packet to one native command per supported lane, behind a signed challenge and a durable claim store"
+      - "for zai, the full packet to the bridge's in-process GLM-verifying native transport; the signed challenge reports its GLM model"
     withheld_context:
       - "Director and API secrets; the child environment carries a fixed safe subset"
     authority: "none"
@@ -1060,3 +1062,4 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

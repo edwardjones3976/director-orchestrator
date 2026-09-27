@@ -1,9 +1,13 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 """Z.ai production enrollment: offline tests only; nothing here contacts Z.ai."""
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -133,9 +137,25 @@ class ToolBoundaryTests(unittest.TestCase):
                          [f"Bash({prefix}:*)" for prefix in TEST_COMMAND_PREFIXES])
         self.assertNotIn("Bash", allowed)
 
-    def test_public_research_grant_adds_only_web_tools(self):
-        arguments = self.args(work_packet(allowed_tools=["PUBLIC_WEB_SEARCH"]))
-        self.assertEqual(self.values(arguments, "--tools"), ["WebSearch,WebFetch"])
+    def test_unqualified_web_search_is_not_advertised(self):
+        # WebSearch is an Anthropic server tool on this CLI; a generic Claude tool
+        # name is not evidence that Z.ai's Coding Plan endpoint supports it.
+        with self.assertRaisesRegex(RuntimeError, "unsupported tool: PUBLIC_WEB_SEARCH"):
+            self.args(work_packet(allowed_tools=["PUBLIC_WEB_SEARCH"]))
+        for grants in (["READ_REPOSITORY"], ["READ_REPOSITORY", "RUN_TESTS"]):
+            tools = self.values(self.args(work_packet(allowed_tools=grants)), "--tools")[0]
+            self.assertNotIn("Web", tools)
+
+    def test_approved_tests_run_in_review_assignments(self):
+        # Plan mode executes nothing, so a review packet that grants RUN_TESTS
+        # must run in default mode with only the fixed test-runner rules.
+        review = work_packet(objective="Independently review the candidate at the exact head and run its tests.",
+                             allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])
+        arguments = self.args(review)
+        self.assertEqual(self.values(arguments, "--permission-mode"), ["default"])
+        self.assertEqual(self.values(arguments, "--tools"), ["Read,Grep,Glob,Bash"])
+        self.assertNotIn("Edit", self.values(arguments, "--tools")[0])
+        self.assertIn("Bash(python -m unittest:*)", self.values(arguments, "--allowedTools"))
 
     def test_writes_need_the_deployment_switch_and_stay_inside_owned_paths(self):
         work = work_packet(allowed_tools=["READ_REPOSITORY", "WRITE_ISOLATED_BRANCH"])
@@ -262,7 +282,12 @@ class TransportTests(ConfigFixture):
         self.assertEqual(result["status"], "SUCCEEDED")
         self.assertEqual(result["usage"]["model"], MODEL)
         self.assertIsNone(result["usage"]["cost_usd"])
-        self.assertTrue(any("cost is UNKNOWN" in risk for risk in result["risks"]))
+        # Cash, plan credits and model-equivalent telemetry stay distinct.
+        risks = " | ".join(result["risks"])
+        self.assertIn("cash expense: not measured", risks)
+        self.assertIn("Coding Plan credits: not reported by the CLI", risks)
+        self.assertIn("model-equivalent telemetry: 0.5 USD at Anthropic tariffs", risks)
+        self.assertIn("not a charge", risks)
         self.assertEqual(result["run_reference"], "zai-session-1")
 
     def test_missing_usage_is_never_a_success(self):
@@ -308,7 +333,7 @@ class TransportTests(ConfigFixture):
 class DiscoveryAndSettingsTests(ConfigFixture):
     def production_settings(self, **changes) -> Settings:
         fields = dict(
-            zai_mode="production", zai_enabled=True, zai_production_activation=ACTIVATION,
+            zai_mode="production", zai_transport="native", zai_enabled=True, zai_production_activation=ACTIVATION,
             zai_api_key=SECRET, zai_api_base=ENDPOINT, zai_model=MODEL, zai_cli_executable=sys.executable,
             zai_max_turns=12, zai_production_timeout_seconds=900, zai_trial_enabled=False,
             zai_trial_ledger_path="", zai_allow_repository_write=False)
@@ -454,6 +479,234 @@ class SlackThreadTests(unittest.TestCase):
         self.assertNotIn("claude:", payload["blocks"][0]["text"]["text"])
 
 
+class NoHangTests(ConfigFixture):
+    """Print mode with a finite stdin: a would-be prompt or a stall ends promptly."""
+
+    def run_child(self, code: str, *, timeout_seconds: int = 30):
+        transport = ZaiNativePacketTransport(self.config, cwd=self.workspace)
+        # The real bounded runner and process tree; only the child program is a
+        # stand-in for the CLI (extra flags land in its sys.argv).
+        transport.command = (sys.executable, "-c", code)
+        work = work_packet(allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+            transport.send(json.dumps(work).encode(), context=context_for(work, timeout_seconds=timeout_seconds))
+        return time.monotonic() - started
+
+    def test_an_interactive_permission_prompt_fails_instead_of_waiting(self):
+        # stdin is a file already at EOF after the packet: asking the user
+        # raises immediately, so the attempt fails rather than hangs.
+        elapsed = self.run_child("import sys; sys.stdin.read(); input('Allow Bash? ')")
+        self.assertLess(elapsed, 20)
+
+    def test_a_stalled_cli_is_ended_at_the_cutoff(self):
+        elapsed = self.run_child("import sys, time; sys.stdin.read(); time.sleep(120)", timeout_seconds=2)
+        self.assertLess(elapsed, 30)
+
+
+KEY = "a1b2c3d4e5.zai-host-secret"
+KEY_ID_DIGEST = "sha256:" + hashlib.sha256(b"a1b2c3d4e5").hexdigest()
+BRIDGE_SECRET = "bridge-secret-" + "q" * 40
+WRITER_DIGEST = "sha256:" + "9" * 64
+
+
+class _FenceVerifier:
+    def __init__(self):
+        self.calls = 0
+
+    def verify(self, request):
+        self.calls += 1
+
+
+class BridgeCompositionTests(unittest.TestCase):
+    """Settings -> discovery -> adapter -> signed bridge -> Windows executor ->
+    GLM-verifying native worker -> normalized result, all offline over loopback."""
+
+    def setUp(self):
+        from director_orchestrator.host_provider_bridge import BridgeClaimStore, WindowsHostProviderExecutor
+        from director_orchestrator.host_provider_bridge_server import _Handler
+
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.workspace = root / "workspace"
+        self.workspace.mkdir()
+        self.cli_calls = []
+        self.envelope = native_envelope()
+        environment = patch.dict(os.environ, {"ZAI_API_KEY": KEY})
+        environment.start()
+        self.addCleanup(environment.stop)
+        runner = patch("director_orchestrator.zai_native._run_bounded_command", side_effect=self.fake_cli)
+        runner.start()
+        self.addCleanup(runner.stop)
+        self.fence = _FenceVerifier()
+        self.store = BridgeClaimStore(root / "claims.sqlite3")
+        self.host_argv = [sys.executable, MODEL, "12", "read-only", KEY_ID_DIGEST]
+        self.executor = WindowsHostProviderExecutor(
+            {"zai": self.host_argv}, cwd=self.workspace, timeout_seconds=900,
+            writer_fence_verifier=self.fence)
+        from http.server import ThreadingHTTPServer
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.server.bridge_secret = BRIDGE_SECRET
+        self.server.claim_store = self.store
+        self.server.executor = self.executor
+        self.server.pinned_environment = False
+        thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.endpoint = f"http://127.0.0.1:{self.server.server_address[1]}/v1/provider/dispatch"
+
+    def fake_cli(self, argv, *, cwd, environment, input_bytes, cutoff, what):
+        self.cli_calls.append({"argv": list(argv), "env": dict(environment)})
+        return subprocess.CompletedProcess(argv, 0, json.dumps(self.envelope).encode(), b"")
+
+    def director_settings(self, **changes) -> Settings:
+        fields = dict(
+            zai_mode="production", zai_transport="host_bridge", zai_enabled=True,
+            zai_production_activation=ACTIVATION, zai_api_base=ENDPOINT, zai_model=MODEL,
+            # The Linux container holds neither the Windows CLI nor the Z.ai key.
+            zai_api_key="", zai_cli_executable="", zai_trial_enabled=False, zai_trial_ledger_path="",
+            zai_allow_repository_write=False,
+            langgraph_primary_host_bridge_endpoint=self.endpoint,
+            langgraph_primary_host_bridge_secret=BRIDGE_SECRET)
+        fields.update(changes)
+        return replace(Settings(), **fields)
+
+    def discover(self, settings: Settings):
+        from director_orchestrator.host_provider_bridge import challenge_host_provider_bridge
+        from director_orchestrator.primary_transports import build_graph_native_packet_adapters
+        challenge = challenge_host_provider_bridge(self.endpoint, BRIDGE_SECRET)
+        with patch("director_orchestrator.primary_transports._which", return_value=None):
+            transports, capabilities = discover_local_primary_command_transports(
+                cwd=self.workspace,
+                authenticated={"zai": settings.zai_bridge_expectation() is not None},
+                host_bridge_endpoint=self.endpoint, host_bridge_secret=BRIDGE_SECRET,
+                host_bridge_writer_owner_token_digest=WRITER_DIGEST,
+                host_bridge_challenge=challenge, zai=settings.zai_native_config(),
+                zai_bridge=settings.zai_bridge_expectation())
+        adapters = build_graph_native_packet_adapters(transports=transports, capabilities=capabilities)
+        return challenge, capabilities, adapters
+
+    def dispatch(self, adapter, work):
+        context = context_for(work, deadline=time.monotonic() + 120)
+        return adapter.dispatch(work, context=context)
+
+    def claim_states(self):
+        from contextlib import closing
+        with closing(self.store._connect()) as connection:
+            return [row[0] for row in connection.execute("SELECT state FROM bridge_attempts")]
+
+    def test_container_dispatches_the_windows_zai_worker_end_to_end(self):
+        settings = self.director_settings()
+        self.assertTrue(all(settings.zai_production_readiness().values()))
+        self.assertIsNone(settings.zai_native_config())
+        challenge, capabilities, adapters = self.discover(settings)
+        self.assertEqual(challenge.lane_argv["zai"], tuple(self.host_argv))
+        self.assertEqual(capabilities["zai"].transport_kind, "authenticated-windows-host-bridge")
+        self.assertEqual(capabilities["zai"].backend_identity, "zai")
+        work = work_packet(allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])
+        result = self.dispatch(adapters["zai"], work)
+        self.assertEqual(result["provider"], "zai")
+        self.assertEqual(result["status"], "SUCCEEDED")
+        self.assertEqual(result["usage"]["model"], MODEL)
+        self.assertIsNone(result["usage"]["cost_usd"])
+        self.assertIn("model-equivalent telemetry: 0.5 USD", " ".join(result["risks"]))
+        # One fenced, claimed attempt ran the GLM worker with only the Z.ai key.
+        self.assertEqual(self.fence.calls, 1)
+        self.assertEqual(self.claim_states(), ["SUCCEEDED"])
+        [call] = self.cli_calls
+        self.assertEqual(call["env"]["ANTHROPIC_AUTH_TOKEN"], KEY)
+        self.assertEqual(call["env"]["ANTHROPIC_BASE_URL"], ENDPOINT)
+        self.assertNotIn("ZAI_API_KEY", call["env"])
+        self.assertEqual(call["argv"][call["argv"].index("--model") + 1], MODEL)
+        self.assertEqual(call["argv"][call["argv"].index("--permission-mode") + 1], "default")
+        self.assertNotIn(KEY, json.dumps(result))
+
+    def test_disabled_or_mismatched_director_never_builds_the_lane(self):
+        for changes in (dict(zai_enabled=False), dict(zai_mode="trial_only"),
+                        dict(zai_model="glm-5.3-flash"), dict(zai_production_activation="")):
+            with self.subTest(changes=changes):
+                _, capabilities, adapters = self.discover(self.director_settings(**changes))
+                self.assertNotIn("zai", adapters)
+                self.assertFalse(capabilities["zai"].callable)
+        self.assertEqual(self.cli_calls, [])
+        self.assertEqual(self.claim_states(), [])
+
+    def test_a_host_key_from_another_account_takes_the_lane_offline(self):
+        with patch.dict(os.environ, {"ZAI_API_KEY": "other-id.other-secret"}):
+            challenge, capabilities, adapters = self.discover(self.director_settings())
+        self.assertNotIn("zai", challenge.configured_providers)
+        self.assertNotIn("zai", adapters)
+        self.assertEqual(self.cli_calls, [])
+
+    def test_director_side_refusals_send_nothing(self):
+        _, _, adapters = self.discover(self.director_settings())
+        for work in (work_packet(allowed_external_effects=["WRITE_ISOLATED_BRANCH"]),
+                     work_packet(allowed_tools=["PUBLIC_WEB_SEARCH"]),
+                     work_packet(allowed_tools=["READ_REPOSITORY", "WRITE_ISOLATED_BRANCH"])):
+            with self.subTest(tools=work["allowed_tools"], effects=work["allowed_external_effects"]):
+                with self.assertRaises(RuntimeError):
+                    self.dispatch(adapters["zai"], work)
+        self.assertEqual(self.claim_states(), [])
+        self.assertEqual(self.fence.calls, 0)
+        self.assertEqual(self.cli_calls, [])
+
+    def test_a_host_refusal_is_a_signed_no_run(self):
+        from director_orchestrator.host_provider_bridge import HostBridgeRefusedBeforeExecution
+        # The Director permits owned-path writes; this host is read-only.
+        _, _, adapters = self.discover(self.director_settings(zai_allow_repository_write=True))
+        work = work_packet(allowed_tools=["READ_REPOSITORY", "WRITE_ISOLATED_BRANCH"])
+        with self.assertRaises(HostBridgeRefusedBeforeExecution):
+            self.dispatch(adapters["zai"], work)
+        self.assertEqual(self.claim_states(), ["REFUSED"])
+        self.assertEqual(self.cli_calls, [])
+
+    def test_another_serving_model_is_ambiguous_never_relabelled(self):
+        _, _, adapters = self.discover(self.director_settings())
+        self.envelope = native_envelope(modelUsage={"claude-opus-5": {}})
+        with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+            self.dispatch(adapters["zai"], work_packet(allowed_tools=["READ_REPOSITORY", "RUN_TESTS"]))
+        self.assertEqual(self.claim_states(), ["AMBIGUOUS"])
+        self.assertEqual(len(self.cli_calls), 1)
+
+    def test_the_director_rechecks_the_host_result_identity(self):
+        from director_orchestrator.host_provider_bridge import HostBridgePacketTransport
+        from director_orchestrator.zai_native import normalize_zai_bridge_result
+        work = work_packet()
+        base = {"schema_version": "1.0", "task_id": work["task_id"], "assignment_id": work["assignment_id"],
+                "idempotency_key": work["idempotency_key"],
+                "authority_snapshot_digest": work["authority_snapshot_digest"],
+                "correlation": work["correlation"], "provider": "zai", "run_reference": "r",
+                "status": "SUCCEEDED", "outcome": "done", "artifacts": [], "checks": [],
+                "acceptance": [{"check": str(check), "status": "NOT_RUN", "evidence": "fixture"}
+                               for check in work["acceptance_checks"]],
+                "risks": [], "blockers": [], "requested_decisions": [],
+                "side_effects": [], "revision_recommended": False,
+                "usage": {"model": MODEL, "input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "cost_usd": None}}
+        self.assertEqual(normalize_zai_bridge_result(MODEL, work, base)["provider"], "zai")
+        for change in ({"provider": "claude"}, {"task_id": "OTHER"},
+                       {"usage": {**base["usage"], "model": "glm-5.3-flash"}},
+                       {"usage": {**base["usage"], "cost_usd": 0}}, {"usage": None}):
+            with self.subTest(change=change):
+                with self.assertRaises(RuntimeError):
+                    normalize_zai_bridge_result(MODEL, work, {**base, **change})
+        with self.assertRaises(ValueError):
+            HostBridgePacketTransport("zai", self.endpoint, BRIDGE_SECRET,
+                                      writer_owner_token_digest=WRITER_DIGEST)
+
+    def test_host_command_shape_is_strict(self):
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        for argv in ([sys.executable, MODEL], [sys.executable, "claude-opus-5", "12", "read-only", KEY_ID_DIGEST],
+                     [sys.executable, MODEL, "0", "read-only", KEY_ID_DIGEST],
+                     [sys.executable, MODEL, "12", "bypass", KEY_ID_DIGEST],
+                     [sys.executable, MODEL, "12", "read-only", "keyid"], ["claude.exe", MODEL, "12", "read-only", KEY_ID_DIGEST]):
+            with self.subTest(argv=argv[1:]):
+                with self.assertRaises(ValueError):
+                    WindowsHostProviderExecutor({"zai": argv}, cwd=self.workspace)
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
@@ -517,72 +518,121 @@ Its GLM models are reached by running the Claude Code executable against Z.ai's
 Anthropic-compatible endpoint; the lane, family and result provider stay `zai`
 and are never relabelled Claude. The lane is in the provider enums, the
 allocation lanes, the primary roster (implementer and independent reviewer of
-other lanes' work, never of its own), `PRIMARY_PROVIDER_LANES` and the Postgres
-admission constraint. It is not a committee member, not part of the
-core-inventory floor, not a Windows host-bridge lane and not a native acceptance
-issuer. The transport is `src/director_orchestrator/zai_native.py`.
+other lanes' work, never of its own), `PRIMARY_PROVIDER_LANES`, the Windows host
+bridge lanes and the Postgres admission constraint. It is not a committee
+member, not part of the core-inventory floor and not a native acceptance
+issuer. The worker is `src/director_orchestrator/zai_native.py`.
 
-Everything stays closed by default. Production needs all of:
+### Routes
+
+The central and Edge Directors run in Docker; the Claude Code CLI is on
+Windows. `ZAI_TRANSPORT` selects how a Director reaches the worker:
+
+- `host_bridge` (default, the Docker deployment): the existing authenticated
+  Windows host bridge runs the worker in the bridge process. The container holds
+  **neither** `ZAI_API_KEY` nor the CLI; it needs the bridge endpoint and secret
+  and its own production switches. The bridge's `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON`
+  entry is exactly `"zai": [<absolute claude.exe>, <GLM model>, <max turns 1-100>,
+  "read-only" | "owned-path-writes", "sha256:<SHA-256 of the key's ID part>"]`, and
+  the bridge profile forwards `ZAI_API_KEY` by listing it in
+  `DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES`. The bridge offers `zai` only while
+  that key's ID matches the digest (the account binding) and the executable
+  exists. Its signed challenge reports the entry, and the Director builds the
+  lane only when the reported model equals its `ZAI_MODEL`. Every bridge control
+  applies unchanged: HMAC request and response signatures, the durable claim
+  (one attempt, ambiguous never rerun), the Postgres writer fence checked before
+  launch, the host deadline and process-tree cutoff.
+- `native` (a host deployment): this process runs the CLI and needs
+  `ZAI_API_KEY`, an absolute `ZAI_CLI_EXECUTABLE`, `ZAI_MAX_TURNS` and
+  `ZAI_PRODUCTION_TIMEOUT_SECONDS`.
+
+Everything stays closed by default. Production on the Docker route needs:
 
 ```dotenv
 ZAI_MODE=production
+ZAI_TRANSPORT=host_bridge
 ZAI_ENABLED=true
 ZAI_PRODUCTION_ACTIVATION=sha256:<digest of the owner's activation record>
-ZAI_API_KEY=
 ZAI_API_BASE=https://api.z.ai/api/anthropic
-ZAI_MODEL=glm-5.3
-ZAI_CLI_EXECUTABLE=<absolute path of the Claude Code CLI>
-ZAI_MAX_TURNS=30
-ZAI_PRODUCTION_TIMEOUT_SECONDS=900
+ZAI_MODEL=glm-5.3-flash
 ZAI_ALLOW_REPOSITORY_WRITE=false
 ZAI_TRIAL_ENABLED=false
+LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT=https://host.docker.internal:18765/v1/provider/dispatch
+LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET=<distinct secret>
 ```
 
 `GET /health` reports `providers.zai` and the `zai_production` readiness
-booleans (never a key, path, endpoint or model value). Startup refuses production
-mode without an activation digest, with the trial lane enabled, or with a
-non-official endpoint. The activation digest is deployment configuration: it is
-not evidence that a live round trip happened.
+booleans (never a key, path, endpoint or model value); their mode-specific keys
+are `host_bridge_configured` or `credential_configured`/`cli_configured`/
+`max_turns_valid`/`timeout_valid`. Startup refuses production mode without an
+activation digest, with the trial lane enabled, with an unknown `ZAI_TRANSPORT`
+or with a non-official endpoint. The activation digest is deployment
+configuration: it is not evidence that a live round trip happened.
 
 What each attempt gets:
 
-- **Credentials.** Only the configured `ZAI_API_KEY`, passed as the child's
-  `ANTHROPIC_AUTH_TOKEN`, with `ANTHROPIC_BASE_URL` pinned to Z.ai and every
-  Anthropic model slot set to the GLM model. No host Anthropic/Claude token or
-  other lane credential is inherited. Home and `CLAUDE_CONFIG_DIR` are a fresh
-  temporary directory, removed afterwards; settings sources, MCP servers and
-  session persistence are off.
+- **Credentials.** Only the Z.ai key, passed as the child's
+  `ANTHROPIC_AUTH_TOKEN`, with `ANTHROPIC_BASE_URL` pinned to Z.ai's Coding Plan
+  endpoint and every Anthropic model slot set to the GLM model. No host
+  Anthropic/Claude token or other lane credential is inherited, and
+  `ZAI_API_KEY` never reaches the child by that name. Home and
+  `CLAUDE_CONFIG_DIR` are a fresh temporary directory, removed afterwards;
+  settings sources, MCP servers and session persistence are off.
 - **Tools, scoped by the work packet.** `READ_REPOSITORY` → Read/Grep/Glob;
   `RUN_TESTS` → Bash limited to `python -m unittest`, `python -m pytest` and
-  `pytest`; `PUBLIC_WEB_SEARCH` → WebSearch/WebFetch; `WRITE_ISOLATED_BRANCH` →
-  Edit/Write only inside the packet's owned paths, and only with
-  `ZAI_ALLOW_REPOSITORY_WRITE=true`. `.env` files, `.git` and the packet's
-  prohibited paths are always denied. Read-only work runs in plan mode; write
-  work runs in default mode, where print mode refuses anything not allowed.
-  There is no permissions bypass. Any other grant, and any external effect
-  (branch push, pull request), is refused before launch: effects stay with the
-  Director's effect gateway.
-- **Bounds.** `--max-turns` from `ZAI_MAX_TURNS`, the shared absolute cutoff and
-  contained process tree, writer fencing, the per-attempt budget variables, and
+  `pytest`; `WRITE_ISOLATED_BRANCH` → Edit/Write only inside the packet's owned
+  paths, and only when both the Director (`ZAI_ALLOW_REPOSITORY_WRITE=true`) and
+  the bridge entry (`owned-path-writes`) allow it. `.env` files, `.git` and the
+  packet's prohibited paths are always denied. Pure reads run in plan mode;
+  test runs (including in review assignments) and writes run in default mode,
+  which runs exactly the listed rules and, in print mode, refuses everything
+  else. There is no permissions bypass. These are Claude Code permission rules
+  on an ordinary host process, **not an operating-system sandbox**; test
+  commands execute repository code.
+- **Only supported tools are offered.** These are client-side coding tools that
+  the documented Claude Code route runs locally. `PUBLIC_WEB_SEARCH` is refused:
+  WebSearch is an Anthropic server tool on this CLI, and a generic Claude tool
+  name is not evidence that Z.ai supports it. No MCP server is installed. Any
+  other grant, and any external effect (branch push, pull request), is refused
+  before launch; the Docker Director refuses them before signing anything, and
+  a host-only refusal returns a signed no-run. Effects stay with the Director's
+  effect gateway.
+- **No hang on permissions.** The CLI runs in print mode with the prompt on a
+  finite stdin file, so it can never wait on an interactive permission prompt;
+  a denied action fails at once, and the shared absolute cutoff ends a stalled
+  process tree.
+- **Bounds.** `--max-turns`, the shared absolute cutoff and contained process
+  tree, writer fencing, the per-attempt budget variables and attempt limits, and
   the existing three-attempt and ambiguity rules.
 - **Verification.** Only a `result`/`success`/`is_error: false` envelope that
   ended on `end_turn` within the turn limit is accepted, and every model in
-  `modelUsage` must be exactly `ZAI_MODEL`; anything else is rejected, never
-  relabelled. Token counts come from the native envelope; if they are missing
-  the result is never `SUCCEEDED`. Cost is always recorded as `null` (UNKNOWN):
-  the CLI prices with Anthropic tariffs, and the owner's $5 total budget has an
-  unknown current balance.
+  `modelUsage` must be exactly the configured GLM model; anything else is
+  rejected, never relabelled. Over the bridge the Director re-checks the
+  returned provider, packet bindings, model and cost field. Token counts come
+  from the native envelope; if they are missing the result is never `SUCCEEDED`.
+
+### Accounting
+
+The owner's budget decision (2026-09-27) allocates **$0 additional API cash**
+to this Coding Plan route and keeps the $5 total ceiling and historical holds.
+Three quantities stay distinct and none is invented:
+
+- incremental cash expense: `usage.cost_usd` is `null`, because a call measures
+  no charge; confirm it against the account after the call;
+- Coding Plan credits: not reported by the CLI; read them from the account;
+- model-equivalent dollar telemetry: the CLI's own figure at Anthropic tariffs,
+  recorded as a result risk line and never as a charge.
+
+No budget check is removed or bypassed to express this.
 
 Media capabilities of individual GLM models are not wired or advertised; the
 lane is text coding and tool-enabled agent work only. Enrollment is prospective:
-it does not read, rewrite or re-credit the trial ledger below.
-
-Before any paid qualification or production call, reconcile the earlier failed
-or ambiguous trial attempts, confirm the current balance of the $5 budget, and
-obtain exact-head independent review and the applicable CI and security gates.
-Completion of the enrollment needs a real authorized Slack thread response and
-receipt through the existing Director relay; installing configuration is not
-round-trip evidence.
+it does not read, rewrite or re-credit the trial ledger below. Historical failed
+or ambiguous attempts stay held and are never replayed. The integration owner
+qualifies the route after exact-head independent review and the applicable CI
+and security gates. Completion of the enrollment needs a real authorized Slack
+thread response and receipt through the existing Director relay; installing
+configuration is not round-trip evidence.
 
 ## Z.ai trial-only contact lane
 
@@ -894,3 +944,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->

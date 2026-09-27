@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -916,6 +917,10 @@ class Settings:
     # keeps the earlier bounded Lite trial route in `zai_lane` and its separate,
     # no-credit ledger unchanged.
     zai_enabled: bool = _bool("ZAI_ENABLED", False)
+    # host_bridge: the Docker Director reaches the Windows Claude Code CLI over
+    # the authenticated host bridge, which holds the key and executable.
+    # native: this process runs the CLI itself (a host deployment).
+    zai_transport: str = os.getenv("ZAI_TRANSPORT", "host_bridge").strip().lower()
     zai_max_turns: int = _int("ZAI_MAX_TURNS", 30)
     zai_production_timeout_seconds: int = _int("ZAI_PRODUCTION_TIMEOUT_SECONDS", 900)
     zai_trial_enabled: bool = _bool("ZAI_TRIAL_ENABLED", False)
@@ -1070,30 +1075,52 @@ class Settings:
         from .zai_native import GLM_MODEL, MAX_TIMEOUT_SECONDS, MAX_TURNS_LIMIT
         from .zai_trial import ENDPOINT
 
-        executable = (
-            Path(self.zai_cli_executable).expanduser() if self.zai_cli_executable else None
-        )
-        return {
+        readiness = {
             "enabled": self.zai_enabled,
             "production_mode": self.zai_mode == "production",
             "activation_evidence_recorded": bool(
                 re.fullmatch(r"sha256:[0-9a-f]{64}", self.zai_production_activation)
             ),
-            "credential_configured": bool(self.zai_api_key)
-            and not any(character.isspace() for character in self.zai_api_key),
+            "transport_valid": self.zai_transport in {"host_bridge", "native"},
             "official_endpoint": self.zai_api_base == ENDPOINT,
             "glm_model_configured": bool(GLM_MODEL.fullmatch(self.zai_model)),
-            "cli_configured": executable is not None
-            and executable.is_absolute()
-            and executable.is_file(),
-            "max_turns_valid": 1 <= self.zai_max_turns <= MAX_TURNS_LIMIT,
-            "timeout_valid": 30 <= self.zai_production_timeout_seconds <= MAX_TIMEOUT_SECONDS,
             "trial_ledger_isolated": self.zai_ledger_isolated(),
         }
+        if self.zai_transport == "native":
+            # This process runs the CLI, so it needs the key and executable.
+            executable = (
+                Path(self.zai_cli_executable).expanduser() if self.zai_cli_executable else None
+            )
+            readiness.update({
+                "credential_configured": bool(self.zai_api_key)
+                and not any(character.isspace() for character in self.zai_api_key),
+                "cli_configured": executable is not None
+                and executable.is_absolute()
+                and executable.is_file(),
+                "max_turns_valid": 1 <= self.zai_max_turns <= MAX_TURNS_LIMIT,
+                "timeout_valid": 30 <= self.zai_production_timeout_seconds <= MAX_TIMEOUT_SECONDS,
+            })
+        else:
+            # The Windows bridge holds the key, CLI and bounds; this container
+            # needs only the authenticated bridge binding.
+            readiness["host_bridge_configured"] = bool(
+                self.langgraph_primary_host_bridge_endpoint
+                and self.langgraph_primary_host_bridge_secret
+            )
+        return readiness
+
+    def zai_bridge_expectation(self):
+        """What this Director requires of the bridged lane, or None while it is closed."""
+        if self.zai_transport != "host_bridge" or not all(self.zai_production_readiness().values()):
+            return None
+        from .zai_native import ZaiBridgeExpectation
+
+        return ZaiBridgeExpectation(
+            model=self.zai_model, allow_repository_write=self.zai_allow_repository_write)
 
     def zai_native_config(self):
         """The lane's trusted transport configuration, or None while it is closed."""
-        if not all(self.zai_production_readiness().values()):
+        if self.zai_transport != "native" or not all(self.zai_production_readiness().values()):
             return None
         from .zai_native import ZaiNativeConfig
 
@@ -1434,6 +1461,8 @@ class Settings:
             raise ValueError(
                 "ZAI_API_BASE must be the official Z.ai Anthropic-compatible endpoint"
             )
+        if self.zai_transport not in {"host_bridge", "native"}:
+            raise ValueError("ZAI_TRANSPORT must be host_bridge or native")
         if self.zai_mode == "production":
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.zai_production_activation):
                 raise ValueError(
@@ -2659,3 +2688,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

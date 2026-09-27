@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -80,7 +81,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 | `github-copilot-lite-review` | direct | director_to_provider | director | authorized | disabled | advisory_evidence_only | `github-copilot` | `src/director_orchestrator/primary_transports.py:PrimaryProviderCapability`, `src/director_orchestrator/host_provider_bridge.py` |
 | `zai-native-cli` | direct | director_to_provider | director | authorized | disabled | none | `zai` | `src/director_orchestrator/zai_native.py:ZaiNativePacketTransport`, `src/director_orchestrator/primary_transports.py:discover_local_primary_command_transports`, `src/director_orchestrator/config.py:Settings.zai_production_readiness` |
 | `zai-lite-trial` | direct | director_to_provider | owner | authorized | disabled | none | `zai` | `src/director_orchestrator/zai_lane.py:ZaiTrialLane`, `src/director_orchestrator/zai_trial.py:ZaiLiteTrialTransport`, `scripts/zai-trial.py` |
-| `windows-host-provider-bridge` | direct | director_to_provider | director | authorized | disabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `github-copilot` | `src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES`, `scripts/windows-host-provider-bridge.ps1` |
+| `windows-host-provider-bridge` | direct | director_to_provider | director | authorized | disabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `github-copilot`, `zai` | `src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES`, `scripts/windows-host-provider-bridge.ps1` |
 | `browser-provider-ui` | direct | director_to_provider | director | authorized | enabled | none | `claude`, `cursor`, `antigravity`, `grok` | `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/team_charter.py` |
 | `chatgpt-slack-alias-bridge` | direct | owner_to_director | owner | authorized | disabled | none | `openai` | `src/director_orchestrator/chatgpt_bridge.py` |
 | `claude-native-acceptance-issuer` | direct | provider_to_director | owner | proposed | blocked | evidence_for_deterministic_gate | `claude` | - |
@@ -143,7 +144,7 @@ Endpoints:
 | `github-copilot-lite-review` |  |  |  |  |  |  |  | x |  |
 | `zai-native-cli` |  |  |  |  |  |  |  |  | x |
 | `zai-lite-trial` |  |  |  |  |  |  |  |  | x |
-| `windows-host-provider-bridge` | x | x | x | x | x |  |  | x |  |
+| `windows-host-provider-bridge` | x | x | x | x | x |  |  | x | x |
 | `browser-provider-ui` |  | x | x | x | x |  |  |  |  |
 | `chatgpt-slack-alias-bridge` | x |  |  |  |  |  |  |  |  |
 | `claude-native-acceptance-issuer` |  | x |  |  |  |  |  |  |  |
@@ -203,3 +204,4 @@ Endpoints:
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->

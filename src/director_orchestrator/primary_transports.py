@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -1677,12 +1678,17 @@ def discover_local_primary_command_transports(
     host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
     host_bridge_attested_argv: Mapping[str, str] | None = None,
     zai: Any = None,
+    zai_bridge: Any = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them.
 
-    ``zai`` is the deployment's ``ZaiNativeConfig`` or None. Z.ai is never found
-    on PATH: the same executable is the Claude lane there, so the Z.ai lane
-    exists only from its explicit configuration and readiness.
+    ``zai`` is the deployment's local ``ZaiNativeConfig`` or None. Z.ai is never
+    found on PATH: the same executable is the Claude lane there, so the Z.ai
+    lane exists only from its explicit configuration and readiness.
+    ``zai_bridge`` is the Director's ``ZaiBridgeExpectation`` or None: the lane
+    is bridged only when the signed challenge reports a Z.ai host command for
+    exactly that GLM model, so a Linux container needs neither the Windows CLI
+    nor the Z.ai key.
     """
 
     if openai_transport not in {"responses-api", "native-codex-host"}:
@@ -1788,6 +1794,26 @@ def discover_local_primary_command_transports(
             if provider_id == "openai" and openai_transport != "native-codex-host":
                 continue
             if provider_id not in host_bridge_challenge.configured_providers:
+                continue
+            if provider_id == "zai":
+                # Disabled here, or a host serving another model: no transport,
+                # so the lane stays unavailable and nothing is ever sent.
+                if zai_bridge is None or not zai_bridge.matches(
+                        (host_bridge_challenge.lane_argv or {}).get("zai")):
+                    continue
+                from .zai_native import normalize_zai_bridge_result, zai_bridge_guard
+                transports["zai"] = HostBridgePacketTransport(
+                    "zai", host_bridge_endpoint, host_bridge_secret,
+                    writer_owner_token_digest=host_bridge_writer_owner_token_digest,
+                    result_normalizer=partial(normalize_zai_bridge_result, zai_bridge.model),
+                    request_guard=partial(
+                        zai_bridge_guard, allow_repository_write=zai_bridge.allow_repository_write),
+                )
+                capabilities["zai"] = PrimaryProviderCapability(
+                    provider_id="zai", backend_identity="zai",
+                    transport_kind="authenticated-windows-host-bridge",
+                    executable_observed=True, authenticated_observed=True,
+                )
                 continue
             # The Antigravity lane keeps its closed-directive contract when the
             # host bridge replaces its native transport: the bridge posts the
@@ -1978,3 +2004,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

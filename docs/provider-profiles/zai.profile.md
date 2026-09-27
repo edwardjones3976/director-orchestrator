@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 
 # Provider profile: Z.ai (GLM) (zai)
@@ -82,13 +83,13 @@ Non-substitution rules:
 
 ## Capabilities
 
-- Tool-enabled GLM agent work through the Claude Code executable on Z.ai's endpoint, limited to the packet's grants: repository reading, fixed test runners, public web search, and isolated-branch edits confined to owned paths only when ZAI_ALLOW_REPOSITORY_WRITE is true. Eligible independent reviewer of candidates it did not author. It performs no external effect, and media capabilities of individual GLM models are not wired or advertised.
+- Tool-enabled GLM agent work through the Claude Code executable on Z.ai's Coding Plan endpoint, limited to the packet's grants and to client-side coding tools: repository reading, fixed test runners (also in review assignments), and isolated-branch edits confined to owned paths only when ZAI_ALLOW_REPOSITORY_WRITE is true. The tool limits are Claude Code permission rules, not an operating-system sandbox. Web search is not advertised: a generic Claude tool name is not evidence that Z.ai supports it. Eligible independent reviewer of candidates it did not author. It performs no external effect, and media capabilities of individual GLM models are not wired or advertised.
 
 Strengths:
 
 - text coding and tool-enabled agent work within granted tools
-- test execution through fixed test runners
-- public web research when the packet grants search
+- test execution through fixed test runners, including for independent review
+- repository research within granted read tools
 - independent review of candidates it did not author
 
 | Field | Value |
@@ -102,7 +103,7 @@ Strengths:
 | May cast committee vote | no |
 | Receives repository context | yes |
 | Receives task prose | yes |
-| Web-grounded research | yes |
+| Web-grounded research | no |
 | Tool use | repository_cli |
 | Charter allowed work | - |
 | Required evidence | - |
@@ -130,7 +131,7 @@ Strengths:
 | `ZAI_PRODUCTION_TIMEOUT_SECONDS` | timeout_seconds | `zai_production_timeout_seconds` | `900` | yes | no |
 
 - Provider daily spend ledger member: no
-- Not modeled note: Cost is UNKNOWN and recorded as null, never zero: the CLI prices with Anthropic tariffs. The owner's existing $5 total budget has an UNKNOWN current balance and no variable here models it; the packet's per-attempt budget and token limits, the shared absolute cutoff, and the turn cap bound each attempt.
+- Not modeled note: The route is the GLM Coding Plan subscription through native Claude Code: $0 additional API cash is allocated to it, and the owner's $5 total ceiling and historical holds are unchanged. Three quantities stay distinct and none is invented: incremental cash expense (usage.cost_usd, null because a call measures no charge; confirm against the account), Coding Plan credits (not reported by the CLI; read from the account), and the CLI's model-equivalent dollar telemetry at Anthropic tariffs (reported as a risk line, not a charge). The packet's per-attempt budget and token limits, the shared absolute cutoff, and the turn cap bound each attempt.
 - Shared limits: `MAX_TASK_BUDGET_USD`, `PROVIDER_TIMEOUT_SECONDS`
 
 ## Allowlists and gating
@@ -146,6 +147,7 @@ Strengths:
 | Variable | Kind | Required value | Readiness key | In .env.example | Verify | Value recorded |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ZAI_ENABLED` | enable_switch | `yes` | `zai` | yes | GET /health zai_production.enabled; startup refuses it outside production mode | no |
+| `ZAI_TRANSPORT` | transport_selector | - | `zai` | yes | GET /health zai_production.transport_valid; host_bridge needs zai_production.host_bridge_configured and no local key or CLI; native needs credential_configured and cli_configured | no |
 | `ZAI_MODE` | transport_selector | `production` | `zai` | yes | GET /health zai_production.production_mode; trial_only keeps only the Lite trial contact | no |
 | `ZAI_PRODUCTION_ACTIVATION` | activation_record_digest | - | `zai` | yes | GET /health zai_production.activation_evidence_recorded; configuration naming the owner's activation record by digest, never proof of a live round trip | no |
 | `ZAI_API_KEY` | credential_presence | - | `zai` | yes | GET /health zai_production.credential_configured | no |
@@ -164,10 +166,10 @@ Strengths:
 | Field | Value |
 | --- | --- |
 | Primary lane credential allowlist (names) | - |
-| Host bridge credential allowlist (names) | - |
+| Host bridge credential allowlist (names) | `ZAI_API_KEY` |
 | Settings credential fields | `zai_api_key` |
 | Values policy | names_and_booleans_only_never_values |
-| Child environment rule | Nothing is inherited by name. The child starts from the lane-minimal base environment with every ANTHROPIC_* and CLAUDE_* variable removed; the transport then injects the configured ZAI_API_KEY explicitly as the child's ANTHROPIC_AUTH_TOKEN, pins the base URL and every model slot, and points home and config at a throwaway per-attempt directory. No other lane's credential reaches a Z.ai process. |
+| Child environment rule | Nothing is inherited by name. The child starts from the lane-minimal base environment with every ANTHROPIC_* and CLAUDE_* variable removed; the transport then injects the Z.ai key explicitly as the child's ANTHROPIC_AUTH_TOKEN, pins the base URL and every model slot, and points home and config at a throwaway per-attempt directory. On the host bridge only the bridge process reads ZAI_API_KEY (forwarded from its profile), refuses a key whose key-ID SHA-256 differs from the command map's, and never passes that name to a child. No other lane's credential reaches a Z.ai process. |
 
 ## Authority limits
 
@@ -202,11 +204,13 @@ Separation of duties:
 
 | Limitation | Source |
 | --- | --- |
-| The Windows host provider bridge is not wired for zai; the lane runs only through its dedicated native CLI transport on the LangGraph primary path, and the legacy engine has no zai worker or adapter. | src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES |
+| The Docker Director reaches the Windows Claude Code CLI only through the authenticated host bridge, whose zai entry runs the same GLM-verifying native transport in the bridge process; the container holds neither the key nor the CLI. The legacy engine has no zai worker or adapter. | src/director_orchestrator/host_provider_bridge.py:WindowsHostProviderExecutor |
+| Tool limits are Claude Code permission rules on an ordinary host process, not an operating-system sandbox. Web search is not advertised on this route, and no MCP server is installed. | src/director_orchestrator/zai_native.py:tool_arguments |
+| A first host-side refusal is a signed no-run; a replay of that same refused request is reported with the older attestation-mismatch reason, which a non-attested Director reads as ambiguous (conservative). | src/director_orchestrator/host_provider_bridge.py:BridgeClaimStore |
 | No native acceptance issuer is available for Z.ai; it cannot sign a security, independent-review, or CI receipt. | docs/provider-setup.md, Z.ai production lane |
-| Qualification replay is pending: the earlier failed or ambiguous trial attempts must be reconciled, and the current budget balance confirmed, before any paid qualification or production call. | docs/provider-setup.md, Z.ai production lane |
+| Qualification is pending and belongs to the integration owner: historical failed or ambiguous attempts stay held and are never replayed; the subscription-only canary runs once after independent review and admission. | docs/provider-setup.md, Z.ai production lane |
 | Completion of the enrollment needs a real authorized Slack thread response and receipt through the existing Director relay; installing configuration is not completion. | docs/provider-setup.md, Z.ai production lane |
-| Cost is UNKNOWN (null) for every attempt because the CLI prices with Anthropic tariffs, and the owner's $5 total budget has an UNKNOWN current balance. | src/director_orchestrator/zai_native.py:zai_usage |
+| usage.cost_usd is null for every attempt: a call measures no cash charge, plan credits are not reported by the CLI, and the CLI's dollar figure is model-equivalent telemetry at Anthropic tariffs, not a charge. | src/director_orchestrator/zai_native.py:accounting_notes |
 | The lane exists only from explicit configuration and readiness; it is never discovered on PATH, where the same executable is the Claude lane. | src/director_orchestrator/primary_transports.py:discover_local_primary_command_transports |
 | Media capabilities of individual GLM models are not wired or advertised; the lane is text coding and tool-enabled agent work only. | docs/provider-setup.md, Z.ai production lane |
 | The Lite trial contact is trial-only: a separate append-only trial ledger, no production credit, no counted review verdict, and no dispatch at or after the trial end or in production mode. | src/director_orchestrator/zai_lane.py; src/director_orchestrator/config.py:validate_zai_trial_configuration |
@@ -215,15 +219,22 @@ Separation of duties:
 
 | Transport | Kind | Runtime | Enum value | Observed kind | Status | Route status | Direction | Config (names) | Route |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `zai-native-cli` | native_cli | langgraph_primary | - | `zai-native-cli` | implemented_disabled_by_default | authorized | director_to_provider | `ZAI_ENABLED`, `ZAI_MODE`, `ZAI_PRODUCTION_ACTIVATION`, `ZAI_API_KEY`, `ZAI_API_BASE`, `ZAI_MODEL`, `ZAI_CLI_EXECUTABLE`, `ZAI_MAX_TURNS`, `ZAI_PRODUCTION_TIMEOUT_SECONDS`, `ZAI_ALLOW_REPOSITORY_WRITE`, `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `zai-native-cli` |
+| `zai-native-cli` | native_cli | langgraph_primary | - | `zai-native-cli` | implemented_disabled_by_default | authorized | director_to_provider | `ZAI_ENABLED`, `ZAI_MODE`, `ZAI_TRANSPORT`, `ZAI_PRODUCTION_ACTIVATION`, `ZAI_API_KEY`, `ZAI_API_BASE`, `ZAI_MODEL`, `ZAI_CLI_EXECUTABLE`, `ZAI_MAX_TURNS`, `ZAI_PRODUCTION_TIMEOUT_SECONDS`, `ZAI_ALLOW_REPOSITORY_WRITE`, `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `zai-native-cli` |
+| `windows-host-provider-bridge` | host_bridge | langgraph_primary | - | `authenticated-windows-host-bridge` | implemented_disabled_by_default | authorized | director_to_provider | `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED`, `ZAI_TRANSPORT`, `ZAI_MODEL` | `windows-host-provider-bridge` |
 | `zai-lite-trial` | native_cli | operator_cli | - | - | implemented_disabled_by_default | authorized | director_to_provider | `ZAI_TRIAL_ENABLED`, `ZAI_MODE`, `ZAI_API_KEY`, `ZAI_API_BASE`, `ZAI_MODEL`, `ZAI_CLI_EXECUTABLE`, `ZAI_TRIAL_JOURNAL_DIR`, `ZAI_TRIAL_LEDGER_PATH`, `ZAI_TIMEOUT_SECONDS`, `ZAI_LITE_ENTITLEMENT_VERIFIED` | `zai-lite-trial` |
 
-- `zai-native-cli`: The only transport that may serve the zai lane. It runs one validated packet per attempt with packet-scoped tool grants, refuses every external effect before launch, and accepts only a complete successful envelope served by the configured GLM model; configuration alone never makes the lane callable.
-  - composed only when every zai_production readiness boolean holds
-  - tool grants limited to READ_REPOSITORY, RUN_TESTS, PUBLIC_WEB_SEARCH, and WRITE_ISOLATED_BRANCH; any other grant is refused before launch
+- `zai-native-cli`: The only transport that may serve the zai lane, run in-process by a host deployment (ZAI_TRANSPORT=native) or by the Windows host bridge for the Docker Director. It runs one validated packet per attempt with packet-scoped tool grants, refuses every external effect before launch, and accepts only a complete successful envelope served by the configured GLM model; configuration alone never makes the lane callable.
+  - composed locally only with ZAI_TRANSPORT=native and every zai_production readiness boolean
+  - tool grants limited to READ_REPOSITORY, RUN_TESTS, and WRITE_ISOLATED_BRANCH; any other grant, including PUBLIC_WEB_SEARCH, is refused before launch
+  - RUN_TESTS or writes run in default permission mode with only the listed rules; pure reads run in plan mode; never a bypass mode; print mode cannot wait on a permission prompt
   - WRITE_ISOLATED_BRANCH needs ZAI_ALLOW_REPOSITORY_WRITE and owned paths; .env files, .git, and prohibited paths are always denied
   - turns capped by ZAI_MAX_TURNS; the shared absolute cutoff and contained process tree apply, and a nonzero exit stays ambiguous
-  - missing token counts mean the result is never SUCCEEDED; cost is always recorded as unknown
+  - missing token counts mean the result is never SUCCEEDED; cash cost is recorded as null, never zero
+- `windows-host-provider-bridge`: The Docker Director's route to the Windows Z.ai worker. The bridge's zai command entry is [Claude Code executable, GLM model, max turns, write mode, key-ID SHA-256]; the bridge runs the zai native transport in-process under the same HMAC signing, durable claim, writer fence, deadline and response signature as every host lane. Configuration alone never makes the lane callable.
+  - built only when this Director's zai production readiness holds and the signed challenge reports a zai command for exactly ZAI_MODEL
+  - the bridge offers zai only while its ZAI_API_KEY matches the command map's key-ID digest and the executable exists
+  - unsupported grants and external effects are refused by the Director before anything is signed; a host-only refusal is a signed no-run
+  - the Director re-checks the returned provider, bindings, GLM model and null cash cost, then applies the attempt limits
 - `zai-lite-trial`: The earlier bounded Lite trial contact, operated through the trial CLI with tools disabled. It records attempts only in its own append-only trial ledger and carries no production credit, counted review verdict, or merge authority.
   - runs only with ZAI_MODE=trial_only; startup refuses ZAI_TRIAL_ENABLED in production mode
   - ZAI_ALLOW_REPOSITORY_WRITE, ZAI_ALLOW_REVIEW_VERDICT, and ZAI_PRODUCTION_ACTIVATION must stay unset or false in trial mode
@@ -248,6 +259,7 @@ Separation of duties:
 | `owner-manual-recovery` | mediated | owner_to_director | owner | authorized | enabled | none | `src/director_orchestrator/callbacks.py`, `src/director_orchestrator/engine.py` |
 | `zai-native-cli` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/zai_native.py:ZaiNativePacketTransport`, `src/director_orchestrator/primary_transports.py:discover_local_primary_command_transports`, `src/director_orchestrator/config.py:Settings.zai_production_readiness` |
 | `zai-lite-trial` | direct | director_to_provider | owner | authorized | disabled | none | `src/director_orchestrator/zai_lane.py:ZaiTrialLane`, `src/director_orchestrator/zai_trial.py:ZaiLiteTrialTransport`, `scripts/zai-trial.py` |
+| `windows-host-provider-bridge` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES`, `scripts/windows-host-provider-bridge.ps1` |
 | `direct-provider-to-provider` | direct | provider_to_provider | none | prohibited | not_applicable | none | `src/director_orchestrator/interactions.py:ProviderTransport`, `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/primary_transports.py:PrimaryProviderCapability` |
 
 ## Routes to other providers
@@ -281,3 +293,4 @@ Separation of duties:
 - `docs/providers/zai-welcome-aboard.md`: Code may host your session; it does not change your provider identity to Claude.
 
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
