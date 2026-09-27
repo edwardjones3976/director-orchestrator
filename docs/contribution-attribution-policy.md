@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:12 UTC | BEGIN]] -->
@@ -151,7 +152,7 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   agent. The pull-request sole author is recorded separately.
 - **How the share is measured and bound to review** (owner ruling, 2026-09-27):
   the sole author and shares are computed from the git record at the exact
-  reviewed base SHA (merge base) and head SHA:
+  reviewed merge-base SHA (`merge_base_sha`) and head SHA:
   `git log <merge-base>..<head> --no-merges --format='%H %an' -p -w --ignore-blank-lines --no-color --no-ext-diff --no-textconv --no-renames`,
   counting only `+` and `-` lines inside patch hunks (not file headers), per
   commit and authenticated identity. After removing the diff prefix, exclude
@@ -174,14 +175,17 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   authenticated producer counts for no one but stays in the denominator. Record
   each identity's share and its receipt references in the pull-request
   description. The share record stated at the reviewed head is the authoritative
-  artifact: identities, counted and uncounted lines, method, and reviewed base
-  SHA (merge base) and head SHA. PRs governed by this policy merge with
+  artifact: identities, counted and uncounted lines, method, reviewed target-tip
+  SHA (`base_sha`), merge-base SHA (`merge_base_sha`), and head SHA. PRs governed by this policy merge with
   `--merge`, never squash (#310), preserving commit-level evidence on main.
-  Reviewers recompute from that base/head pair while history is available;
+  Reviewers recompute from that merge-base/head pair while history is available;
   if history is ever collapsed, use the authoritative record without recomputing.
   A reviewer who can neither recompute nor find that record returns no verdict.
-  The computation and verdict bind to both SHAs; either changing, including a
-  retarget that changes the base, invalidates the verdict. Once #302 lands,
+  The authorship computation uses only `merge_base_sha` and head SHA;
+  `base_sha` remains the PR current target-tip SHA for runtime exact-candidate
+  binding. The verdict binds to `base_sha`, `merge_base_sha`, and head SHA;
+  any of the three changing, including a retarget that changes the base,
+  invalidates the verdict. Once #302 lands,
   the commit trailers carry the record.
 - **Nothing to count.** When the denominator is zero (for example a pull request
   that only restores contribution envelopes), the sole author is the one identity
@@ -194,11 +198,11 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   `ReviewCandidateArtifact` carries only `material_authors`, and
   `bind_review_handoff` can dispatch a review without any share evidence.
   Until a reviewed runtime and schema change adds that check, the Director and
-  the reviewer enforce the threshold from the exact base/head computation or
+  the reviewer enforce the threshold from the exact merge-base/head computation or
   authoritative reconstruction record above. The Director
   does not request review of a pull request whose record names no sole author
   with its shares. A reviewer, including one dispatched by the runtime, checks
-  that record against the exact reviewed base/head pair, recomputes while
+  that record against the exact reviewed merge-base/head pair, recomputes while
   history is available, and otherwise uses the reconstruction rule above.
   Missing or conflicting evidence, or a share below 52 %, yields no verdict. A
   runtime-dispatched review is therefore never, by itself, evidence that the
@@ -253,3 +257,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:12 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | END]] -->
