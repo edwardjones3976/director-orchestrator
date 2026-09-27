@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
@@ -17,7 +18,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 
-from director_orchestrator.antigravity import antigravity_wire_input
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
 from director_orchestrator.models import (
@@ -85,10 +85,12 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                                      request_limit=10, budget_usd=1, serialize=True, now=now)
                 self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
                 tomorrow = now + timedelta(days=1)
-                reopened.reserve(provider=provider, effect_key=key("tomorrow"), estimated_cost_usd=0,
-                                 request_limit=10, budget_usd=1, serialize=True, now=tomorrow)
+                with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                    reopened.reserve(provider=provider, effect_key=key("tomorrow"), estimated_cost_usd=0,
+                                     request_limit=10, budget_usd=1, serialize=True, now=tomorrow)
+                self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
                 self.assertEqual(reopened.exposure(provider, now=now), (2, 0.75))
-                self.assertEqual(reopened.exposure(provider, now=tomorrow), (1, 1))
+                self.assertEqual(reopened.exposure(provider, now=tomorrow), (0, 0))
 
     def test_payload_bytes_output_cap_and_prices(self):
         for provider in ("gemini", "grok", "perplexity"):
@@ -114,15 +116,57 @@ class ProviderSpendBoundsTests(unittest.TestCase):
         self.assertIsNone(assignment_request_cost_bound(
             settings, assignment.model_copy(update={"allow_draft_pr": True}), "context"))
 
-    def test_gemini_uses_whole_agent_token_cap(self):
-        settings = priced("gemini")
-        assignment = test_provider_contracts.ProviderContractTests.gemini_assignment()
-        prompt = antigravity_wire_input(assignment, context="context")
-        expected = (len(prompt.encode()) * 2 + settings.gemini_max_total_tokens * 8) / 1_000_000
-        self.assertAlmostEqual(assignment_request_cost_bound(settings, assignment, "context"), expected)
-        # Search has request fees, not a bounded token-only response.
-        search = Assignment(sequence=1, agent=ProviderName.PERPLEXITY, task="Research", acceptance=["Sources"])
-        self.assertIsNone(assignment_request_cost_bound(priced("perplexity"), search, "context"))
+    def test_priced_unbounded_transports_still_serialize(self):
+        assignments = (
+            test_provider_contracts.ProviderContractTests.gemini_assignment(),
+            Assignment(sequence=1, agent=ProviderName.GROK, task="Implement",
+                       acceptance=["Evidence"], allow_draft_pr=True),
+            Assignment(sequence=1, agent=ProviderName.PERPLEXITY, task="Research", acceptance=["Sources"]),
+        )
+        for assignment in assignments:
+            provider = assignment.agent
+            for revision in (None, "Correct the result"):
+                with self.subTest(provider=provider, revision=revision), tempfile.TemporaryDirectory() as directory:
+                    engine = object.__new__(OrchestrationEngine)
+                    engine.settings = priced(provider.value, **{f"{provider.value}_daily_budget_usd": 1})
+                    engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                    self.assertIsNone(assignment_request_cost_bound(
+                        engine.settings, assignment, "context", revision_prompt=revision))
+                    engine._reserve_provider_daily_spend(
+                        assignment, effect_key=key("first"), context="context", revision_prompt=revision)
+                    self.assertEqual(engine.provider_spend.exposure(provider), (1, 1))
+                    with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                        engine._reserve_provider_daily_spend(
+                            assignment, effect_key=key("next"), context="context", revision_prompt=revision)
+                    self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
+
+    def test_unsettled_serialized_request_blocks_across_midnight_until_known_charge(self):
+        before = datetime(2026, 9, 27, 23, 59, tzinfo=timezone.utc)
+        after = before + timedelta(minutes=2)
+        for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / "spend.sqlite3")
+                ledger = ProviderDailySpendLedger(path)
+                ledger.reserve(provider=provider, effect_key=key("first"), estimated_cost_usd=0,
+                               request_limit=10, budget_usd=1, serialize=True, now=before)
+                ledger = ProviderDailySpendLedger(path)
+                for charge in ("pending", None):
+                    if charge is None:
+                        ledger.record_charge(provider=provider, effect_key=key("first"),
+                                             actual_cost_usd=None, now=after)
+                    for serialized in (False, True):
+                        with self.subTest(charge=charge, serialized=serialized):
+                            with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                                ledger.reserve(provider=provider, effect_key=key("next"), estimated_cost_usd=0.1,
+                                               request_limit=10, budget_usd=1, serialize=serialized, now=after)
+                            self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
+                self.assertEqual(ledger.exposure(provider, now=after), (0, 0))
+                ledger.record_charge(provider=provider, effect_key=key("first"),
+                                     actual_cost_usd=0.25, now=after)
+                ledger.reserve(provider=provider, effect_key=key("next"), estimated_cost_usd=0,
+                               request_limit=10, budget_usd=1, serialize=True, now=after)
+                self.assertEqual(ledger.exposure(provider, now=before), (1, 0.25))
+                self.assertEqual(ledger.exposure(provider, now=after), (1, 1))
 
     def test_invalid_prices_refused_without_echoing_values(self):
         for provider in ("gemini", "grok", "perplexity"):
@@ -399,3 +443,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
