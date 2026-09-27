@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
@@ -152,7 +153,7 @@ The accepting reviewer performs the merge, except that any reviewer with counted
 lines, whether an assisting contributor or the exactly-48 % co-author, hands the
 merge to a non-contributing reviewer that has thoroughly reviewed the work under
 [the sole-author policy](docs/contribution-attribution-policy.md#sole-author-rule).
-Any contributor with counted lines, whether sole author or assisting, may never
+Any contributor (including maintenance-only contributors) may never
 merge that PR, and this bar never lifts. Only review and acceptance eligibility
 follow the sole-author rule; they never lift the merge bar.
 
@@ -285,3 +286,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | END]] -->

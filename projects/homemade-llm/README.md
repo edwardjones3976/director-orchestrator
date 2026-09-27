@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]] -->
@@ -45,7 +46,7 @@ capability.** The deviation from the template default is recorded in
 [`provider-roles-contract.yaml`](provider-roles-contract.yaml) under
 `project_local_bindings.deviations`. Every repository rule still binds: one
 author (at most one sole author, at least 52 % of the PR; see the
-[sole author rule](../../docs/contribution-attribution-policy.md#sole-author-rule)) and one non-author reviewer per PR, no contributor with counted lines merges;
+[sole author rule](../../docs/contribution-attribution-policy.md#sole-author-rule)) and one non-author reviewer per PR, no contributor (including maintenance-only contributors) merges;
 the non-contributing reviewer that has thoroughly reviewed the work performs the
 merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 10.
@@ -102,7 +103,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
    except that any reviewer with counted lines, whether an assisting contributor
    or the exactly-48 % co-author, hands the merge to a non-contributing reviewer
    that has thoroughly reviewed the work.
-   Any contributor with counted lines, whether sole author or assisting, may never
+   Any contributor (including maintenance-only contributors) may never
    merge that PR, and this bar never lifts. Every candidate change invalidates
    prior review evidence. This is the owner merge law as policy.
    Until the separately authorized framework alignment lands, protected-branch merges (including `main`) remain tier 0 under `docs/human-out-of-the-loop-operation.md`, so an accepting reviewer records the `ACCEPT` and the framework blocker instead of merging; non-protected merges still require a live grant.
@@ -157,3 +158,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | END]] -->
