@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
@@ -34,8 +35,8 @@ from director_orchestrator.hotl_execution import (
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "human-out-of-the-loop-operation.md"
 
-MERGE = ProposedAction(
-    action_class="eligible_merge_non_protected_branch",
+CANDIDATE = ProposedAction(
+    action_class="mark_pull_request_ready_for_review",
     repository="edwardjones3976/director-orchestrator",
     environment="local",
     candidate_sha="0" * 40,
@@ -50,6 +51,10 @@ def _all(satisfied: bool = True, **overrides: TermEvidence) -> dict[str, TermEvi
     }
     evidence.update(overrides)
     return evidence
+
+
+def _decide_delegated(action, evidence):
+    return decide(action, evidence, operating_state="DELEGATED")
 
 
 class TierTests(unittest.TestCase):
@@ -71,6 +76,7 @@ class TierTests(unittest.TestCase):
         # an added or removed bullet breaks the bijection below.
         encodes = {
             "eligible_merge_non_protected_branch": ("eligible merge", "non-protected branch"),
+            "eligible_merge_protected_branch": ("eligible merge", "into a protected branch"),
             "mark_pull_request_ready_for_review": ("marking a pull request ready for review",),
             "post_to_own_designated_slack_channel": ("designated slack channel",),
             "execute_small_read_only_task": ("executing a small read-only task",),
@@ -146,13 +152,19 @@ class GoverningDocumentTests(unittest.TestCase):
             was = self._bullets(before, heading)
             now = self._bullets(current, heading)
             for entry in was:
+                if heading == "### Tier 0" and entry == "- Merging into a protected branch.":
+                    self.assertNotIn(entry, now)
+                    continue
                 self.assertIn(entry, now, f'{heading} lost: {entry}')
             if heading == "### Tier 1":
-                # Closed at exactly the owner-signed addition, and nothing else.
-                self.assertEqual(now, was + [
+                # Only the owner-signed read-only and merge-law additions.
+                expected = was[:1] + [
+                    "- Executing an eligible merge of a pull request into a protected branch."
+                ] + was[1:] + [
                     "- Executing a small read-only task that "
                     "`policy.small_read_only_eligible()` admits."
-                ])
+                ]
+                self.assertEqual(now, expected)
 
     def test_the_predicate_document_defers_to_the_governing_one(self):
         text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
@@ -229,7 +241,7 @@ class PreExecutionTests(unittest.TestCase):
                 self.assertIn(f"{term} unmet", " ".join(decision.blockers))
 
     def test_it_decides_only_its_class_and_exactly_its_terms(self):
-        self.assertFalse(decide_pre_execution(MERGE, self.evidence()).autonomous)
+        self.assertFalse(decide_pre_execution(CANDIDATE, self.evidence()).autonomous)
         with self.assertRaises(ValueError):
             decide_pre_execution(SMALL, _all(True))
         with self.assertRaises(ValueError):
@@ -238,7 +250,7 @@ class PreExecutionTests(unittest.TestCase):
 
 class ConjunctionTests(unittest.TestCase):
     def test_every_term_met_executes(self):
-        decision = decide(MERGE, _all(True))
+        decision = _decide_delegated(CANDIDATE, _all(True))
         self.assertIs(decision.outcome, Outcome.EXECUTE)
         self.assertTrue(decision.autonomous)
         self.assertEqual(decision.blockers, ())
@@ -249,7 +261,7 @@ class ConjunctionTests(unittest.TestCase):
         for term in TERMS:
             evidence = _all(True)
             evidence[term] = TermEvidence(False, f"{term} unmet")
-            decision = decide(MERGE, evidence)
+            decision = _decide_delegated(CANDIDATE, evidence)
             self.assertIs(decision.outcome, Outcome.HOLD, term)
             self.assertFalse(decision.autonomous, term)
 
@@ -257,7 +269,7 @@ class ConjunctionTests(unittest.TestCase):
         evidence = _all(True)
         evidence["bounds"] = TermEvidence(False, "daily ceiling reached")
         evidence["independence"] = TermEvidence(False, "acting identity authored it")
-        decision = decide(MERGE, evidence)
+        decision = _decide_delegated(CANDIDATE, evidence)
         joined = " ".join(decision.blockers)
         self.assertIn("daily ceiling reached", joined)
         self.assertIn("acting identity authored it", joined)
@@ -267,7 +279,7 @@ class ConjunctionTests(unittest.TestCase):
 
         evidence = _all(True)
         evidence["verification"] = TermEvidence(False, "evidence not bound to candidate")
-        for blocker in decide(MERGE, evidence).blockers:
+        for blocker in _decide_delegated(CANDIDATE, evidence).blockers:
             self.assertNotIn("?", blocker)
             for asking in ("may i", "should i", "permission", "approve", "confirm"):
                 self.assertNotIn(asking, blocker.lower())
@@ -276,7 +288,7 @@ class ConjunctionTests(unittest.TestCase):
         partial = _all(True)
         del partial["gates"]
         with self.assertRaises(ValueError) as caught:
-            decide(MERGE, partial)
+            _decide_delegated(CANDIDATE, partial)
         self.assertIn("gates", str(caught.exception))
 
     def test_an_unmet_term_must_state_a_reason(self):
@@ -290,7 +302,7 @@ class RecoveryTests(unittest.TestCase):
         evidence["verification"] = TermEvidence(
             False, "evidence stale", recovery="re-run exact-SHA verification"
         )
-        decision = decide(MERGE, evidence)
+        decision = _decide_delegated(CANDIDATE, evidence)
         self.assertIs(decision.outcome, Outcome.RECOVER)
         self.assertEqual(decision.recovery, "re-run exact-SHA verification")
         self.assertFalse(decision.autonomous)
@@ -304,7 +316,7 @@ class RecoveryTests(unittest.TestCase):
     def test_an_unrecoverable_blocker_holds(self):
         evidence = _all(True)
         evidence["authorization"] = TermEvidence(False, "no standing grant for this class")
-        self.assertIs(decide(MERGE, evidence).outcome, Outcome.HOLD)
+        self.assertIs(_decide_delegated(CANDIDATE, evidence).outcome, Outcome.HOLD)
 
     def test_a_sibling_recovery_cannot_carry_a_missing_authorization(self):
         """An unmet authorization needs authority no recovery supplies.
@@ -322,7 +334,7 @@ class RecoveryTests(unittest.TestCase):
         evidence["verification"] = TermEvidence(
             False, "evidence stale", recovery="re-run exact-SHA verification"
         )
-        decision = decide(MERGE, evidence)
+        decision = _decide_delegated(CANDIDATE, evidence)
         self.assertIs(decision.outcome, Outcome.HOLD)
         self.assertIsNone(decision.recovery)
         # The recoverable term is still reported, so the hold names every
@@ -345,13 +357,13 @@ class RecoveryTests(unittest.TestCase):
             False, "evidence stale", recovery="re-run exact-SHA verification"
         )
         # bounds carries no recovery, so nothing authorises progress on it.
-        self.assertIs(decide(MERGE, evidence).outcome, Outcome.HOLD)
+        self.assertIs(_decide_delegated(CANDIDATE, evidence).outcome, Outcome.HOLD)
 
         # Give it one and the decision may recover.
         evidence["bounds"] = TermEvidence(
             False, "daily ceiling reached", recovery="wait for the ceiling to reset"
         )
-        decision = decide(MERGE, evidence)
+        decision = _decide_delegated(CANDIDATE, evidence)
         self.assertIs(decision.outcome, Outcome.RECOVER)
         self.assertEqual(len(decision.blockers), 2)
 
@@ -372,7 +384,7 @@ class RecoveryTests(unittest.TestCase):
             evidence[term] = TermEvidence(
                 False, f"{term} unmet", recovery=f"retry {term}"
             )
-            decision = decide(MERGE, evidence)
+            decision = _decide_delegated(CANDIDATE, evidence)
             self.assertIs(decision.outcome, Outcome.HOLD, term)
             self.assertIsNone(decision.recovery, term)
 
@@ -424,7 +436,7 @@ class RecoveryTests(unittest.TestCase):
         evidence = _all(True)
         evidence["provenance"] = TermEvidence(False, "artifact provenance unproved")
         with self.assertRaises(ValueError) as caught:
-            decide(MERGE, evidence)
+            _decide_delegated(CANDIDATE, evidence)
         self.assertIn("provenance", str(caught.exception))
 
     def test_every_bar_item_reaches_a_term(self):
@@ -492,3 +504,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | BEGIN]]
@@ -10,6 +13,7 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')][string]$ContainerName = "director-primary-test-pg",
     [ValidateRange(1024, 65535)][int]$HostPort = 55433,
     [ValidateRange(5, 900)][int]$TimeoutSeconds = 60,
+    [ValidateRange(1, 86400)][int]$SlotWaitSeconds = 2700,
     [string]$Python = ".venv\Scripts\python.exe",
     [string[]]$TestNames = @()
 )
@@ -103,41 +107,127 @@ function Remove-LaneContainer {
     if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be removed." }
 }
 
+function Get-LaneStateDirectory {
+    $root = $env:LOCALAPPDATA
+    if (-not $root) { $root = $env:XDG_STATE_HOME }
+    if (-not $root -and $env:HOME) { $root = Join-Path $env:HOME '.local/state' }
+    if (-not $root) { $root = $env:RUNNER_TEMP }
+    if (-not $root) { throw "No test lane state directory is available." }
+    $directory = Join-Path $root 'director-orchestrator/test-lanes'
+    [IO.Directory]::CreateDirectory($directory) | Out-Null
+    return $directory
+}
+
+function Get-SlotInventory {
+    # One daemon snapshot includes reservations and their pre-created owners.
+    $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.Labels}}')
+    if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
+    foreach ($row in $rows) {
+        $parts = [string]$row -split '\|', 3
+        if ($parts.Count -ne 3) { throw "Invalid Docker slot inventory." }
+        $labels = @{}
+        foreach ($label in ($parts[2] -split ',')) {
+            $pair = $label -split '=', 2
+            if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
+        }
+        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
+    }
+}
+
+function Remove-SlotContainer {
+    param([string]$Id)
+    # Immutable IDs prevent removing another caller's replacement reservation.
+    & docker rm --volumes $Id | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The PostgreSQL test lane slot could not be removed." }
+}
+
+function Enter-LaneSlot {
+    $limit = 2
+    if ($env:GITHUB_ACTIONS -eq 'true') { $limit = 4 }
+    if ($null -ne $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY) {
+        if (-not [int]::TryParse($env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY, [ref]$limit) -or $limit -lt 1) {
+            throw "DIRECTOR_TEST_LANE_MAX_CONCURRENCY must be a positive integer."
+        }
+    }
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $inventory = @(Get-SlotInventory)
+        foreach ($slot in $inventory | Where-Object { $_.Owner -and $_.Name -match '^director-test-lane-slot-[1-9][0-9]*$' }) {
+            if (@($inventory | ForEach-Object { $_.Name }) -cnotcontains $slot.Owner) { Remove-SlotContainer $slot.Id }
+        }
+        for ($number = 1; $number -le $limit; $number++) {
+            # Daemon name uniqueness is atomic across Windows and WSL.
+            # The owner exists before reservation, closing the reclamation race.
+            $priorErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $id = & docker create --pull=never --name "director-test-lane-slot-$number" --label "director-orchestrator.test-lane-slot=$ContainerName" $image 2>$null
+                $created = $LASTEXITCODE -eq 0
+            }
+            finally { $ErrorActionPreference = $priorErrorActionPreference }
+            if (-not $created) { continue }
+            # High-number CI slots and legacy lanes count against local caps too.
+            $inventory = @(Get-SlotInventory)
+            $occupied = @($inventory | Where-Object { $_.Owner -or ($_.Lane -eq 'true' -and $_.Managed -ne 'true') })
+            if ($occupied.Count -le $limit) { return }
+            Remove-SlotContainer ([string]$id)
+        }
+        if ($timer.Elapsed.TotalSeconds -ge $SlotWaitSeconds) {
+            throw "Timed out waiting for a PostgreSQL test lane slot after $SlotWaitSeconds seconds (cap $limit)."
+        }
+        Write-Host "Waiting for a PostgreSQL test lane slot (cap $limit; $([int]$timer.Elapsed.TotalSeconds)s elapsed)."
+        Start-Sleep -Milliseconds ([int][Math]::Min(15000, [Math]::Max(1, ($SlotWaitSeconds - $timer.Elapsed.TotalSeconds) * 1000)))
+    } while ($true)
+}
+
+function Remove-LaneSlot {
+    foreach ($slot in @(Get-SlotInventory)) {
+        if ($slot.Owner -ceq $ContainerName -and $slot.Name -match '^director-test-lane-slot-[1-9][0-9]*$') {
+            Remove-SlotContainer $slot.Id
+        }
+    }
+}
+
 function Start-Lane {
     Assert-DockerReachable
     $existing = Get-LaneContainer
     if ($null -ne $existing) {
         Assert-LaneOwned -Container $existing
-        # Always begin from a fresh data directory so the role baked into the
-        # container equals the DSN user; a leftover is never restarted.
-        Remove-LaneContainer
+        throw "Container '$ContainerName' already belongs to a lane; run -Action Stop first or choose a distinct name."
     }
     $publishers = @(& docker ps --filter "publish=$HostPort" --format '{{.Names}}')
     if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
     if ($publishers.Count -gt 0) {
-        throw "Host port $HostPort is already published by container(s): $($publishers -join ', '). Choose another -HostPort or stop them yourself; this script never removes containers it did not create."
+        throw "Host port $HostPort is already published; choose another -HostPort or stop your own lane."
     }
-    & docker run --detach --rm --name $ContainerName --label "$laneLabel=true" --publish "127.0.0.1:${HostPort}:5432" --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" $image | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be started." }
-    try { Wait-LaneReady }
-    catch { Remove-LaneContainer; throw }
-    Export-LaneEnvironment
-    Write-Host "Disposable PostgreSQL lane '$ContainerName' is ready on 127.0.0.1:$HostPort (trust auth, loopback only, no volume, no password)."
+    # Create the owner first, but do not start PostgreSQL until admission.
+    & docker create --name $ContainerName --label "$laneLabel=true" --label "director-orchestrator.test-lane-managed=true" --publish ("127.0.0.1:" + $HostPort + ":5432") --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" $image | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be created." }
+    try {
+        Enter-LaneSlot
+        & docker start $ContainerName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be started." }
+        Wait-LaneReady
+        Export-LaneEnvironment
+        Write-Host "Disposable PostgreSQL lane is ready."
+    }
+    catch {
+        try { Remove-LaneContainer; Remove-LaneSlot }
+        catch { Write-Warning "Could not verify lane cleanup; slot retained." }
+        throw
+    }
 }
 
 function Stop-Lane {
     $existing = Get-LaneContainer
-    if ($null -eq $existing) {
-        Clear-LaneEnvironment
-        Write-Host "No container named '$ContainerName' exists; nothing to remove."
-        return
+    if ($null -ne $existing) {
+        Assert-LaneOwned -Container $existing
+        Remove-LaneContainer
     }
-    Assert-LaneOwned -Container $existing
-    Remove-LaneContainer
+    Remove-LaneSlot
     Clear-LaneEnvironment
-    Write-Host "Disposable PostgreSQL lane '$ContainerName' was removed."
+    Write-Host "Disposable PostgreSQL lane was removed or confirmed absent."
 }
-
 if ($Action -eq "Start") { Start-Lane; return }
 if ($Action -eq "Stop") { Assert-DockerReachable; Stop-Lane; return }
 if ($Action -eq "Status") {
@@ -173,13 +263,15 @@ foreach ($name in @("PYTHONPATH", "SQLITE_PATH", $dsnVariable, $containerVariabl
 Push-Location -LiteralPath $repoRoot
 $testExit = 1
 $laneRemoved = $false
+$laneStarted = $false
 try {
     # Start inside the try so a refused, unreachable, or timed-out lane still
     # restores the caller's working directory and environment on the way out.
     Start-Lane
+    $laneStarted = $true
     $pythonPath = (Resolve-Path -LiteralPath $Python).Path
     [Environment]::SetEnvironmentVariable("PYTHONPATH", "src", "Process")
-    $sqlitePath = Join-Path ([IO.Path]::GetTempPath()) "director-postgres-test-lane-$([Guid]::NewGuid().ToString('N')).sqlite3"
+    $sqlitePath = Join-Path (Get-LaneStateDirectory) "director-postgres-test-lane-$([Guid]::NewGuid().ToString('N')).sqlite3"
     [Environment]::SetEnvironmentVariable("SQLITE_PATH", $sqlitePath, "Process")
     if (@($TestNames).Count -gt 0) { & $pythonPath -m unittest -v @TestNames }
     else { & $pythonPath -m unittest discover -s tests -v }
@@ -189,7 +281,9 @@ finally {
     # A cleanup failure must not mask the error that ended the run, and it must
     # not be reported as a removal either: a surviving container keeps the
     # published port, and the next -Action Start refuses a lane it does not own.
-    try { Stop-Lane; $laneRemoved = $true } catch { Write-Warning $_.Exception.Message }
+    if ($laneStarted) {
+        try { Stop-Lane; $laneRemoved = $true } catch { Write-Warning $_.Exception.Message }
+    }
     foreach ($entry in $originalProcessEnvironment.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
     }
@@ -204,3 +298,6 @@ Write-Host "Unit tests passed against the disposable PostgreSQL lane; the contai
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:20 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
