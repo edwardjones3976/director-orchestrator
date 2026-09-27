@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
@@ -159,6 +160,18 @@ class ParallelRunnerTests(unittest.TestCase):
                 self.assertTrue(any('DROP DATABASE IF EXISTS "director_test_s1"' in sql for sql in statements))
             self.assertEqual(3 if not partial else 2, connect.call_count)
             self.assertFalse(any("DROP" in str(call) for call in connection.execute.call_args_list))
+
+    def test_disposable_ci_lane_uses_container_removal_for_cleanup(self):
+        import psycopg
+        setup = MagicMock()
+        setup.__enter__.return_value = setup
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "DIRECTOR_CI_PG_LANE": "owned-lane|47001"}), \
+                patch.object(psycopg, "connect", return_value=setup) as connect:
+            with self.assertRaisesRegex(RuntimeError, "shard failure"):
+                with runner.shard_databases("dbname=fixture", 2):
+                    raise RuntimeError("shard failure")
+        connect.assert_called_once()
+        self.assertFalse(any("DROP" in str(call) for call in setup.execute.call_args_list))
 
     def test_discovery_failure_is_loud(self):
         self.module("test_parallel_broken", "raise ImportError('private diagnostic')\n")
@@ -331,3 +344,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | END]]
