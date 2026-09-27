@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]] -->
@@ -42,9 +43,51 @@ with its stopped owner container still present, use Stop for that lane; it is
 not reclaimed automatically. Existing same-name lanes require explicit Stop
 before a fresh Start, preventing replacement of another active caller.
 
+## Parallel tests within one lane
+
+Run the full suite from the worktree in PowerShell:
+
+```powershell
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Parallel 8 -Python C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe
+```
+
+Without `-Parallel N`, local execution remains serial. Parallel mode requires
+`-Action Test` without `-TestNames`. All shards share the lane's single container
+and slot. Each gets a database `director_test_s<i>` created from `template0`,
+its own SQLite file and temp directory, and `DIRECTOR_TEST_SHARD=i`. Only
+successfully created databases are dropped, including after test failure or
+partial setup failure. Existing databases are refused, never reused or deleted.
+Do not run two parallel runners against the same lane simultaneously. Abrupt
+host termination still requires the lane's normal `-Action Stop` cleanup.
+
+The runner checks serial discovery counts and test-ID multisets, preserving
+the default `test*.py` pattern, implicit top-level `tests`, imported test classes
+and `load_tests` hooks. It balances whole modules by test count, or by the
+optional `tests/.durations.json`. `--record-durations` writes module totals
+from unittest's test method durations on success; fixture time is excluded.
+
+`--shards N` overrides `DIRECTOR_TEST_SHARDS`; the standalone default is
+`max(1, min(8, cpu_count // 4))`. CI uses repository variable
+`DIRECTOR_TEST_SHARDS`, default eight. `--timeout SECONDS` sets the per-shard
+limit (default 1800). Timeouts terminate the shard process tree and fail the run.
+`--serial` runs the original `python -m unittest discover -s tests -v` command.
+Buffered logs report identifiers and counts, suppressing raw assertion values
+and tracebacks that could contain sensitive data. Use serial mode for diagnosis.
+
+No module is currently assigned a serial tail. Static inspection found no
+confirmed cross-module conflict after database/temp isolation; full-suite
+parallel compatibility and wall-time improvement still require CI validation.
+
+Only Compose/build and recovery-probe jobs skip docs-only PRs. The classifier
+uses the merge-base diff including both sides of renames: `docs/**` and Markdown
+qualify, except `AGENTS.md` and `CLAUDE.md`; `n8n/workflows/*.json` do not qualify.
+Unit tests, attribution and secret hygiene always run. Main pushes and
+classifier failures run the expensive jobs too.
+
 Local test state uses `LOCALAPPDATA`, then `XDG_STATE_HOME`, then
 `HOME/.local/state`, then `RUNNER_TEMP`, with `director-orchestrator/test-lanes`
 appended. These local files are not admission authority.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]] -->

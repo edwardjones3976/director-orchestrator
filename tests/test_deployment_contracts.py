@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
@@ -505,7 +506,26 @@ process.stdout.write(JSON.stringify({outputs, store}));
         )
         self.assertIn("ubuntu-latest", workflow)
         self.assertIn("windows-latest", workflow)
-        self.assertIn("python -m unittest discover -s tests -v", workflow)
+        self.assertEqual(3, workflow.count("python scripts/run-tests-parallel.py\n"))
+        self.assertIn("DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || 8 }}", workflow)
+        jobs = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)", workflow.split("\njobs:\n", 1)[1], re.MULTILINE | re.DOTALL))
+        expected_names = {
+            "contribution-attribution": "Contribution attribution",
+            "python": "Python 3.12 (${{ matrix.os }})",
+            "containers": "Compose and container build",
+            "secret-hygiene": "Secret hygiene",
+            "recovery-probe": "Cross-process recovery probe",
+        }
+        self.assertEqual(set(expected_names) | {"changes"}, set(jobs))
+        for job, name in expected_names.items():
+            self.assertIn(f"    name: {name}\n", jobs[job])
+            if job in {"containers", "recovery-probe"}:
+                self.assertIn("    needs: changes\n", jobs[job])
+                self.assertIn("always() && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true')", jobs[job])
+            else:
+                self.assertNotRegex(jobs[job], r"(?m)^    (if|needs):")
+        self.assertIn('echo "docs_only=false"', jobs["changes"])
+        self.assertIn('python scripts/run-tests-parallel.py --docs-only "$BASE_SHA" "$HEAD_SHA"', jobs["changes"])
         self.assertIn("docker compose --env-file .env.example config --quiet", workflow)
         self.assertNotIn(
             "PYTHONPATH: src\n      SQLITE_PATH: ${{ runner.temp }}/recovery-bootstrap.sqlite3",
@@ -654,3 +674,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]

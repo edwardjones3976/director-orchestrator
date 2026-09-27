@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
@@ -15,12 +16,16 @@ param(
     [ValidateRange(5, 900)][int]$TimeoutSeconds = 60,
     [ValidateRange(1, 86400)][int]$SlotWaitSeconds = 2700,
     [string]$Python = ".venv\Scripts\python.exe",
+    [ValidateRange(1, 256)][int]$Parallel,
     [string[]]$TestNames = @()
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
+if ($PSBoundParameters.ContainsKey('Parallel') -and ($Action -ne 'Test' -or @($TestNames).Count -gt 0)) {
+    throw '-Parallel requires -Action Test and full discovery (no -TestNames).'
+}
 
 # These literals mirror the "Start disposable PostgreSQL (Linux)" step in
 # .github/workflows/ci.yml and the primary database digest in docker-compose.yml;
@@ -273,7 +278,8 @@ try {
     [Environment]::SetEnvironmentVariable("PYTHONPATH", "src", "Process")
     $sqlitePath = Join-Path (Get-LaneStateDirectory) "director-postgres-test-lane-$([Guid]::NewGuid().ToString('N')).sqlite3"
     [Environment]::SetEnvironmentVariable("SQLITE_PATH", $sqlitePath, "Process")
-    if (@($TestNames).Count -gt 0) { & $pythonPath -m unittest -v @TestNames }
+    if ($PSBoundParameters.ContainsKey('Parallel')) { & $pythonPath scripts/run-tests-parallel.py --shards $Parallel }
+    elseif (@($TestNames).Count -gt 0) { & $pythonPath -m unittest -v @TestNames }
     else { & $pythonPath -m unittest discover -s tests -v }
     $testExit = $LASTEXITCODE
 }
@@ -301,3 +307,4 @@ Write-Host "Unit tests passed against the disposable PostgreSQL lane; the contai
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
