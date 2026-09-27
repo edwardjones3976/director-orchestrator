@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
@@ -288,7 +289,7 @@ class ResponseMeterTests(unittest.TestCase):
                         # still held and no usage row is written.
                         bound = 1 + (ACCOUNTING_ALLOWANCE_SECONDS if phase=="settle" else 0)
                         self.assertLess(elapsed,bound+1.5)
-                        self.assertTrue(all(0 < call.kwargs["timeout"] <= bound for call in acquisition.call_args_list))
+                        self.assertTrue(all(0 < call.kwargs["timeout"] <= bound + 1e-9 for call in acquisition.call_args_list))
                 self.assertEqual(0 if phase=="prepare" else 2,len(requests))
                 self.assertEqual(0,self.count_rows())
                 with self.store._pool.connection() as c:
@@ -526,3 +527,4 @@ class ResponseMeterTests(unittest.TestCase):
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | END]]

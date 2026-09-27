@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
@@ -95,7 +96,8 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(len(reservations), 1)
                         self.assertEqual(ledger.unreconciled(provider, stale_after=HOUR),
                                          [reservations[0][0]] if expected is None else [])
-                        self.assertAlmostEqual(ledger.exposure(provider)[1], max(reservations[0][1], expected or 0))
+                        self.assertAlmostEqual(ledger.exposure(provider)[1],
+                                               reservations[0][1] if expected is None else expected)
 
     def test_authoritative_cost_rejects_malformed_and_wrong_fields(self) -> None:
         for provider in ("gemini", "grok", "xai", "perplexity"):
@@ -185,10 +187,12 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             # $0.50 of other spend today under the $1 cap.
             engine.provider_spend.reserve(provider=ProviderName.GEMINI, effect_key=_key("other"),
                                           estimated_cost_usd=0.5, request_limit=50, budget_usd=1.0)
+            engine.provider_spend.record_charge(provider=ProviderName.GEMINI, effect_key=_key("other"),
+                                                actual_cost_usd=0.5)
             engine = await self._dispatch(settings, store, record, assignment, {"usage": {"cost": 0.60}})
             reservations = dict(engine.provider_spend.reservations(ProviderName.GEMINI))
-            # The $0 estimate reserved the provider's nonzero bound, never $0.
-            self.assertEqual(sorted(reservations.values()), [0.01, 0.5])
+            # Without prices, the request holds all remaining capacity.
+            self.assertEqual(sorted(reservations.values()), [0.5, 0.5])
             count, exposure = engine.provider_spend.exposure(ProviderName.GEMINI)
             self.assertEqual(count, 2)
             self.assertAlmostEqual(exposure, 1.10)  # the actual $0.60 charge, not its $0.01 reservation
@@ -203,19 +207,20 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             engine = await self._dispatch(settings, store, record, assignment, {})
             self.assertEqual(len(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR)), 1)
             _, exposure = engine.provider_spend.exposure(ProviderName.GEMINI)
-            self.assertAlmostEqual(exposure, 0.01)  # it keeps counting at its bound
+            self.assertAlmostEqual(exposure, 1.0)  # unknown cost retains all capacity
             # The producer check 15 reads reports it, so check 15 cannot pass on that lower bound.
             accounting = UsageMonitor(settings, store, adapters={})._daily_accounting(
                 "gemini", datetime.now(timezone.utc))
             self.assertEqual(accounting["unreconciled_request_count"], 1)
 
-    async def test_a_zero_estimate_with_no_configured_bound_is_refused(self) -> None:
+    async def test_a_zero_estimate_with_no_configured_bound_serializes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = self._world(directory, ceiling=None)
             engine = OrchestrationEngine(settings, store)
+            engine._reserve_provider_daily_spend(assignment, effect_key=_key("unbounded"))
             with self.assertRaises(ProviderDailyLimitExceeded):
-                engine._reserve_provider_daily_spend(assignment, effect_key=_key("unbounded"))
-            self.assertEqual(engine.provider_spend.reservations(ProviderName.GEMINI), [])
+                engine._reserve_provider_daily_spend(assignment, effect_key=_key("overlap"))
+            self.assertEqual(engine.provider_spend.exposure(ProviderName.GEMINI), (1, 1.0))
 
     async def _run_unfinished(self, settings, store, record, assignment, poll_error):
         engine = OrchestrationEngine(settings, store)
@@ -324,3 +329,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]

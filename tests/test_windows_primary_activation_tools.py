@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
@@ -1136,6 +1138,11 @@ Write-Output 'slot-checks-passed'
 
     def test_postgres_test_lane_mirrors_ci_and_refuses_foreign_containers(self) -> None:
         text = self.text("windows-postgres-test-lane.ps1")
+        self.assertIn("[ValidateRange(1, 256)][int]$Parallel", text)
+        self.assertIn("$PSBoundParameters.ContainsKey('Parallel')", text)
+        self.assertIn("-Parallel requires -Action Test and full discovery (no -TestNames).", text)
+        self.assertIn("& $pythonPath scripts/run-tests-parallel.py --shards $Parallel", text)
+        self.assertIn("else { & $pythonPath -m unittest discover -s tests -v }", text)
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         for action in ('"Start"', '"Stop"', '"Status"', '"Dsn"', '"Test"'):
@@ -1381,3 +1388,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]

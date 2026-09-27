@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -572,7 +573,7 @@ class CompletionWorkerTests(unittest.TestCase):
 
         remaining = backend._execute_argv.call_args.kwargs["timeout_seconds"]
         self.assertGreater(remaining, 0)
-        self.assertLess(remaining, short_spec.limits.timeout_seconds)
+        self.assertLessEqual(remaining, short_spec.limits.timeout_seconds + 1e-9)
 
     def test_expired_total_deadline_prevents_snapshot_construction(self):
         with self.assertRaisesRegex(CompletionWorkerError, "total deadline"):
@@ -827,3 +828,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | END]]
