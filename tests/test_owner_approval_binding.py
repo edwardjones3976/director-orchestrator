@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
@@ -385,8 +386,8 @@ class AtomicOwnerDecisionTests(unittest.TestCase):
             barrier = threading.Barrier(2)
             original_get = task_store.get_versioned
 
-            def synchronized_get(task_id: str):
-                versioned = original_get(task_id)
+            def synchronized_get(task_id: str, **kwargs):
+                versioned = original_get(task_id, **kwargs)
                 barrier.wait(timeout=5)
                 return versioned
 
@@ -3904,3 +3905,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | END]]

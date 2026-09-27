@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
@@ -28,6 +29,7 @@ from unittest.mock import patch, AsyncMock
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.store import TaskStore
 from director_orchestrator.models import (
     AmbiguousDispatchResolution, Assignment, ProviderContactAttempt, ProviderName, ProviderRun, TaskStatus,
 )
@@ -160,6 +162,22 @@ class ProviderSpendBoundsTests(unittest.TestCase):
         self.assertIsNone(assignment_request_cost_bound(
             settings, assignment.model_copy(update={"allow_draft_pr": True}), "context"))
 
+    def test_engine_missing_or_mismatched_store_refuses_before_reserving(self):
+        for provider in ProviderDailySpendLedger._SUPPORTED:
+            for missing in (True, False):
+                with self.subTest(provider=provider, missing=missing), tempfile.TemporaryDirectory() as directory:
+                    engine = object.__new__(OrchestrationEngine)
+                    engine.settings = Settings()
+                    engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                    if not missing:
+                        engine.store = TaskStore(str(Path(directory) / "other.sqlite3"))
+                    assignment = Assignment(sequence=1, agent=provider, task="Answer", acceptance=["Evidence"])
+                    with patch.object(engine.provider_spend, "reserve") as reserve:
+                        with self.assertRaises(ProviderDailyLimitExceeded):
+                            engine._reserve_provider_daily_spend(assignment, effect_key=key("refused"))
+                    reserve.assert_not_called()
+                    self.assertEqual(engine.provider_spend.reservations(provider), [])
+
     def test_priced_unbounded_transports_still_serialize(self):
         assignments = (
             test_provider_contracts.ProviderContractTests.gemini_assignment(),
@@ -174,6 +192,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     engine = object.__new__(OrchestrationEngine)
                     engine.settings = priced(provider.value, **{f"{provider.value}_daily_budget_usd": 1})
                     engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                    engine.store = TaskStore(engine.provider_spend.path)
                     self.assertIsNone(assignment_request_cost_bound(
                         engine.settings, assignment, "context", revision_prompt=revision))
                     engine._reserve_provider_daily_spend(
@@ -234,6 +253,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
             engine = object.__new__(OrchestrationEngine)
             engine.settings = priced("grok", grok_daily_budget_usd=10)
             engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+            engine.store = TaskStore(engine.provider_spend.path)
             assignment = Assignment(sequence=1, agent=ProviderName.GROK, task="Answer", acceptance=["Evidence"])
             bound = assignment_request_cost_bound(engine.settings, assignment, "context")
             for index, (floor, estimate) in enumerate(((0.01, 0), (0.5, 0), (0.01, 0.7))):
@@ -309,6 +329,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
             maximum = assignment_request_cost_bound(settings, assignment, "context")
             engine.settings = replace(settings, grok_daily_budget_usd=maximum * 2.5)
             engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+            engine.store = TaskStore(engine.provider_spend.path)
             barrier = threading.Barrier(4)
 
             def admit(index):
@@ -363,6 +384,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     f"{provider.value}_daily_budget_usd": 1,
                 })
                 engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                engine.store = TaskStore(engine.provider_spend.path)
                 assignment = Assignment(sequence=1, agent=provider, task="Answer", acceptance=["Evidence"],
                                         estimated_cost_usd=0)
                 engine._reserve_provider_daily_spend(assignment, effect_key=key("first"), context="context")
@@ -500,3 +522,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]]
