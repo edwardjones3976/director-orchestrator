@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
@@ -1394,14 +1395,16 @@ class CompactProviderViewTests(unittest.TestCase):
         # A 10 s reader inside a 0.3 s caller deadline.
         reader = git_blob_reader(".", timeout_seconds=10)
         started = time_module.monotonic()
+        deadline = started + 0.3
+        initial_allowance = deadline - started
         with patch("director_orchestrator.packet_routing.subprocess.run", side_effect=run), \
                 patch("director_orchestrator.packet_routing.subprocess.Popen", Stuck), \
-                blob_read_deadline(time_module.monotonic() + 0.3):
+                blob_read_deadline(deadline):
             self.assertIsNone(reader("a" * 40))
         self.assertLess(time_module.monotonic() - started, 1.5)
-        self.assertLessEqual(runs[0], 0.3)
+        self.assertLessEqual(runs[0], initial_allowance)
         self.assertEqual(1, len(waits))
-        self.assertLessEqual(waits[0], 0.3)
+        self.assertLessEqual(waits[0], initial_allowance)
         time_module.sleep(0.05)
         self.assertEqual([True], reaped)
         # A deadline already spent reads nothing at all.
@@ -1690,3 +1693,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:23 UTC | END]]
