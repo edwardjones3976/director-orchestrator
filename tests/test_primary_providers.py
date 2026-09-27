@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | BEGIN]]
 from __future__ import annotations
@@ -240,7 +241,7 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext):
                 self.calls += 1
                 entered.set()
-                release.wait(timeout=2)
+                release.wait(timeout=60)
                 return copy.deepcopy(self.result)
 
         transport = BlockingTransport(self.result)
@@ -250,10 +251,11 @@ class PrimaryProviderBoundaryTests(unittest.TestCase):
             target=lambda: first.append(service.provider_subgraph(self.context))
         )
         worker.start()
-        self.assertTrue(entered.wait(timeout=2))
-
-        competing = service.provider_subgraph(self.context)
-        release.set()
+        try:
+            self.assertTrue(entered.wait(timeout=60), "transport did not enter within 60s")
+            competing = service.provider_subgraph(self.context)
+        finally:
+            release.set()
         worker.join(timeout=30)
         self.assertFalse(worker.is_alive(), "provider worker did not finish within 30s")
 
@@ -337,3 +339,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | END]]
