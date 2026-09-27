@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
@@ -244,6 +245,33 @@ def _remaining(cap: float) -> float:
     return min(cap, left)
 
 
+def _git_environment() -> dict[str, str]:
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"}}
+    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    return env
+
+
+def _reject_git_metadata(repo: str, end: float) -> None:
+    def probe(*arguments: str) -> bytes:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired("git metadata verification", 0)
+        return _run_bytes(["git", "-C", repo, *arguments], timeout=remaining)
+
+    if probe("for-each-ref", "--format=%(refname)", "refs/replace/").strip():
+        raise ValueError("replace refs are not permitted")
+    common = os.fsdecode(probe("rev-parse", "--path-format=absolute", "--git-common-dir")).strip()
+    if not common or not Path(common).is_absolute():
+        raise ValueError("Git common directory could not be verified")
+    try:
+        (Path(common) / "info" / "grafts").lstat()
+    except FileNotFoundError:
+        return
+    raise ValueError("grafts metadata is not permitted")
+
+
 def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
     """Run one read-only command (no shell, stdin closed, no retries) as a contained process tree: a kill-on-close
     Job Object on Windows, a new session on POSIX (process_isolation, the transports' own boundary). Both pipes are
@@ -254,8 +282,17 @@ def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
     buffered streams (a descendant that kept a pipe open would otherwise hold the buffered lock a close waits on), and
     readers still blocked when the time is up are abandoned as daemons after their fds are closed."""
     end = time.monotonic() + _remaining(timeout)
+    options = {}
+    if arguments[0] == "git":
+        # All local Git reads share this boundary, including security diffs and candidate blobs.
+        # Only the two metadata probes bypass rejection, never the isolation flags/environment.
+        if arguments[3:] not in (["for-each-ref", "--format=%(refname)", "refs/replace/"],
+                                 ["rev-parse", "--path-format=absolute", "--git-common-dir"]):
+            _reject_git_metadata(arguments[2], end)
+        arguments = ["git", "--no-replace-objects", *arguments[1:]]
+        options["env"] = _git_environment()
     process, guard = launch_contained_process(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                              stderr=subprocess.PIPE)
+                                              stderr=subprocess.PIPE, **options)
     streams = {"stdout": process.stdout, "stderr": process.stderr}
     process.stdout = process.stderr = None  # stop_contained_process must not touch what a reader may still hold
     captured = {name: bytearray() for name in streams}
@@ -3661,3 +3698,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]

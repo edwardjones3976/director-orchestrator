@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 """Owner-installed launcher for the twenty-check scorecard (review 4112412081).
@@ -42,15 +43,44 @@ def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
     return pin if isinstance(pin, str) and len(pin) == 40 and all(c in "0123456789abcdef" for c in pin) else None
 
 
+def _git_environment() -> dict[str, str]:
+    # Standalone bootstrap: never import a helper from the not-yet-trusted checkout.
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"}}
+    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    return env
+
+
 def _git(repo: Path, *arguments: str) -> bytes:
-    return subprocess.run(["git", "-C", str(repo), *arguments], capture_output=True, timeout=120, check=True,
+    return subprocess.run(["git", "--no-replace-objects", "-C", str(repo), *arguments],
+                          env=_git_environment(), capture_output=True, timeout=120, check=True,
                           stdin=subprocess.DEVNULL).stdout
+
+
+def _reject_git_metadata(repo: Path) -> None:
+    if _git(repo, "for-each-ref", "--format=%(refname)", "refs/replace/").strip():
+        raise ValueError("replace refs are not permitted")
+    common = os.fsdecode(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip()
+    if not common or not Path(common).is_absolute():
+        raise ValueError("Git common directory could not be verified")
+    try:
+        (Path(common) / "info" / "grafts").lstat()
+    except FileNotFoundError:
+        return
+    raise ValueError("grafts metadata is not permitted")
 
 
 def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPTOR) -> int:
     pin = pinned_evaluator(descriptor)
     if pin is None:
         return _refuse("evaluator revision not pinned")
+    try:
+        _reject_git_metadata(repo)
+    except ValueError as error:
+        return _refuse(str(error))
+    except (OSError, subprocess.SubprocessError):
+        return _refuse("Git replace/graft metadata could not be verified")
     try:
         _git(repo, "merge-base", "--is-ancestor", pin, "github/main")
     except (OSError, subprocess.SubprocessError):
@@ -61,10 +91,13 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
     with tempfile.TemporaryDirectory(prefix="director-scorecard-") as folder:
         tree = Path(folder) / "tree"
         try:
-            archive = _git(repo, "archive", "--format=tar", pin)
+            tree_id = _git(repo, "rev-parse", "--verify", f"{pin}^{{tree}}").decode("ascii").strip()
+            if len(tree_id) != 40 or any(c not in "0123456789abcdef" for c in tree_id):
+                raise ValueError("invalid evaluator tree id")
+            archive = _git(repo, "archive", "--format=tar", tree_id)
             with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
                 bundle.extractall(tree, filter="data")
-        except (OSError, subprocess.SubprocessError, tarfile.TarError):
+        except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError):
             return _refuse("the pinned evaluator tree could not be extracted")
         env = {key: value for key, value in os.environ.items() if not key.upper().startswith("PYTHON")}
         env.update({"PYTHONPATH": str(tree / "src"), "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -91,3 +124,4 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]

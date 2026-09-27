@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
@@ -46,6 +47,34 @@ def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
     return pin if isinstance(pin, str) and len(pin) == 40 and all(c in "0123456789abcdef" for c in pin) else None
 
 
+def _git_environment() -> dict[str, str]:
+    # This gate must run before importing any repository module.
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"}}
+    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    return env
+
+
+def _git(repo: Path, *arguments: str) -> bytes:
+    return subprocess.run(["git", "--no-replace-objects", "-C", str(repo), *arguments],
+                          env=_git_environment(), capture_output=True, timeout=30, check=True,
+                          stdin=subprocess.DEVNULL).stdout
+
+
+def _reject_git_metadata(repo: Path) -> None:
+    if _git(repo, "for-each-ref", "--format=%(refname)", "refs/replace/").strip():
+        raise ValueError("replace refs are not permitted")
+    common = os.fsdecode(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip()
+    if not common or not Path(common).is_absolute():
+        raise ValueError("Git common directory could not be verified")
+    try:
+        (Path(common) / "info" / "grafts").lstat()
+    except FileNotFoundError:
+        return
+    raise ValueError("grafts metadata is not permitted")
+
+
 def launch_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
     """None when this file runs from the launcher's archived evaluator tree and the pin is on github/main."""
     pinned = pinned_evaluator(descriptor)
@@ -57,8 +86,13 @@ def launch_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> 
     if os.environ.get(SHA_ENV) != pinned:  # review 4112533825: the tree is bound to the pin read at extraction
         return ROTATED
     try:
-        subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", pinned, "github/main"],
-                       capture_output=True, timeout=30, check=True, stdin=subprocess.DEVNULL)
+        _reject_git_metadata(Path(repo))
+    except ValueError as error:
+        return str(error)
+    except (OSError, subprocess.SubprocessError):
+        return "Git replace/graft metadata could not be verified"
+    try:
+        _git(Path(repo), "merge-base", "--is-ancestor", pinned, "github/main")
     except (OSError, subprocess.SubprocessError):
         return "the pinned evaluator revision is not on github/main"
     return None
@@ -159,3 +193,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]

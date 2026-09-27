@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
@@ -929,6 +930,154 @@ def resign(key, envelope):
     signed = json.dumps(envelope["document"], sort_keys=True, separators=(",", ":"), ensure_ascii=True,
                         allow_nan=False).encode()
     return {"document": envelope["document"], "signature": key.sign(signed).hex()}
+
+
+class ScorecardGitTrustTests(unittest.TestCase):
+    """Real object databases: replacement siblings must never supply executable evaluator bytes."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        base = Path(self.folder.name)
+        self.repo, self.home, self.outside = base / "repo", base / "home", base / "outside"
+        for path in (self.repo / "scripts", self.home / ".director-scorecard", self.outside):
+            path.mkdir(parents=True)
+        source = Path(__file__).resolve().parents[1]
+        self.modules = {}
+        for name in ("scorecard-launcher", "director-scorecard"):
+            spec = importlib.util.spec_from_file_location(name, source / "scripts" / f"{name}.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.modules[name] = module
+        self.launcher = self.modules["scorecard-launcher"]
+        self.installed = self.home / ".director-scorecard" / "launcher.py"
+        self.installed.write_bytes((source / "scripts/scorecard-launcher.py").read_bytes())
+        self.git("init", "-q")
+        self.git("commit", "--allow-empty", "-qm", "parent")
+        self.parent = self.git("rev-parse", "HEAD").decode().strip()
+        self.script = self.repo / "scripts" / "director-scorecard.py"
+        self.script.write_text("print('clean evaluator reached')\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "evaluator")
+        self.pin = self.git("rev-parse", "HEAD").decode().strip()
+        self.git("update-ref", "refs/remotes/github/main", self.pin)
+        self.descriptor = self.home / ".director-scorecard" / "release-descriptor.json"
+        self.descriptor.write_text(json.dumps({"version": self.launcher.DESCRIPTOR_VERSION,
+                                              "evaluator_sha": self.pin}), encoding="utf-8")
+        self.marker = self.outside / "malicious-executed"
+
+    def git(self, *arguments):
+        return subprocess.run(["git", "--no-replace-objects", "-C", str(self.repo),
+                               "-c", "user.email=fixture@example.test", "-c", "user.name=fixture", *arguments],
+                              env=self.launcher._git_environment(), check=True, capture_output=True,
+                              timeout=30).stdout
+
+    def run_launcher(self, extra_env=None):
+        env = {**self.launcher._git_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
+               **(extra_env or {})}
+        return subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo)],
+                              env=env, cwd=self.outside, capture_output=True, text=True, timeout=120)
+
+    def assert_metadata_refused(self, reason):
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(reason, result.stderr)
+        self.assertNotIn("clean evaluator reached", result.stdout)
+        self.assertFalse(self.marker.exists())
+        cli = self.modules["director-scorecard"]
+        launched = {cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo), cli.SHA_ENV: self.pin}
+        with patch.dict(os.environ, launched):
+            self.assertIn(reason, cli.launch_refusal(cli.ROOT, self.descriptor))
+        with self.assertRaisesRegex(ValueError, reason):
+            sc._run_bytes(["git", "-C", str(self.repo), "diff", "--name-only", self.parent, self.pin])
+        with patch.dict(os.environ, {"DIRECTOR_SCORECARD_REPO": str(self.repo)}):
+            self.assertIsNone(sc._candidate_blob(self.pin, "scripts/director-scorecard.py"))
+
+    def test_replace_ref_to_sibling_commit_refused_without_execution(self):
+        self.script.write_text(f"from pathlib import Path\nPath({str(self.marker)!r}).write_text('executed')\n",
+                               encoding="utf-8")
+        self.git("add", ".")
+        malicious_tree = self.git("write-tree").decode().strip()
+        sibling = self.git("commit-tree", malicious_tree, "-p", self.parent, "-m", "malicious sibling").decode().strip()
+        self.assertEqual(self.git("rev-parse", f"{sibling}^"), self.git("rev-parse", f"{self.pin}^"))
+        self.git("update-ref", f"refs/replace/{self.pin}", sibling)
+        self.assert_metadata_refused("replace refs")
+        # Even below the refusal gate the primitive resolves the original object's tree.
+        self.assertEqual(self.launcher._git(self.repo, "rev-parse", f"{self.pin}^{{tree}}"),
+                         self.git("rev-parse", f"{self.pin}^{{tree}}"))
+
+    def test_common_directory_grafts_refused_from_linked_worktree(self):
+        common = Path(os.fsdecode(self.git("rev-parse", "--path-format=absolute", "--git-common-dir")).strip())
+        linked = self.outside / "linked"
+        self.git("worktree", "add", "--detach", str(linked), self.pin)
+        (common / "info" / "grafts").write_text(self.pin + "\n", encoding="ascii")
+        self.repo = linked
+        self.assert_metadata_refused("grafts metadata")
+
+    def test_clean_pin_launches_and_git_environment_overrides_are_ignored(self):
+        hostile = {name: "invalid-fixture-value" for name in (
+            "GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_REPLACE_REF_BASE", "GIT_NAMESPACE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_SYSTEM", "GIT_GRAFT_FILE")}
+        hostile.update(GIT_NO_REPLACE_OBJECTS="0", GIT_CONFIG_COUNT="1",
+                       GIT_CONFIG_KEY_0="core.bare", GIT_CONFIG_VALUE_0="true")
+        result = self.run_launcher(hostile)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "clean evaluator reached")
+        cli = self.modules["director-scorecard"]
+        with patch.dict(os.environ, {**hostile, cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo),
+                                     cli.SHA_ENV: self.pin}):
+            self.assertIsNone(cli.launch_refusal(cli.ROOT, self.descriptor))
+            self.assertEqual(sc._run_bytes(["git", "-C", str(self.repo), "show",
+                                           f"{self.pin}:scripts/director-scorecard.py"]), self.script.read_bytes())
+
+    def test_metadata_probe_errors_fail_closed(self):
+        for name, module in self.modules.items():
+            with self.subTest(module=name), patch.object(module, "_git", side_effect=subprocess.TimeoutExpired("git", 1)):
+                with self.assertRaises(subprocess.SubprocessError):
+                    module._reject_git_metadata(self.repo)
+        with self.assertRaises((OSError, ValueError, subprocess.SubprocessError)):
+            sc._run_bytes(["git", "-C", str(self.outside / "missing"), "show", self.pin])
+
+    def test_archive_uses_the_verified_tree_id(self):
+        tree_id = self.git("rev-parse", f"{self.pin}^{{tree}}").decode().strip()
+        run = subprocess.run
+
+        def launch(arguments, **options):
+            if arguments[0] == "git":
+                return run(arguments, **options)
+            return subprocess.CompletedProcess(arguments, 0)
+
+        with patch.object(self.launcher, "_git", wraps=self.launcher._git) as git, \
+                patch.object(self.launcher.subprocess, "run", side_effect=launch), \
+                patch.object(self.launcher.Path, "cwd", return_value=self.outside):
+            self.assertEqual(self.launcher.launch(self.repo, [], self.descriptor), 0)
+        git.assert_any_call(self.repo, "rev-parse", "--verify", f"{self.pin}^{{tree}}")
+        git.assert_any_call(self.repo, "archive", "--format=tar", tree_id)
+        self.assertNotEqual(tree_id, self.pin)
+
+    def test_every_git_transport_disables_replacements_and_uses_minimal_environment(self):
+        # Do not let mocks at _run_bytes conceal a missing subprocess-level defense.
+        class Captured(Exception):
+            pass
+
+        def capture(arguments, **options):
+            self.assertEqual(arguments[:2], ["git", "--no-replace-objects"])
+            env = options["env"]
+            self.assertEqual(env["GIT_NO_REPLACE_OBJECTS"], "1")
+            self.assertEqual(env["GIT_GRAFT_FILE"], os.devnull)
+            self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
+            self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+            self.assertFalse({key.upper() for key in env} - {
+                "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "GIT_NO_REPLACE_OBJECTS",
+                "GIT_GRAFT_FILE", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"})
+            raise Captured
+
+        for module in self.modules.values():
+            with patch.object(module.subprocess, "run", side_effect=capture), self.assertRaises(Captured):
+                module._git(self.repo, "rev-parse", self.pin)
+        with patch.object(sc, "launch_contained_process", side_effect=capture), self.assertRaises(Captured):
+            sc._run_bytes(["git", "-C", str(self.repo), "show", self.pin])
 
 
 class CompletionScorecardTests(unittest.TestCase):
@@ -4817,3 +4966,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
