@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
@@ -90,6 +91,12 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    and before any fan-out of more than three concurrent agents or dispatches.
    Downloads, configuration changes, deletions, messages to other Directors, and
    merges wait for the owner's explicit "Go".
+   Maintenance (review-finding fixes, record and document inconsistencies, CI
+   fixes, provider plumbing) goes to Codex under the charter's
+   [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
+   `dispatch.py codex` is the usual route from this project.
+   Codex's edits are assistance and leave the PR's sole author unchanged (the
+   sole-author rule, PR #284).
 
 7. **Evidence.** Numbers come from artifacts this project produced and re-read.
    Claims carry a grade: `[verified]` (read or measured), `[relayed]` (from a
@@ -123,3 +130,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
