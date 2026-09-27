@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
@@ -45,6 +46,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -259,6 +261,33 @@ class UsageCheckStatus(StrEnum):
 MAX_SLACK_INTAKE_TEXT = 20_000
 
 
+class PrimaryCommitteeDebate(BaseModel):
+    """An owner-attested committee invitation for one LangGraph-primary task.
+
+    It arrives only inside the gateway-attested structured intake; nothing
+    parses it out of message text. Each invited member receives one POSITION
+    assignment in the ordinary primary plan, dispatched like any other
+    assignment, and its validated contribution is tallied with the charter's
+    configured weights (``primary_committee``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question: str = Field(min_length=1, max_length=2_000)
+    vote_options: tuple[str, ...] = Field(min_length=2, max_length=6)
+    material_risk: bool = False
+    # Only Z.ai has a primary committee seat; widening it is a separate change.
+    invited_members: tuple[Literal["zai"], ...] = Field(min_length=1, max_length=1)
+
+    @model_validator(mode="after")
+    def validate_options(self) -> PrimaryCommitteeDebate:
+        if any(not option.strip() or len(option) > 255 for option in self.vote_options):
+            raise ValueError("committee vote options must be 1-255 characters")
+        if len({option.strip().lower() for option in self.vote_options}) != len(self.vote_options):
+            raise ValueError("committee vote options must be unique")
+        return self
+
+
 class SlackIntake(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -270,8 +299,18 @@ class SlackIntake(BaseModel):
     allocation_profile: Literal["engineering", "mixed", "public_research", "enterprise"] = "engineering"
     primary_required_capabilities: tuple[Literal["public_research", "enterprise_context", "bounded_scaffolding", "repository_assistance"], ...] = Field(default=(), max_length=4)
     primary_public_research_query: str | None = Field(default=None, min_length=1, max_length=500)
+    primary_committee_debate: PrimaryCommitteeDebate | None = None
     permalink: str | None = Field(default=None, max_length=2_000)
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_committee_debate(self, handler):
+        # Attestations, approvals and phase digests hash this dump: an intake
+        # without an invitation keeps its exact pre-existing bytes.
+        data = handler(self)
+        if data.get("primary_committee_debate", 0) is None:
+            del data["primary_committee_debate"]
+        return data
 
 
 def slack_status_text_digest(text: str) -> str:
@@ -1495,3 +1534,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

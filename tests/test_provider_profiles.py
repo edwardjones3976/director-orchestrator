@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
@@ -77,9 +78,8 @@ EXAMPLE_PATH = SCHEMA_ROOT / "director-provider-profile-v1.example.json"
 ROLES_CONTRACT = ROOT / "docs" / "templates" / "project-bootstrap" / "provider-roles-contract.yaml"
 SRC = ROOT / "src" / "director_orchestrator"
 LANES = tuple(PRIMARY_PROVIDER_LANES)
-COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai")
-# Weighted members plus Z.ai's Director-invited seat without a configured weight.
-DEBATE_SEATS = (*COMMITTEE_LANES, "zai")
+COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai", "zai")
+DEBATE_SEATS = COMMITTEE_LANES
 PROPOSED_ROUTES = {
     "claude-director-injected-native-packet",
     "grok-bot",
@@ -372,7 +372,7 @@ class CharterMirrorTests(unittest.TestCase):
             key = profile["identifiers"]["committee_member_key"]
             with self.subTest(lane=lane):
                 # "member" means a configured voting weight; a debate seat is
-                # separate (Z.ai is seated without a weight).
+                # separate, so a seat without a weight stays representable.
                 self.assertEqual(committee["member"], key is not None and key in members)
                 self.assertEqual(profile["capabilities"]["may_cast_committee_vote"], committee["member"])
                 if key is None:
@@ -388,7 +388,8 @@ class CharterMirrorTests(unittest.TestCase):
                 self.assertEqual(committee["voting_power"], members[key]["voting_power"])
                 total += committee["voting_power"]
         self.assertEqual(total, self.charter["committee"]["voting"]["configured_weight_total"])
-        self.assertEqual(total, 8.5)
+        # 8.5 + Z.ai 1.5, owner decision 2026-09-27 "Approve 1.5; total 10.0".
+        self.assertEqual(total, 10.0)
 
     def test_allocation_mirrors_allocation_profiles_and_directive(self):
         for lane, profile in self.profiles.items():
@@ -1058,3 +1059,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
@@ -521,7 +522,7 @@ and are never relabelled Claude. The lane is in the provider enums, the
 allocation lanes, the primary roster (implementer and independent reviewer of
 other lanes' work, never of its own), `PRIMARY_PROVIDER_LANES`, the Windows host
 bridge lanes, the interaction identities and the Postgres admission constraint.
-It holds a weightless committee debate seat, is not part of the core-inventory
+It holds a committee seat at advisory weight 1.5, is not part of the core-inventory
 floor and is not a native acceptance
 issuer. The worker is `src/director_orchestrator/zai_native.py`.
 
@@ -647,8 +648,9 @@ configuration is not round-trip evidence.
 | Material-author family in acceptance evidence | Supported | Binds reviewer independence for Z.ai-authored candidates |
 | Interaction identities (`InteractionProvider.ZAI`, `ProviderTransport.ZAI_CODING_CLI`) | Supported | Ledger and packet-result evidence keep the Z.ai identity |
 | Slack | Supported via the Director relay | Z.ai never posts; `thread_ts` is preserved |
-| Committee debate seat and advisory-vote identity | Recognized, weight 0 | The 8.5 denominator is immutable and the owner assigned no weight; debates execute only in the legacy engine (below) |
-| Legacy engine worker | Excluded | A supported rollback path, but its worker has no v1 packet and the only route to the Windows CLI is the host bridge, whose Postgres writer fence rollback disables |
+| Committee seat and advisory vote, weight 1.5 | Supported | Owner decision 2026-09-27, "Approve 1.5; total 10.0"; new debates use 10.0, earlier tallies keep their recorded 8.5 |
+| Invited committee turns in the primary runtime | Supported | An owner-attested structured intake (`primary_committee_debate`) seats one POSITION assignment, dispatched through the ordinary bounded dispatcher (host bridge or native); the evidence phase tallies the persisted, validated contribution over the fixed 10.0 total and a replay recomputes it without a model call. The Slack bot never parses an invitation from text; primary tasks hold no rebuttal round |
+| Legacy engine worker | Unavailable under legacy rollback | A supported rollback path, but its worker has no v1 packet and the only route to the Windows CLI is the host bridge, whose primary Postgres writer fence rollback disables; legacy intake refuses an invitation (409). No fence bypass, second engine, substitute provider or second launcher |
 | Protected signing (native acceptance issuer, v2 issuer family, v3 review product) | Excluded | No keys, principals or signing authority are granted; ordinary review is unaffected |
 | Web search, MCP servers, media capabilities | Excluded | Not qualified on the Coding Plan route; a generic Claude tool name is not evidence |
 | External effects (push, pull request, Slack post) | Excluded | Owned by the Director's effect gateway |
@@ -966,3 +968,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->

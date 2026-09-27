@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
@@ -450,12 +451,14 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             encoding="utf-8"
         )
         for expected in (
-            "| OpenAI / Codex production | 27% | 40% | 20% | 32% |",
-            "| Claude | 33% | 25% | 25% | 38% |",
-            "| Cursor | 10% | 15% | 5% | 5% |",
-            "| Grok | 10% | 10% | 5% | 5% |",
-            "| Gemini / Antigravity | 5% | 10% | 5% | 5% |",
-            "| Perplexity | 5% | 0% | 25% | 0% |",
+            # Z.ai enrollment 2026-09-27: 18% everywhere, others reduced to 82%.
+            "| OpenAI / Codex production | 22% | 33% | 16% | 27% |",
+            "| Claude | 27% | 21% | 21% | 31% |",
+            "| Cursor | 9% | 12% | 4% | 4% |",
+            "| Grok | 8% | 8% | 4% | 4% |",
+            "| Gemini / Antigravity | 4% | 8% | 4% | 4% |",
+            "| Perplexity | 4% | 0% | 21% | 0% |",
+            "| Z.ai (GLM) | 18% | 18% | 18% | 18% |",
         ):
             self.assertIn(expected, charter)
         self.assertIn("Freeze one approved allocation profile and its digest before plan approval", prompt)
@@ -1575,3 +1578,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

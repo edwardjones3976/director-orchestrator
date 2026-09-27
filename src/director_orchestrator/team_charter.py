@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
@@ -35,7 +36,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-TEAM_CHARTER_MAX_BYTES = 20_480
+# Raised by 512 bytes from 20,480 for the owner-approved Z.ai committee member
+# (2026-09-27, "Approve 1.5; total 10.0"); the >256-byte headroom check stays.
+TEAM_CHARTER_MAX_BYTES = 20_992
 
 
 _TEAM_OPERATING_CHARTER: dict[str, Any] = {
@@ -477,14 +480,13 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "grok": {"provider": "xai", "voting_power": 1.5},
             "openai": {"voting_power": 2.5},
             "claude": {"voting_power": 2.0},
+            # Owner decision 2026-09-27 05:23:47 UTC: "Approve 1.5; total 10.0".
+            "zai": {"voting_power": 1.5},
         },
         "debate": {
             # Antigravity is seatable only by Director invitation. It cannot open,
             # self-route, or autonomously continue a conversation, and a seat grants
             # it no review, acceptance, merge, deployment, or methodology authority.
-            # Z.ai (enrolled 2026-09-27) holds a Director-invited seat. It has no
-            # configured voting weight: the 8.5 denominator is immutable and the
-            # owner has not assigned one, so its recorded position adds zero weight.
             "seatable_members": ["antigravity", "claude", "cursor", "grok", "openai", "zai"],
             "recommended_for_complexity": ["medium", "high", "critical"],
             "procedure": [
@@ -496,9 +498,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "voting": {
             "mode": "advisory",
             "decision_rule": "prefer the option with the highest declared weighted support",
-            "configured_weight_total": 8.5,
+            # New debates use 10.0; every recorded tally keeps the total it was
+            # tallied under (historical debates 8.5) and is never re-tallied.
+            "configured_weight_total": 10.0,
             "denominator_rule": (
-                "The configured 8.5 total is immutable. Abstentions and unavailability cast zero "
+                "Each debate's configured total is fixed when tallied. Abstentions and unavailability cast zero "
                 "weight and never change weights, thresholds, or the denominator."
             ),
             "rules": [
@@ -815,9 +819,8 @@ def tally_advisory_votes(
             unavailable.append(vote.member)
             continue
         if vote.member not in members:
-            # A seated participant without a configured weight (Z.ai): its
-            # position stays in the debate record but moves no option, so it
-            # can never create or break a tie on its own.
+            # A participant without a configured weight: its position stays
+            # in the debate record but moves no option.
             continue
         weight = float(members[vote.member]["voting_power"])
         option_weights[vote.option or ""] = option_weights.get(vote.option or "", 0.0) + weight
@@ -873,3 +876,4 @@ def tally_advisory_votes(
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

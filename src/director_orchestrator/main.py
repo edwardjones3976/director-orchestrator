@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | BEGIN]]
@@ -755,6 +756,14 @@ def intake(
                 status_code=503,
                 detail="LangGraph primary intake is unavailable",
             ) from exc
+    if payload.primary_committee_debate is not None:
+        # The legacy engine has no Z.ai seat and cannot run under the primary
+        # fence: an invited debate is refused here, never silently dropped.
+        raise HTTPException(
+            status_code=409,
+            detail="Invited committee debates require the LangGraph primary; "
+            "Z.ai is unavailable under legacy rollback",
+        )
     if settings.langgraph_primary_postgres_dsn:
         postgres_module = importlib.import_module(
             ".langgraph_postgres", package=__package__
@@ -1929,3 +1938,4 @@ def complete_run(
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

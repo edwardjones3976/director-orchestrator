@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
@@ -187,6 +188,17 @@ class ToolBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "differ"):
             tool_arguments(work, context_for(work, allowed_tools=("READ_REPOSITORY", "RUN_TESTS")),
                            allow_repository_write=False)
+
+    def test_the_primary_plans_prose_scope_is_not_a_path(self):
+        # Every live primary plan prohibits "all external writes": prose the lane
+        # already cannot do, skipped exactly; any other unrulable entry refuses.
+        from director_orchestrator.workload_policy import PREVIEW_PROHIBITED_SCOPE
+        work = work_packet(prohibited_paths=[PREVIEW_PROHIBITED_SCOPE, "secrets"])
+        denied = self.values(self.args(work), "--disallowedTools")
+        self.assertIn("Read(./secrets)", denied)
+        self.assertFalse(any("external" in rule for rule in denied))
+        with self.assertRaisesRegex(RuntimeError, "unsupported character"):
+            self.args(work_packet(prohibited_paths=["all external writes "]))
 
 
 class EnvelopeTests(unittest.TestCase):
@@ -519,9 +531,8 @@ class _FenceVerifier:
         self.calls += 1
 
 
-class BridgeCompositionTests(unittest.TestCase):
-    """Settings -> discovery -> adapter -> signed bridge -> Windows executor ->
-    GLM-verifying native worker -> normalized result, all offline over loopback."""
+class ZaiBridgeFixture:
+    """A loopback signed bridge, Windows executor and fake GLM CLI (no Z.ai)."""
 
     def setUp(self):
         from director_orchestrator.host_provider_bridge import BridgeClaimStore, WindowsHostProviderExecutor
@@ -559,7 +570,7 @@ class BridgeCompositionTests(unittest.TestCase):
         self.endpoint = f"http://127.0.0.1:{self.server.server_address[1]}/v1/provider/dispatch"
 
     def fake_cli(self, argv, *, cwd, environment, input_bytes, cutoff, what):
-        self.cli_calls.append({"argv": list(argv), "env": dict(environment)})
+        self.cli_calls.append({"argv": list(argv), "env": dict(environment), "input": input_bytes})
         return subprocess.CompletedProcess(argv, 0, json.dumps(self.envelope).encode(), b"")
 
     def director_settings(self, **changes) -> Settings:
@@ -597,6 +608,11 @@ class BridgeCompositionTests(unittest.TestCase):
         from contextlib import closing
         with closing(self.store._connect()) as connection:
             return [row[0] for row in connection.execute("SELECT state FROM bridge_attempts")]
+
+
+class BridgeCompositionTests(ZaiBridgeFixture, unittest.TestCase):
+    """Settings -> discovery -> adapter -> signed bridge -> Windows executor ->
+    GLM-verifying native worker -> normalized result, all offline over loopback."""
 
     def test_container_dispatches_the_windows_zai_worker_end_to_end(self):
         settings = self.director_settings()
@@ -798,19 +814,34 @@ class BridgeCompositionTests(unittest.TestCase):
 
 
 class CommitteeAndInteractionIdentityTests(unittest.TestCase):
-    def test_zai_is_seated_without_an_invented_weight(self):
-        from director_orchestrator.team_charter import AdvisoryVote, tally_advisory_votes, team_operating_charter
+    def test_owner_approved_weight_and_fixed_denominator(self):
+        from director_orchestrator.team_charter import (
+            AdvisoryVote, AdvisoryVoteTally, tally_advisory_votes, team_operating_charter)
         committee = team_operating_charter()["committee"]
         self.assertIn("zai", committee["debate"]["seatable_members"])
-        self.assertNotIn("zai", committee["members"])
-        self.assertEqual(committee["voting"]["configured_weight_total"], 8.5)
+        # Owner decision 2026-09-27 05:23:47 UTC: "Approve 1.5; total 10.0".
+        self.assertEqual({name: member["voting_power"] for name, member in committee["members"].items()},
+                         {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0, "zai": 1.5})
+        self.assertEqual(sum(member["voting_power"] for member in committee["members"].values()), 10.0)
+        self.assertEqual(committee["voting"]["configured_weight_total"], 10.0)
         vote = lambda member, option: AdvisoryVote(member=member, disposition="vote", option=option,
                                                    rationale="position")
-        tally = tally_advisory_votes([vote("claude", "A"), vote("zai", "B")])
-        self.assertEqual(tally.winning_options, ["A"])
-        self.assertEqual(tally.option_weights, {"A": 2.0})
-        # A weightless seat alone can never produce a recommendation.
-        self.assertEqual(tally_advisory_votes([vote("zai", "B")]).resolution, "no_votes")
+        tally = tally_advisory_votes([vote("claude", "A"), vote("zai", "B"), vote("grok", "B")])
+        self.assertEqual(tally.option_weights, {"A": 2.0, "B": 3.0})
+        self.assertEqual(tally.winning_options, ["B"])
+        # Abstention and unavailability keep the debate's denominator.
+        for disposition in ("abstain", "unavailable"):
+            fixed = tally_advisory_votes([
+                vote("claude", "A"),
+                AdvisoryVote(member="zai", disposition=disposition, rationale="no position")])
+            self.assertEqual(fixed.configured_weight_total, 10.0)
+            self.assertEqual(fixed.cast_weight_total, 2.0)
+        # A historical 8.5 tally keeps its recorded total and provenance.
+        historical = dict(configured_weight_total=8.5, cast_weight_total=4.0,
+                          option_weights={"A": 2.0, "B": 2.0}, abstaining=[], unavailable=[],
+                          winning_options=["A", "B"], resolution="openai_director_judgment",
+                          authorizes_external_action=False)
+        self.assertEqual(AdvisoryVoteTally.model_validate(historical).model_dump(), historical)
 
     def test_interaction_identities_keep_zai_distinct(self):
         from director_orchestrator.engine import OrchestrationEngine as DirectorEngine
@@ -846,3 +877,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

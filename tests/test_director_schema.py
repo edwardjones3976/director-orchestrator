@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
@@ -349,7 +350,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 name: member["voting_power"]
                 for name, member in charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0},
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0, "zai": 1.5},
         )
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
@@ -838,7 +839,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tally.option_weights, {"A": 2.0})
         self.assertEqual(tally.cast_weight_total, 2.0)
-        self.assertEqual(tally.configured_weight_total, 8.5)
+        # New debates tally under the owner's 10.0 total (8.5 before Z.ai's weight).
+        self.assertEqual(tally.configured_weight_total, 10.0)
         self.assertFalse(tally.authorizes_external_action)
 
     def test_ties_route_to_claude_or_owner_without_authorizing_action(self):
@@ -1136,7 +1138,7 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     tally = completed.debate_tally
                     self.assertEqual(tally["option_weights"].get("A", 0.0), 0.0 if abstain else 2.0)
                     self.assertEqual("claude" in tally["abstaining"], abstain)
-                    self.assertEqual(tally["configured_weight_total"], 8.5)
+                    self.assertEqual(tally["configured_weight_total"], 10.0)
                     self.assertFalse(tally["authorizes_external_action"])
                     messages = "\n".join(post["message"] for post in engine.notifier.posts)
                     self.assertIn("casts its single advisory vote or records an explicit abstention", messages)
@@ -1643,3 +1645,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

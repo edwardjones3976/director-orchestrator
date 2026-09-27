@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
@@ -808,6 +809,10 @@ class DirectorPacketTaskRouter:
         constraints.extend(self._predecessor_review_constraints(record, assignment))
         if self._extra_constraints is not None:
             constraints.extend(self._extra_constraints(self, record, assignment))
+        # An invited committee seat carries its options and contribution shape
+        # in its own packet, whichever router built it.
+        from .primary_committee import committee_position_constraints
+        constraints.extend(committee_position_constraints(record, assignment))
 
         objective = assignment.task
         if assignment.agent.value == "perplexity":
@@ -1004,3 +1009,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

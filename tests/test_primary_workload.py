@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
@@ -60,7 +61,9 @@ def previous_engineering_digest():
     """Reconstruct the original historical hard-tolerance identity for the
     pre-role-swap targets, never the current prospective identity."""
     from director_orchestrator.allocation_profiles import historical_allocation_profile_digest
-    with patch("director_orchestrator.allocation_profiles.ALLOCATION_PROFILES",
+    # Since the Z.ai enrollment the historical identity reads the pinned
+    # pre-enrollment table, so the pre-role-swap targets are patched there.
+    with patch("director_orchestrator.allocation_profiles.PRE_ZAI_ALLOCATION_PROFILES",
                {"engineering": PREVIOUS_ENGINEERING_TARGETS}):
         return historical_allocation_profile_digest("engineering")
 
@@ -626,3 +629,4 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

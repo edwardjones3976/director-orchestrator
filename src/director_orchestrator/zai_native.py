@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
@@ -66,7 +67,9 @@ from .primary_transports import (
     _run_bounded_command,
     normalize_native_provider_envelope,
 )
-from .workload_policy import WorkloadPolicyError, _canonical_repository_relative_path
+from .workload_policy import (
+    PREVIEW_PROHIBITED_SCOPE, WorkloadPolicyError, _canonical_repository_relative_path,
+)
 from .zai_trial import ENDPOINT, redact_bound_key
 
 GLM_MODEL = re.compile(r"^glm-[0-9a-z][0-9a-z.\-]{0,62}$")
@@ -202,6 +205,9 @@ def _scoped_paths(values: Any, field: str) -> tuple[str, ...]:
         raise RuntimeError(f"zai packet {field} are malformed")
     scoped = []
     for value in values:
+        if field == "prohibited_paths" and value == PREVIEW_PROHIBITED_SCOPE:
+            # Names external writes, which this lane never performs; no path.
+            continue
         try:
             path = _canonical_repository_relative_path(value, field_name=field)
         except WorkloadPolicyError as exc:
@@ -425,3 +431,4 @@ class ZaiNativePacketTransport(NativeCommandPacketTransport):
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

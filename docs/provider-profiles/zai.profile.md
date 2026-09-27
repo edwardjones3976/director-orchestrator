@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
@@ -36,12 +37,12 @@
 | --- | --- |
 | Team | lane_only |
 | Lane class | capability_routed_lane |
-| Summary | Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane holds a Director-invited committee debate seat without a voting weight (the owner has assigned none and the 8.5 denominator is immutable), and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes. |
+| Summary | Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane holds a Director-invited committee seat with the owner-approved advisory weight 1.5 (total 10.0 for new debates), and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes. |
 | Charter workload lane | - |
 | Strategy key | - |
 | Strategy priority | - |
-| Committee member | no |
-| Voting power | - |
+| Committee member | yes |
+| Voting power | 1.5 |
 | Seatable in debate | yes |
 | May initiate debate | no |
 | Vote grants authority | no |
@@ -101,7 +102,7 @@ Strengths:
 | May merge | no |
 | May deploy or publish | no |
 | May post to Slack | no |
-| May cast committee vote | no |
+| May cast committee vote | yes |
 | Receives repository context | yes |
 | Receives task prose | yes |
 | Web-grounded research | no |
@@ -207,7 +208,7 @@ Separation of duties:
 | --- | --- |
 | The Docker Director reaches the Windows Claude Code CLI only through the authenticated host bridge, whose zai entry runs the same GLM-verifying native transport in the bridge process; the container holds neither the key nor the CLI. | src/director_orchestrator/host_provider_bridge.py:WindowsHostProviderExecutor |
 | Excluded from the legacy engine, which remains a supported rollback path: its worker contract is assignment text to ProviderRun with no v1 packet, and the only route to the Windows CLI is the host bridge, which verifies the primary Postgres writer fence before launch while rollback disables that writer. A legacy Z.ai worker would need the CLI inside the container or a weakened fence. Firecrawl, GitHub Copilot and OpenAI production likewise have no legacy worker. | docs/langgraph-primary-operations.md, Rollback; src/director_orchestrator/providers.py:provider_registry |
-| Committee debates execute only in the legacy engine, so the Director-invited seat is recognized (charter seat, advisory-vote identity, interaction enums) but no Z.ai debate turn can run until a primary-runtime debate path exists; its recorded position carries zero weight until the owner assigns one. | src/director_orchestrator/team_charter.py:tally_advisory_votes |
+| A Z.ai debate turn runs only in the primary runtime, and only when an owner-attested structured intake invites it: the invitation seats one POSITION assignment dispatched like any other, and the live evidence phase tallies its validated contribution at weight 1.5 over the fixed 10.0 total, with every unseated member recorded unavailable. The Slack bot never parses an invitation from message text, primary tasks hold no rebuttal round, and legacy intake refuses an invitation (409) rather than drop the Z.ai seat. | src/director_orchestrator/primary_committee.py; src/director_orchestrator/primary_default.py:build_primary_committee_resolver |
 | No protected signing: Z.ai is not a native acceptance issuer, a v2 issuer family, or a qualified v3 review product. It is recognized as a material-author family, so its candidates bind reviewer independence; ordinary non-author review eligibility is unaffected. | src/director_orchestrator/native_acceptance_issuer.py:ROLE_PROVIDERS |
 | Tool limits are Claude Code permission rules on an ordinary host process, not an operating-system sandbox. Web search is not advertised on this route, and no MCP server is installed. | src/director_orchestrator/zai_native.py:tool_arguments |
 | Only a Director refusal before signing, or the bridge's signed refusal (first answer or replay of the recorded reason), is a proven no-run settled as refused before I/O; any unsigned or unreadable bridge error stays ambiguous and is never replayed. | src/director_orchestrator/host_provider_bridge.py:BridgeClaimStore; src/director_orchestrator/primary_default.py:bridge_refusal_no_run_hold |
@@ -248,7 +249,7 @@ Separation of duties:
 
 - Relay rule: provider_messages_relay_through_director.
 - Direct provider-to-provider channels exist: no.
-- Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and a Director-invited advisory debate seat whose position carries zero weight until the owner assigns one.
+- Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and Director-invited advisory debate turns dispatched as primary work packets and tallied at weight 1.5.
 - Z.ai never posts to Slack; the Director relays a concise assignment-correlated summary through the existing Slack thread relay, preserving thread_ts.
 - Trial-lane results never reach another provider as production evidence.
 
@@ -299,3 +300,4 @@ Separation of duties:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->

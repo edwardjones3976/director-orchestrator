@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
@@ -238,7 +239,7 @@ routes:
       - "the neutrally framed question and bounded options"
       - "independent positions, evidence, counterarguments, confidence, unknowns"
       - "at most one advisory vote per seated member at the configured weight, or an explicit abstention"
-      - "a Z.ai position recorded at zero weight: the owner has assigned it no weight and the 8.5 denominator is immutable"
+      - "a Z.ai position at the owner-approved weight 1.5, dispatched as a primary v1 work packet"
     withheld_context:
       - "other members' conclusions before independent positions are recorded, when practical"
     authority: "advisory_evidence_only"
@@ -253,7 +254,7 @@ routes:
       - "src/director_orchestrator/team_charter.py:tally_advisory_votes"
     prohibition_quote: null
     config: [OPENAI_DEBATE_TURN_ESTIMATED_COST_USD]
-    notes: "The configured denominator is 8.5 and immutable. Positions are exchanged only through the Director as moderator; members never address one another."
+    notes: "Each debate's configured denominator is fixed when tallied: 10.0 since the owner's 2026-09-27 Z.ai weight decision, 8.5 for earlier tallies, which are never re-tallied. Positions are exchanged only through the Director as moderator; members never address one another."
 
   - route_id: "antigravity-invited-debate"
     name: "Antigravity invited debate turn"
@@ -1066,3 +1067,4 @@ provider_to_provider_rule:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

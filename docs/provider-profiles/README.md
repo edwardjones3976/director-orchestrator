@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
@@ -48,7 +49,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 | `perplexity` | [perplexity.profile.md](perplexity.profile.md) | `perplexity` | `perplexity` | `perplexity` | supplemental | evidence_only_research | - | `perplexity` |
 | `firecrawl` | [firecrawl.profile.md](firecrawl.profile.md) | `firecrawl` | `firecrawl` | `firecrawl` | lane_only | public_search_transport | - | - |
 | `github-copilot` | [github-copilot.profile.md](github-copilot.profile.md) | `github-copilot` | `github-copilot` | `github-copilot` | lane_only | capability_routed_lane | - | - |
-| `zai` | [zai.profile.md](zai.profile.md) | `zai` | `zai` | `zai` | lane_only | capability_routed_lane | - | `zai` |
+| `zai` | [zai.profile.md](zai.profile.md) | `zai` | `zai` | `zai` | lane_only | capability_routed_lane | 1.5 | `zai` |
 
 ## Route catalog
 
@@ -207,3 +208,4 @@ Endpoints:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
