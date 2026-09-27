@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
@@ -300,6 +301,10 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
         from director_orchestrator.packet_routing import PacketRoutingError, blob_read_deadline
 
         timeouts = []
+        started = 4096.0
+        deadline = started + 0.3
+        # Reproduce a coarse clock: the represented deadline is over 0.3 s away.
+        self.assertGreater(deadline - started, 0.3)
 
         def run(*args, **kwargs):
             timeouts.append(kwargs["timeout"])
@@ -309,10 +314,11 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
             resolver = LocalGitAuthoritySnapshotResolver("example/demo", root)
             with patch("director_orchestrator.packet_transports.subprocess.run", side_effect=run):
                 self.assertEqual("ok", resolver._git("status"))
-                with blob_read_deadline(time_module.monotonic() + 0.3):
+                with patch("director_orchestrator.packet_routing.monotonic", return_value=started), \
+                        blob_read_deadline(deadline):
                     resolver._git("status")
             self.assertEqual(30.0, timeouts[0])
-            self.assertLessEqual(timeouts[1], 0.3)
+            self.assertLessEqual(timeouts[1], deadline - started)
             with patch("director_orchestrator.packet_transports.subprocess.run",
                        side_effect=AssertionError("spawned")), \
                     blob_read_deadline(time_module.monotonic() - 1), \
@@ -1354,3 +1360,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:31 UTC | END]]
