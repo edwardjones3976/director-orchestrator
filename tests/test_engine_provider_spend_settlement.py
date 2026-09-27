@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -11,7 +12,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -29,7 +30,7 @@ from director_orchestrator.models import (
 )
 from director_orchestrator.providers import ProviderDailyLimitExceeded
 from director_orchestrator.store import TaskStore
-from director_orchestrator.usage import UsageMonitor
+from director_orchestrator.usage import UsageMonitor, authoritative_reported_cost
 from tests.plan_binding_helpers import seed_production_plan_materialization
 
 
@@ -45,6 +46,76 @@ def _key(label: str) -> str:
 
 
 class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_charge_paths_use_only_authoritative_usage(self) -> None:
+        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+
+        for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
+            for raw, expected in (
+                ({"result": {"usage": {"cost": 0}}}, None),
+                ({"tool_data": {"usage": {"cost": 0}}}, None),
+                ({"usage": {"cost": 0.25}}, 0.25),
+                ({"tool_data": {"usage": {"cost": 0}}, "usage": {"cost": 0.25}}, 0.25),
+                ({"usage": {"cost": 0}}, 0),
+                ({"usage": [], "result": {"usage": {"cost": 0}}}, None),
+            ):
+                for path in ("ordinary", "packet", "probe"):
+                    with self.subTest(provider=provider, raw=raw, path=path), tempfile.TemporaryDirectory() as directory:
+                        settings, store, record, assignment = self._world(directory)
+                        settings = replace(settings, usage_check_enabled=True,
+                                           usage_check_providers=(provider.value,),
+                                           perplexity_usage_probe_cost_ceiling_usd=0.01)
+                        assignment = assignment.model_copy(update={"agent": provider})
+                        engine = OrchestrationEngine(settings, store)
+                        run = ProviderRun(provider=provider, run_id="metered-run", status="completed", raw=raw)
+                        if path == "probe":
+                            adapter = AsyncMock()
+                            adapter.usage_check.return_value = run
+                            monitor = UsageMonitor(settings, store, adapters={provider: adapter})
+                            monitor._post_summary = AsyncMock()
+                            with patch.object(Settings, "usage_check_readiness", return_value={provider.value: True}):
+                                records = await monitor.run_once(force=True)
+                            self.assertEqual(records[0].reported_cost_usd, expected)
+                            self.assertEqual(records[0].status.value, "ok")
+                        else:
+                            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                            record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
+                                                               outcome="ambiguous")
+                            run.assignment_sequence = assignment.sequence
+                            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                            record.provider_runs.append(run)
+                            if path == "ordinary":
+                                engine._settle_provider_spend(record, run, provider)
+                            else:
+                                outcome = SimpleNamespace(result_packet={
+                                    "run_reference": run.run_id, "usage": {"cost_usd": 0},
+                                })
+                                engine._settle_packet_spend(record, assignment, key, outcome)
+                        ledger = engine.provider_spend
+                        reservations = ledger.reservations(provider)
+                        self.assertEqual(len(reservations), 1)
+                        self.assertEqual(ledger.unreconciled(provider, stale_after=HOUR),
+                                         [reservations[0][0]] if expected is None else [])
+                        self.assertAlmostEqual(ledger.exposure(provider)[1], max(reservations[0][1], expected or 0))
+
+    def test_authoritative_cost_rejects_malformed_and_wrong_fields(self) -> None:
+        for provider in ("gemini", "grok", "xai", "perplexity"):
+            for cost in (None, True, -1, float("nan"), float("inf"), "0", 10 ** 1000,
+                         {"currency": "EUR", "total_cost": 0}):
+                with self.subTest(provider=provider, cost=cost):
+                    self.assertIsNone(authoritative_reported_cost(provider, {"usage": {"cost": cost}}))
+            self.assertIsNone(authoritative_reported_cost(provider, {"usageMetadata": {"cost": 0}}))
+            self.assertIsNone(authoritative_reported_cost(provider, {"usage": {"cost_usd": 0}}))
+            self.assertIsNone(authoritative_reported_cost(provider, None))
+        self.assertIsNone(authoritative_reported_cost("unknown", {"usage": {"cost": 0}}))
+        for provider in ("grok", "xai"):
+            self.assertEqual(authoritative_reported_cost(provider, {
+                "usage": {"cost_in_usd_ticks": 5_000_000}, "result": {"usage": {"cost": 0}},
+            }), 0.0005)
+            for ticks in (True, -1, "0", float("inf"), 10 ** 1000):
+                self.assertIsNone(authoritative_reported_cost(provider, {
+                    "usage": {"cost_in_usd_ticks": ticks, "cost": 0},
+                }))
+
     def _world(self, directory: str, *, ceiling: float | None = 0.01):
         database = str(Path(directory) / "tasks.sqlite3")
         settings = replace(
@@ -231,12 +302,18 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             engine = OrchestrationEngine(settings, store)
             key = _key("packet")
             engine._reserve_provider_daily_spend(assignment, effect_key=key)
-            outcome = SimpleNamespace(result_packet={"run_reference": "packet-run", "usage": {"cost_usd": 0.25}})
+            record.provider_runs.append(ProviderRun(
+                provider=assignment.agent, run_id="packet-run", status="completed",
+                raw={"usage": {"cost": 0.25}},
+            ))
+            outcome = SimpleNamespace(result_packet={"run_reference": "packet-run", "usage": {"cost_usd": 0}})
             engine._settle_packet_spend(record, assignment, key, outcome)
             self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.25)
             unpriced = _key("packet-unpriced")
             engine._reserve_provider_daily_spend(assignment, effect_key=unpriced)
-            engine._settle_packet_spend(record, assignment, unpriced, SimpleNamespace(result_packet=None))
+            engine._settle_packet_spend(record, assignment, unpriced, SimpleNamespace(
+                result_packet={"run_reference": "missing-run", "usage": {"cost_usd": 0}},
+            ))
             self.assertEqual(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR), [unpriced])
 
 
@@ -245,3 +322,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
@@ -122,6 +123,7 @@ def _token_value(usage: dict[str, Any], *names: str) -> int | None:
 
 
 def normalize_usage(payload: dict[str, Any]) -> tuple[dict[str, Any], int | None, int | None, int | None]:
+    # Recursive token discovery is not spend authority and must never feed a charge.
     usage = _usage_payload(payload)
     input_tokens = _token_value(usage, "input_tokens", "prompt_tokens", "prompt_token_count")
     output_tokens = _token_value(
@@ -149,6 +151,30 @@ def normalize_reported_cost(usage: dict[str, Any]) -> float | None:
         if parsed >= 0 and math.isfinite(parsed):
             return parsed
     return None
+
+
+def authoritative_reported_cost(provider: ProviderName | str, raw: Any) -> float | None:
+    """Read native envelope metering only, never model or tool content."""
+    # Gemini Interactions, Grok Responses and Perplexity adapters store the native
+    # response verbatim. All use top-level usage, not generateContent usageMetadata.
+    if provider not in {"gemini", "grok", "xai", "perplexity"} or not isinstance(raw, dict):
+        return None
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    # Match the native Grok Responses conversion in primary_transports.py.
+    if provider in {"grok", "xai"} and "cost_in_usd_ticks" in usage:
+        ticks = usage["cost_in_usd_ticks"]
+        if type(ticks) is not int or ticks < 0:
+            return None
+        try:
+            return normalize_reported_cost({"cost": ticks / 10_000_000_000})
+        except OverflowError:
+            return None
+    try:
+        return normalize_reported_cost(usage)
+    except OverflowError:
+        return None
 
 
 # The most attempts one usage check may make (GeminiAdapter.usage_check bounds its own at five).
@@ -575,7 +601,7 @@ class UsageMonitor:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
-            reported_cost_usd=normalize_reported_cost(raw_usage),
+            reported_cost_usd=authoritative_reported_cost(provider, run.raw),
             attempt_count=run.attempt_count,
             raw_usage=raw_usage,
             error=f"Provider ended with status {run.status}" if failed else None,
@@ -707,10 +733,10 @@ class UsageMonitor:
                                 error=f"{type(exc).__name__}: {exc}"[:2_000],
                             )
                     self.store.add_usage_check(record)
-                    # The probe's actual charge joins the ledger its admission gate reads (review 4111357778):
-                    # against the grok probe's floor reservation, or as its own row for gemini and perplexity.
+                    # Settle against the probe reservation, including unknown costs (unreconciled)
+                    # and authoritative zero costs. Skipped probes incurred no request.
                     if (provider in {"gemini", "grok", "perplexity"}
-                            and record.reported_cost_usd is not None and record.reported_cost_usd > 0):
+                            and record.status != UsageCheckStatus.SKIPPED):
                         self.provider_spend.record_charge(
                             provider=ProviderName(provider),
                             effect_key=_probe_key(cycle_id, provider),
@@ -822,3 +848,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]

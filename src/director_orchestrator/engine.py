@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -155,7 +156,7 @@ from .policy import (
     trusted_openai_debate_phase_cost_usd,
 )
 from .models import canonical_opaque_identifier_digest
-from .usage import normalize_reported_cost, normalize_usage
+from .usage import authoritative_reported_cost
 from .providers import (
     PreSubmitProviderError,
     ProviderDailyLimitExceeded,
@@ -1110,10 +1111,7 @@ class OrchestrationEngine:
         packet = getattr(outcome, "result_packet", None)
         run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
         run = next((item for item in reversed(record.provider_runs) if run_id and item.run_id == run_id), None)
-        usage = packet.get("usage") if isinstance(packet, dict) else None
-        cost = usage.get("cost_usd") if isinstance(usage, dict) else None
-        if not isinstance(cost, (int, float)) or isinstance(cost, bool) or not math.isfinite(cost) or cost < 0:
-            cost = normalize_reported_cost(normalize_usage(run.raw)[0]) if run is not None else None
+        cost = authoritative_reported_cost(assignment.agent, run.raw) if run is not None else None
         self._charge_spend(assignment.agent, effect_key, cost)
 
     @staticmethod
@@ -5469,7 +5467,7 @@ class OrchestrationEngine:
                 and item.provider == run.provider and item.assignment_sequence == run.assignment_sequence
                 and item.run_id_digest is None
             }
-        cost = normalize_reported_cost(normalize_usage(run.raw)[0])
+        cost = authoritative_reported_cost(provider, run.raw)
         for key in sorted(keys):
             self._charge_spend(provider, key, cost)
 
@@ -7115,3 +7113,4 @@ class OrchestrationEngine:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
