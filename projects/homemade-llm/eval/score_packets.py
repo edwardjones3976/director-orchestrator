@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-27 | 00:31 UTC | BEGIN]]
 # [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | BEGIN]]
@@ -212,6 +214,21 @@ def _grade_row_missing_or_invalid_grader(row: dict[str, Any]) -> bool:
     return False
 
 
+def _grade_row_packet_id(row: dict[str, Any]) -> str | None:
+    packet_id = row.get("id")
+    if isinstance(packet_id, str) and packet_id:
+        return packet_id
+    return None
+
+
+def grade_rows_for_packet_ids(grades: list[dict[str, Any]], packet_ids: set[str]) -> list[dict[str, Any]]:
+    return [row for row in grades if _grade_row_packet_id(row) in packet_ids]
+
+
+def count_grade_rows_for_packet_ids(grades: list[dict[str, Any]], packet_ids: set[str]) -> int:
+    return sum(1 for row in grades if _grade_row_packet_id(row) in packet_ids)
+
+
 def count_malformed_grade_rows(grades: list[dict[str, Any]]) -> int:
     """Count grade rows with non-boolean ``accepted`` or missing grader on accept rows."""
     count = 0
@@ -263,6 +280,7 @@ def score(
     schema_path: Path,
     *,
     digest_metadata: dict[str, Any] | None = None,
+    excluded_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     grades = load_grades(grades_path)
@@ -389,10 +407,21 @@ def score(
     if digest_metadata is not None:
         summary.update(digest_metadata)
     if has_grades:
+        excluded_id_set: set[str] = set()
+        if excluded_ids is not None:
+            excluded_id_set = excluded_ids
+        elif digest_metadata is not None:
+            for entry in digest_metadata.get("excluded", []):
+                if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+                    excluded_id_set.add(entry["id"])
+        grades_for_scored = [r for r in grades if _grade_row_packet_id(r) not in excluded_id_set]
         summary["pct_accepted_as_is"] = round(pct_accepted, 6)
         summary["accepted_as_is_count"] = len(accepted_ids)
         summary["remaining_packet_count"] = len(remaining)
-        summary["malformed_grade_rows"] = count_malformed_grade_rows(grades)
+        summary["malformed_grade_rows"] = count_malformed_grade_rows(grades_for_scored)
+        summary["grade_rows_for_excluded_ids"] = count_grade_rows_for_packet_ids(
+            grades, excluded_id_set
+        )
 
     summary_path = out_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -492,3 +521,5 @@ if __name__ == "__main__":
 # [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | END]]
 # [[Cursor | composer-2.5 | 2026-09-27 | 00:31 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | END]]

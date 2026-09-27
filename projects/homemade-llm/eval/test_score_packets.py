@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-27 | 00:31 UTC | BEGIN]]
 # [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | BEGIN]]
@@ -521,6 +523,122 @@ class ScorePacketsTests(unittest.TestCase):
             )
             self.assertEqual({r["id"] for r in packet_rows}, {"p3", "p4", "p5"})
 
+    def test_exclude_file_with_grades_ignores_excluded_grade_rows_in_scored_metrics(self):
+        ref_p1 = _minimal_ref("p1")
+        ref_p2 = _minimal_ref("p2")
+        fields = list(score_packets.DEFAULT_FIELDS)
+        grades = [
+            {"id": "p2", "grader": 1, "field": "objective", "accepted": True},
+            {"id": "p2", "grader": "g1", "field": "objective", "accepted": True},
+        ] + [
+            {"id": "p1", "grader": "g1", "field": f, "accepted": True} for f in fields
+        ] + [
+            {"id": "p1", "grader": "g2", "field": f, "accepted": True} for f in fields
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            refs_dir = tmp_path / "refs"
+            cands_dir = tmp_path / "cands"
+            out_dir = tmp_path / "out"
+            refs_dir.mkdir()
+            cands_dir.mkdir()
+            for pid, ref in (("p1", ref_p1), ("p2", ref_p2)):
+                (refs_dir / f"{pid}.json").write_text(json.dumps(ref), encoding="utf-8")
+                (cands_dir / f"{pid}.json").write_text(json.dumps(ref), encoding="utf-8")
+            exclude_path = tmp_path / "exclude.json"
+            exclude_path.write_text(
+                json.dumps([{"id": "p2", "reason": "leaks answer"}]),
+                encoding="utf-8",
+            )
+            grades_path = tmp_path / "grades.jsonl"
+            grades_path.write_text(
+                "\n".join(json.dumps(row) for row in grades) + "\n",
+                encoding="utf-8",
+            )
+            refs_manifest = score_packets.manifest(refs_dir)
+            code = score_packets.main(
+                [
+                    "--refs",
+                    str(refs_dir),
+                    "--candidates",
+                    str(cands_dir),
+                    "--out",
+                    str(out_dir),
+                    "--refs-manifest",
+                    refs_manifest,
+                    "--exclude-file",
+                    str(exclude_path),
+                    "--grades",
+                    str(grades_path),
+                ]
+            )
+            self.assertEqual(code, 0)
+            summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["n_scored"], 1)
+            self.assertEqual(summary["packet_count"], 1)
+            self.assertEqual(summary["malformed_grade_rows"], 0)
+            self.assertEqual(summary["grade_rows_for_excluded_ids"], 2)
+            self.assertEqual(summary["accepted_as_is_count"], 1)
+            self.assertEqual(summary["pct_accepted_as_is"], 100.0)
+            packet_rows = list(
+                csv.DictReader((out_dir / "packets.csv").read_text(encoding="utf-8").splitlines())
+            )
+            self.assertEqual(len(packet_rows), 1)
+            self.assertEqual(packet_rows[0]["id"], "p1")
+            self.assertEqual(packet_rows[0]["accepted_as_is"], "true")
+
+    def test_exclude_file_idless_non_boolean_accepted_counts_as_malformed(self):
+        ref_p1 = _minimal_ref("p1")
+        ref_p2 = _minimal_ref("p2")
+        fields = list(score_packets.DEFAULT_FIELDS)
+        grades = [
+            {"accepted": "yes"},
+        ] + [
+            {"id": "p1", "grader": "g1", "field": f, "accepted": True} for f in fields
+        ] + [
+            {"id": "p1", "grader": "g2", "field": f, "accepted": True} for f in fields
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            refs_dir = tmp_path / "refs"
+            cands_dir = tmp_path / "cands"
+            out_dir = tmp_path / "out"
+            refs_dir.mkdir()
+            cands_dir.mkdir()
+            for pid, ref in (("p1", ref_p1), ("p2", ref_p2)):
+                (refs_dir / f"{pid}.json").write_text(json.dumps(ref), encoding="utf-8")
+                (cands_dir / f"{pid}.json").write_text(json.dumps(ref), encoding="utf-8")
+            exclude_path = tmp_path / "exclude.json"
+            exclude_path.write_text(
+                json.dumps([{"id": "p2", "reason": "leaks answer"}]),
+                encoding="utf-8",
+            )
+            grades_path = tmp_path / "grades.jsonl"
+            grades_path.write_text(
+                "\n".join(json.dumps(row) for row in grades) + "\n",
+                encoding="utf-8",
+            )
+            refs_manifest = score_packets.manifest(refs_dir)
+            code = score_packets.main(
+                [
+                    "--refs",
+                    str(refs_dir),
+                    "--candidates",
+                    str(cands_dir),
+                    "--out",
+                    str(out_dir),
+                    "--refs-manifest",
+                    refs_manifest,
+                    "--exclude-file",
+                    str(exclude_path),
+                    "--grades",
+                    str(grades_path),
+                ]
+            )
+            self.assertEqual(code, 0)
+            summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["malformed_grade_rows"], 1)
+
     def test_unknown_exclude_id_fails_closed(self):
         ref = _minimal_ref("p1")
         with tempfile.TemporaryDirectory() as tmp:
@@ -685,3 +803,5 @@ if __name__ == "__main__":
 # [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | END]]
 # [[Cursor | composer-2.5 | 2026-09-27 | 00:31 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | END]]
