@@ -34,16 +34,34 @@ def _git(*args: str) -> str:
     ).stdout.decode("utf-8", errors="strict")
 
 
-def validate_commits(base: str, head: str) -> list[str]:
-    """Check Git's parsed trailer block on every commit, including merge commits."""
+def validate_commits(base: str, head: str, default_branch_ref: str = "origin/main") -> list[str]:
+    """Check new commits outside fetched default-branch history."""
     head = _git("rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}").strip()
     if base == ZERO_SHA:
         revision_range = head  # New ref: include the root commit too.
     else:
         base = _git("rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}").strip()
         revision_range = f"{base}..{head}"
+    try:
+        default_head = _git(
+            "rev-parse", "--verify", "--end-of-options", f"{default_branch_ref}^{{commit}}"
+        ).strip()
+    except subprocess.CalledProcessError:
+        return [
+            "setup error: default-branch ref unavailable; fetch the repository's "
+            "default branch and supply --default-branch-ref (default: origin/main)"
+        ]
     errors = []
-    for commit in _git("rev-list", revision_range).splitlines():
+    for commit in _git("rev-list", revision_range, "--not", default_head).splitlines():
+        parents, committer, subject = _git(
+            "show", "-s", "--format=%P%n%cn <%ce>%n%s", commit
+        ).splitlines()
+        if (
+            len(parents.split()) == 2
+            and committer == "GitHub <noreply@github.com>"
+            and re.fullmatch(r"Merge pull request #[0-9]+ from .+", subject)
+        ):
+            continue
         trailers = _git(
             "show", "-s", "--format=%(trailers:key=Contributed-by)", commit
         ).splitlines()
@@ -100,10 +118,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate commit trailers and PR authorship.")
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument("--default-branch-ref", default="origin/main")
     parser.add_argument("--github-event", type=Path)
     args = parser.parse_args()
     try:
-        errors = validate_commits(args.base, args.head)
+        errors = validate_commits(args.base, args.head, args.default_branch_ref)
         if args.github_event is not None:
             errors.extend(_validate_github_event(args.github_event))
     except (OSError, ValueError, subprocess.CalledProcessError):

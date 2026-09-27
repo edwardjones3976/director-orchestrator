@@ -686,6 +686,7 @@ class GitAttributionTests(unittest.TestCase):
         self.git("config", "user.name", "Fixture")
         self.git("config", "user.email", "fixture@example.invalid")
         self.base = self.commit("Baseline")
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
 
     def git(self, *args):
         return subprocess.check_output(
@@ -733,11 +734,95 @@ class GitAttributionTests(unittest.TestCase):
         stripped = self.commit("Strip\n\nContributed-by: Codex | GPT-6")
         self.assertEqual(self.checker.validate_commits(tagged, stripped), [])
 
-    def test_zero_base_includes_root_and_invalid_revision_fails_closed(self):
+    def test_zero_base_excludes_main_and_invalid_revision_fails_closed(self):
+        missing = self.commit("Missing attribution")
         head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
-        self.assertIn(self.base, self.checker.validate_commits("0" * 40, head)[0])
+        errors = self.checker.validate_commits("0" * 40, head)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(missing, errors[0])
         with patch("sys.argv", ["checker", "--base", "missing-ref", "--head", head]), patch("sys.stderr", new_callable=io.StringIO):
             self.assertEqual(self.checker.main(), 1)
+
+    def test_branch_merging_main_excludes_unattributed_main_commits(self):
+        main = self.commit("Legacy main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", self.base)
+        branch = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        self.git("merge", "--no-ff", "-m", "Sync main\n\nContributed-by: Codex | GPT-6", main)
+        self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
+
+    def test_main_push_github_merge_and_legacy_commits_pass(self):
+        main = self.commit("Legacy main change")
+        self.git("checkout", "-b", "legacy", self.base)
+        legacy = self.commit("Feature checked under old tag rule")
+        self.git("checkout", "-b", "main-push", main)
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            self.git("merge", "--no-ff", "-m", "Merge pull request #123 from fixture/legacy", legacy)
+        head = self.git("rev-parse", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/main", head)
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"ref": "refs/heads/main"}), encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", main, "--head", head,
+                                "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(self.checker.main(), 0)
+
+    def test_github_merge_exemption_requires_committer_and_subject(self):
+        main = self.commit("Main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", self.base)
+        branch = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        subject = "Merge pull request #123 from fixture/main"
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            self.git("merge", "--no-ff", "-m", subject, main)
+            self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
+            self.git("commit", "--amend", "-m", "Local integration")
+            self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
+        self.git("commit", "--amend", "-m", subject)
+        self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
+
+    def test_single_parent_github_subject_without_trailer_fails(self):
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            head = self.commit("Merge pull request #123 from fixture/feature")
+        self.assertIn(head, self.checker.validate_commits(self.base, head)[0])
+
+    def test_local_merge_with_resolution_without_trailer_fails(self):
+        path = self.root / "conflict.txt"
+        path.write_text("baseline\n", encoding="utf-8")
+        base = self.commit("Base\n\nContributed-by: Codex | GPT-6")
+        path.write_text("main\n", encoding="utf-8")
+        main = self.commit("Legacy main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", base)
+        path.write_text("feature\n", encoding="utf-8")
+        branch = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.git("merge", "--no-ff", main)
+        path.write_text("combined resolution\n", encoding="utf-8")
+        head = self.commit("Resolve integration")
+        self.assertEqual(len(self.git("show", "-s", "--format=%P", head).split()), 2)
+        errors = self.checker.validate_commits(branch, head)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(head, errors[0])
+
+    def test_missing_default_branch_fails_closed_with_setup_error(self):
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", self.base]), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(self.checker.main(), 1)
+        self.assertIn("setup error: default-branch ref unavailable", stderr.getvalue())
+
+    def test_explicit_default_branch_ref(self):
+        self.git("update-ref", "refs/remotes/origin/trunk", self.base)
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", head,
+                                "--default-branch-ref", "origin/trunk"]), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(self.checker.main(), 0)
 
     def test_pr_headers(self):
         header = "Sole author: OpenAI Codex (GPT-6)"

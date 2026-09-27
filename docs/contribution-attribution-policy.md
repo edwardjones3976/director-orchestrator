@@ -54,11 +54,32 @@ contribute.
 
 ## Validation
 
-The CI job remains **Contribution attribution**. For every commit in
-`base..head`, the checker requires at least one well-formed `Contributed-by:`
-trailer and rejects malformed contributor trailers. It uses Git's trailer
-parser, so a mention in ordinary prose is insufficient. A zero base (new ref)
-checks all reachable commits, including the root.
+The CI job remains **Contribution attribution**. The checker selects commits
+with `git rev-list base..head --not origin/main`: only commits introduced by
+the change that are not already reachable from the fetched default branch.
+A zero base (new ref) selects all commits reachable from head, still excluding
+default-branch history. This repository's default branch is main; for another
+default-branch ref, pass `--default-branch-ref <fetched-ref>`.
+
+Fetch the current default branch before running the checker (CI checks out full
+history). A missing or unreadable default-branch ref fails with a setup error,
+even for an empty range; the checker never silently skips validation or fetches
+on the caller's behalf.
+
+Each selected commit requires at least one well-formed `Contributed-by:` trailer
+and no malformed contributor trailers. Git's trailer parser is used, so a
+mention in ordinary prose is insufficient. The only merge exemption is exactly
+two parents, committer `GitHub <noreply@github.com>`, and the standard subject
+`Merge pull request #N from <source>`. These web-flow merges integrate content
+checked on the PR. This metadata is not authentication. Local merges, including
+conflict resolutions, and other merge forms still require trailers when selected.
+
+No date cutoff is needed for the transition: once merged, commits checked under
+the old in-file tag rule are reachable from main and excluded, as is the main
+push's merge commit. Consequently, a main push with an up-to-date default-branch
+ref has no new commits to validate; trailer enforcement happens before merge
+on branch/PR checks. An unmerged legacy branch still needs trailers on its
+selected commits. This check is not a post-merge audit of main history.
 
 On pull-request events it also requires exactly one `Sole author:` header in
 the event-file PR body. Push events on main (and other refs) check trailers only.
