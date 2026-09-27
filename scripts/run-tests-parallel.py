@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
@@ -108,10 +109,15 @@ def shard_databases(dsn, count):
                 created.append(name)
         yield [shard_dsn(dsn, i) for i in range(count)]
     finally:
+        # The CI workflow always removes this owned, disposable container after
+        # the test step. Dropping its shard databases first can hang for five
+        # minutes even after every test passed.
+        names_to_drop = () if (os.environ.get("GITHUB_ACTIONS") == "true"
+                               and os.environ.get("DIRECTOR_CI_PG_LANE")) else reversed(created)
         deadline = time.monotonic() + 300
         failures = []
         # Worst case: about 300s total, plus one in-flight attempt's overhead.
-        for name in reversed(created):
+        for name in names_to_drop:
             for attempt in range(3):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -343,3 +349,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | END]]
