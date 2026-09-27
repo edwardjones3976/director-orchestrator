@@ -1,4 +1,5 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
@@ -730,6 +731,11 @@ explicit sign-off on the pull request that adds it.
   and merge execution create no authorship, so performing them neither makes an
   identity the producer for evidence-bar items 3, 4, and 5 nor makes an actual
   author eligible under them.
+- **The charter's Director maintenance routing changes nothing here.** It
+  sends maintenance to OpenAI Codex, adds no authority, and removes no gate.
+  Codex's maintenance edits are assistance, not authorship: they do not make
+  OpenAI the candidate's producer or sole author for evidence-bar items 3, 4,
+  and 5 (the sole-author rule, PR #284).
 
 ## How the existing gates are satisfied, not substituted
 
@@ -937,4 +943,5 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]] -->
