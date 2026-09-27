@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
@@ -1421,13 +1422,14 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
         allocation_profile=record.intake.allocation_profile,
         team_mode=settings.langgraph_primary_antigravity_team_enabled)
     required = ((selected.research,) if selected.research else ()) + (selected.producer,)
-    # An owner-invited committee member holds one POSITION seat, dispatched
-    # like every other assignment. Its lane must be ready and admissible now;
-    # dispatch-time admission still decides.
+    # An owner-invited debate seats the Director and each invited member in one
+    # POSITION assignment apiece, dispatched like every other assignment. Each
+    # lane must be ready and admissible now; dispatch-time admission still decides.
+    from .primary_committee import committee_seat_members
     from .primary_roster import PrimaryRosterHold
     from .primary_workload import WorkloadAdmissionHold, admission_reason
     invitation = record.intake.primary_committee_debate
-    seats = invitation.invited_members if invitation is not None else ()
+    seats = committee_seat_members(invitation) if invitation is not None else ()
     for lane in seats:
         if lane not in available:
             raise PrimaryRosterHold("committee_member_unavailable")
@@ -1797,20 +1799,21 @@ def build_primary_committee_resolver(
             aggregate = dispatch.aggregate(context.task_id)
         except Exception as exc:
             raise CommitteeContributionInvalid("committee_position_unresolved") from exc
+        if not aggregate.terminal or aggregate.ambiguous_slot_count:
+            raise CommitteeContributionInvalid("committee_position_unresolved")
         results: dict[int, Mapping[str, Any]] = {}
         result_digests: dict[str, str] = {}
         for seat in committee_seats(record):
             assignment_id = services._packet_router._assignment_id(record, seat)
             expected = aggregate.result_digests.get(assignment_id)
+            if aggregate.statuses.get(assignment_id) != "SUCCEEDED" or not expected:
+                # Left out: committee_tally names the missing seat's reason.
+                continue
             artifact = handle.claim_store.read_result_packet_artifact(
                 task_id=context.task_id, assignment_id=assignment_id
             )
             if (
-                not aggregate.terminal
-                or aggregate.ambiguous_slot_count
-                or aggregate.statuses.get(assignment_id) != "SUCCEEDED"
-                or not expected
-                or artifact is None
+                artifact is None
                 or artifact.document_digest != expected
                 or str(artifact.packet.get("assignment_id")) != assignment_id
             ):
@@ -1822,11 +1825,13 @@ def build_primary_committee_resolver(
                          and item.discussion_phase.value == "work"
                          and item.primary_provider_lane not in _PRIMARY_PUBLIC_RESEARCH_LANES),
                         None)
-        votes, tally = committee_tally(record, results, producer_lane=producer)
+        committee_record = committee_tally(record, results, producer_lane=producer)
         return _digest({
             "position_result_digests": result_digests,
-            "votes": [vote.model_dump(mode="json") for vote in votes],
-            "tally": tally.model_dump(mode="json"),
+            "seated": list(committee_record.seated),
+            "not_seated": list(committee_record.not_seated),
+            "votes": [vote.model_dump(mode="json") for vote in committee_record.votes],
+            "tally": committee_record.tally.model_dump(mode="json"),
         })
 
     return committee
@@ -5374,3 +5379,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]

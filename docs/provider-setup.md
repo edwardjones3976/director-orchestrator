@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
@@ -650,7 +651,7 @@ configuration is not round-trip evidence.
 | Interaction identities (`InteractionProvider.ZAI`, `ProviderTransport.ZAI_CODING_CLI`) | Supported | Ledger and packet-result evidence keep the Z.ai identity |
 | Slack | Supported via the Director relay | Z.ai never posts; `thread_ts` is preserved |
 | Committee seat and advisory vote, weight 1.5 | Supported | Owner decision 2026-09-27, "Approve 1.5; total 10.0"; new debates use 10.0, earlier tallies keep their recorded 8.5 |
-| Invited committee turns in the primary runtime | Supported | An owner-attested structured intake (`primary_committee_debate`) seats one POSITION assignment, dispatched through the ordinary bounded dispatcher (host bridge or native); the evidence phase tallies the persisted, validated contribution over the fixed 10.0 total and a replay recomputes it without a model call. The Slack bot never parses an invitation from text; primary tasks hold no rebuttal round |
+| Invited committee turns in the primary runtime | Supported | The owner's `DIRECTOR debate` command (see the Director user guide) becomes a gateway-signed invitation verified by `/v1/intake`. The Director (OpenAI) is always seated for its own position and 2.5 vote; Z.ai and any other invited primary member (Claude, Cursor, Grok) get one POSITION seat each, dispatched through the ordinary bounded dispatcher (Z.ai over the host bridge or native). The evidence phase tallies the persisted, validated contributions over the fixed 10.0 total, lists uninvited members as not seated, fails closed without the Director's contribution, and a replay recomputes it without dispatch. Plan approval and budgets still apply; primary tasks hold no rebuttal round |
 | Legacy engine worker | Unavailable under legacy rollback | A supported rollback path, but its worker has no v1 packet and the only route to the Windows CLI is the host bridge, whose primary Postgres writer fence rollback disables; legacy intake refuses an invitation (409). No fence bypass, second engine, substitute provider or second launcher |
 | Protected signing (native acceptance issuer, v2 issuer family, v3 review product) | Excluded | No keys, principals or signing authority are granted; ordinary review is unaffected |
 | Web search, MCP servers, media capabilities | Excluded | Not qualified on the Coding Plan route; a generic Claude tool name is not evidence |
@@ -971,3 +972,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->

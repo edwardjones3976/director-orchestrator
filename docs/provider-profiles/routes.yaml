@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
@@ -239,7 +240,7 @@ routes:
       - "the neutrally framed question and bounded options"
       - "independent positions, evidence, counterarguments, confidence, unknowns"
       - "at most one advisory vote per seated member at the configured weight, or an explicit abstention"
-      - "a Z.ai position at the owner-approved weight 1.5, dispatched as a primary v1 work packet"
+      - "in the primary runtime, the Director's own position and 2.5 vote plus each invited member's position (Z.ai at the owner-approved 1.5), each dispatched as a primary v1 work packet after the owner's signed DIRECTOR debate invitation"
     withheld_context:
       - "other members' conclusions before independent positions are recorded, when practical"
     authority: "advisory_evidence_only"
@@ -252,6 +253,7 @@ routes:
         anchor: "No tally can expand scope or access, waive owner approval, make a producer its"
     enforced_by:
       - "src/director_orchestrator/team_charter.py:tally_advisory_votes"
+      - "src/director_orchestrator/primary_committee.py"
     prohibition_quote: null
     config: [OPENAI_DEBATE_TURN_ESTIMATED_COST_USD]
     notes: "Each debate's configured denominator is fixed when tallied: 10.0 since the owner's 2026-09-27 Z.ai weight decision, 8.5 for earlier tallies, which are never re-tallied. Positions are exchanged only through the Director as moderator; members never address one another."
@@ -1068,3 +1070,4 @@ provider_to_provider_rule:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]

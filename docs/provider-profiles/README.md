@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
@@ -62,7 +63,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`, `zai` | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
 | `dependency-outcome-forwarding` | mediated | director_to_provider | director | authorized | enabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`, `zai` | `src/director_orchestrator/engine.py`, `src/director_orchestrator/antigravity.py` |
 | `review-to-merge-handoff` | mediated | director_to_provider | director | authorized | enabled | evidence_for_deterministic_gate | `openai`, `claude`, `cursor`, `grok`, `zai` | `src/director_orchestrator/review_handoff.py`, `src/director_orchestrator/primary_roster.py` |
-| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `zai` | `src/director_orchestrator/team_charter.py:tally_advisory_votes` |
+| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `zai` | `src/director_orchestrator/team_charter.py:tally_advisory_votes`, `src/director_orchestrator/primary_committee.py` |
 | `antigravity-invited-debate` | mediated | bidirectional | director_invitation_only | authorized | enabled | advisory_evidence_only | `antigravity` | `src/director_orchestrator/antigravity.py:build_debate_request`, `src/director_orchestrator/policy.py` |
 | `antigravity-closed-work-directive` | mediated | director_to_provider | director | authorized | enabled | none | `antigravity` | `src/director_orchestrator/antigravity.py`, `src/director_orchestrator/primary_transports.py:antigravity_closed_payload` |
 | `oracle-exact-sha-merge-gate` | mediated | provider_to_director | director | authorized | disabled | evidence_for_deterministic_gate | `claude`, `cursor`, `grok`, `openai` | `src/director_orchestrator/oracle_merge.py`, `src/director_orchestrator/policy.py` |
@@ -211,3 +212,4 @@ Endpoints:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->

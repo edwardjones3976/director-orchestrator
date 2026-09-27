@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -264,11 +265,13 @@ MAX_SLACK_INTAKE_TEXT = 20_000
 class PrimaryCommitteeDebate(BaseModel):
     """An owner-attested committee invitation for one LangGraph-primary task.
 
-    It arrives only inside the gateway-attested structured intake; nothing
-    parses it out of message text. Each invited member receives one POSITION
-    assignment in the ordinary primary plan, dispatched like any other
-    assignment, and its validated contribution is tallied with the charter's
-    configured weights (``primary_committee``).
+    It arrives inside the gateway-attested intake: the Slack gateway builds it
+    from the owner's explicit ``DIRECTOR debate`` command and signs its exact
+    bytes. It grants no authority; the plan still needs owner approval and
+    budget. The Director is always seated; each invited member receives one
+    POSITION assignment in the ordinary primary plan, dispatched like any
+    other assignment, and the validated contributions are tallied with the
+    charter's configured weights (``primary_committee``).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -276,8 +279,11 @@ class PrimaryCommitteeDebate(BaseModel):
     question: str = Field(min_length=1, max_length=2_000)
     vote_options: tuple[str, ...] = Field(min_length=2, max_length=6)
     material_risk: bool = False
-    # Only Z.ai has a primary committee seat; widening it is a separate change.
-    invited_members: tuple[Literal["zai"], ...] = Field(min_length=1, max_length=1)
+    # Members the primary packet router can seat. The Director (openai) is
+    # always seated and never listed; Antigravity's debate turns need its own
+    # closed Director-invited contract, which primary packets do not carry.
+    invited_members: tuple[Literal["claude", "cursor", "grok", "zai"], ...] = Field(
+        min_length=1, max_length=4)
 
     @model_validator(mode="after")
     def validate_options(self) -> PrimaryCommitteeDebate:
@@ -285,6 +291,8 @@ class PrimaryCommitteeDebate(BaseModel):
             raise ValueError("committee vote options must be 1-255 characters")
         if len({option.strip().lower() for option in self.vote_options}) != len(self.vote_options):
             raise ValueError("committee vote options must be unique")
+        if len(set(self.invited_members)) != len(self.invited_members):
+            raise ValueError("committee members are invited once")
         return self
 
 
@@ -1535,3 +1543,4 @@ class ManualRunCompletion(BaseModel):
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]

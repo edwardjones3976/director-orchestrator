@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
@@ -60,6 +61,28 @@ depending on whether paid runs are enabled.
 
 Duplicate posts are safe. The event ID is the idempotency key, so re-sending
 does not create a second task.
+
+### Opening a committee debate
+
+```
+DIRECTOR debate
+Question: Should the retry budget move to the gateway?
+Options: gateway | worker
+Invite: zai, claude
+Material risk: no
+```
+
+(`/director debate` with the same lines also works.) The gateway turns only this
+exact form into a signed invitation; any other line, a repeated field, or an
+uninvitable member is refused with the usage text and nothing is forwarded.
+The Director (OpenAI) is always seated for its own independent position and its
+single full-weight vote; `Invite` may name `zai`, `claude`, `cursor` or `grok`
+(Antigravity's debate contract is not carried by primary packets). Each seat is
+an ordinary primary assignment: the plan still needs your approval, every seat's
+lane needs a configured budget and must be ready, and the reviewer synthesizes
+the positions without voting. The tally uses the charter weights over the fixed
+10.0 total, records members you did not invite as not seated, and fails closed if
+the Director's contribution is missing. The legacy engine refuses the command.
 
 ### Approving
 
@@ -228,3 +251,4 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->

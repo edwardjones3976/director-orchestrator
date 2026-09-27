@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
@@ -312,7 +313,7 @@ Separation of duties:
 | `result-packet-return` | mediated | provider_to_director | provider_response_to_dispatch | authorized | enabled | none | `src/director_orchestrator/packet_results.py`, `src/director_orchestrator/packet_contracts.py` |
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
 | `dependency-outcome-forwarding` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/antigravity.py` |
-| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes` |
+| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes`, `src/director_orchestrator/primary_committee.py` |
 | `antigravity-invited-debate` | mediated | bidirectional | director_invitation_only | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/antigravity.py:build_debate_request`, `src/director_orchestrator/policy.py` |
 | `antigravity-closed-work-directive` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/antigravity.py`, `src/director_orchestrator/primary_transports.py:antigravity_closed_payload` |
 | `provider-usage-checks` | mediated | director_to_provider | timer_or_owner | authorized | disabled | none | `src/director_orchestrator/usage.py` |
@@ -379,3 +380,4 @@ Separation of duties:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->

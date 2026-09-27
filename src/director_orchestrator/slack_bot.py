@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
@@ -69,6 +70,11 @@ from .primary_commands import (
     ApprovalResumeRequest,
     PrimaryIngressProof,
     build_primary_ingress_proof,
+)
+from .primary_committee import (
+    DEBATE_COMMAND_USAGE,
+    CommitteeInvitationRejected,
+    committee_invitation_from_command,
 )
 
 
@@ -658,6 +664,16 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
     )
     if not source_event_id or not thread_ts or not _claim_event(source_event_id):
         return
+    # The owner's explicit debate command becomes a structured invitation: the
+    # question, options and invited seats. It grants no approval, budget, tool
+    # or data access (the plan is still owner-approved), and a command that
+    # does not parse is refused rather than forwarded as plain work.
+    try:
+        invitation = committee_invitation_from_command(text)
+    except CommitteeInvitationRejected as exc:
+        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(
+            f"*DIRECTOR — DEBATE NOT ACCEPTED*\n{exc}. Usage: {DEBATE_COMMAND_USAGE}"))
+        return
     # Routing steering is owner-set deployment configuration, never parsed out of
     # `text`: rule 6 treats the Slack message as untrusted data. The attestation
     # below covers the whole intake, so these fields are bound to the gateway
@@ -670,6 +686,7 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
         text=text,
         allocation_profile=settings.intake_allocation_profile,
         primary_required_capabilities=settings.intake_primary_required_capabilities,
+        primary_committee_debate=invitation,
         received_at=datetime.now(timezone.utc),
     )
     payload = intake.model_dump(mode="json")
@@ -924,7 +941,8 @@ def command_handler(ack, command, client, respond):
 
     if not text:
         respond(
-            _tag("Usage: `/director Project: … Outcome: … Constraints: …` or `/director approve DIR-… <optional clarification>`."),
+            _tag("Usage: `/director Project: … Outcome: … Constraints: …`, `/director debate` (see below) "
+                 "or `/director approve DIR-… <optional clarification>`.\n" + DEBATE_COMMAND_USAGE),
             response_type="ephemeral",
         )
         return
@@ -1086,3 +1104,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]
