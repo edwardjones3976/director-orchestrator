@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
@@ -178,9 +179,13 @@ function Get-ExpectedBlobMap([string]$Repo, [string]$Revision) {
     $url = "https://huggingface.co/api/models/$Repo/revision/$Revision`?blobs=true"
     $resp = Invoke-RestMethod -Uri $url -Method Get
     $map = @{}
+    $seen = @{}
     foreach ($b in $resp.siblings) {
+        if ([string]::IsNullOrWhiteSpace($b.rfilename)) { throw "Missing sibling rfilename for $key" }
+        if ($seen.ContainsKey($b.rfilename)) { throw "Duplicate sibling rfilename '$($b.rfilename)' for $key" }
+        $seen[$b.rfilename] = $true
         if ($b.lfs -and $b.lfs.sha256) {
-            $map[$b.path] = @{
+            $map[$b.rfilename] = @{
                 sha256 = $b.lfs.sha256.ToLower()
                 size = [long]$b.lfs.size
             }
@@ -595,3 +600,4 @@ exit 0
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:12 UTC | END]]

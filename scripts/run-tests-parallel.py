@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -107,18 +109,30 @@ def shard_databases(dsn, count):
                 created.append(name)
         yield [shard_dsn(dsn, i) for i in range(count)]
     finally:
+        # The CI workflow always removes this owned, disposable container after
+        # the test step. Dropping its shard databases first can hang for five
+        # minutes even after every test passed.
+        names_to_drop = () if (os.environ.get("GITHUB_ACTIONS") == "true"
+                               and os.environ.get("DIRECTOR_CI_PG_LANE")) else reversed(created)
+        deadline = time.monotonic() + 300
         failures = []
-        for name in reversed(created):
-            for attempt in range(2):
+        # Worst case: about 300s total, plus one in-flight attempt's overhead.
+        for name in names_to_drop:
+            for attempt in range(3):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    failures.append(f"{name}: CleanupDeadline")
+                    break
+                remaining = max(1, int(remaining))
                 try:
                     # Tests can terminate admin sessions. Reconnect for every
                     # drop/retry; IF EXISTS tolerates a lost successful reply.
-                    with psycopg.connect(dsn, autocommit=True, connect_timeout=15) as cleanup:
-                        cleanup.execute("SET statement_timeout = '30s'")
+                    with psycopg.connect(dsn, autocommit=True, connect_timeout=min(15, remaining)) as cleanup:
+                        cleanup.execute(f"SET statement_timeout = '{min(120, remaining)}s'")
                         cleanup.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
                     break
                 except Exception as error:
-                    if attempt == 0 and isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError)):
+                    if attempt < 2 and isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError)):
                         time.sleep(0.2)
                         continue
                     # Type only: libpq messages and server diagnostics can
@@ -334,3 +348,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | END]]
