@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | BEGIN]]
+# [[Cursor | composer-2.5 | 2026-09-27 | 00:31 UTC | BEGIN]]
 # [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | BEGIN]]
@@ -19,7 +21,9 @@ from __future__ import annotations
 import argparse
 import csv
 import difflib
+import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -99,6 +103,57 @@ def load_json_dir(directory: Path) -> dict[str, dict[str, Any]]:
     for path in sorted(directory.glob("*.json")):
         out[path.stem] = json.loads(path.read_text(encoding="utf-8"))
     return out
+
+
+def manifest(directory: Path) -> str:
+    """D-M1-0 digest: SHA-256 over sorted ``<dir_basename>/<file>\\t<file_sha256>\\n`` lines."""
+    dir_name = directory.resolve().name
+    lines: list[str] = []
+    for path in sorted(directory.glob("*.json"), key=lambda p: p.name):
+        file_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        lines.append(f"{dir_name}/{path.name}\t{file_digest}\n")
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def sha256_file_bytes(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def parse_exclude_entries(raw: Any) -> list[dict[str, str]]:
+    if isinstance(raw, list):
+        entries = raw
+    elif isinstance(raw, dict) and isinstance(raw.get("excluded"), list):
+        entries = raw["excluded"]
+    else:
+        raise ValueError("exclude file must be a JSON list or run record with excluded array")
+    out: list[dict[str, str]] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            raise ValueError("each exclude entry must be an object")
+        packet_id = item.get("id")
+        reason = item.get("reason")
+        if not isinstance(packet_id, str) or not packet_id:
+            raise ValueError("exclude entry missing string id")
+        if not isinstance(reason, str):
+            raise ValueError("exclude entry missing string reason")
+        if not reason.strip():
+            raise ValueError("exclude entry missing non-empty reason")
+        out.append({"id": packet_id, "reason": reason})
+    return out
+
+
+def load_exclude_file(path: Path, reference_ids: set[str]) -> list[dict[str, str]]:
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    entries = parse_exclude_entries(parsed)
+    ids = [e["id"] for e in entries]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate exclude ids")
+    unknown = sorted({e["id"] for e in entries if e["id"] not in reference_ids})
+    if unknown:
+        raise ValueError(f"exclude ids not in references: {', '.join(unknown)}")
+    if ids and len(ids) >= len(reference_ids):
+        raise ValueError("cannot exclude every reference")
+    return entries
 
 
 def try_load_candidate(path: Path) -> tuple[dict[str, Any] | None, bool]:
@@ -206,6 +261,8 @@ def score(
     fields: tuple[str, ...],
     grades_path: Path | None,
     schema_path: Path,
+    *,
+    digest_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     grades = load_grades(grades_path)
@@ -329,6 +386,8 @@ def score(
         "per_field_mean_similarity": {k: round(v, 6) for k, v in mean_similarity_by_field.items()},
         "pct_remaining_at_or_under_10pct_text_change": round(pct_remaining_under_bar, 6),
     }
+    if digest_metadata is not None:
+        summary.update(digest_metadata)
     if has_grades:
         summary["pct_accepted_as_is"] = round(pct_accepted, 6)
         summary["accepted_as_is_count"] = len(accepted_ids)
@@ -359,10 +418,66 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_SCHEMA,
         help="JSON Schema path for candidate validation",
     )
+    parser.add_argument(
+        "--refs-manifest",
+        required=True,
+        help="Expected D-M1-0 SHA-256 digest of the full --refs directory",
+    )
+    parser.add_argument(
+        "--exclude-file",
+        type=Path,
+        default=None,
+        help="JSON list of {id, reason} or run record with excluded array",
+    )
     args = parser.parse_args(argv)
-    references = load_json_dir(args.refs)
+    references_all = load_json_dir(args.refs)
+    reference_ids = set(references_all)
+    computed_refs_manifest = manifest(args.refs)
+    if computed_refs_manifest != args.refs_manifest.lower():
+        expected = args.refs_manifest.lower()
+        print(
+            f"refs manifest mismatch: expected {expected} computed {computed_refs_manifest}",
+            file=sys.stderr,
+        )
+        return 1
+
+    excluded: list[dict[str, str]] = []
+    exclude_file_sha256: str | None = None
+    if args.exclude_file is not None:
+        exclude_file_sha256 = sha256_file_bytes(args.exclude_file)
+        try:
+            excluded = load_exclude_file(args.exclude_file, reference_ids)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    excluded_ids = {e["id"] for e in excluded}
+    references = {pid: payload for pid, payload in references_all.items() if pid not in excluded_ids}
+    n_references = len(references_all)
+    n_excluded = len(excluded)
+    n_scored = len(references)
+
     fields = parse_fields(args.fields)
-    score(references, args.candidates, args.out, fields, args.grades, args.schema)
+    grades_sha256 = sha256_file_bytes(args.grades) if args.grades is not None else None
+    digest_metadata = {
+        "reference_manifest": computed_refs_manifest,
+        "candidate_manifest": manifest(args.candidates),
+        "grades_sha256": grades_sha256,
+        "exclude_file_sha256": exclude_file_sha256,
+        "n_references": n_references,
+        "n_excluded": n_excluded,
+        "n_scored": n_scored,
+        "excluded": excluded,
+    }
+    score(
+        references,
+        args.candidates,
+        args.out,
+        fields,
+        args.grades,
+        args.schema,
+        digest_metadata=digest_metadata,
+    )
     return 0
 
 
@@ -375,3 +490,5 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | END]]
 # [[Cursor | Cursor Agent CLI | 2026-09-26 | 18:19 UTC | END]]
+# [[Cursor | composer-2.5 | 2026-09-27 | 00:31 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | END]]
