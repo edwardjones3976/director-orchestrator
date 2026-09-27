@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:57 UTC | BEGIN]]
+# MX-055
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:42 UTC | BEGIN]]
 # MX-053
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:24 UTC | BEGIN]]
@@ -8,6 +10,8 @@
 # Maintenance MX-042
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | BEGIN]]
+# MX-054
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:35 UTC | BEGIN]]
 # MX-052
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]]
@@ -52,7 +56,7 @@ project:
   state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-27T04:42:37Z"
+  updated_at: "2026-09-27T04:57:59Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -184,9 +188,9 @@ team:
     - id: "review-cursor"
       provider: "cursor"
       role: "reviewer"
-      workflow_skill: "cursor-agent-workflow"
+      workflow_skill: "none"
       responsibilities:
-        - "After the PRESTAGE_REQUIRED gate is satisfied, use the local cursor-agent CLI for non-author exact-head, current-base full-diff review of #293. The thorough reviewer's ACCEPT is the one required review and carries the guarded merge subject to B2 and all deterministic gates."
+        - "After PRESTAGE_REQUIRED and the skill discovery and readiness gate are satisfied, use the verified baseline contract (workflow_skill: none): local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble for non-author exact-head, current-base full-diff review of #293. The thorough reviewer's ACCEPT is the one required review and carries the guarded merge subject to B2 and all deterministic gates."
       forbidden_authority:
         - "authoring or maintaining #293"
         - "reviewing or merging its own work"
@@ -256,17 +260,17 @@ controls:
 review_chain:
   producer: "claude"
   material_authors: ["claude"]
-  eligible_reviewer: "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Then Cursor is the single non-author review-and-merge provider for #293. Its thorough exact-head, current-base full-diff ACCEPT is the one required review and carries the merge, subject to B2: the owner's specific direction for #293, or #305 plus phase-3 wiring. Until that wiring lands, an owner-directed agent merge is disclosed as a crossing like D-023. Grok is API-only and cannot merge; its recorded ACCEPTs are supplementary evidence, not a gate. Claude is sole author; Codex assisted and is not independent for #293. Neither may review or merge it."
+  eligible_reviewer: "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): Use the catalog name in the assignment rather than a machine-specific absolute path. Skill discovery is required before selection; installation or a reported structural evaluation does not prove that the active provider session has loaded the skill. If a selected skill is unavailable after refresh, continue with the provider's baseline contract when that still satisfies acceptance, or reshape the plan under the assignment-specific retry budget. For #293 select none; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble. Record that baseline verification before contact; otherwise stop. Then Cursor is the single non-author review-and-merge provider for #293. Its thorough exact-head, current-base full-diff ACCEPT is the one required review and carries the merge, subject to B2: the owner's specific direction for #293, or #305 plus phase-3 wiring. Until that wiring lands, an owner-directed agent merge is disclosed as a crossing like D-023. Grok is API-only and cannot merge; its recorded ACCEPTs are supplementary evidence, not a gate. Claude is sole author; Codex assisted and is not independent for #293. Neither may review or merge it."
   candidate:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
     # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
-    base_sha: "4ece6d1f7666e501971cb049e2ae41f52728ae65"
+    base_sha: "4ece6d1f7666e501971cb049e2ae41f52728ae65" # #293 merge base until a sync; current main is 4be58d56e6142cf478741860a63b3bee0d9e901b.
     head_sha: "bound on the M0 record reconciliation PR's review-of-record comment"
     artifact_digest: "none"
     last_merged_candidate: "PR #283 at d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88, merged 2026-09-26T16:40:15Z as 052553f"
   required_evidence:
-    - "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. The workload_policy_version: v1 plan carries immutable assignment workload_size (simple, short, medium, or long), 1–100 effort_points, fixed execution limits, any workload-variance reason, and one canonically digested pre-stage packet. The pre-stage packet binds packet_id, goal, terminal condition, exact repository, worktree, branch and lowercase 40-character base SHA, nullable candidate SHA, producer, different independent reviewer, nonempty owned paths, prohibited paths, nonempty required tests, nonempty required security evidence, budget, timeout, retry limit no greater than three, nonempty merge-eligibility conditions, and nonempty stopping conditions. For this review, candidate SHA must name the final exact head and base SHA the current base; the packet is not committed into this PR because that would change the head it names. Execution limits must specify effort, a 20-minute time cap, no-edit, and accept-only under B2: review only, do not merge unless the owner has directed this specific merge."
+    - "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): Use the catalog name in the assignment rather than a machine-specific absolute path. Skill discovery is required before selection; installation or a reported structural evaluation does not prove that the active provider session has loaded the skill. If a selected skill is unavailable after refresh, continue with the provider's baseline contract when that still satisfies acceptance, or reshape the plan under the assignment-specific retry budget. For #293 select none; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble. Record that baseline verification before contact; otherwise stop. The workload_policy_version: v1 plan carries immutable assignment workload_size (simple, short, medium, or long), 1–100 effort_points, fixed execution limits, any workload-variance reason, and one canonically digested pre-stage packet. The pre-stage packet binds packet_id, goal, terminal condition, exact repository, worktree, branch and lowercase 40-character base SHA, nullable candidate SHA, producer, different independent reviewer, nonempty owned paths, prohibited paths, nonempty required tests, nonempty required security evidence, budget, timeout, retry limit no greater than three, nonempty merge-eligibility conditions, and nonempty stopping conditions. For this review, candidate SHA must name the final exact head and base SHA the current base; the packet is not committed into this PR because that would change the head it names. Execution limits must specify effort, a 20-minute time cap, no-edit, and accept-only under B2: review only, do not merge unless the owner has directed this specific merge."
     - "Cursor thorough exact-head, current-base full-diff ACCEPT; the one required non-author review carries the merge, subject to B2 and all deterministic gates"
     - "current security evidence when configured"
     - "all six CI checks successful at the exact head; conflict-free non-draft PR"
@@ -279,7 +283,7 @@ assumptions:
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
     - "LM Studio on 127.0.0.1:1234 is reachable from containers through host.docker.internal (HTTP 200, 2026-09-25)"
-    - "Paid spend is metered from the provider-dispatch receipts; homemade-llm M0 is at least USD 1.43271956 over 16 costed receipts (audit 2026-09-26 18:16 UTC, decision D-017), with three uncosted attempts unknown"
+    - "Paid spend is metered from provider-dispatch receipts; the canonical live ledger is project-state-report.md, MX-049 ledger extension (including MX-045). Current reconciled M0 figures: USD 5.88268156 charged (lower bound), four uncosted attempts, conservative upper bound USD 7.44373756; the reserve is an estimate, not confirmed billing. Historical D-017 snapshot: USD 1.43271956 before the additional M0 charges; retained as history, not current M0 spend."
     - "M0 gate closed and M1 entered on the owner's approval (decision O-031); phone chat with web search over the tailnet accepted (D-016)"
   provisional:
     - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
@@ -328,9 +332,11 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:57 UTC | END]]
