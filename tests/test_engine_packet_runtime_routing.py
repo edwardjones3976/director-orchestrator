@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | BEGIN]]
@@ -355,7 +356,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
         self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
         self.assertEqual(stopped.provider_runs[-1].run_id, result["run_reference"])
-        self.assertEqual(stopped.provider_runs[-1].raw["settlement_result_packet"], result)
+        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["packet_outcome"]["result_packet"], result)
         self.assertEqual(consumer.calls, 0)
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertFalse(await engine._route_live_dispatch(stopped, assignment))
@@ -995,7 +996,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertEqual(transport.sends, 1)
         self.assertEqual(consumer.calls, 0)
-        self.assertEqual(stopped.provider_runs[-1].raw["settlement_result_packet"], result)
+        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["packet_outcome"]["result_packet"], result)
         with patch.object(engine.provider_spend, "record_charge", wraps=real_charge) as retry_charge:
             self.assertTrue(engine._retry_spend_settlements(stopped))
         retry_charge.assert_called_once()
@@ -1318,7 +1319,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
         self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
         self.assertEqual(stopped.provider_runs[-1].run_id, "run-1")
-        self.assertIn("settlement_result_packet", stopped.provider_runs[-1].raw)
+        self.assertTrue(engine._spend_settlements(stopped, stopped.provider_runs[-1]))
         self.assertEqual(consumer.calls, 0)
         self.assertFalse(await engine._dispatch_parallel_packet_batch(stopped))
         self.assertEqual(transports["gemini"].sends, 1)
@@ -1598,3 +1599,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]

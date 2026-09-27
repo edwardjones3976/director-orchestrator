@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
@@ -161,6 +163,24 @@ class ProviderDailySpendLedger:
                 connection.execute(
                     "ALTER TABLE provider_daily_spend_reservations ADD COLUMN released_at TEXT"
                 )
+            connection.execute("""CREATE TABLE IF NOT EXISTS engine_spend_settlements (
+                task_id TEXT NOT NULL, effect_key TEXT NOT NULL, evidence TEXT NOT NULL,
+                PRIMARY KEY(task_id, effect_key))""")
+
+    def save_settlement(self, task_id: str, effect_key: str, evidence: dict) -> None:
+        """Engine-only recovery evidence, never populated from ProviderRun.raw."""
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO engine_spend_settlements VALUES (?, ?, ?)
+                ON CONFLICT(task_id, effect_key) DO UPDATE SET evidence = excluded.evidence""",
+                (task_id, effect_key, json.dumps(evidence, allow_nan=False)),
+            )
+
+    def settlements(self, task_id: str) -> dict[str, dict]:
+        with self._connect() as connection:
+            return {str(key): json.loads(evidence) for key, evidence in connection.execute(
+                "SELECT effect_key, evidence FROM engine_spend_settlements WHERE task_id = ?", (task_id,)
+            )}
 
     @staticmethod
     def _exposure(connection: sqlite3.Connection, provider: ProviderName, utc_day: str) -> tuple[int, float]:
@@ -215,7 +235,10 @@ class ProviderDailySpendLedger:
             connection.execute("BEGIN IMMEDIATE")
             if actual_cost_usd is None:
                 connection.execute(
-                    """UPDATE provider_daily_spend_reservations SET settled_at = COALESCE(settled_at, ?)
+                    """UPDATE provider_daily_spend_reservations
+                    SET settled_at = COALESCE(settled_at, ?),
+                        actual_cost_usd = CASE WHEN released_at IS NOT NULL THEN NULL ELSE actual_cost_usd END,
+                        released_at = NULL
                     WHERE provider = ? AND effect_key = ?""",
                     (observed_at.isoformat(), provider.value, effect_key),
                 )
@@ -223,10 +246,10 @@ class ProviderDailySpendLedger:
             updated = connection.execute(
                 """UPDATE provider_daily_spend_reservations
                 SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
-                    released_at = CASE WHEN ? > 0 THEN NULL ELSE released_at END,
+                    released_at = NULL,
                     settled_at = COALESCE(settled_at, ?)
                 WHERE provider = ? AND effect_key = ?""",
-                (float(actual_cost_usd), float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
+                (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
             ).rowcount
             if not updated:
                 connection.execute(
@@ -394,8 +417,10 @@ class ProviderDailySpendLedger:
             ).fetchone()
         return int(count), float(reserved)
 
-    def reservations(self, provider: ProviderName, *, now: datetime | None = None) -> list[tuple[str, float]]:
-        """The day's reservations as (effect key, estimated cost), work and usage-check probes alike."""
+    def reservations(self, provider: ProviderName, *, now: datetime | None = None, include_released: bool = True) -> list[tuple[str, float]]:
+        """The day's reservations, including released audit records.
+        Released rows are excluded only with include_released=False, used by real-request telemetry.
+        """
 
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend reservations apply only to supplemental providers")
@@ -403,8 +428,8 @@ class ProviderDailySpendLedger:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT effect_key, estimated_cost_usd FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ?""",
-                (provider.value, observed_at.date().isoformat()),
+                WHERE provider = ? AND utc_day = ? AND (? OR released_at IS NULL)""",
+                (provider.value, observed_at.date().isoformat(), include_released),
             ).fetchall()
         return [(str(row[0]), float(row[1])) for row in rows]
 
@@ -1817,3 +1842,5 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]

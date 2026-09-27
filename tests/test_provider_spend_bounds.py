@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:13 UTC | BEGIN]]
@@ -52,6 +55,42 @@ def priced(provider, **overrides):
 
 
 class ProviderSpendBoundsTests(unittest.TestCase):
+    def test_released_readback_reinstates_unknown_zero_and_positive_requests(self):
+        from director_orchestrator.usage import UsageMonitor
+
+        for provider in ProviderDailySpendLedger._SUPPORTED:
+            for cost in (None, 0.0, 0.4):
+                with self.subTest(provider=provider, cost=cost), tempfile.TemporaryDirectory() as directory:
+                    settings = replace(Settings(), sqlite_path=str(Path(directory) / "spend.sqlite3"))
+                    ledger = ProviderDailySpendLedger(settings.sqlite_path)
+                    effect = key("released")
+                    now = datetime.now(timezone.utc)
+                    ledger.reserve(provider=provider, effect_key=effect, estimated_cost_usd=0.75,
+                                   request_limit=1, budget_usd=1, now=now)
+                    ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=0, now=now)
+                    ledger.release_not_created(provider=provider, effect_key=effect)
+                    monitor = UsageMonitor(settings, settlement.TaskStore(settings.sqlite_path))
+                    self.assertEqual(ledger.reservations(provider, now=now, include_released=False), [])
+                    self.assertEqual(ledger.reservations(provider, now=now), [(effect, 0.75)])
+                    self.assertEqual(ledger.exposure(provider, now=now), (0, 0))
+                    self.assertEqual(monitor._provider_request_count(provider.value, [], now), 0)
+                    self.assertEqual(monitor._exposure_usd(provider.value, [], now), 0)
+                    with ledger._connect() as db:
+                        self.assertEqual(db.execute("SELECT COUNT(*) FROM provider_daily_spend_reservations").fetchone()[0], 1)
+                    ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=cost, now=now)
+                    reopened = ProviderDailySpendLedger(settings.sqlite_path)
+                    self.assertEqual(reopened.exposure(provider, now=now), (1, 0.75 if cost is None else cost))
+                    self.assertEqual(reopened.unreconciled(provider, stale_after=timedelta(hours=1), now=now),
+                                     [effect] if cost is None else [])
+                    self.assertEqual(monitor._provider_request_count(provider.value, [], now), 1)
+                    with self.assertRaises(ProviderDailyLimitExceeded):
+                        reopened.reserve(provider=provider, effect_key=key("next"), estimated_cost_usd=0.1,
+                                         request_limit=1, budget_usd=1, now=now)
+                    if cost is None:
+                        with self.assertRaises(ProviderDailyLimitExceeded):
+                            reopened.reserve(provider=provider, effect_key=key("over-budget"), estimated_cost_usd=0.3,
+                                             request_limit=10, budget_usd=1, now=now)
+
     def test_pre_settlement_upgrade_preserves_exposure_without_pending_hold(self):
         for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
@@ -366,6 +405,7 @@ class UnpricedRecoveryTests(unittest.IsolatedAsyncioTestCase):
             restarted._settle_reconciled_spend(store.get(record.task_id))
             self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (0, 0))
             self.assertEqual(len(restarted.provider_spend.reservations(assignment.agent)), 1)
+            self.assertEqual(len(restarted.provider_spend.reservations(assignment.agent, include_released=False)), 0)
             self.assertEqual(restarted.provider_spend.exposure(ProviderName.GROK), (1, 0.5))
             record = store.get(record.task_id)
             next_effect = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
@@ -410,3 +450,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | END]]
