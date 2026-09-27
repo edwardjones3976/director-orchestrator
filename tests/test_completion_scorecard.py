@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -756,6 +758,11 @@ class World:
             put([sc._acceptance_observation(at, SHA, consistency)])
             put([sc._paid_observation(at, runtime, paid, selected.get("paid_rubric_path"),
                                      consistency, t.m.LABEL if t is not None else "")])
+            if t is not None and verified is True:
+                try:
+                    put([sc._trial_observation(at, runtime, t, selected.get("trials"), selected.get("rubric_path"))])
+                except sc._SOURCE_ERRORS:
+                    pass
             cost = sc._settled_cost(consistency, paid)[0] if paid is not None else None
             put([sc._monetary_observation(at, runtime, paid, consistency, cost)])
             if verified is not True or t is None:
@@ -2013,13 +2020,13 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_full_selection_reaches_every_live_collector_without_leaking(self):
         world = self.world()
         report = world.report()
-        passing = {"03", "04", "05", "06", "09", "10", "19"}
+        passing = {"03", "04", "05", "09", "19"}
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, passing,
                          [(item["id"], item["status"], item["explanation"]) for item in report["checks"]])
         self.assertEqual(world.opened, [HEALTH])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("07", "08", "11", "12", "15", "17", "20"):
+        for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
             self.assertIn("Trusted-collection follow-up", row(report, key)["evidence"][0]["source"])
@@ -2041,14 +2048,16 @@ class ScorecardCollectorTests(unittest.TestCase):
                 patch.object(sc, "_approval_observations", return_value=[passing("06"), passing("08")]) as approval, \
                 patch.object(sc, "_acceptance_observation", return_value=passing("17")) as acceptance, \
                 patch.object(sc, "_paid_observation", return_value=passing("20")) as paid, \
+                patch.object(sc, "_trial_observation", return_value=passing("10")) as trials, \
                 patch.object(sc, "_monetary_observation", return_value=passing("15")) as monetary:
             report = world.report()
+        trials.assert_called_once()
         for probe, index in ((consistency, 2), (captures, 2), (approval, 4),
                              (acceptance, 2), (paid, 4), (monetary, 3)):
             self.assertIsNone(probe.call_args.args[index])
         self.assertFalse(any(call[:2] == ["docker", "exec"]
                              and "director_orchestrator.primary_generation" in call for call in world.calls))
-        for key in ("07", "08", "11", "12", "15", "17", "20"):
+        for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
 
@@ -2332,7 +2341,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         world.handle.assert_not_called()
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertIn("collector not yet trusted" if key in ("08", "11", "20") else "--channel",
+            self.assertIn("collector not yet trusted" if key in ("06", "08", "10", "11", "20") else "--channel",
                           row(report, key)["explanation"])
         self.assertEqual(row(report, "07")["status"], "UNKNOWN")
 
@@ -2772,9 +2781,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = recreated.report()
         self.assertEqual(row(report, "08")["status"], "UNKNOWN")
         self.assertIn("before the running Director container", row(report, "08")["explanation"])
-        report = self.world(evaluate_rules=True).report(approval_task=None)
-        self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
-        self.assertIn("--approval-task", row(report, "06")["explanation"])
+        report = self.world().report(approval_task=None)
+        for key in ("06", "08"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN")
+            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
         missing = self.world(evaluate_rules=True)
         del missing.tasks[APPROVAL_TASK]
         report = missing.report()
@@ -2939,20 +2949,20 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_offline_trials_are_pipeline_proof_10(self):
         # Owner ruling 2026-09-24: the committed structural rubric plus valid evidence passes 10; answers are 20's.
-        report = self.world().report()
+        report = self.world(evaluate_rules=True).report()
         self.assertEqual(row(report, "10")["status"], "PASS")
         records = row(report, "10")["evidence"][0]["facts"]["records"]
         self.assertTrue(all("structural_rubric_passed" in r and "correctness_verified" not in r for r in records))
         self.assertIn("pipeline proof", sc.CHECKS[9].action)
         # A trial input that does not commit to the structural rubric fails it.
-        uncommitted = self.world()
+        uncommitted = self.world(evaluate_rules=True)
         thread = uncommitted.trials[2]
         task = next(t for t in uncommitted.tasks.values() if t["intake"]["thread_ts"] == thread)
         task["intake"]["text"] = "audit trial without a rubric marker"
         uncommitted.threads[thread][0]["text"] = f"<@{BOT}> " + task["intake"]["text"]
         self.assertNotEqual(uncommitted.state("10"), "PASS")
         # Without the rubric, 10 is not graded.
-        self.assertEqual(self.world().state("10", rubric_path=None), "UNKNOWN")
+        self.assertEqual(self.world(evaluate_rules=True).state("10", rubric_path=None), "UNKNOWN")
 
     def test_persisted_execution_mode_decides_the_run_kind_10_20(self):
         live_trial = self.world(evaluate_rules=True)
@@ -3002,18 +3012,18 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_offline_assignments_must_be_settled_and_joined_10(self):
         for label, change in (("pending", {"status": "PENDING"}), ("active", {"status": "ACTIVE"}),
                               ("other digest", {"result_digest": "sha256:" + "e" * 64})):
-            world = self.world()
+            world = self.world(evaluate_rules=True)
             world.tasks["DIR-LG-7A04"]["qualification_evidence"]["assignments"][0].update(change)
             with self.subTest(label=label):
                 self.assertNotEqual(world.state("10"), "PASS")
-        extra = self.world()
+        extra = self.world(evaluate_rules=True)
         assignments = extra.tasks["DIR-LG-7A05"]["qualification_evidence"]["assignments"]
         assignments.append({**assignments[0], "assignment_id": assignments[0]["assignment_id"] + "-2", "sequence": 2})
         self.assertNotEqual(extra.state("10"), "PASS")
 
     def test_restart_needs_settled_attempts_06(self):
         # The attempt's latest event is still STARTED (its SUCCEEDED event never landed): not settled.
-        unsettled = self.world()
+        unsettled = self.world(evaluate_rules=True)
         readback = unsettled.tasks[APPROVAL_TASK]["qualification_evidence"]
         readback["provider_attempts"].pop()
         tf.recount(readback)
@@ -3025,7 +3035,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = other_image.report()
         for key in ("07", "11", "12", "17"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
-        gateway_image = self.world()
+            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted", key)
+        gateway_image = self.world(evaluate_rules=True)
         gateway_image.rows[-1]["Image"] = "sha256:" + "e" * 64
         report = gateway_image.report()
         for key in ("03", "08", "09", "10", "20"):
@@ -3195,21 +3206,21 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(missing.state("20"), "FAIL")
 
     def test_offline_outcomes_are_fixed_by_the_ledger_row_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         first = "DIR-LG-7A01"
         # A genuine digest under another run identity is a mismatch.
-        forged = self.world()
+        forged = self.world(evaluate_rules=True)
         forged.tasks[first]["assignment_outcomes"][0]["run_id"] = "offline-double:sha256:" + "f" * 64
         self.assertEqual(forged.state("10"), "FAIL")
         # Other result text is not the double's (the collector already refuses it as an offline run).
-        edited = self.world()
+        edited = self.world(evaluate_rules=True)
         edited.tasks[first]["assignment_outcomes"][0]["result"] = "SIMULATION — NO PROVIDER INTERACTION (edited)"
         self.assertNotEqual(edited.state("10"), "PASS")
         self.assertFalse(sc._offline_outcomes_bound(
             {"readback": {"assignments": [{"sequence": 1, "reservation_digest": "sha256:" + "a" * 64}]},
              "task": {"assignment_outcomes": [{"assignment_sequence": 1, "run_id": "offline-double:sha256:" + "a" * 64,
                                                "result": "edited"}]}}, "label"))
-        unreserved = self.world()
+        unreserved = self.world(evaluate_rules=True)
         unreserved.tasks[first]["qualification_evidence"]["assignments"][0]["reservation_digest"] = None
         self.assertNotEqual(unreserved.state("10"), "PASS")
         self.assertIsNone(sc._offline_outcomes_bound(
@@ -3250,11 +3261,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertLess(observed[0].observed_at, inside[0])
 
     def test_assignment_timestamps_bound_settlement_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         first = "DIR-LG-7A01"
         for change in ({"completed_at": None}, {"completed_at": "2026-09-12T10:00:04+00:00"},
                        {"completed_at": "2026-09-13T10:00:25+00:00"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.tasks[first]["qualification_evidence"]["assignments"][0].update(change)
             with self.subTest(change=change):
                 self.assertNotEqual(case.state("10"), "PASS")
@@ -3319,12 +3330,12 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertNotEqual(case.state("09"), "PASS")
 
     def test_offline_finals_are_the_canonical_rendering_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
-        first = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
+        first = self.world(evaluate_rules=True)
         final = first.threads[ts(1000)][-1]
         final["blocks"] = [{"type": "section", "text": {"type": "plain_text", "text": final["text"] + " (edited)"}}]
         self.assertEqual(first.state("10"), "FAIL")
-        text = self.world()
+        text = self.world(evaluate_rules=True)
         text.threads[ts(1000)][-1]["text"] += "\nextra"
         self.assertNotEqual(text.state("10"), "PASS")
 
@@ -3413,10 +3424,10 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_resume_final_delivery_is_a_settled_lifecycle_06(self):
         """4100381657: the restart predicate's terminal delivery passes the same _delivery_settled rule as 03, 09,
         10 and 20: a DELIVERED row without its claim or readback moment, or out of order, resumes nothing."""
-        self.assertEqual(self.world().state("06"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("06"), "PASS")
         for name, change in (("unclaimed", {"claimed_at": None}), ("never read back", {"delivered_at": None}),
                              ("read back before its claim", {"delivered_at": "2026-09-12T09:00:00+00:00"})):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             terminal = next(r for r in case.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"]
                             if r["notification_key"] == "terminal")
             terminal.update(change)
@@ -3638,9 +3649,9 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_channel_history_needs_an_explicit_last_page_10(self):
         """4100880199: a history page without has_more=false (missing, or true without a cursor) is incomplete."""
-        self.assertEqual(self.world().state("10"), "PASS")
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
         for page in ({}, {"has_more": True}, {"has_more": None}, {"has_more": "false"}):
-            case = self.world()
+            case = self.world(evaluate_rules=True)
             case.history_page = page
             with self.subTest(page=page):
                 self.assertEqual(case.state("10"), "UNKNOWN")
@@ -4404,54 +4415,54 @@ class ScorecardCollectorTests(unittest.TestCase):
             sc._run_bytes([sys.executable, "-c", "import sys; sys.exit(3)"])
 
     def test_ten_offline_trials_10(self):
-        self.assertEqual(self.world().state("10"), "PASS")
-        called = self.world()
+        self.assertEqual(self.world(evaluate_rules=True).state("10"), "PASS")
+        called = self.world(evaluate_rules=True)
         called.add(task_entry("DIR-LG-7A01", 1000, offline=False,
                               text=called.tasks["DIR-LG-7A01"]["intake"]["text"]))
         report = called.report()
         self.assertEqual(row(report, "10")["status"], "FAIL")
         self.assertIn("DIR-LG-7A01", row(report, "10")["explanation"])
-        world = self.world()
+        world = self.world(evaluate_rules=True)
         report = world.report(trials=world.trials[:9])
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
-        late = self.world()
+        late = self.world(evaluate_rules=True)
         late.rows[0]["Created"] = "2026-09-12T13:40:00Z"  # after the last trial ran (~13:34)
         report = late.report()
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
         self.assertIn("runtime_sha", row(report, "10")["explanation"])
-        wrong = self.world()
+        wrong = self.world(evaluate_rules=True)
         wrong.tasks["DIR-LG-7A02"]["status"] = "FAILED"
         self.assertEqual(wrong.state("10"), "FAIL")
         # An edited terminal reply keeps its ts but not the text it was posted with.
-        edited = self.world()
+        edited = self.world(evaluate_rules=True)
         final = next(m for m in edited.threads[ts(2000)] if m.get("ts") == ts(2030))
         final["edited"] = {"user": BOT, "ts": ts(2090)}
         self.assertNotEqual(edited.state("10"), "PASS")
-        missing = self.world()
+        missing = self.world(evaluate_rules=True)
         missing.failing.add(missing.trials[3])
         self.assertEqual(missing.state("10"), "UNKNOWN")
         # Ten passing threads are not enough: they must be consecutive owner posts.
-        skipped = self.world()
+        skipped = self.world(evaluate_rules=True)
         skipped.history_extra.append({"ts": ts(1500), "user": OWNER, "text": "DIRECTOR another trial"})
         report = skipped.report()
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
         self.assertIn("consecutive", row(report, "10")["explanation"])
-        shared_file = self.world()
+        shared_file = self.world(evaluate_rules=True)
         shared_file.history_extra.append({"ts": ts(1500), "user": OWNER, "subtype": "file_share", "text": "DIRECTOR x"})
         self.assertEqual(shared_file.state("10"), "UNKNOWN")
         # A deleted post leaves a tombstone that may be a skipped trial.
-        deleted = self.world()
+        deleted = self.world(evaluate_rules=True)
         deleted.history_extra.append({"ts": ts(1500), "user": "USLACKBOT", "subtype": "tombstone", "hidden": True,
                                       "text": "This message was deleted."})
         self.assertEqual(deleted.state("10"), "UNKNOWN")
         # Every trial must itself be a visible top-level post in the window.
-        not_a_post = self.world()
+        not_a_post = self.world(evaluate_rules=True)
         not_a_post.history_hidden.add(not_a_post.trials[4])
         self.assertEqual(not_a_post.state("10"), "UNKNOWN")
-        chatter_from_bot = self.world()
+        chatter_from_bot = self.world(evaluate_rules=True)
         chatter_from_bot.history_extra.append({"ts": ts(1500), "user": BOT, "bot_id": "BBOT123", "text": "status"})
         self.assertEqual(chatter_from_bot.state("10"), "PASS")
-        no_history = self.world()
+        no_history = self.world(evaluate_rules=True)
         no_history.failing.add("history")
         self.assertEqual(no_history.state("10"), "UNKNOWN")
 
@@ -4954,7 +4965,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(len(report["checks"]), 20)
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, {"05", "19"})
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
-            self.assertIn("collector not yet trusted" if key in ("08", "11", "20") else "--channel",
+            self.assertIn("collector not yet trusted" if key in ("06", "08", "10", "11", "20") else "--channel",
                           row(report, key)["explanation"])
         self.assertEqual(len({item.check_id for item in observations}), len(observations))
         text = json.dumps(report)
@@ -5067,3 +5078,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | END]]

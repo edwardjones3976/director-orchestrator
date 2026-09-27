@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
@@ -94,11 +95,14 @@ whether any operation is permitted. The report always says
 ### Collector containment (2026-09-27)
 
 The trusted collector is not available yet. Live collection finishes checks
-**07, 08, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
+**06, 07, 08, 10, 11, 12, 15, 17 and 20** as **UNKNOWN**, with the reason
 "collector not yet trusted" and a source naming the trusted-collection follow-up.
 It supplies no consistency or activation-capture report and never executes
 candidate Python through docker exec. Health, Slack, later observations and
-final collection merging cannot promote these seven checks to PASS.
+final collection merging cannot promote these nine checks to PASS. Checks 06
+and 10 retain Slack-side collection, but candidate `/v1/tasks` readback cannot
+establish trusted checkpoint timing, provider attempts, assignment outcomes or
+zero-call offline execution. Trusted collection moves to #313 / PR #327.
 
 The planned trusted-collection follow-up will run independently pinned collector
 code outside the candidate image, use independently enforced read-only data
@@ -1175,9 +1179,13 @@ packets (each `run_packet` call, a replay included, settles in its own
 `finally`), legacy dispatch and revision runs polled to a terminal state
 (including a resumed run), and an owner-reconciled "created" run, which settles
 the reservation of the ambiguous dispatch it resolves. Callback-delivered
-results come only from Claude, which the daily ledger does not account. Settlement records the
-provider-reported cost (the result packet's `usage.cost_usd`, else the run's
-reported `usage.cost`) against the request's reservation; with no reported cost
+results come only from Claude, which the daily ledger does not account. Gemini,
+Grok and Perplexity packet transports record native envelope metering against
+the exact dispatch intent before normalizing ordinary, parallel or authenticated
+late-readback results. The same idempotent `record_charge` update retains that
+charge through subsequent packet settlement. Packet `usage.cost_usd` is never
+charge authority; only `authoritative_reported_cost` reads native metering.
+With no native reported cost
 the request is settled without a charge, keeps counting at its reservation, and
 is reported as `unreconciled_request_count`, which makes check 15 UNKNOWN. Every
 work reservation is at least the provider's per-request bound
@@ -1468,3 +1476,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
@@ -2765,7 +2766,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         if t is not None:
             t.close()
     # Final disposition: health, Slack and evaluator results cannot supply trusted reports.
-    unknown(("07", "08", "15", "20"), "collector not yet trusted", _CONSISTENCY_SOURCE)
+    unknown(("06", "07", "08", "10", "15", "20"), "collector not yet trusted", _CONSISTENCY_SOURCE)
     unknown(("11", "12"), "collector not yet trusted", _CAPTURES_SOURCE)
     put([_observation("17", None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
                       candidate_sha=candidate_sha)])
@@ -3659,3 +3660,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]

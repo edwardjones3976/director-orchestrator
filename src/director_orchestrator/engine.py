@@ -1,4 +1,5 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
@@ -1123,7 +1124,12 @@ class OrchestrationEngine:
             record._store_version = latest._store_version
         packet = getattr(outcome, "result_packet", None)
         run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
-        run = next((item for item in reversed(record.provider_runs) if run_id and item.run_id == run_id), None)
+        latest = self.store.get(record.task_id) or record
+        run = next((item for item in reversed(latest.provider_runs)
+                    if run_id and item.run_id == run_id and item.provider == assignment.agent), None)
+        if run is None:
+            run = next((item for item in reversed(record.provider_runs)
+                        if run_id and item.run_id == run_id and item.provider == assignment.agent), None)
         cost = authoritative_reported_cost(assignment.agent, run.raw) if run is not None else None
         if run is None and run_id:
             run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
@@ -7276,4 +7282,5 @@ class OrchestrationEngine:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
