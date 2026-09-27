@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
@@ -68,7 +69,7 @@
 # Director Orchestrator
 
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=802ec25ac9d54d53bf1e6f54b7a3aeffab952dd9e76d2a529f976393a51a4541 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=430533f478d438864995e74b0ea91fbde4ecdc0f1602bd4b6d137661d0f80961 -->
 
 I am the Director.
 
@@ -146,7 +147,7 @@ removes no gate. The canonical rule is the charter's
   provider lanes. Engineering defaults to OpenAI 33%, Claude 21%, Z.ai 18%, Cursor 12%, Grok 8%,
   and Antigravity 8% since the owner's 2026-09-27 Z.ai enrollment; other profiles reserve real
   research and enterprise work. A fixed
-  real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement, except Z.ai's enrollment ceiling of target+5) and zero-target exclusion,
+  real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement; for Z.ai since 2026-09-27) and zero-target exclusion,
   with ±3-point normal preference. A zero-target lane is ineligible, not merely unlikely.
 - Deterministic accepted-productive-work accounting, an immutable pre-stage packet, rolling
   twenty-assignment preferences, cheap-capable-model selection, and a five-action ordinary
@@ -787,3 +788,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->

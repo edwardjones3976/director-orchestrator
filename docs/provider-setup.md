@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
@@ -642,7 +643,7 @@ configuration is not round-trip evidence.
 | Capability | Status | Reason |
 | --- | --- | --- |
 | Identity `zai`, family Z.ai, GLM model verified per result | Supported | Never relabelled Claude; a foreign serving model is rejected |
-| Allocation 18%, rolling-20 ±3 normal band, target+5 hard ceiling (4 of 20) | Supported | Owner instruction for this enrollment; other lanes unchanged |
+| Allocation 18%, rolling-20 ±3 normal band as routing guidance | Supported | Allocation share never blocks dispatch: the owner retired the former target+5 hard limit for Z.ai on 2026-09-27 (for other lanes on 2026-09-21); zero-target, budget, approval, availability, retry and safety checks remain |
 | Implementation, tests, repository research through LangGraph primary | Supported | Native route or Docker → Windows host bridge |
 | Independent review of candidates Z.ai did not author, with approved tests | Supported | Default permission mode runs only the fixed test runners |
 | Material-author family in acceptance evidence | Supported | Binds reviewer independence for Z.ai-authored candidates |
@@ -969,3 +970,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->

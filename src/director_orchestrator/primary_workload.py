@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
@@ -25,7 +26,7 @@ from types import MappingProxyType
 from .langgraph_postgres import _require_schema
 from .allocation_profiles import (
     allocation_targets, allocation_profile_digest, DEFAULT_ALLOCATION_PROFILE,
-    PRE_RETIREMENT_V3 as _PRE_RETIREMENT_V3, PRE_ZAI_LANES, hard_ceiling_slots,
+    PRE_RETIREMENT_V3 as _PRE_RETIREMENT_V3, PRE_ZAI_LANES,
     pre_zai_allocation_profile_digest,
 )
 
@@ -93,9 +94,6 @@ def admission_reason(provider: str, history: Sequence[str], *, allocation_profil
         return "workload_history_invalid"
     if targets[provider] == 0:
         return "workload_profile_lane_ineligible"
-    ceiling = hard_ceiling_slots(provider, allocation_profile)
-    if ceiling is not None and list(history[-19:]).count(provider) + 1 > ceiling:
-        return "workload_lane_hard_ceiling_reached"
     return None
 
 
@@ -181,3 +179,4 @@ schema is trusted and validated by its owner, never supplied by a work packet.
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

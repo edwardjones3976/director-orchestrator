@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
@@ -55,7 +56,7 @@ roles:
     - "A nonzero allocation target is not evidence that the route is operational."
   family: "zai"
   transport_rule: "The production native CLI and the Lite trial contact are separate contacts; each may use only the capabilities and authority of that contact, and the trial contact never runs in production mode."
-  routing_rule: "Route Z.ai by assignment scope, granted tools, reviewer independence from every material author's provider family, readiness, and the enforced target-plus-five ceiling."
+  routing_rule: "Route Z.ai by assignment scope, granted tools, reviewer independence from every material author's provider family, readiness, and the 18% target and +/-3 band as routing guidance, never a dispatch block."
   committee:
     member: true
     voting_power: 1.5
@@ -146,7 +147,7 @@ authority:
   review_requirement: "Every Z.ai candidate needs independent exact-candidate review by a non-author from a different provider family. Z.ai reviews only candidates it did not author, and its verdict is evidence for the deterministic gate, never merge authority."
   strategy_constraints:
     - "a nonzero target is not evidence that a route is operational"
-    - "enforced hard ceiling of target plus five points: at most 4 of any rolling 20 admissions"
+    - "the 18% target and the rolling-twenty +/-3 band are routing guidance; the former target plus five hard limit was retired by the owner on 2026-09-27 and allocation share never blocks dispatch"
   separation_of_duties:
     - "cannot review, accept, or merge its own candidate"
     - "reviewer independence is judged by provider family; Z.ai is its own family, never Claude's"
@@ -263,10 +264,11 @@ sources:
   - document: "docs/provider-allocation-profiles.md"
     anchor: "### Z.ai production enrollment (2026-09-27)"
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
-    anchor: "hard_ceiling_enforced_lanes: [zai]"
+    anchor: "lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]"
   - document: "docs/providers/zai-welcome-aboard.md"
     anchor: "Code may host your session; it does not change your provider identity to Claude."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

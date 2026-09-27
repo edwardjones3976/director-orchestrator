@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -9,7 +10,7 @@
 import unittest
 from director_orchestrator.allocation_profiles import (
     ALLOCATION_PROFILES, PRE_ZAI_ALLOCATION_PROFILES, ZAI_TARGET_PERCENT, allocation_targets,
-    allocation_profile_digest, hard_ceiling_slots, redistribute_for_enrollment,
+    allocation_profile_digest, redistribute_for_enrollment,
 )
 from director_orchestrator.workload_policy import WorkloadPolicy, DirectProductionProvider, direct_assignment_capacity_violation
 
@@ -41,24 +42,20 @@ class AllocationProfilesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             redistribute_for_enrollment(ALLOCATION_PROFILES["engineering"], "new", 100)
 
-    def test_zai_hard_ceiling_is_target_plus_five_in_a_rolling_twenty(self):
+    def test_zai_share_above_target_never_blocks_dispatch(self):
+        # Owner 2026-09-27: the target+5 hard limit is retired for Z.ai too;
+        # targets and the +/-3 band are routing guidance, not a dispatch block.
         from director_orchestrator.primary_workload import admission_reason
-        for profile in ALLOCATION_PROFILES:
-            self.assertEqual(hard_ceiling_slots("zai", profile), 4)  # (18 + 5)% of 20 slots
-            self.assertIsNone(hard_ceiling_slots("claude", profile))
-            self.assertIsNone(admission_reason("zai", ["zai"] * 3, allocation_profile=profile))
-            self.assertEqual(admission_reason("zai", ["zai"] * 4, allocation_profile=profile),
-                             "workload_lane_hard_ceiling_reached")
-        # Only the last nineteen admissions count toward the rolling twenty.
-        self.assertIsNone(admission_reason("zai", ["zai"] * 4 + ["openai"] * 16))
-        # The retired ceiling stays retired for the other lanes.
-        self.assertIsNone(admission_reason("claude", ["claude"] * 19))
-        policy = WorkloadPolicy.for_profile("engineering")
         from director_orchestrator.workload_policy import DirectProductionRecord
-        history = [DirectProductionRecord(f"A{i}", DirectProductionProvider.ZAI) for i in range(4)]
-        self.assertEqual(direct_assignment_capacity_violation(DirectProductionProvider.ZAI, history, policy=policy),
-                         "allocation_lane_hard_ceiling_reached:zai")
-        self.assertIsNone(direct_assignment_capacity_violation(DirectProductionProvider.ZAI, history[:3], policy=policy))
+        for profile in ALLOCATION_PROFILES:
+            self.assertIsNone(admission_reason("zai", ["zai"] * 19, allocation_profile=profile))
+            policy = WorkloadPolicy.for_profile(profile)
+            history = [DirectProductionRecord(f"A{i}", DirectProductionProvider.ZAI) for i in range(19)]
+            self.assertIsNone(direct_assignment_capacity_violation(DirectProductionProvider.ZAI, history, policy=policy))
+        # The unrelated gates remain: zero targets, unknown lanes and unauthenticated history.
+        self.assertEqual(admission_reason("perplexity", ["zai"] * 19), "workload_profile_lane_ineligible")
+        self.assertEqual(admission_reason("unknown-lane", []), "workload_unsupported_allocation_lane")
+        self.assertEqual(admission_reason("zai", ["forged"]), "workload_history_invalid")
 
     def test_engineering_allocation_is_prospective_and_keeps_real_provider_history(self):
         from director_orchestrator.primary_workload import admission_reason
@@ -92,3 +89,4 @@ class AllocationProfilesTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

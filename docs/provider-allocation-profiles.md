@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]] -->
@@ -70,11 +71,10 @@ fresh plan and approval. PostgreSQL history recorded under the pre-enrollment
 digests stays readable, so the `workload_history_invalid` hold described below
 does not arise from this change.
 
-Rolling twenty, normal band target plus or minus three, hard ceiling target
-plus five: for Z.ai this ceiling is enforced prospectively (at most 4 of any
-rolling 20 admissions, `workload_lane_hard_ceiling_reached`), as the owner's
-enrollment instruction requires. It does not revive the retired ceiling for
-the other lanes and rewrites no historical rule.
+Rolling twenty and the normal band of target plus or minus three apply to Z.ai
+as routing guidance. The owner retired the former target plus five hard limit
+for Z.ai on 2026-09-27 (as for every other lane on 2026-09-21), so allocation
+share never blocks its dispatch. The current identity carries no hard tolerance.
 
 The PROPOSED `conditional_20260929` profile below was not activated; only its
 Z.ai target was adopted. No other conditional lane (Grok Bot, VS Code Coding
@@ -88,7 +88,6 @@ minus three percentage points, an advisory routing preference. The owner retired
 the rolling-twenty target-plus-five hard ceiling on 2026-09-21 as outdated; the
 historical ceiling number is preserved for reference and does not block or
 refuse admission. A zero target remains ineligible regardless of history.
-The one exception is the Z.ai lane's enrollment ceiling described above.
 Startup under-allocation is warming, never permission for filler work.
 Engineering targets correspond to about 6.6 OpenAI, 4.2 Claude, 3.6 Z.ai, 2.4
 Cursor, 1.6 Grok, and 1.6 Antigravity assignments per full window; these are
@@ -299,3 +298,4 @@ The ledgers are distinct, append-only SQLite files. A rolling 7-day observation 
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->

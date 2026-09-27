@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
@@ -659,7 +660,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.assertFalse(enforcement["overall_effort_can_block_or_route"])
         self.assertTrue(enforcement["automatic_drift_correction"])
         self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["share_pressure_action"], "zai_cap_only")
+        self.assertEqual(enforcement["share_pressure_action"], "historical_nonenforcing")
         self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
@@ -955,8 +956,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
     def test_explicit_planning_payload_ceiling_remains_bounded(self):
         payload = canonical_team_charter_json().encode("utf-8")
-        # 20,480 + 512 for the owner-approved Z.ai committee member (2026-09-27).
-        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 20_992)
+        self.assertEqual(TEAM_CHARTER_MAX_BYTES, 20_480)
         self.assertLessEqual(len(payload), TEAM_CHARTER_MAX_BYTES)
         self.assertGreater(TEAM_CHARTER_MAX_BYTES - len(payload), 256)
 
@@ -2209,3 +2209,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

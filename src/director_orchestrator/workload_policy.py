@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
@@ -52,7 +53,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
-from .allocation_profiles import allocation_targets, canonical_allocation_lane, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest, hard_ceiling_slots
+from .allocation_profiles import allocation_targets, canonical_allocation_lane, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest
 
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
@@ -622,9 +623,6 @@ def direct_assignment_capacity_violation(
     prior = tuple(history)[-(policy.rolling_window_size - 1):]
     if policy.direct_production_target(provider) == 0:
         return f"allocation_profile_lane_ineligible:{provider.value}"
-    ceiling = hard_ceiling_slots(canonical_allocation_lane(provider.value), policy.allocation_profile)
-    if ceiling is not None and sum(record.provider is provider for record in prior) + 1 > ceiling:
-        return f"allocation_lane_hard_ceiling_reached:{provider.value}"
     return None
 
 
@@ -1444,3 +1442,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

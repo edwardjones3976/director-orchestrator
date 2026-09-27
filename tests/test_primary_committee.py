@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 """Invited Z.ai committee seats in the LangGraph primary: offline only.
 
@@ -125,13 +126,16 @@ class PlanSeatTests(unittest.TestCase):
         self.assertEqual(2, len(record.plan.assignments))
         self.assertEqual((), committee_seats(record))
 
-    def test_an_unready_or_capped_zai_holds_before_any_dispatch(self):
+    def test_share_above_target_seats_zai_but_real_holds_remain(self):
         from director_orchestrator.primary_roster import PrimaryRosterHold
         from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        # Allocation share is guidance, never a block (owner 2026-09-27).
+        record = committee_record(self.configuration, history=("zai",) * 19)
+        self.assertEqual(["zai"], [seat.primary_provider_lane for seat in committee_seats(record)])
         with self.assertRaisesRegex(PrimaryRosterHold, "committee_member_unavailable"):
             committee_record(self.configuration, available=("openai", "grok", "claude"))
-        with self.assertRaisesRegex(WorkloadAdmissionHold, "workload_lane_hard_ceiling_reached"):
-            committee_record(self.configuration, history=("zai",) * 4)
+        with self.assertRaisesRegex(WorkloadAdmissionHold, "workload_history_invalid"):
+            committee_record(self.configuration, history=("forged",))
         # A seat whose lane has no configured budget is never planned.
         with self.assertRaises(RuntimeError):
             committee_record(settings(langgraph_primary_provider_attempt_budgets_usd_json='{"claude":1,"grok":0.55}'))
@@ -256,10 +260,12 @@ class CommitteeBridgeDispatchTests(ZaiBridgeFixture, _LiveDispatchHarness, unitt
 
     budgets = BUDGETS
     reserved_microusd = (550000, 500000, 1000000)
+    history = ()
 
     def setUp(self):
         ZaiBridgeFixture.setUp(self)
-        with patch("tests.test_primary_provider_budgets.record_for", side_effect=committee_record):
+        with patch("tests.test_primary_provider_budgets.record_for",
+                   side_effect=lambda configuration: committee_record(configuration, history=self.history)):
             _LiveDispatchHarness.setUp(self)
         _, _, adapters = self.discover(self.director_settings())
         # The deployment's one attempt format for the lane: the bridge adapter.
@@ -343,4 +349,24 @@ class CommitteeBridgeDispatchTests(ZaiBridgeFixture, _LiveDispatchHarness, unitt
         self.assertEqual((1, ["AMBIGUOUS"], {}), (len(self.cli_calls), self.claim_states(), self.persisted))
         with self.assertRaisesRegex(CommitteeContributionInvalid, "committee_position_unresolved"):
             self.resolve(status="AMBIGUOUS")
+
+
+class OverTargetCommitteeDispatchTests(CommitteeBridgeDispatchTests):
+    """Every case above again, planned after nineteen Z.ai admissions (95%
+    against an 18% target): allocation share never refuses the seat (owner
+    2026-09-27), while budget and signature refusals still gate before I/O."""
+
+    history = ("zai",) * 19
+
+    def test_budget_and_signature_refusals_still_gate_before_any_call(self):
+        from director_orchestrator.primary_parallel import PaidSetupHold
+        for changes in ({"spent": 15_500_001}, {"reserved": 499_999}, {"signature": "0" * 64}):
+            with self.subTest(changes=changes):
+                reservation, connection = self.request(1, **changes)
+                with self.assertRaises(PaidSetupHold):
+                    self.dispatch.preflight(reservation, writer=self.writer, connection=connection,
+                                            wave_budget_usage={})
+        self.activation.coordinator.reserve_provider_attempt.assert_not_called()
+        self.assertEqual(([], []), (self.cli_calls, self.claim_states()))
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

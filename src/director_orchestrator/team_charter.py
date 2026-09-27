@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
@@ -36,9 +37,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-# Raised by 512 bytes from 20,480 for the owner-approved Z.ai committee member
-# (2026-09-27, "Approve 1.5; total 10.0"); the >256-byte headroom check stays.
-TEAM_CHARTER_MAX_BYTES = 20_992
+TEAM_CHARTER_MAX_BYTES = 20_480
 
 
 _TEAM_OPERATING_CHARTER: dict[str, Any] = {
@@ -196,9 +195,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "prospective_last20_assignment_count",
             ],
             "soft_action": "route_next_eligible_work_to_an_under_target_provider",
-            # Share pressure blocks nothing except the Z.ai target+5 rolling-twenty
-            # ceiling set with the owner's 2026-09-27 enrollment.
-            "share_pressure_action": "zai_cap_only",
+            "share_pressure_action": "historical_nonenforcing",
             "automatic_drift_correction": True,
             "automatic_enforcement_after_shadow": True,
             "overall_effort_can_block_or_route": False,
@@ -502,8 +499,8 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             # tallied under (historical debates 8.5) and is never re-tallied.
             "configured_weight_total": 10.0,
             "denominator_rule": (
-                "Each debate's configured total is fixed when tallied. Abstentions and unavailability cast zero "
-                "weight and never change weights, thresholds, or the denominator."
+                "A tally keeps its total; abstentions and unavailability weigh zero and change "
+                "no weight or threshold."
             ),
             "rules": [
                 "Voting is encouraged but not mandatory.",
@@ -877,3 +874,4 @@ def tally_advisory_votes(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

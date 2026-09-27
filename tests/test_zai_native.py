@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
@@ -448,9 +449,16 @@ class RosterAndIndependenceTests(unittest.TestCase):
         roster = self.select(available=("openai", "claude", "cursor", "grok"))
         self.assertNotIn("zai", (roster.producer, roster.reviewer))
 
-    def test_hard_ceiling_removes_zai_after_four_admissions_in_twenty(self):
-        roster = self.select(history=("zai",) * 4)
+    def test_share_above_target_is_a_preference_never_a_block(self):
+        # Owner 2026-09-27: no dispatch block on allocation share. Over its band
+        # Z.ai yields to in-band lanes...
+        roster = self.select(history=("zai",) * 5)
         self.assertNotIn("zai", (roster.producer, roster.reviewer))
+        # ...but when every lane is over its band it is still selected: 6 of 20
+        # (30%) is past the retired target+5 limit (4 of 20).
+        roster = self.select(available=("openai", "claude", "cursor", "zai"),
+                             history=("openai",) * 7 + ("claude",) * 4 + ("cursor",) * 3 + ("zai",) * 5)
+        self.assertEqual(roster.producer, "zai")
 
 
 class HistoricalAdmissionTests(unittest.TestCase):
@@ -878,3 +886,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

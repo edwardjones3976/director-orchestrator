@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
@@ -65,22 +66,9 @@ ALLOCATION_PROFILES = MappingProxyType({
     }.items()
 })
 
-# Owner instruction for the Z.ai enrollment: rolling twenty admissions, normal
-# band target +/-3 points, hard ceiling target +5 points. The hard ceiling is
-# enforced prospectively for the newly enrolled lane only; it does not revive
-# the rolling-twenty hard stop the owner retired for the other lanes on
-# 2026-09-21, and it rewrites no historical rule.
-HARD_CEILING_TOLERANCE = 5
-HARD_CEILING_LANES = frozenset({"zai"})
-ROLLING_WINDOW = 20
-
-
-def hard_ceiling_slots(lane: str, profile: str = DEFAULT_ALLOCATION_PROFILE) -> int | None:
-    """Most admissions `lane` may hold in any rolling twenty, or None when uncapped."""
-    if lane not in HARD_CEILING_LANES:
-        return None
-    return (allocation_targets(profile)[lane] + HARD_CEILING_TOLERANCE) * ROLLING_WINDOW // 100
-
+# Targets and the +/-3 normal band over a rolling twenty are routing guidance,
+# never a dispatch block, for every lane including Z.ai: the owner retired the
+# target+5 hard limit on 2026-09-21 and again, for Z.ai, on 2026-09-27.
 def allocation_targets(profile: str = DEFAULT_ALLOCATION_PROFILE):
     if not isinstance(profile, str) or profile not in ALLOCATION_PROFILES:
         raise ValueError("allocation_profile_unknown")
@@ -134,9 +122,8 @@ def pre_zai_allocation_profile_digest(profile: str = DEFAULT_ALLOCATION_PROFILE)
 def allocation_profile_digest(profile: str = DEFAULT_ALLOCATION_PROFILE) -> str:
     """Current prospective identity; every live admission caller binds this value."""
     payload = {"version": "capacity-allocation-v3-zai-enrollment", "profile": profile,
-               "targets": dict(allocation_targets(profile)), "window": ROLLING_WINDOW,
+               "targets": dict(allocation_targets(profile)), "window": 20,
                "soft_tolerance": 3,
-               "hard_tolerance": {lane: HARD_CEILING_TOLERANCE for lane in sorted(HARD_CEILING_LANES)},
                "unit": "admitted_assignment", "zero_target": "ineligible"}
     return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -154,3 +141,4 @@ def canonical_allocation_lane(lane: str) -> str:
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
@@ -69,7 +70,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | - |
 | Comparison peers | - |
 | Family | `zai` |
-| Routing rule | Route Z.ai by assignment scope, granted tools, reviewer independence from every material author's provider family, readiness, and the enforced target-plus-five ceiling. |
+| Routing rule | Route Z.ai by assignment scope, granted tools, reviewer independence from every material author's provider family, readiness, and the 18% target and +/-3 band as routing guidance, never a dispatch block. |
 | Transport rule | The production native CLI and the Lite trial contact are separate contacts; each may use only the capabilities and authority of that contact, and the trial contact never runs in production mode. |
 
 Elevated work:
@@ -194,7 +195,7 @@ Strengths:
 Strategy constraints:
 
 - a nonzero target is not evidence that a route is operational
-- enforced hard ceiling of target plus five points: at most 4 of any rolling 20 admissions
+- the 18% target and the rolling-twenty +/-3 band are routing guidance; the former target plus five hard limit was retired by the owner on 2026-09-27 and allocation share never blocks dispatch
 
 Separation of duties:
 
@@ -294,10 +295,11 @@ Separation of duties:
 - `docs/provider-setup.md`: The owner enrolled Z.ai (GLM Coding Plan) as its own production lane `zai` on
 - `docs/provider-setup.md`: and are never relabelled Claude.
 - `docs/provider-allocation-profiles.md`: ### Z.ai production enrollment (2026-09-27)
-- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: hard_ceiling_enforced_lanes: [zai]
+- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
 - `docs/providers/zai-welcome-aboard.md`: Code may host your session; it does not change your provider identity to Claude.
 
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
