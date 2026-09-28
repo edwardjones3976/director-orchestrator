@@ -13,7 +13,7 @@ alwaysApply: true
   `Co-Authored-By` trailers. Follow the sole-author rule from #284 and the
   [canonical policy](../../docs/contribution-attribution-policy.md).
 - Do not add in-file tags. Keep historical tags until separately authorized cleanup.
-- Attribution records acknowledge actual contributions; they do not authenticate
+- Attribution records acknowledge actual contributions only; they do not authenticate
   identity or replace approval, exact-SHA review, CI, security or merge gates.
 - Work produced or materially authored by a provider remains attributed solely
   to that provider or those providers. The acting Director/Claude does not inherit
