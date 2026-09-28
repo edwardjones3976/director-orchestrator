@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import os
+import queue
 import sqlite3
 import tempfile
+import time
 import unittest
 from contextlib import contextmanager
 from multiprocessing import get_context
@@ -710,9 +712,36 @@ class LangGraphResumeTests(unittest.TestCase):
         for worker in workers:
             worker.start()
         start_event.set()
-        outcomes = [results.get(timeout=30) for _ in workers]
+        # One overall deadline for both results. Each spawned worker first
+        # imports the whole package, which on a loaded Windows runner can take
+        # most of a per-result budget by itself, so a per-get timeout measured
+        # from before either worker was ready reported a queue timeout rather
+        # than a resume defect. A worker that dies before answering is reported
+        # as such instead of waiting out the deadline.
+        deadline = time.monotonic() + 180
+        outcomes = []
+        try:
+            while len(outcomes) < len(workers):
+                remaining = deadline - time.monotonic()
+                self.assertGreater(
+                    remaining, 0,
+                    f"resume workers answered {len(outcomes)} of {len(workers)} before the "
+                    f"deadline; alive={[w.is_alive() for w in workers]} "
+                    f"exitcodes={[w.exitcode for w in workers]}",
+                )
+                try:
+                    outcomes.append(results.get(timeout=min(remaining, 5)))
+                except queue.Empty:
+                    dead = [w for w in workers if not w.is_alive() and w.exitcode not in (None, 0)]
+                    self.assertEqual(
+                        dead, [], f"resume worker exited without answering: exitcodes={[w.exitcode for w in workers]}"
+                    )
+        finally:
+            for worker in workers:
+                worker.join(30)
+                if worker.is_alive():
+                    worker.terminate()
         for worker in workers:
-            worker.join(30)
             self.assertEqual(worker.exitcode, 0)
 
         statuses = sorted(status for status, _ in outcomes)
