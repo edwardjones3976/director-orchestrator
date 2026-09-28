@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
@@ -189,8 +190,8 @@ class StreamingAuditVerificationTests(unittest.TestCase):
             __slots__ = ("__weakref__",)
 
         @contextmanager
-        def tracked_connect():
-            with connect() as connection:
+        def tracked_connect(**kwargs):
+            with connect(**kwargs) as connection:
                 audit_cursor = None
 
                 def execute(sql, parameters=()):
@@ -320,8 +321,8 @@ class StreamingAuditVerificationTests(unittest.TestCase):
             scans = []
 
             @contextmanager
-            def raced_connect():
-                with connect() as connection:
+            def raced_connect(**kwargs):
+                with connect(**kwargs) as connection:
                     def execute(sql, parameters=()):
                         if sql.lstrip().upper().startswith("SELECT") and "delegated_decision_audit" in sql:
                             scans.append(sql)
@@ -362,8 +363,8 @@ class ExternalAnchorRegressionTests(unittest.TestCase):
                 audit_reads = []
 
                 @contextmanager
-                def divergent_connect():
-                    with connect() as connection:
+                def divergent_connect(**kwargs):
+                    with connect(**kwargs) as connection:
                         def execute(sql, parameters=()):
                             if sql.lstrip().upper().startswith("SELECT") and "delegated_decision_audit" in sql:
                                 audit_reads.append(sql)
@@ -1303,3 +1304,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | END]]

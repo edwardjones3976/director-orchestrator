@@ -89,22 +89,22 @@ authority.
 
 ## Contribution attribution
 
-- Wrap free-form human-visible submissions with a matching UTC pair in this form:
-  `[[Assistant or Tool | Complete Model or System | YYYY-MM-DD | HH:MM UTC | BEGIN]]`
-  and the corresponding `END` record.
-- Add a fresh outer comment-style pair to every safely commentable file changed in
-  the current submission. Preserve earlier contribution records.
-- Never insert inline tags into JSON, JSONL, CSV, TSV, lock files, checksums,
-  binaries, exact queries, callback payloads, review artifacts, or other
-  syntax-sensitive contracts. Attribute those through the enclosing commit,
-  pull request, handoff, or Director relay.
-- Tags acknowledge actual contributions only and never imply inherited
-  authorship. They never authenticate identity, grant authority, replace Git
-  provenance, or satisfy approval, exact-SHA review, security, CI, merge, or
-  deployment requirements.
-- Before handoff, run `PYTHONPATH=src python scripts/check_contribution_tags.py
-  --base <base-sha> --head <head-sha>`. See
-  `docs/contribution-attribution-policy.md` for the canonical rules.
+No contribution tags are written into file contents any more. Every commit
+carries `Contributed-by: <Assistant or Tool> | <Complete Model or System>`,
+one trailer per contributor; keep existing `Co-Authored-By` trailers.
+Every PR description carries exactly one header line:
+`Sole author: <assistant> (<model>)`, followed on that line by
+`; assistance: <id>[, <id>...]` when others assisted. Follow the 52% sole-author
+rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
+this policy does not redefine it.
+Existing in-file tags are historical; a later mechanical PR removes them.
+Attribution records acknowledge actual contributions only and never imply
+inherited authorship. They never authenticate provider identity, grant authority,
+or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
+
+Before handoff, run the checker with the exact base and head; see
+`docs/contribution-attribution-policy.md`.
+
 11. Communicate concisely and accurately. Reuse fresh verified evidence; repeat a call or test only after state changes, an ambiguous result, or a named coverage gap. Before another paid or tool attempt, identify its expected information gain and stop, reshape, or escalate when that gain is low. Correct inaccuracies before dependent work. Brevity must not omit uncertainty, required evidence, safety gates, or unresolved risks.
 
 ## Human-out-of-the-loop operation

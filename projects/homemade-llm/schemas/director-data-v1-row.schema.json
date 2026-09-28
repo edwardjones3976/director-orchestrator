@@ -1,0 +1,605 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwardjones3976/director-orchestrator/projects/homemade-llm/schemas/director-data-v1-row.schema.json",
+  "title": "homemade-llm DIRECTOR training row v1",
+  "description": "One JSONL row of the M2 DIRECTOR data set. The row carries the task input the model sees, the target packet fields it must produce, and the provenance the L1 checklist requires (source_provider and terms_tier on every row, zero excluded-tier rows). Held-out reference packets are never rows here (O-027). This schema is a contract for the M2-D packets; it grants no authority and is not the training format itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "row_id",
+    "schema_version",
+    "split",
+    "source_kind",
+    "source_provider",
+    "source_model",
+    "terms_tier",
+    "generated_at",
+    "receipt_ref",
+    "source_group",
+    "input",
+    "target",
+    "scrub",
+    "heldout_check"
+  ],
+  "properties": {
+    "row_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "First 16 hex characters of the SHA-256 of the canonical JSON of input plus target. Duplicate row_id values are rejected."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "homemade-llm-director-row/v1"
+    },
+    "split": {
+      "type": "string",
+      "enum": [
+        "train",
+        "dev",
+        "quarantine"
+      ],
+      "description": "Assigned per source_group, not per row: every row sharing a source_group carries the same split value. Held-out sets A and B are not splits of this file; they live only under C:\\llm\\datasets\\heldout and are pinned by the D-M1-0 manifests. 'quarantine' is the only split a row may carry while its near-duplicate check is unresolved (D-M2-3): such rows are never trained on or used for selection, and the validator refuses a quarantine row on either side of a run."
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "real_history",
+        "provider_exemplar",
+        "provider_critique_repair",
+        "owner_seed"
+      ],
+      "description": "O-019 sources. real_history rows come only from dispatched assignments that are not in either held-out set."
+    },
+    "source_provider": {
+      "type": "string",
+      "enum": [
+        "anthropic_api",
+        "openai",
+        "gemini_api",
+        "cursor",
+        "owner",
+        "repository_history"
+      ],
+      "description": "Only competing-only-clause providers, the owner, or repository history may appear (O-026). Excluded-tier providers (Z.ai, xAI, Google consumer Gemini, Antigravity) are not valid values by construction. Perplexity is withheld from this enum: the 2026-09-28 official-source recheck (PR #294 comment 5861548635) could not confirm a customer training grant in its API terms, so its output is research-only until the owner records a clearer grant; re-adding it needs a new owner decision."
+    },
+    "source_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model label as recorded in the dispatch receipt for provider rows (never a guessed name), and exactly 'n/a' for owner and repository_history rows; both directions are enforced by the allOf rules."
+    },
+    "terms_tier": {
+      "type": "string",
+      "enum": [
+        "competing_only_clause",
+        "owner_content",
+        "repository_history"
+      ],
+      "description": "PLAN.md section 4.2 tier at generation time. 'excluded' and 'unclear' tiers are intentionally not valid values."
+    },
+    "terms_verified_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC time the provider's training-data clause was last re-read (O-026 requires re-verification before the first M2 training run). Required whenever source_provider names a provider; enforced by the allOf rule below. Must be an explicit UTC timestamp (YYYY-MM-DDTHH:MM:SS[.ffffff]Z); the pattern is enforced because validators do not check format by default.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
+      "description": "UTC timestamp, pattern-enforced."
+    },
+    "receipt_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*(/[A-Za-z0-9._@+-]+)*$",
+      "description": "Relative path of the provider-dispatch receipt (forward slashes only), the assignment ledger key, or the owner-seed SHA-256 reference. The pattern forbids absolute host paths (no leading slash, no drive letter, no backslash) and never carries a raw seed."
+    },
+    "source_group": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Lineage key shared by every row derived from the same seed, source PR, assignment or work order, including perturbations, critique-and-repair variants and provider re-generations. The train/dev split is assigned per source_group, never per row (D-M2-4): all rows of a group sit on one side. The validator reports unique source_group counts per split and refuses a group that appears on both sides."
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "repository",
+        "title",
+        "context"
+      ],
+      "description": "Revised M2 input contract (O-M2-D, D-M2-10): the M1 D-M1-1 fields objective, repository and title, plus at least one provenance-bound context item cited at inference time. Scored target text and held-out source lineage are never context.",
+      "properties": {
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[^/]+/[^/]+$",
+          "description": "owner/repo, the same pattern as model-work-packet-v1; UNKNOWN/UNKNOWN is the recorded value when the source carried none."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "type": "string"
+        },
+        "context": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Cited assignment context available at inference for historical held-out tasks and real dispatches alike. Each item is bound to its source by pointer and hash so a row can be audited for leaks and provenance.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "text",
+              "source_ref",
+              "source_sha256"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "assignment_packet",
+                  "project_policy"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The context excerpt as given to the model. Must not contain any scored target field text of any row or held-out item."
+              },
+              "source_ref": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Pointer to the source artifact (repository path at a commit, packet id, or work-order id). Never a held-out item or anything derived from one."
+              },
+              "source_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "SHA-256 of the source artifact the excerpt was taken from."
+              }
+            }
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "non_goals",
+        "constraints",
+        "acceptance_checks",
+        "evidence_requirements"
+      ],
+      "description": "The four scored fields of model-work-packet-v1 that the model must produce. Field shapes follow docs/schemas/model-work-packet-v1.schema.json, including its minItems on acceptance_checks and evidence_requirements, so a training row cannot teach a packet shape that schema rejects.",
+      "properties": {
+        "non_goals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "acceptance_checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "evidence_requirements": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "scrub": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gitleaks_clean",
+        "redact_pass",
+        "scrubbed_at"
+      ],
+      "properties": {
+        "gitleaks_clean": {
+          "type": "boolean",
+          "const": true
+        },
+        "redact_pass": {
+          "type": "boolean",
+          "const": true
+        },
+        "scrubbed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+        },
+        "scan_report_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*(/[A-Za-z0-9._@+-]+)*$",
+          "description": "Relative path of the gitleaks report, forward slashes only; never an absolute host path."
+        }
+      },
+      "description": "Both flags must be true for a row to ship; the schema makes false unrepresentable so an unscrubbed row fails validation instead of being filtered silently."
+    },
+    "heldout_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "set_a_manifest",
+        "set_b_manifest",
+        "source_lineage",
+        "near_duplicate",
+        "title_objective_match",
+        "overlap"
+      ],
+      "description": "Results of the three D-M2-3 leak checks, recorded per row against the D-M1-0 manifests. A row whose lineage resolves to a held-out item, or whose title and objective match one, is never written; a near-duplicate at or above the threshold is never written; a near-duplicate near the threshold is written only as split 'quarantine' until a non-author reviewer decides, and is released to train or dev only with that decision recorded.",
+      "properties": {
+        "set_a_manifest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "set_b_manifest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_lineage": {
+          "type": "string",
+          "const": "clear",
+          "description": "Check 1. The only writable value: a row whose receipt_ref or source metadata resolves to a held-out source ID is refused, not recorded."
+        },
+        "near_duplicate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "max_overlap",
+            "threshold",
+            "quarantine_band"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "clear",
+                "quarantined",
+                "released"
+              ],
+              "description": "Check 2. clear: below the quarantine band. quarantined: inside the band, awaiting a non-author reviewer. released: was quarantined and a reviewer kept it. A leak at or above the threshold is never written."
+            },
+            "max_overlap": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Highest word-shingle overlap of any input or scored target field against any held-out item's corresponding field, after the scorer's normalization."
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "quarantine_band": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Overlaps in [threshold - quarantine_band, threshold) are quarantined."
+            },
+            "nearest_item": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Held-out item ID and field with the highest overlap; recorded for the reviewer, never the held-out text."
+            },
+            "quarantine_decision": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reviewer",
+                "verdict",
+                "decided_at",
+                "receipt_ref"
+              ],
+              "properties": {
+                "reviewer": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Non-author reviewer identity."
+                },
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "keep"
+                  ],
+                  "description": "Only keep is representable: a drop removes the row from the file."
+                },
+                "decided_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+                },
+                "receipt_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*(/[A-Za-z0-9._@+-]+)*$"
+                }
+              }
+            }
+          }
+        },
+        "title_objective_match": {
+          "type": "boolean",
+          "const": false,
+          "description": "Check 3. A match is never written."
+        },
+        "overlap": {
+          "type": "string",
+          "enum": [
+            "none",
+            "quarantined"
+          ],
+          "description": "Summary: none when near_duplicate.status is clear or released, quarantined otherwise."
+        }
+      }
+    },
+    "grades": {
+      "type": "array",
+      "description": "Optional grader rows in the shape score_packets.py accepts: one entry per non-author grader per scored field, keyed by the packet id and field, so per-field acceptance (M2-Q1, the D-M2-6 stop rule) is recorded. A packet counts as accepted as-is only when at least two graders accept all four fields. Rows without grades are still valid training rows; grades gate promotion from dev to train under M2-Q1.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "field",
+          "grader",
+          "accepted",
+          "receipt_ref"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$",
+            "description": "Must equal the row's row_id."
+          },
+          "field": {
+            "type": "string",
+            "enum": [
+              "non_goals",
+              "constraints",
+              "acceptance_checks",
+              "evidence_requirements"
+            ]
+          },
+          "grader": {
+            "type": "string",
+            "minLength": 1
+          },
+          "accepted": {
+            "type": "boolean"
+          },
+          "receipt_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*(/[A-Za-z0-9._@+-]+)*$"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source_provider": {
+            "enum": [
+              "anthropic_api",
+              "openai",
+              "gemini_api",
+              "cursor"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "terms_verified_at"
+        ],
+        "properties": {
+          "terms_tier": {
+            "const": "competing_only_clause"
+          },
+          "source_kind": {
+            "enum": [
+              "provider_exemplar",
+              "provider_critique_repair"
+            ]
+          },
+          "source_model": {
+            "type": "string",
+            "minLength": 1,
+            "not": {
+              "const": "n/a"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source_provider": {
+            "const": "owner"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "terms_tier": {
+            "const": "owner_content"
+          },
+          "source_kind": {
+            "const": "owner_seed"
+          },
+          "source_model": {
+            "const": "n/a"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source_provider": {
+            "const": "repository_history"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "terms_tier": {
+            "const": "repository_history"
+          },
+          "source_kind": {
+            "const": "real_history"
+          },
+          "source_model": {
+            "const": "n/a"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "heldout_check": {
+            "properties": {
+              "near_duplicate": {
+                "properties": {
+                  "status": {
+                    "const": "quarantined"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "split": {
+            "const": "quarantine"
+          },
+          "heldout_check": {
+            "properties": {
+              "overlap": {
+                "const": "quarantined"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "split": {
+            "enum": [
+              "train",
+              "dev"
+            ]
+          },
+          "heldout_check": {
+            "properties": {
+              "overlap": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "heldout_check": {
+            "properties": {
+              "near_duplicate": {
+                "properties": {
+                  "status": {
+                    "const": "released"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "heldout_check": {
+            "properties": {
+              "near_duplicate": {
+                "required": [
+                  "quarantine_decision",
+                  "nearest_item"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "heldout_check": {
+            "properties": {
+              "near_duplicate": {
+                "properties": {
+                  "status": {
+                    "const": "quarantined"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "heldout_check": {
+            "properties": {
+              "near_duplicate": {
+                "required": [
+                  "nearest_item"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

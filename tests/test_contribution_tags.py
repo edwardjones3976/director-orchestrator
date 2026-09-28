@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -464,7 +465,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         self.assertIn("startup uses the full 20-slot denominator with real assignments only", prompt)
         self.assertIn("cheapest capable trusted model first", prompt)
         self.assertIn("GitHub Copilot Lite", prompt)
-        self.assertIn("canonical matching UTC contribution", prompt)
+        self.assertIn("Contributed-by:", charter)
         self.assertIn("never authenticate provider", charter.lower())
 
     def test_director_provider_authorship_boundary_is_synchronized(self):
@@ -572,236 +573,11 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             prompt,
         )
 
-    def test_pull_request_envelope_ignores_static_template_comments(self):
-        root = Path(__file__).resolve().parents[1]
-        spec = importlib.util.spec_from_file_location(
-            "check_contribution_tags",
-            root / "scripts" / "check_contribution_tags.py",
-        )
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        checker = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(checker)
-        with tempfile.TemporaryDirectory() as temp:
-            event = Path(temp) / "event.json"
-            event.write_text(
-                json.dumps(
-                    {
-                        "pull_request": {
-                            "head": {"sha": "a" * 40},
-                            "body": (
-                                "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]] -->\n"
-                                "**[[<Assistant> | <Model> | <YYYY-MM-DD> | <HH:MM UTC> | BEGIN]]**\n"
-                                "body\n"
-                                "**[[<Assistant> | <Model> | <YYYY-MM-DD> | <HH:MM UTC> | END]]**\n"
-                                "<!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]] -->"
-                            )
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            message = (
-                "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]]\n"
-                "commit\n"
-                "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]"
-            )
-            with patch.object(checker, "_git", return_value=message):
-                self.assertTrue(checker._validate_github_event(event))
-            event.write_text(
-                json.dumps(
-                    {
-                        "pull_request": {
-                            "head": {"sha": "a" * 40},
-                            "body": (
-                                "**[[Cursor | Agent | 2026-08-21 | 23:06 UTC | BEGIN]]**\n"
-                                "body\n"
-                                "**[[Cursor | Agent | 2026-08-21 | 23:06 UTC | END]]**"
-                            )
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            with patch.object(checker, "_git", return_value=message):
-                self.assertEqual(checker._validate_github_event(event), [])
-
-    def test_submission_envelope_rejects_visible_content_outside_boundaries(self):
-        root = Path(__file__).resolve().parents[1]
-        spec = importlib.util.spec_from_file_location(
-            "check_contribution_tags_outer",
-            root / "scripts" / "check_contribution_tags.py",
-        )
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        checker = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(checker)
-        errors = checker._validate_submission_envelope(
-            "prefix\n"
-            "**[[Cursor | Agent | 2026-08-21 | 23:06 UTC | BEGIN]]**\n"
-            "body\n"
-            "**[[Cursor | Agent | 2026-08-21 | 23:06 UTC | END]]**",
-            require_outer=True,
-            require_markdown_boundary=True,
-        )
-        self.assertTrue(errors)
-
-    def test_submodule_pointers_are_skipped_instead_of_read_as_text(self):
-        root = Path(__file__).resolve().parents[1]
-        spec = importlib.util.spec_from_file_location(
-            "check_contribution_tags_gitlink",
-            root / "scripts" / "check_contribution_tags.py",
-        )
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        checker = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(checker)
-
-        with tempfile.TemporaryDirectory() as temp:
-            repo = Path(temp)
-
-            def git(*args: str) -> str:
-                return subprocess.run(
-                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                    cwd=repo,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                ).stdout.decode("utf-8")
-
-            git("init", "--quiet", "-b", "main")
-            (repo / "seed.txt.fixture").write_text("seed\n", encoding="utf-8")
-            git("add", "seed.txt.fixture")
-            git("commit", "--quiet", "-m", "seed")
-            base = git("rev-parse", "HEAD").strip()
-            pointer = git("rev-parse", "HEAD").strip()
-            git("update-index", "--add", "--cacheinfo", f"160000,{pointer},vendor")
-            git("commit", "--quiet", "-m", "add submodule pointer")
-            head = git("rev-parse", "HEAD").strip()
-
-            cwd = Path.cwd()
-            try:
-                os.chdir(repo)
-                self.assertEqual(checker._tree_mode(head, "vendor"), checker.GITLINK_MODE)
-                self.assertIsNone(checker._tree_mode(head, "absent"))
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", head],
-                ):
-                    self.assertEqual(checker.main(), 0)
-
-                # An unreadable path must be reported as one finding rather than
-                # aborting the range and hiding every other result.
-                git("update-index", "--force-remove", "vendor")
-                (repo / "note.md").write_text("no tags here\n", encoding="utf-8")
-                git("add", "note.md")
-                git("commit", "--quiet", "-m", "add untagged note")
-                unreadable_head = git("rev-parse", "HEAD").strip()
-                failure = subprocess.CalledProcessError(128, ["git", "show"])
-                with patch.object(checker, "_content_at", side_effect=failure), patch(
-                    "sys.argv",
-                    [
-                        "check_contribution_tags.py",
-                        "--base",
-                        base,
-                        "--head",
-                        unreadable_head,
-                    ],
-                ):
-                    self.assertEqual(checker.main(), 1)
-            finally:
-                os.chdir(cwd)
-
-    def test_push_commit_message_requires_outer_boundaries(self):
-        root = Path(__file__).resolve().parents[1]
-        spec = importlib.util.spec_from_file_location(
-            "check_contribution_tags_push",
-            root / "scripts" / "check_contribution_tags.py",
-        )
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        checker = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(checker)
-        with tempfile.TemporaryDirectory() as temp:
-            event = Path(temp) / "push.json"
-            event.write_text(
-                json.dumps(
-                    {
-                        "ref": "refs/heads/codex/example",
-                        "head_commit": {
-                            "message": (
-                                "[[Codex | GPT-5.6 | 2026-08-21 | 23:07 UTC | BEGIN]]\n"
-                                "Implement attribution\n"
-                                "[[Codex | GPT-5.6 | 2026-08-21 | 23:07 UTC | END]]"
-                            )
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            self.assertEqual(checker._validate_github_event(event), [])
-            payload = json.loads(event.read_text(encoding="utf-8"))
-            payload["head_commit"]["message"] = (
-                payload["head_commit"]["message"]
-                + "\n\nCo-authored-by: Edward L Jones IV <owner@example.com>\n"
-            )
-            event.write_text(json.dumps(payload), encoding="utf-8")
-            self.assertEqual(checker._validate_github_event(event), [])
-            payload["head_commit"]["message"] = "subject\n" + payload["head_commit"]["message"]
-            event.write_text(json.dumps(payload), encoding="utf-8")
-            self.assertTrue(checker._validate_github_event(event))
-
-
 class ContributionAttributionFollowupTests(unittest.TestCase):
     """Delayed review findings on PR #52, tracked by issue #62."""
 
     BEGIN = "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | BEGIN]]"
     END = "[[Codex | GPT-5.6 | 2026-08-21 | 23:05 UTC | END]]"
-
-    def test_pr_event_requires_body_and_exact_head_commit_envelopes(self):
-        checker = self._checker("check_contribution_tags_pr_head")
-        sha = "a" * 40
-        message = f"{self.BEGIN}\ncommit\n{self.END}"
-        body = f"**{self.BEGIN}**\nbody\n**{self.END}**"
-        with tempfile.TemporaryDirectory() as temp:
-            event = Path(temp) / "event.json"
-            payload = {"pull_request": {"body": body, "head": {"sha": sha}}}
-            event.write_text(json.dumps(payload), encoding="utf-8")
-            for commit, valid in (
-                (message, True),
-                (message + "\n\nSigned-off-by: Example <example@example.invalid>\n", True),
-                ("untagged", False),
-                ("subject\n" + message, False),
-                (message + "\nNote: outside envelope", False),
-            ):
-                with self.subTest(commit=commit), patch.object(
-                    checker, "_git", return_value=commit
-                ) as git:
-                    self.assertEqual(not checker._validate_github_event(event), valid)
-                    git.assert_called_once_with("show", "-s", "--format=%B", sha, "--")
-            for failure in (OSError(), subprocess.CalledProcessError(128, ["git"])):
-                with patch.object(checker, "_git", side_effect=failure):
-                    self.assertIn(
-                        "could not read pull-request head commit envelope",
-                        checker._validate_github_event(event),
-                    )
-            payload["pull_request"]["body"] = "untagged body"
-            event.write_text(json.dumps(payload), encoding="utf-8")
-            with patch.object(checker, "_git", return_value=message):
-                self.assertTrue(checker._validate_github_event(event))
-            for head in (None, {}, {"sha": "HEAD"}, {"sha": "--all"}):
-                payload["pull_request"].update(body=body, head=head)
-                event.write_text(json.dumps(payload), encoding="utf-8")
-                with patch.object(checker, "_git") as git:
-                    self.assertTrue(checker._validate_github_event(event))
-                    git.assert_not_called()
-            event.write_text(
-                json.dumps({"ref": "refs/heads/main", "head_commit": {"message": "merge"}}),
-                encoding="utf-8",
-            )
-            with patch.object(checker, "_git") as git:
-                self.assertEqual(checker._validate_github_event(event), [])
-                git.assert_not_called()
 
     @staticmethod
     def _checker(name: str):
@@ -872,337 +648,6 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
             ["BEGIN", "END"],
         )
 
-    def test_trailer_stripping_requires_a_supported_block_after_the_end_tag(self):
-        checker = self._checker("check_contribution_tags_trailers")
-        envelope = f"{self.BEGIN}\n\nImplement the fix\n\n{self.END}"
-        supported = (
-            "Co-authored-by: Edward L Jones IV <owner@example.com>\n"
-            "Claude-Session: https://claude.ai/code/session_0123456789\n"
-            "Signed-off-by: Codex <codex@example.com>"
-        )
-
-        for label, message in (
-            ("blank separator", f"{envelope}\n\n{supported}"),
-            ("whitespace-only separator", f"{envelope}\n   \n{supported}"),
-            ("no separator", f"{envelope}\n{supported}"),
-            ("trailing blank line", f"{envelope}\n\n{supported}\n\n"),
-            # The delayed trailing-whitespace regression: a whitespace-only line
-            # after the trailer block used to stop the scan, leaving the trailers
-            # visible and failing an otherwise valid submission.
-            ("trailing whitespace-only line", f"{envelope}\n\n{supported}\n   \n"),
-        ):
-            with self.subTest(label):
-                self.assertEqual(
-                    checker._without_trailing_git_trailers(message), envelope
-                )
-                self.assertEqual(
-                    checker._validate_submission_envelope(
-                        checker._without_trailing_git_trailers(message),
-                        require_outer=True,
-                        require_markdown_boundary=False,
-                    ),
-                    [],
-                )
-
-        for label, tail in (
-            ("arbitrary prose trailer", "Note: extra visible content"),
-            ("unsupported key", "Fixes: #62"),
-            ("mixed supported and arbitrary", f"{supported}\nNote: extra"),
-            ("resumed block after a blank line", f"{supported}\n\nNote: extra"),
-            ("plain content", "still visible"),
-        ):
-            with self.subTest(label):
-                message = f"{envelope}\n\n{tail}"
-                self.assertEqual(
-                    checker._without_trailing_git_trailers(message), message
-                )
-                self.assertTrue(
-                    checker._validate_submission_envelope(
-                        checker._without_trailing_git_trailers(message),
-                        require_outer=True,
-                        require_markdown_boundary=False,
-                    )
-                )
-
-        # Trailer-shaped lines inside the envelope are body text, not trailers.
-        inside = f"{self.BEGIN}\n\nNote: kept\n\n{self.END}\n\nSigned-off-by: Codex <c@example.com>"
-        self.assertEqual(
-            checker._without_trailing_git_trailers(inside),
-            f"{self.BEGIN}\n\nNote: kept\n\n{self.END}",
-        )
-        # Without an END tag nothing is treated as a trailer block.
-        headless = "Subject line\n\nCo-authored-by: Edward L Jones IV <owner@example.com>"
-        self.assertEqual(checker._without_trailing_git_trailers(headless), headless)
-
-    def test_submission_outer_identities_must_match(self):
-        checker = self._checker("check_contribution_tags_identity")
-        other_begin = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]"
-        other_end = "[[Gemini | Antigravity | 2026-08-22 | 15:10 UTC | END]]"
-        errors = checker._validate_submission_envelope(
-            f"{other_begin}\n\n{self.BEGIN}\ninner submission\n{self.END}\n\n{other_end}",
-            require_outer=True,
-            require_markdown_boundary=False,
-        )
-        self.assertEqual(
-            errors, ["submission outer BEGIN and END contribution tags do not match"]
-        )
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                f"{self.BEGIN}\n\nsubmission\n\n{self.END}",
-                require_outer=True,
-                require_markdown_boundary=False,
-            ),
-            [],
-        )
-        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
-        bold_end = "**[[Cursor | Agent | 2026-08-22 | 15:10 UTC | END]]**"
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                f"{bold_begin}\n\n**{self.BEGIN}**\nbody\n**{self.END}**\n\n{bold_end}",
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            ["submission outer BEGIN and END contribution tags do not match"],
-        )
-
-    def test_pure_rename_and_copy_cannot_reuse_existing_contribution_tags(self):
-        checker = self._checker("check_contribution_tags_rename")
-        begin = f"# {self.BEGIN}"
-        end = f"# {self.END}"
-        fresh_begin = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | BEGIN]]"
-        fresh_end = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | END]]"
-
-        with tempfile.TemporaryDirectory() as temp:
-            repo = Path(temp)
-
-            def git(*args: str) -> str:
-                return subprocess.run(
-                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                    cwd=repo,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                ).stdout.decode("utf-8")
-
-            git("init", "--quiet", "-b", "main")
-            (repo / "source.py").write_text(
-                f"{begin}\nprint('ok')\n{end}\n", encoding="utf-8"
-            )
-            git("add", "source.py")
-            git("commit", "--quiet", "-m", "seed")
-            base = git("rev-parse", "HEAD").strip()
-
-            git("mv", "source.py", "renamed.py")
-            git("commit", "--quiet", "-m", "pure rename")
-            renamed_head = git("rev-parse", "HEAD").strip()
-
-            cwd = Path.cwd()
-            try:
-                os.chdir(repo)
-                self.assertEqual(
-                    checker.changed_paths(base, renamed_head),
-                    [("R100", "source.py", "renamed.py")],
-                )
-                # The old path is diffed against the new one, so pre-existing
-                # tags are not reported as additions by a pure rename.
-                self.assertEqual(
-                    checker._added_lines(base, renamed_head, "renamed.py", "source.py"),
-                    [],
-                )
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", renamed_head],
-                ):
-                    self.assertEqual(checker.main(), 1)
-            finally:
-                os.chdir(cwd)
-
-            # A rename that also records a fresh outer pair is accepted.
-            (repo / "renamed.py").write_text(
-                f"{fresh_begin}\n{begin}\nprint('ok')\n{end}\n{fresh_end}\n",
-                encoding="utf-8",
-            )
-            git("add", "renamed.py")
-            git("commit", "--quiet", "-m", "rename with attribution")
-            tagged_head = git("rev-parse", "HEAD").strip()
-
-            git("reset", "--quiet", "--hard", base)
-            (repo / "copy.py").write_text(
-                f"{begin}\nprint('ok')\n{end}\n", encoding="utf-8"
-            )
-            git("add", "copy.py")
-            git("commit", "--quiet", "-m", "pure copy")
-            copied_head = git("rev-parse", "HEAD").strip()
-
-            try:
-                os.chdir(repo)
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", tagged_head],
-                ):
-                    self.assertEqual(checker.main(), 0)
-                self.assertEqual(
-                    checker.changed_paths(base, copied_head),
-                    [("C100", "source.py", "copy.py")],
-                )
-                self.assertEqual(
-                    checker._added_lines(base, copied_head, "copy.py", "source.py"), []
-                )
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", copied_head],
-                ):
-                    self.assertEqual(checker.main(), 1)
-            finally:
-                os.chdir(cwd)
-
-    def test_base_tag_lookup_separates_no_matches_from_a_real_git_failure(self):
-        checker = self._checker("check_contribution_tags_base_lookup")
-        begin = f"# {self.BEGIN}"
-        end = f"# {self.END}"
-
-        with tempfile.TemporaryDirectory() as temp:
-            repo = Path(temp)
-
-            def git(*args: str) -> str:
-                return subprocess.run(
-                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                    cwd=repo,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                ).stdout.decode("utf-8")
-
-            git("init", "--quiet", "-b", "main")
-            (repo / "untagged.py").write_text("print('ok')\n", encoding="utf-8")
-            git("add", "untagged.py")
-            git("commit", "--quiet", "-m", "seed")
-            untagged_base = git("rev-parse", "HEAD").strip()
-
-            (repo / "tagged.py").write_text(
-                f"{begin}\nprint('ok')\n{end}\n", encoding="utf-8"
-            )
-            git("add", "tagged.py")
-            git("commit", "--quiet", "-m", "add a tagged file")
-            tagged_base = git("rev-parse", "HEAD").strip()
-
-            cwd = Path.cwd()
-            try:
-                os.chdir(repo)
-                # Exit status 1 is "no matching line", not a failure.
-                self.assertEqual(checker._base_tag_pairs(untagged_base), set())
-                self.assertEqual(
-                    checker._base_tag_pairs(tagged_base),
-                    {("Codex", "GPT-5.6", "2026-08-21", "23:05")},
-                )
-                # Any other status must surface instead of silently disabling
-                # the inherited-pair check.
-                with self.assertRaises(checker.BaseTagLookupError) as raised:
-                    checker._base_tag_pairs("0" * 39 + "1")
-                self.assertIn("git grep failed with status", str(raised.exception))
-                with patch(
-                    "sys.argv",
-                    [
-                        "check_contribution_tags.py",
-                        "--base",
-                        "0" * 39 + "1",
-                        "--head",
-                        tagged_base,
-                    ],
-                ):
-                    self.assertEqual(checker.main(), 1)
-            finally:
-                os.chdir(cwd)
-
-    def test_low_similarity_move_cannot_inherit_base_tree_contribution_tags(self):
-        """Git reports an edited move below the similarity threshold as D + A.
-
-        The destination then presents its inherited outer tags as additions, so
-        the range check must reject a pair the base tree already carries.
-        """
-
-        checker = self._checker("check_contribution_tags_low_similarity")
-        begin = f"# {self.BEGIN}"
-        end = f"# {self.END}"
-        fresh_begin = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | BEGIN]]"
-        fresh_end = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 09:30 UTC | END]]"
-        original = "\n".join(f"value_{index} = {index}" for index in range(40))
-        rewritten = "\n".join(
-            f"renamed_symbol_{index} = compute({index}, mode='wholly different')"
-            for index in range(40)
-        )
-
-        with tempfile.TemporaryDirectory() as temp:
-            repo = Path(temp)
-
-            def git(*args: str) -> str:
-                return subprocess.run(
-                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                    cwd=repo,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                ).stdout.decode("utf-8")
-
-            git("init", "--quiet", "-b", "main")
-            (repo / "source.py").write_text(
-                f"{begin}\n{original}\n{end}\n", encoding="utf-8"
-            )
-            git("add", "source.py")
-            git("commit", "--quiet", "-m", "seed")
-            base = git("rev-parse", "HEAD").strip()
-
-            git("rm", "--quiet", "source.py")
-            (repo / "moved.py").write_text(
-                f"{begin}\n{rewritten}\n{end}\n", encoding="utf-8"
-            )
-            git("add", "moved.py")
-            git("commit", "--quiet", "-m", "move and rewrite below the rename threshold")
-            moved_head = git("rev-parse", "HEAD").strip()
-
-            cwd = Path.cwd()
-            try:
-                os.chdir(repo)
-                # Git does not pair these paths, so the inherited tags look new.
-                self.assertEqual(
-                    sorted(checker.changed_paths(base, moved_head)),
-                    [("A", None, "moved.py"), ("D", None, "source.py")],
-                )
-                self.assertIn(
-                    "# " + self.BEGIN,
-                    checker._added_lines(base, moved_head, "moved.py"),
-                )
-                self.assertEqual(
-                    checker._base_tag_pairs(base),
-                    {("Codex", "GPT-5.6", "2026-08-21", "23:05")},
-                )
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", moved_head],
-                ):
-                    self.assertEqual(checker.main(), 1)
-            finally:
-                os.chdir(cwd)
-
-            # Recording a fresh outer pair on the destination is accepted.
-            (repo / "moved.py").write_text(
-                f"{fresh_begin}\n{begin}\n{rewritten}\n{end}\n{fresh_end}\n",
-                encoding="utf-8",
-            )
-            git("add", "moved.py")
-            git("commit", "--quiet", "-m", "record the move")
-            tagged_head = git("rev-parse", "HEAD").strip()
-
-            try:
-                os.chdir(repo)
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", tagged_head],
-                ):
-                    self.assertEqual(checker.main(), 0)
-            finally:
-                os.chdir(cwd)
-
     def test_scanning_reports_every_tag_including_one_behind_a_decoy(self):
         """The base-tree scan must not stop at the first tag on a line.
 
@@ -1224,379 +669,325 @@ class ContributionAttributionFollowupTests(unittest.TestCase):
         )
         self.assertEqual(iter_contribution_tags("wiki [[Some Page]] only"), [])
 
-    def test_a_pair_sharing_one_base_line_is_still_seen_as_reuse(self):
-        checker = self._checker("check_contribution_tags_single_line_pair")
+class GitAttributionTests(unittest.TestCase):
+    def setUp(self):
+        self.checker = ContributionAttributionFollowupTests._checker("git_attribution")
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        isolated_git = patch.dict(os.environ, {
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        })
+        isolated_git.start()
+        self.addCleanup(isolated_git.stop)
+        previous = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous)
+        self.git("init", "--quiet")
+        self.git("config", "user.name", "Fixture")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.base = self.commit("Baseline")
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
 
-        with tempfile.TemporaryDirectory() as temp:
-            repo = Path(temp)
+    def git(self, *args):
+        return subprocess.check_output(
+            ["git", "-c", "commit.gpgsign=false", *args], stderr=subprocess.PIPE
+        ).decode("utf-8").strip()
 
-            def git(*args: str) -> str:
-                return subprocess.run(
-                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                    cwd=repo,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                ).stdout.decode("utf-8")
+    def commit(self, message):
+        self.git("add", "--all")
+        self.git("commit", "--quiet", "--allow-empty", "-m", message)
+        return self.git("rev-parse", "HEAD")
 
-            git("init", "--quiet", "-b", "main")
-            # Both halves on one line: the retired per-line parse saw only the
-            # BEGIN, so the identity never joined begins & ends.
-            (repo / "notes.txt").write_text(
-                f"recorded {self.BEGIN} {self.END}\n", encoding="utf-8"
-            )
-            git("add", "notes.txt")
-            git("commit", "--quiet", "-m", "seed")
-            base = git("rev-parse", "HEAD").strip()
-
-            cwd = Path.cwd()
-            try:
-                os.chdir(repo)
-                self.assertEqual(
-                    checker._base_tag_pairs(base),
-                    {("Codex", "GPT-5.6", "2026-08-21", "23:05")},
-                )
-            finally:
-                os.chdir(cwd)
-
-    def test_padded_maximum_length_base_tags_are_visible_to_the_reuse_check(self):
-        """A base grep with a grammar of its own missed padded maximum labels.
-
-        ``TAG_PATTERN`` accepts an 80-character label and then the whitespace it
-        also allows before the delimiter. The retired POSIX expression bounded
-        that whole span at 80 characters, so these identities never reached
-        ``_base_tag_pairs`` and the inherited-pair check failed open for exactly
-        them. Git reports the move below as an unrelated delete and add, which
-        leaves the base-tree comparison as the only defense.
-        """
-
-        checker = self._checker("check_contribution_tags_padded_labels")
-        contributor = "C" * 80
-        system = "s" * 80
-        identity = (contributor, system, "2026-08-21", "23:05")
-        padded_begin = f"[[{contributor}   |   {system}   | 2026-08-21 | 23:05 UTC | BEGIN]]"
-        padded_end = f"[[{contributor}   |   {system}   | 2026-08-21 | 23:05 UTC | END]]"
-
-        # The fixture must be a tag the repository genuinely accepts, not a
-        # curiosity: maximum-length labels, padding stripped off the identity.
-        for rendered, boundary in ((padded_begin, "BEGIN"), (padded_end, "END")):
-            tag = parse_contribution_tag(rendered)
-            self.assertIsNotNone(tag)
-            self.assertEqual(
-                (tag.contributor, tag.system, tag.date, tag.time), identity
-            )
-            self.assertEqual(tag.boundary, boundary)
-            self.assertEqual(len(tag.contributor), 80)
-            self.assertEqual(len(tag.system), 80)
-            # The span before the delimiter exceeds the retired 80-character bound.
-            self.assertGreater(len(rendered.split("|")[0]) - 2, 80)
-
-        begin = f"# {padded_begin}"
-        end = f"# {padded_end}"
-        fresh_begin = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | BEGIN]]"
-        fresh_end = "# [[Claude Code | claude-code/chief-programmer | 2026-08-23 | 10:05 UTC | END]]"
-        original = "\n".join(f"value_{index} = {index}" for index in range(40))
-        rewritten = "\n".join(
-            f"renamed_symbol_{index} = compute({index}, mode='wholly different')"
-            for index in range(40)
+    def test_pre_trailer_commits_are_grandfathered_by_their_envelope(self):
+        pair = "[[OpenAI Codex | GPT-6 | 2026-09-27 | 06:56 UTC | {}]]"
+        cases = (
+            (pair.format("BEGIN") + "\nOld change\n" + pair.format("END"), True),
+            (pair.format("BEGIN") + " Merge settled main\n\nBody\n" + pair.format("END"), True),
+            (pair.format("BEGIN") + "\nUnclosed", False),
+            (pair.format("BEGIN") + "\n[[OpenAI Codex | GPT-6 | 2026-09-27 | 06:57 UTC | END]]", False),
+            ("Plain old change", False),
+            (pair.format("BEGIN") + "\nOld change\n" + pair.format("END") + "\n\nContributed-by: broken", False),
         )
+        for message, valid in cases:
+            with self.subTest(message=message.splitlines()[0]):
+                head = self.commit(message)
+                self.assertEqual(self.checker.validate_commits(self.base, head) == [], valid)
+                self.assertEqual(self.checker.message_attributed(message), valid)
 
-        with tempfile.TemporaryDirectory() as temp:
-            repo = Path(temp)
+    def test_every_commit_needs_trailer_not_only_head(self):
+        missing = self.commit("Missing attribution")
+        head = self.commit("Good\n\nContributed-by: OpenAI Codex | GPT-6")
+        errors = self.checker.validate_commits(self.base, head)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(missing, errors[0])
 
-            def git(*args: str) -> str:
-                return subprocess.run(
-                    ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-                    cwd=repo,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                ).stdout.decode("utf-8")
-
-            git("init", "--quiet", "-b", "main")
-            (repo / "source.py").write_text(
-                f"{begin}\n{original}\n{end}\n", encoding="utf-8"
-            )
-            git("add", "source.py")
-            git("commit", "--quiet", "-m", "seed")
-            base = git("rev-parse", "HEAD").strip()
-
-            git("rm", "--quiet", "source.py")
-            (repo / "moved.py").write_text(
-                f"{begin}\n{rewritten}\n{end}\n", encoding="utf-8"
-            )
-            git("add", "moved.py")
-            git("commit", "--quiet", "-m", "move and rewrite below the rename threshold")
-            moved_head = git("rev-parse", "HEAD").strip()
-
-            cwd = Path.cwd()
-            try:
-                os.chdir(repo)
-                # The identity is in the base tree, and the scan now finds it.
-                self.assertEqual(checker._base_tag_pairs(base), {identity})
-                # Git does not pair these paths, so nothing else would catch it.
-                self.assertEqual(
-                    sorted(checker.changed_paths(base, moved_head)),
-                    [("A", None, "moved.py"), ("D", None, "source.py")],
-                )
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", moved_head],
-                ):
-                    self.assertEqual(checker.main(), 1)
-            finally:
-                os.chdir(cwd)
-
-            # Recording a fresh outer pair on the destination is still accepted.
-            (repo / "moved.py").write_text(
-                f"{fresh_begin}\n{begin}\n{rewritten}\n{end}\n{fresh_end}\n",
-                encoding="utf-8",
-            )
-            git("add", "moved.py")
-            git("commit", "--quiet", "-m", "record the move")
-            tagged_head = git("rev-parse", "HEAD").strip()
-
-            try:
-                os.chdir(repo)
-                with patch(
-                    "sys.argv",
-                    ["check_contribution_tags.py", "--base", base, "--head", tagged_head],
-                ):
-                    self.assertEqual(checker.main(), 0)
-            finally:
-                os.chdir(cwd)
-
-    def test_terminal_cursor_summary_block_is_ignored_for_markdown_envelopes(self):
-        checker = self._checker("check_contribution_tags_cursor_summary")
-        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
-        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
-        envelope = f"{bold_begin}\n\n## Summary\n\nbody\n\n{bold_end}"
-        summary = (
-            "\n\n<!-- CURSOR_SUMMARY -->\n"
-            "Generated summary with untrusted prose.\n"
-            "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**\n"
-            "<!-- /CURSOR_SUMMARY -->"
+    def test_trailer_grammar_and_real_git_parsing(self):
+        cases = (
+            ("Change\n\nContributed-by: Codex | GPT-6", True),
+            ("Change\n\nContributed-by: Codex | GPT-6\nContributed-by: Tool | System\nCo-Authored-By: Fixture <fixture@example.invalid>", True),
+            ("Change\n\nContributed-by: Codex", False),
+            ("Change\n\nContributed-by:   | GPT-6", False),
+            ("Change\n\nContributed-by: Codex |   ", False),
+            ("Change\n\nContributed-by: Codex | GPT-6 | extra", False),
+            ("Change\n\nContributed-by: <assistant> | <model>", False),
+            ("Change\n\nContributed-by: Codex | GPT-6\nContributed-by: broken", False),
+            ("Change\n\nContributed-by: Codex | GPT-6\nContributed-by:", False),
+            ("Change\n\nContributed-by: Codex | GPT-6\n\nLater prose", False),
+            ("Contributed-by: Codex | GPT-6\n\nOrdinary prose", False),
         )
+        for message, valid in cases:
+            with self.subTest(message=message):
+                base = self.git("rev-parse", "HEAD")
+                head = self.commit(message)
+                self.assertEqual(self.checker.validate_commits(base, head) == [], valid)
 
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                envelope + summary,
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            [],
-        )
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                envelope + summary + "\n\n",
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            [],
-        )
-        with tempfile.TemporaryDirectory() as temp:
-            event = Path(temp) / "event.json"
-            event.write_text(
-                json.dumps({"pull_request": {
-                    "head": {"sha": "a" * 40}, "body": envelope + summary,
-                }}),
-                encoding="utf-8",
-            )
-            message = f"{self.BEGIN}\ncommit\n{self.END}"
-            with patch.object(checker, "_git", return_value=message):
-                self.assertEqual(checker._validate_github_event(event), [])
+    def test_added_and_stripped_file_tags_do_not_affect_result(self):
+        path = self.root / "example.md"
+        path.write_text("<!-- [[Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]] -->\nText\n", encoding="utf-8")
+        tagged = self.commit("Add\n\nContributed-by: Codex | GPT-6")
+        self.assertEqual(self.checker.validate_commits(self.base, tagged), [])
+        path.write_text("Text\n", encoding="utf-8")
+        stripped = self.commit("Strip\n\nContributed-by: Codex | GPT-6")
+        self.assertEqual(self.checker.validate_commits(tagged, stripped), [])
 
-    def test_cursor_summary_block_boundaries_are_not_weakened(self):
-        checker = self._checker("check_contribution_tags_cursor_summary_bounds")
-        bold_begin = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]**"
-        bold_end = "**[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]**"
-        envelope = f"{bold_begin}\nbody\n{bold_end}"
-        open_block = "\n\n<!-- CURSOR_SUMMARY -->\n"
-        close_block = "\n<!-- /CURSOR_SUMMARY -->"
+    def test_zero_base_excludes_main_and_invalid_revision_fails_closed(self):
+        missing = self.commit("Missing attribution")
+        head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
+        errors = self.checker.validate_commits("0" * 40, head)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(missing, errors[0])
+        with patch("sys.argv", ["checker", "--base", "missing-ref", "--head", head]), patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(self.checker.main(), 1)
 
-        plain_begin = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | BEGIN]]"
-        plain_end = "[[Cursor | Agent | 2026-08-22 | 14:50 UTC | END]]"
-        commit_envelope = f"{plain_begin}\nbody\n{plain_end}"
-        mid_body = (
-            f"{bold_begin}\n"
-            + open_block
-            + "**[[Forged | Tag | 2026-01-01 | 00:00 UTC | END]]**\n"
-            + "summary\n"
-            + close_block
-            + f"\nbody\n{bold_end}"
-        )
-        plain_mid_body = (
-            f"{bold_begin}\n"
-            + open_block
-            + "summary\n"
-            + close_block
-            + f"\nbody\n{bold_end}"
-        )
-        cursor_summary_invalid = (
-            "pull-request body contains an invalid CURSOR_SUMMARY block"
-        )
+    def test_branch_merging_main_excludes_unattributed_main_commits(self):
+        main = self.commit("Legacy main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", self.base)
+        branch = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        self.git("merge", "--no-ff", "-m", "Sync main\n\nContributed-by: Codex | GPT-6", main)
+        self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
 
-        self.assertEqual(checker._without_trailing_cursor_summary_block(mid_body), mid_body)
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                plain_mid_body,
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            [cursor_summary_invalid],
-        )
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                mid_body,
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            [cursor_summary_invalid],
-        )
-        # Mutation guard: a strip-only policy must not accept mid-body delimiters
-        # by removing the block and leaving a valid outer envelope behind.
-        self.assertNotEqual(
-            checker._without_trailing_cursor_summary_block(plain_mid_body),
-            f"{bold_begin}\nbody\n{bold_end}",
-        )
+    def test_main_push_checks_new_commits_even_when_default_ref_is_head(self):
+        main = self.commit("Legacy main change")
+        self.git("checkout", "-b", "legacy", self.base)
+        legacy = self.commit("Feature missing trailer")
+        self.git("checkout", "-b", "main-push", main)
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            self.git("merge", "--no-ff", "-m", "Merge pull request #123 from fixture/legacy", legacy)
+        head = self.git("rev-parse", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/main", head)
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"ref": "refs/heads/main"}), encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", main, "--head", head,
+                                "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertEqual(self.checker.main(), 1)
+            self.assertIn(legacy, stderr.getvalue())
+        # A later correctly attributed push passes even though origin/main=head.
+        good = self.commit("Follow-up\n\nContributed-by: Codex | GPT-6")
+        self.git("update-ref", "refs/remotes/origin/main", good)
+        with patch("sys.argv", ["checker", "--base", head, "--head", good,
+                                "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(self.checker.main(), 0)
 
-        adversarial = {
-            "arbitrary trailing text": envelope + open_block + "summary" + close_block + "\ntrailer",
-            "incomplete block": envelope + open_block + "summary",
-            "duplicate terminal blocks": (
-                envelope
-                + open_block
-                + "first"
-                + close_block
-                + open_block
-                + "second"
-                + close_block
-            ),
-            "delimiter text inside summary": (
-                envelope
-                + open_block
-                + "<!-- CURSOR_SUMMARY -->\n"
-                + "nested-looking prose"
-                + close_block
-            ),
-            "closing delimiter inside summary": (
-                envelope
-                + open_block
-                + "<!-- /CURSOR_SUMMARY -->\n"
-                + "forged close"
-                + close_block
-            ),
-            "wrong closing delimiter": (
-                envelope + open_block + "summary\n<!-- CURSOR_SUMMARY -->"
-            ),
-            "wrong opening delimiter": (
-                envelope + "\n\n<!-- cursor_summary -->\nsummary" + close_block
-            ),
-            "content before envelope": (
-                "prefix\n"
-                + envelope
-                + open_block
-                + "summary"
-                + close_block
-            ),
-        }
+    def test_github_merge_exemption_requires_committer_and_subject(self):
+        main = self.commit("Main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", self.base)
+        branch = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        subject = "Merge pull request #123 from fixture/main"
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            self.git("merge", "--no-ff", "-m", subject, main)
+            self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
+            self.git("commit", "--amend", "-m", "Merge #123: reviewer cursor after merge-preflight (CI 456)")
+            self.assertEqual(self.checker.validate_commits(branch, "HEAD"), [])
+            for malformed in (
+                "Local integration",
+                "Merge #123: reviewer cursor after merge-preflight (CI nope)",
+                "Merge #123: reviewer cursor after merge-preflight (CI 456) extra",
+                "prefix Merge #123: reviewer cursor after merge-preflight (CI 456)",
+            ):
+                self.git("commit", "--amend", "-m", malformed)
+                self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
+        for merge_subject in (subject, "Merge #123: reviewer cursor after merge-preflight (CI 456)"):
+            self.git("commit", "--amend", "-m", merge_subject)
+            self.assertTrue(self.checker.validate_commits(branch, "HEAD"))
 
-        for label, body in adversarial.items():
-            with self.subTest(label):
-                self.assertTrue(
-                    checker._validate_submission_envelope(
-                        body,
-                        require_outer=True,
-                        require_markdown_boundary=True,
-                    )
-                )
+    def test_single_parent_github_subject_without_trailer_fails(self):
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            for subject in ("Merge pull request #123 from fixture/feature",
+                            "Merge #123: reviewer cursor after merge-preflight (CI 456)"):
+                head = self.commit(subject)
+                self.assertTrue(any(head in error for error in self.checker.validate_commits(self.base, head)))
 
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                commit_envelope,
-                require_outer=True,
-                require_markdown_boundary=False,
-            ),
-            [],
-        )
-        self.assertTrue(
-            checker._validate_submission_envelope(
-                commit_envelope + open_block + "summary" + close_block,
-                require_outer=True,
-                require_markdown_boundary=False,
-            )
-        )
+    def test_local_merge_with_resolution_without_trailer_fails(self):
+        path = self.root / "conflict.txt"
+        path.write_text("baseline\n", encoding="utf-8")
+        base = self.commit("Base\n\nContributed-by: Codex | GPT-6")
+        path.write_text("main\n", encoding="utf-8")
+        main = self.commit("Legacy main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", base)
+        path.write_text("feature\n", encoding="utf-8")
+        branch = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.git("merge", "--no-ff", main)
+        path.write_text("combined resolution\n", encoding="utf-8")
+        head = self.commit("Resolve integration")
+        self.assertEqual(len(self.git("show", "-s", "--format=%P", head).split()), 2)
+        errors = self.checker.validate_commits(branch, head)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(head, errors[0])
 
-    def test_retained_inner_contribution_pair_is_accepted_for_markdown_envelopes(self):
-        checker = self._checker("check_contribution_tags_retained_inner_pair")
-        outer_begin = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]**"
-        outer_end = "**[[Claude | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]**"
-        inner_begin = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | BEGIN]]**"
-        inner_end = "**[[Cursor | Composer 2.5 | 2026-09-04 | 18:42 UTC | END]]**"
-        revised_body = "\n".join(
-            [
-                outer_begin,
-                "",
-                inner_begin,
-                "",
-                "## Summary",
-                "",
-                "retained prior submission text",
-                "",
-                inner_end,
-                "",
-                "Fallback correction notes.",
-                "",
-                outer_end,
-            ]
-        )
+    def test_missing_default_branch_fails_closed_with_setup_error(self):
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", self.base]), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(self.checker.main(), 1)
+        self.assertIn("setup error: default-branch ref unavailable", stderr.getvalue())
 
-        # Revising a tagged body requires retaining the earlier pair and adding
-        # a fresh outer pair, so the balanced retained inner pair is legitimate.
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                revised_body,
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            [],
-        )
-        with tempfile.TemporaryDirectory() as temp:
-            event = Path(temp) / "event.json"
-            event.write_text(
-                json.dumps({"pull_request": {
-                    "head": {"sha": "a" * 40}, "body": revised_body,
-                }}),
-                encoding="utf-8",
-            )
-            message = f"{self.BEGIN}\ncommit\n{self.END}"
-            with patch.object(checker, "_git", return_value=message):
-                self.assertEqual(checker._validate_github_event(event), [])
+    def test_explicit_default_branch_ref(self):
+        self.git("update-ref", "refs/remotes/origin/trunk", self.base)
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", head,
+                                "--default-branch-ref", "origin/trunk"]), patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(self.checker.main(), 0)
 
-        summary = (
-            "\n\n<!-- CURSOR_SUMMARY -->\n"
-            "Generated summary with untrusted prose.\n"
-            "<!-- /CURSOR_SUMMARY -->"
-        )
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                revised_body + summary,
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            [],
-        )
+    def test_pr_headers(self):
+        header = "Sole author: OpenAI Codex (GPT-6)"
+        for body in (header, header + "; assistance: tool-a, tool-b", "Summary\n\n" + header):
+            self.assertEqual(self.checker.validate_pr_body(body), [])
+        for body in ("", "Sole author: Codex", "Sole author:  (GPT-6)",
+                     "Sole author: Codex ( )", "Sole author: <assistant> (<model>)",
+                     header + "\n" + header, header + "; assistance: ",
+                     header + "; assistance: one, ", "<!--\n" + header + "\n-->",
+                     "```text\n" + header + "\n```", "> " + header, "    " + header):
+            with self.subTest(body=body):
+                self.assertTrue(self.checker.validate_pr_body(body))
 
-        # Retaining inner pairs does not weaken the outer boundary: an inner
-        # END that displaces the outer END is still rejected.
-        self.assertEqual(
-            checker._validate_submission_envelope(
-                "\n".join([outer_begin, "", inner_begin, "", "body", "", inner_end]),
-                require_outer=True,
-                require_markdown_boundary=True,
-            ),
-            ["submission outer BEGIN and END contribution tags do not match"],
-        )
+    def test_fenced_comment_text_cannot_hide_a_visible_author_header(self):
+        header = "Sole author: OpenAI Codex (GPT-6)"
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                self.assertTrue(self.checker.validate_pr_body(
+                    f"{header}\n{fence}text\n<!--\n{fence}\n{header}\n-->"
+                ))
+                self.assertEqual(self.checker.validate_pr_body(
+                    f"{fence}text\n<!--\n{fence}\n{header}\n-->"
+                ), [])
+        self.assertEqual(self.checker.validate_pr_body(
+            f"<!-- hidden\n```\n{header}\n-->\n{header}"
+        ), [])
+
+    def test_event_file_pr_and_push_and_malformed_input(self):
+        event = self.root / "event.json"
+        for payload, valid in (({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": self.base}}}, True),
+                               ({"pull_request": {"body": None, "head": {"sha": self.base}}}, False),
+                               ({"ref": "refs/heads/main"}, True)):
+            event.write_text(json.dumps(payload), encoding="utf-8")
+            errors, source_head = self.checker._validate_github_event(event)
+            self.assertEqual(errors == [], valid)
+            self.assertEqual(source_head, self.base if "pull_request" in payload else None)
+        head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
+        event.write_text("invalid JSON", encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", head, "--github-event", str(event)]), patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(self.checker.main(), 1)
+
+    def test_push_main_still_checks_trailers_and_pr_checks_both(self):
+        event = self.root / "event.json"
+        head = self.commit("No trailer")
+        for payload, valid in (({"ref": "refs/heads/main"}, False),
+                               ({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": head}}}, False)):
+            event.write_text(json.dumps(payload), encoding="utf-8")
+            with patch("sys.argv", ["checker", "--base", self.base, "--head", head, "--github-event", str(event)]), patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(self.checker.main(), 1)
+        base = head
+        head = self.commit("Good\n\nContributed-by: Codex | GPT-6")
+        for payload, expected in (({"ref": "refs/heads/main"}, 0),
+                                  ({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": head}}}, 0),
+                                  ({"pull_request": {"body": "No header", "head": {"sha": head}}}, 1)):
+            event.write_text(json.dumps(payload), encoding="utf-8")
+            with patch("sys.argv", ["checker", "--base", base, "--head", head, "--github-event", str(event)]), patch("sys.stdout", new_callable=io.StringIO), patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(self.checker.main(), expected)
+
+    def test_pr_source_head_overrides_synthetic_merge_checkout(self):
+        main = self.commit("Main change")
+        self.git("update-ref", "refs/remotes/origin/main", main)
+        self.git("checkout", "-b", "feature", self.base)
+        source = self.commit("Feature\n\nContributed-by: Codex | GPT-6")
+        self.git("checkout", "-b", "pr-merge", main)
+        with patch.dict(os.environ, {
+            "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }):
+            self.git("merge", "--no-ff", "-m", f"Merge {source} into {main}", source)
+        synthetic = self.git("rev-parse", "HEAD")
+        self.assertIn(synthetic, self.checker.validate_commits(self.base, "HEAD")[0])
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"pull_request": {
+            "body": "Sole author: Codex (GPT-6)", "head": {"sha": source},
+        }}), encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", "HEAD",
+                                "--github-event", str(event)]), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ), patch.object(self.checker, "_git", wraps=self.checker._git) as git:
+            self.assertEqual(self.checker.main(), 0)
+        git.assert_any_call("rev-list", f"{self.base}..{source}", "--not", main)
+        self.assertFalse(any(synthetic in call.args or "HEAD^{commit}" in call.args
+                             for call in git.call_args_list))
+
+    def test_pr_missing_or_invalid_source_head_fails_closed(self):
+        event = self.root / "event.json"
+        for pr_head in (None, {}, {"sha": "HEAD"}, {"sha": "--all"},
+                        {"sha": "a" * 39}, {"sha": "g" * 40}, {"sha": 123}):
+            with self.subTest(head=pr_head):
+                pr = {"body": "Sole author: Codex (GPT-6)"}
+                if pr_head is not None:
+                    pr["head"] = pr_head
+                event.write_text(json.dumps({"pull_request": pr}), encoding="utf-8")
+                with patch("sys.argv", ["checker", "--base", self.base, "--head", "HEAD",
+                                        "--github-event", str(event)]), patch(
+                    "sys.stderr", new_callable=io.StringIO
+                ), patch.object(self.checker, "validate_commits") as validate:
+                    self.assertEqual(self.checker.main(), 1)
+                    validate.assert_not_called()
+
+    def test_pr_unreadable_source_head_fails_closed(self):
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"pull_request": {
+            "body": "Sole author: Codex (GPT-6)", "head": {"sha": "a" * 40},
+        }}), encoding="utf-8")
+        with patch("sys.argv", ["checker", "--base", self.base, "--head", self.base,
+                                "--github-event", str(event)]), patch(
+            "sys.stderr", new_callable=io.StringIO
+        ), patch.object(self.checker, "_git", wraps=self.checker._git) as git:
+            self.assertEqual(self.checker.main(), 1)
+        git.assert_called_once_with("rev-parse", "--verify", "--end-of-options",
+                                    f"{'a' * 40}^{{commit}}")
+
+    def test_policy_and_templates_use_git_attribution(self):
+        root = Path(__file__).resolve().parents[1]
+        prompt = (root / "prompts/director-system.md").read_text(encoding="utf-8")
+        self.assertIn("Contributed-by:", prompt)
+        self.assertIn("do not add contribution tags to files", prompt)
+        self.assertNotIn("Require safe changed", prompt)
+        for name in ("AGENTS.md", "CLAUDE.md", "docs/team-operating-charter.md",
+                     "docs/contribution-attribution-policy.md", ".github/pull_request_template.md",
+                     "docs/templates/contribution-submission.md", "README.md",
+                     ".cursor/rules/contribution-attribution.mdc"):
+            text = (root / name).read_text(encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertIn("Contributed-by:", text)
+                self.assertIn("Sole author:", text)
+                self.assertIn("Co-Authored-By", text)
+                self.assertIn("#284", text)
+                self.assertNotIn("add a fresh outer", text)
 
 
 if __name__ == "__main__":

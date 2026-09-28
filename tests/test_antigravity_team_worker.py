@@ -835,6 +835,10 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 
     def test_exact_returned_bytes_become_durable_candidate_without_checkout_or_ref_change(self):
         candidate=self.integrate()
+        self.assertEqual(
+            self.git_command("show", "-s", "--format=%(trailers:key=Contributed-by)", candidate),
+            "Contributed-by: Antigravity | " + self.g.model,
+        )
         self.assertEqual(self.git_command("rev-parse","HEAD"),self.g.commit)
         self.assertEqual((self.repository/"src/allowed.py").read_bytes(),b"original\n")
         self.assertEqual(self.git_command("show",candidate+":src/allowed.py"),"changed")

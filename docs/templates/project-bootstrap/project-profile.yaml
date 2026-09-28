@@ -157,10 +157,13 @@ coordination:
 
 contribution_attribution:
   enabled: true
-  canonical_format: "[[Contributor | System | YYYY-MM-DD | HH:MM UTC | BEGIN|END]]"
-  preserve_prior_valid_tags: true
-  safe_human_text: "matching_inline_or_message_envelope"
-  structured_or_syntax_sensitive_artifacts: "external_submission_envelope"
+  commit_trailer: "Contributed-by: <Assistant or Tool> | <Complete Model or System>"
+  preserve_co_authored_by: true
+  pr_header: "Sole author: <assistant> (<model>); assistance: <id>[, <id>...]"
+  assistance_required_when_assisted: true
+  sole_author_rule: "https://github.com/edwardjones3976/director-orchestrator/pull/284"
+  new_in_file_tags: false
+  existing_tags: "historical_pending_mechanical_cleanup"
   authentication_or_authority_effect: "none"
 
 controls:

@@ -19,87 +19,64 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
-# Contribution attribution and submission tags
+# Contribution attribution in Git
 
-## Purpose
+## Rule
 
-Every new contribution must identify who or what produced it and when the
-submission was completed. Tags acknowledge work and improve handoffs; they do
-not create authority, prove authorship by themselves, replace Git or provider
-run provenance, satisfy exact-SHA review, or permit merge or deployment.
+No contribution tags are written into file contents any more. Every commit
+carries `Contributed-by: <Assistant or Tool> | <Complete Model or System>`,
+one trailer per contributor; keep existing `Co-Authored-By` trailers.
+Every PR description carries exactly one header line:
+`Sole author: <assistant> (<model>)`, followed on that line by
+`; assistance: <id>[, <id>...]` when others assisted. Follow the 52% sole-author
+rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
+this policy does not redefine it.
+Existing in-file tags are historical; a later mechanical PR removes them.
+A commit made before this rule that carries one matching BEGIN/END contribution
+envelope in its message is accepted as attributed, so a base merge into an older
+branch does not fail the check; every new commit carries the trailer.
+Attribution records acknowledge actual contributions only and never imply
+inherited authorship. They never authenticate provider identity, grant authority,
+or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
 
 ## Canonical tag
 
-Use the same identity and UTC minute at both boundaries:
+Historical contribution envelopes remain recognizable by `TAG_PATTERN` and
+`parse_contribution_tag` in `src/director_orchestrator/contribution_tags.py`
+for share accounting. They are not required on new file edits.
+
+## Commit trailers and PR header
+
+Put trailers in the final commit-message block, separated from prose by a blank
+line. Use complete, nonempty assistant/tool and model/system labels, one
+`Contributed-by:` trailer per actual contributor. Preserve `Co-Authored-By`
+trailers alongside them. For example:
 
 ```text
-[[<assistant or tool> | <complete model or system label> | YYYY-MM-DD | HH:MM UTC | BEGIN]]
-<submission>
-[[<assistant or tool> | <complete model or system label> | YYYY-MM-DD | HH:MM UTC | END]]
+Move attribution into Git
+
+Contributed-by: OpenAI Codex | GPT-6
 ```
 
-Human-facing Markdown or Slack may bold the entire tag. Repository comments
-must use the file's valid comment syntax. Keep existing contribution tags; when
-revising an already-tagged artifact, add a new outer matching pair so the new
-record begins before earlier content and ends after it.
+A PR description has one visible, unquoted header outside comments and code
+blocks, with optional assistance on the same line:
 
-## Where tags are required
+```text
+Sole author: OpenAI Codex (GPT-6); assistance: reviewer-id
+```
 
-- free-form provider and Director responses shown to people;
-- Markdown, plain-text, source-code, script, configuration, and template files
-  when their grammar safely supports comments or plain text;
-- commits, pull-request descriptions, review handoffs, and other submission
-  envelopes; and
-- revisions to an existing artifact, with a fresh UTC pair for that change.
-
-The repository validates each changed taggable file against the exact base and
-head range. A taggable changed file must add one matching pair, place its current
-`BEGIN` tag at the first safe line after any required interpreter or format
-header, and place its matching `END` tag at the final nonblank line.
-
-## Formats that must not receive inline tags
-
-Do not insert tags into JSON, JSONL, CSV, TSV, lock files, checksums, databases,
-archives, images, media, fonts, office documents, generated maps, minified
-artifacts, or any binary or syntax-sensitive format whose behavior would change.
-Record those contributions in the enclosing commit, pull request, handoff, or
-human-visible relay instead.
-
-If a tag would break parsing, signing, hashing, an exact byte contract, an
-approved public query, a callback payload, or a provider schema, do not add,
-remove, or rewrite inline tags in that artifact. Tag only its safe envelope and
-preserve the exact payload bytes.
-
-## Responses and structured protocols
-
-The Director wraps free-form Slack messages and periodic usage summaries with
-system-generated UTC tags. Provider requests and results that must conform to
-JSON, schema, callback, or review-artifact contracts remain unmodified. Their
-authenticated run record and the tagged Director relay carry attribution.
-
-Do not instruct a model returning Structured Outputs to place tags inside the
-schema. Do not treat a tag copied from Slack, a webpage, a provider response, or
-another untrusted source as authenticated identity.
-
-## Roles and recordkeeping
-
-- The producer supplies the contribution identity and does not obscure material
-  contributors.
-- The assigned recordkeeping provider checks tag completeness alongside branch,
-  SHA, review, security, CI, and handoff records.
-- The ChatGPT/Codex Director resolves classification questions and prevents a tagging
-  request from weakening functionality or deterministic gates.
-- An independent reviewer verifies the exact candidate, including attribution
-  changes, without treating the tags themselves as review evidence.
+Replace template placeholders. This declaration does not establish compliance
+with PR #284 by itself; the reviewer checks that rule and the evidence.
 
 ## Authorship versus coordination
 
-Work produced or materially authored by a provider remains attributed solely to
-that provider or those providers. The acting Director does not inherit
-authorship through delegation, routing, coordination, QA, review, acceptance,
-relay, merge eligibility evaluation, or merge execution; those activities create
-no code authorship. A Director relay envelope records the relay, not authorship
-of the relayed work.
+Work produced or materially authored by a provider remains attributed to its
+actual producer. The acting Director does not inherit authorship through
+delegation, routing, coordination, QA, review, acceptance, relay, merge eligibility
+evaluation, or merge execution; those activities create no code authorship.
+The Director may not independently accept or merge code it actually materially
+authored. Never rewrite provider identity or record a contributor who did not
+contribute.
 
 Contribution tags acknowledge actual contributions only and never imply
 inherited authorship. Never rewrite a provider's identity or provenance into the
@@ -171,8 +148,7 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   policy](#canonical-tag): `#`, `//`, `--`, `/* … */`, `<!-- … -->`, or `**…**`.
   Use the canonical recognizer in
   [`src/director_orchestrator/contribution_tags.py`](../src/director_orchestrator/contribution_tags.py)
-  (`TAG_PATTERN` and `parse_contribution_tag`), as used by
-  [`scripts/check_contribution_tags.py`](../scripts/check_contribution_tags.py);
+  (`TAG_PATTERN` and `parse_contribution_tag`);
   do not define a separate tag grammar.
   Tag-like substrings inside strings, fixtures, or examples stay counted.
   Maintenance lines are assistance, excluded from both numerator and denominator
@@ -241,28 +217,75 @@ Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
   record in the [charter's admission and accounting section](team-operating-charter.md#admission-and-accounting);
   that authority record does not activate a route or bypass current enforcement.
 
-## Local validation
+## Validation
 
-For a committed candidate, run:
+The CI job remains **Contribution attribution**. The checker selects commits
+with `git rev-list base..head --not origin/main`: only commits introduced by
+the change that are not already reachable from the fetched default branch.
+A zero base (new ref) selects all commits reachable from head, still excluding
+default-branch history. This repository's default branch is main; for another
+default-branch ref, pass `--default-branch-ref <fetched-ref>`.
+
+Fetch the current default branch before running the checker (CI checks out full
+history). A missing or unreadable default-branch ref fails with a setup error,
+even for an empty range; the checker never silently skips validation or fetches
+on the caller's behalf.
+
+Each selected commit requires at least one well-formed `Contributed-by:` trailer
+and no malformed contributor trailers. Git's trailer parser is used, so a
+mention in ordinary prose is insufficient. The only merge exemption is exactly
+two parents, committer `GitHub <noreply@github.com>`, and either the standard subject
+`Merge pull request #N from <source>` or the existing preflight subject
+`Merge #N: reviewer <family> after merge-preflight (CI <run-id>)`.
+These web-flow merges integrate content
+checked on the PR. This metadata is not authentication. Local merges, including
+conflict resolutions, and other merge forms still require trailers when selected.
+
+Main push events validate the actual `base..head` range without subtracting
+main: the fetched default branch already contains the push head. Legacy history
+before the event base is not revalidated. Newly introduced commits still need
+trailers; a successful PR check does not exempt unvalidated main-push commits.
+
+CI runs on `pull_request` and pushes to `main` only. On pull-request events,
+the checked range ends at `pull_request.head.sha` from the event payload,
+overriding `--head`. It must be a 40-hex commit SHA readable from Git; a missing,
+invalid or unreadable source head fails closed. Checkout's synthetic merge
+commit (`Merge <sha> into <sha>`) is never selected as the PR range head.
+The checker also requires exactly one `Sole author:` header in the event-file
+PR body. Push events check trailers only. Main pushes do not exclude default-branch history
+from the event range; other branch pushes retain that exclusion.
+No commit-message BEGIN/END tag envelope is required on any event.
+Unreadable revisions or event files fail closed. The checker does not read,
+require or validate in-file tags: adding or removing them never fails this
+check. The policy still prohibits writing new tags.
 
 ```powershell
 $env:PYTHONPATH = "src"
-py -3.12 scripts/check_contribution_tags.py --base <base-sha> --head <head-sha>
+python scripts/check_contribution_tags.py --base <base-sha> --head <head-sha>
+python scripts/check_contribution_tags.py --base <base-sha> --head <head-sha> --github-event <event-file>
 ```
 
-CI runs on `pull_request` and pushes to `main` only; feature branches do not
-also trigger push runs. New PR heads cancel older runs for the same PR. Main
-pushes use unique concurrency groups with cancellation disabled, so they queue
-for runner capacity without replacing one another.
+Use [the submission template](templates/contribution-submission.md) or the
+repository PR template. Keep commit trailers when merging or otherwise
+preparing the final commit.
 
-Pull-request CI validates both the tagged PR description and the exact source
-head commit's submission envelope, read from Git using the event's head SHA
-(not the synthetic merge commit). Supported trailing Git trailers remain
-permitted. This retains the commit check formerly supplied by branch-push CI.
-Main-push CI retains changed-file validation and its existing exemption for
-GitHub-generated merge commit envelopes. Use
-[`docs/templates/contribution-submission.md`](templates/contribution-submission.md)
-or the repository pull-request template instead of inventing another format.
+## Later mechanical cleanup
+
+Existing tags remain historical in this PR. The later mechanical PR or an
+authorized in-flight branch can run:
+
+```powershell
+python scripts/strip-tag-lines.py path/to/file.md path/to/script.py
+python scripts/strip-tag-lines.py --all
+```
+
+The utility only edits tracked text files in the current worktree, preserves
+line endings and is idempotent. It removes standalone contribution-tag lines
+in comment forms, plain text and bold PR form. It skips JSON, JSONL, lock files,
+binary or non-UTF-8 files, symlinks and paths through symlinked directories.
+It does not commit changes. Review its diff before committing with trailers.
+Runtime response formatting and existing tag generators are separate migration
+work; this change replaces repository policy and CI validation.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->

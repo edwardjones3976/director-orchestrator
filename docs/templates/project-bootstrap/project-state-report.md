@@ -55,10 +55,7 @@ that no appropriate alternative exists.
 
 Event markers follow
 [`project-bootstrap-protocol.md`](../../project-bootstrap-protocol.md).
-When publishing a completed report, preserve prior valid contribution tags and
-enclose the report in a new matching UTC pair. Keep tags out of embedded
-machine-readable payloads and identify those contributors in the surrounding
-report or submission envelope.
+Record attribution in commit `Contributed-by:` trailers and the PR `Sole author:` header, with assistance when applicable; keep `Co-Authored-By` trailers. Follow PR #284 and the attribution policy. Write no new in-file tags; historical tags await mechanical cleanup.
 
 ## <BOOTSTRAP | PLAN | EVIDENCE | RESHAPED | PAUSED | COMPLETE | OWNER_DECISION_REQUIRED>
 

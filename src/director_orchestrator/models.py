@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -767,6 +768,7 @@ class ProviderRun(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     provider: ProviderName
+    plan_generation: int | None = Field(default=None, ge=0)
     interaction_id: str | None = Field(default=None, min_length=1, max_length=255)
     assignment_sequence: int | None = Field(default=None, ge=1, le=20)
     run_id: str
@@ -1551,3 +1553,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]

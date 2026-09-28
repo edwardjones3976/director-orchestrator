@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
@@ -571,6 +572,12 @@ class LegacyProviderPacketTransport:
         record = self.task_store.get(str(packet["task_id"]))
         if record is None:
             raise RuntimeError("Claude callback task record is unavailable")
+        # The immutable packet captures dispatch generation before provider I/O.
+        # Owner reset clears the active plan before a replacement increments it.
+        generation = int(str(packet["idempotency_key"]).rsplit(":", 3)[1])
+        if record.plan is None or generation != record.plan_generation:
+            raise RuntimeError("Claude acknowledgement belongs to an inactive plan generation")
+        run.plan_generation = generation
         run.assignment_sequence = assignment.sequence
         run.interaction_id = str(packet["correlation"]["correlation_id"])
         backend = build_transport_evidence(
@@ -658,6 +665,7 @@ class LegacyProviderPacketTransport:
                 continue
             if observed.provider != current.provider or observed.run_id != current.run_id:
                 raise RuntimeError("provider poll changed the immutable run identity")
+            observed.plan_generation = current.plan_generation
             current = observed
         return current
 
@@ -1216,6 +1224,7 @@ class LegacyProviderPacketTransport:
 
         async def execute() -> ProviderRun:
             run = await self.adapter.dispatch(assignment, context=handoff)
+            run.plan_generation = int(str(packet["idempotency_key"]).rsplit(":", 3)[1])
             if provider == ProviderName.CLAUDE:
                 self._record_claude_dispatch(packet, context, assignment, run)
             return await self._wait(
@@ -1270,3 +1279,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]
