@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
@@ -46,7 +49,7 @@ import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass, replace
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -291,19 +294,16 @@ class TaskStore:
         self._initialize()
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        # Legacy task JSON may contain provider prose that migration replaces
-        # with opaque digests. SQLite's default leaves deleted cell content in
-        # free pages, so every writer enables physical page scrubbing before
-        # any migration or update.
-        connection.execute("PRAGMA secure_delete = ON")
-        try:
+    def _connect(self, *, timeout: float = 30) -> Iterator[sqlite3.Connection]:
+        with closing(sqlite3.connect(self.path, timeout=timeout)) as connection:
+            connection.row_factory = sqlite3.Row
+            # Legacy task JSON may contain provider prose that migration replaces
+            # with opaque digests. SQLite's default leaves deleted cell content in
+            # free pages, so every writer enables physical page scrubbing before
+            # any migration or update.
+            connection.execute("PRAGMA secure_delete = ON")
             with connection:
                 yield connection
-        finally:
-            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -857,6 +857,7 @@ class TaskStore:
                 """
             )
             self._migrate_effect_ledgers(connection)
+            self._compact_spend_settlements(connection)
             if self._journal_mode(connection) == "wal":
                 # A pre-upgrade WAL may still contain raw task JSON even when
                 # every logical row already uses the compact schema.
@@ -1238,11 +1239,19 @@ class TaskStore:
         else:
             changed_private_projection = previous_projection != replacement_projection
         had_private_projection = previous_projection is None or bool(previous_projection)
+        if changed_private_projection:
+            self._compact_spend_settlements(connection, json.loads(replacement_json)["task_id"])
         if (
             changed_private_projection
             and had_private_projection
             and self._journal_mode(connection) == "wal"
         ):
+            self._mark_privacy_cleanup_pending(connection)
+
+    def _compact_spend_settlements(self, connection: sqlite3.Connection, task_id: str | None = None) -> None:
+        from .providers import ProviderDailySpendLedger
+
+        if ProviderDailySpendLedger.compact_settlements(connection, task_id):
             self._mark_privacy_cleanup_pending(connection)
 
     def create(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
@@ -1421,13 +1430,13 @@ class TaskStore:
         self._attempt_privacy_cleanup()
         return record, True
 
-    def get(self, task_id: str) -> TaskRecord | None:
-        versioned = self.get_versioned(task_id)
+    def get(self, task_id: str, *, timeout: float = 30) -> TaskRecord | None:
+        versioned = self.get_versioned(task_id, timeout=timeout)
         return versioned[0] if versioned is not None else None
 
-    def get_versioned(self, task_id: str) -> tuple[TaskRecord, int] | None:
+    def get_versioned(self, task_id: str, *, timeout: float = 30) -> tuple[TaskRecord, int] | None:
         self._attempt_privacy_cleanup()
-        with self._lock, self._connect() as connection:
+        with self._task_lock(timeout), self._connect(timeout=timeout) as connection:
             row = connection.execute(
                 "SELECT * FROM tasks WHERE task_id = ?",
                 (task_id,),
@@ -2471,9 +2480,32 @@ class TaskStore:
                     ),
                 )
 
-    def save(self, record: TaskRecord) -> TaskRecord:
+    @contextmanager
+    def _task_lock(self, timeout: float) -> Iterator[None]:
+        if not self._lock.acquire(timeout=timeout):
+            raise sqlite3.OperationalError("Task store is busy")
+        try:
+            yield
+        finally:
+            self._lock.release()
+
+    def save(self, record: TaskRecord, *, spend_settlement: tuple[str, dict] | None = None) -> TaskRecord:
+        """CAS the task and, when supplied, its content-free acknowledgement atomically.
+
+        The settlement table must already exist in this SQLite database. This
+        does not provide a transaction across a Postgres runtime and SQLite.
+        """
+        if spend_settlement is not None:
+            from .providers import ProviderDailySpendLedger
+
+            effect_key, evidence = spend_settlement
+            evidence = ProviderDailySpendLedger.compact_settlement(evidence)
+            if not any(run.provider.value == evidence.get("provider") and run.run_id == evidence.get("run_id")
+                       for run in record.provider_runs):
+                raise ValueError("Acknowledgement requires its matching task run")
         self._attempt_privacy_cleanup()
-        with self._lock, self._connect() as connection:
+        timeout = 0.25 if spend_settlement else 30
+        with self._task_lock(timeout), self._connect(timeout=timeout) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """SELECT effect_migration_status, record_version, record_json
@@ -2521,7 +2553,14 @@ class TaskStore:
                 raise StaleTaskWrite(
                     "Task changed while the write was being committed"
                 )
-            record._store_version = current_version + 1
+            if spend_settlement is not None:
+                connection.execute(
+                    """INSERT INTO engine_spend_settlements VALUES (?, ?, ?)
+                    ON CONFLICT(task_id, effect_key) DO UPDATE SET evidence = excluded.evidence""",
+                    (record.task_id, effect_key, json.dumps(evidence, allow_nan=False)),
+                )
+        # Never advance the caller's CAS version until COMMIT has succeeded.
+        record._store_version = current_version + 1
         self._attempt_privacy_cleanup()
         return record
 
@@ -4346,3 +4385,6 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | END]]
