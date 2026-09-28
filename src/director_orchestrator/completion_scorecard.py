@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
@@ -559,10 +560,15 @@ def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observat
     env = _environment(service)
     environment = env.get("APP_ENV", "").strip() or "local"
     health_url = f"http://127.0.0.1:{int(port)}/health"
-    health = _health(health_url, environment)
+    # Daemon identity remains collectable when candidate health refuses or lies.
+    # Health-dependent predicates receive missing evidence, never a replacement PASS.
+    try:
+        health = _health(health_url, environment)
+        if not isinstance(health.get("langgraph_primary", {}), dict):
+            raise ValueError("primary health is malformed")
+    except _SOURCE_ERRORS:
+        health = {}
     primary = health.get("langgraph_primary", {})
-    if not isinstance(primary, dict):
-        raise ValueError("primary health is malformed")
     # The Director's evidence lives in its control-plane store as much as in the process: the bound is the later
     # creation of the Director and the langgraph-primary-db its DSN resolves to.
     runtime = _Runtime(project, ids[0], image_id, runtime_sha,
@@ -708,11 +714,21 @@ def _workflow_matches(sha: str, reference: str, nodes: Any, connections: Any,
     types must match), and the parameter values the collector binds separately (``bound``: node name ->
     (parameter path, expected value)), such as the project channel.
     """
-    # The contract is the candidate commit's workflow file, never an unverified working tree.
-    blob = _candidate_blob(sha, "n8n/workflows/" + reference)
+    # The launcher runs an owner-pinned evaluator archive. Its contract, not
+    # agreement between a candidate file and its deployment, selects expectation.
+    if reference not in {"director-intake.json", "director-status.json"}:
+        return None
+    path = "n8n/workflows/" + reference
+    blob = _candidate_blob(sha, path)
+    try:
+        expected_blob = _read_bounded_file(_REPO_ROOT, path)
+    except (OSError, ValueError):
+        return None
     if blob is None:
         return None
-    document = json.loads(blob.decode("utf-8"))
+    if blob.replace(b"\r\n", b"\n") != expected_blob.replace(b"\r\n", b"\n"):
+        return False
+    document = json.loads(expected_blob.decode("utf-8"))
     if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
         return False
 
@@ -885,6 +901,46 @@ def _intake_route_verified(runtime: _Runtime, gateway: str) -> tuple[bool | None
     return True, max(_when(mark) for mark in marks)
 
 
+def _gateway_inventory_observation(at, runtime, gateway_env, gateway_identity, containers):
+    """Independent daemon/host inventory; no route or candidate health read."""
+    binding = runtime.binding
+    # A Slack app-level token carries its app's ID (xapp-<n>-<APP_ID>-...): that, not one credential
+    # instance, is the gateway's identity, so a rotated or second token of the same app still matches.
+    app = _slack_app_id(gateway_env.get("SLACK_APP_TOKEN", ""))
+    if app is None:
+        return _observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)
+    matches, unknown = [], 0
+    for row in containers:
+        token = _environment(row).get("SLACK_APP_TOKEN", "")
+        if not token:
+            continue
+        other = _slack_app_id(token)
+        if other is None:
+            unknown += 1  # an app token whose app cannot be read may be this app's
+            continue
+        if other != app:
+            continue
+        if _gateway_launch(row):
+            matches.append(row.get("Id"))
+        elif not _same(row.get("Id"), runtime.container_id):
+            # Only the already-identified Director container is exempt, by its exact ID: any other same-app
+            # container (a wrapper that also launches the API, say) is unclassified, never exempted by its command.
+            unknown += 1
+    host = None
+    try:
+        host = _run_json(["powershell", "-NoProfile", "-NonInteractive", "-Command", _HOST_GATEWAYS])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    passed = False if len(matches) != 1 else None
+    if len(matches) == 1 and unknown == 0 and isinstance(host, dict):
+        if type(host.get("unreadable")) is int and type(host.get("gateway_process_count")) is int and host["unreadable"] == 0 and host["gateway_process_count"] == 0:
+            passed = True
+    inventory = {**gateway_identity, "running_containers_inspected": len(containers),
+                 "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
+    return _observation("02", passed, "Compared the Slack app ID named by each running container's app token and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
+                               "Docker running inventory and Windows Win32_Process", inventory, at, **binding)
+
+
 def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
                            channel: str | None) -> list[Observation]:
     """Inspect every running container; the gateway is the caller's exact name, never a guess."""
@@ -922,114 +978,84 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     gateway_identity = {"expected_gateway": expected_gateway, "gateway_container_id": gateway["Id"],
                         "gateway_image_id": gateway_image}
     gateway_env = _environment(gateway)
-    gateway_project = _labels(gateway).get("com.docker.compose.project")
-    in_deployment = None if gateway_project is None else gateway_project == runtime.project
-    workflow = None
-    upstream = {}
-    # Only n8n's own execution store says which intake workflow it runs.
-    store = _n8n_store(n8n, n8n_db, containers) if n8n is not None else None
-    if n8n is not None and n8n_db is not None and store is True:
-        try:
-            workflow = _run_json(["docker", "exec", n8n_db["Id"], "psql", "-U", "n8n", "-d", "n8n",
-                                  "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
-            if (isinstance(workflow, dict) and workflow.get("supported_request") is True
-                    and workflow.get("active_version") and workflow.get("active_version") == workflow.get("stored_version")):
-                upstream = _run_json(["docker", "exec", n8n["Id"], "node", "-e", _UPSTREAM_HEALTH])
-        except _SOURCE_ERRORS:
-            workflow = None
-    channel_ok = channel is not None and gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == channel
-    relay = urlsplit(gateway_env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
-    route_ok = _relay_route_ok(relay, n8n)
-    facts = {**gateway_identity, "director_port_loopback": _loopback(director, 8080),
-             "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
-             "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
-             "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
-             # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
-             "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
-             "gateway_runs_director_image": gateway_image == runtime.image_id,
-             "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
-             "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
-             "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
-             "active_intake": workflow,
-             "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
-                                       for row in (director, gateway, n8n))}
-    route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
-                                   "gateway_n8n_route_matches": True, "containers_running": True,
-                                   "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
-                                   "gateway_credentials_match": True, "gateway_runs_director_image": True})
-    hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
-    if route_pass is False and None in hops and False not in hops and all(
-            facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
-                                           "gateway_n8n_route_matches", "containers_running")):
-        route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
-    if isinstance(workflow, dict):
-        # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
-        workflow["forwarding_contract"] = _workflow_matches(runtime.runtime_sha, "director-intake.json",
-                                                            workflow.pop("nodes", None),
-                                                            workflow.pop("connections", None),
-                                                            settings=workflow.pop("settings", None),
-                                                            pin_data=workflow.pop("pin_data", None))
-    workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
-                                             "supported_webhook": True, "direct_connection": True,
-                                             "forwarding_contract": True})
-    if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
-        workflow_ok = None  # An unsupported expression is not a proven wrong destination.
-    if workflow and workflow.get("forwarding_contract") is None:
-        workflow_ok = None  # The candidate's workflow file could not be read: unproven, not wrong.
-    if route_pass is True:
-        route_pass = workflow_ok
-        if route_pass is True:
-            route_pass = (bool(workflow.get("active_version")) and workflow["active_version"] == workflow.get("stored_version")
-                          and upstream.get("environment") == runtime.environment)
-    explanation = ("Observed the selected deployment's loopback Director and n8n ports, the gateway's --channel and relay, "
-                   "and the actual published intake version's supported forwarding URL, then checked that upstream's "
-                   "environment. Missing/unsupported workflow evidence cannot pass. Full task delivery is scored separately.")
-    if in_deployment is False:
-        route_pass, explanation = False, "The expected gateway belongs to another Compose project."
-    elif channel is None:
-        route_pass, explanation = None, "--channel was not supplied; the project channel was not compared."
-    elif n8n is None or n8n_db is None:
-        route_pass, explanation = None, "The selected deployment does not run exactly one n8n and one n8n-db service."
-    elif route_pass is not False and in_deployment is None:
-        route_pass, explanation = None, "The expected gateway carries no Compose labels; deployment membership is unproven."
-    result = [_observation("01", route_pass, explanation,
-                           "Docker topology and n8n upstream GET /health", facts, at, **binding)]
-    # A Slack app-level token carries its app's ID (xapp-<n>-<APP_ID>-...): that, not one credential
-    # instance, is the gateway's identity, so a rotated or second token of the same app still matches.
-    app = _slack_app_id(gateway_env.get("SLACK_APP_TOKEN", ""))
-    if app is None:
-        return result + [_observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)]
-    matches, unknown = [], 0
-    for row in containers:
-        token = _environment(row).get("SLACK_APP_TOKEN", "")
-        if not token:
-            continue
-        other = _slack_app_id(token)
-        if other is None:
-            unknown += 1  # an app token whose app cannot be read may be this app's
-            continue
-        if other != app:
-            continue
-        if _gateway_launch(row):
-            matches.append(row.get("Id"))
-        elif not _same(row.get("Id"), runtime.container_id):
-            # Only the already-identified Director container is exempt, by its exact ID: any other same-app
-            # container (a wrapper that also launches the API, say) is unclassified, never exempted by its command.
-            unknown += 1
-    host = None
+    inventory = _gateway_inventory_observation(at, runtime, gateway_env, gateway_identity, containers)
     try:
-        host = _run_json(["powershell", "-NoProfile", "-NonInteractive", "-Command", _HOST_GATEWAYS])
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass
-    passed = False if len(matches) != 1 else None
-    if len(matches) == 1 and unknown == 0 and isinstance(host, dict):
-        if type(host.get("unreadable")) is int and type(host.get("gateway_process_count")) is int and host["unreadable"] == 0 and host["gateway_process_count"] == 0:
-            passed = True
-    inventory = {**gateway_identity, "running_containers_inspected": len(containers),
-                 "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
-    result.append(_observation("02", passed, "Compared the Slack app ID named by each running container's app token and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
-                               "Docker running inventory and Windows Win32_Process", inventory, at, **binding))
-    return result
+        gateway_project = _labels(gateway).get("com.docker.compose.project")
+        in_deployment = None if gateway_project is None else gateway_project == runtime.project
+        workflow = None
+        upstream = {}
+        # Only n8n's own execution store says which intake workflow it runs.
+        store = _n8n_store(n8n, n8n_db, containers) if n8n is not None else None
+        if n8n is not None and n8n_db is not None and store is True:
+            try:
+                workflow = _run_json(["docker", "exec", n8n_db["Id"], "psql", "-U", "n8n", "-d", "n8n",
+                                      "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
+                if (isinstance(workflow, dict) and workflow.get("supported_request") is True
+                        and workflow.get("active_version") and workflow.get("active_version") == workflow.get("stored_version")):
+                    upstream = _run_json(["docker", "exec", n8n["Id"], "node", "-e", _UPSTREAM_HEALTH])
+            except _SOURCE_ERRORS:
+                workflow = None
+        channel_ok = channel is not None and gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == channel
+        relay = urlsplit(gateway_env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
+        route_ok = _relay_route_ok(relay, n8n)
+        facts = {**gateway_identity, "director_port_loopback": _loopback(director, 8080),
+                 "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
+                 "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
+                 "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
+                 # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
+                 "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
+                 "gateway_runs_director_image": gateway_image == runtime.image_id,
+                 "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
+                 "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
+                 "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
+                 "active_intake": workflow,
+                 "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
+                                           for row in (director, gateway, n8n))}
+        route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
+                                       "gateway_n8n_route_matches": True, "containers_running": True,
+                                       "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
+                                       "gateway_credentials_match": True, "gateway_runs_director_image": True})
+        hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
+        if route_pass is False and None in hops and False not in hops and all(
+                facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
+                                               "gateway_n8n_route_matches", "containers_running")):
+            route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
+        if isinstance(workflow, dict):
+            # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
+            workflow["forwarding_contract"] = _workflow_matches(runtime.runtime_sha, "director-intake.json",
+                                                                workflow.pop("nodes", None),
+                                                                workflow.pop("connections", None),
+                                                                settings=workflow.pop("settings", None),
+                                                                pin_data=workflow.pop("pin_data", None))
+        workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
+                                                 "supported_webhook": True, "direct_connection": True,
+                                                 "forwarding_contract": True})
+        if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
+            workflow_ok = None  # An unsupported expression is not a proven wrong destination.
+        if workflow and workflow.get("forwarding_contract") is None:
+            workflow_ok = None  # The candidate's workflow file could not be read: unproven, not wrong.
+        if route_pass is True:
+            route_pass = workflow_ok
+            if route_pass is True:
+                route_pass = (bool(workflow.get("active_version")) and workflow["active_version"] == workflow.get("stored_version")
+                              and upstream.get("environment") == runtime.environment)
+        explanation = ("Observed the selected deployment's loopback Director and n8n ports, the gateway's --channel and relay, "
+                       "and the actual published intake version's supported forwarding URL, then checked that upstream's "
+                       "environment. Missing/unsupported workflow evidence cannot pass. Full task delivery is scored separately.")
+        if in_deployment is False:
+            route_pass, explanation = False, "The expected gateway belongs to another Compose project."
+        elif channel is None:
+            route_pass, explanation = None, "--channel was not supplied; the project channel was not compared."
+        elif n8n is None or n8n_db is None:
+            route_pass, explanation = None, "The selected deployment does not run exactly one n8n and one n8n-db service."
+        elif route_pass is not False and in_deployment is None:
+            route_pass, explanation = None, "The expected gateway carries no Compose labels; deployment membership is unproven."
+        result = [_observation("01", route_pass, explanation,
+                               "Docker topology and n8n upstream GET /health", facts, at, **binding)]
+    except _SOURCE_ERRORS:
+        result = [_observation("01", None, "Intake route evidence unavailable; no retry was made.",
+                               "Docker topology and pinned workflow", {}, at, **binding)]
+    return result + [inventory]
 
 
 def _trial_module():
@@ -1078,6 +1104,7 @@ class _SlackThreads:
         self.bot, self.owner, self.api, self.channel = auth["user_id"], self.env["SLACK_OWNER_USER_ID"], runtime.api_base, channel
         self.runtime = runtime
         self._task_snapshots = {}
+        self._thread_bindings = {}
 
     def replies(self, thread: str):
         return self.reads.replies(thread)
@@ -1149,21 +1176,22 @@ class _SlackThreads:
         raise ValueError("channel history exceeds its bound")
 
     def binding(self, thread: str) -> str | None:
-        """200 -> task ID, 404 -> None, 409 -> "AMBIGUOUS"; anything else is unavailable."""
-        status, body = self._get(self.api + "/v1/slack-thread-bindings",
-                                 {"channel_id": self.channel, "thread_ts": thread}, self.env["ORCHESTRATOR_SHARED_SECRET"])
-        if status == 404:
-            return None
-        if status == 409:
-            return "AMBIGUOUS"
-        if status != 200:
-            raise ValueError("thread binding unavailable")
-        value = json.loads(body)
-        task_id = value.get("task_id") if isinstance(value, dict) else None
-        if (not isinstance(task_id, str) or not _TASK.fullmatch(task_id)
-                or value.get("channel_id") != self.channel or value.get("thread_ts") != thread):
-            raise ValueError("thread binding does not echo this thread")
-        return task_id
+        """One bounded store snapshot: absent, unique, ambiguous, or unavailable."""
+        if not isinstance(thread, str) or not _TS.fullmatch(thread):
+            raise ValueError("invalid thread selection")
+        if thread not in self._thread_bindings:
+            if len(self._thread_bindings) >= len(DRILL_KINDS):
+                raise ValueError("thread binding limit exceeded")
+            self._thread_bindings[thread] = None
+            matches, _ = _trusted_collection(self.runtime, [], thread_binding=(self.channel, thread))
+            if (not isinstance(matches, tuple) or len(matches) > 2
+                    or any(not isinstance(task, str) or not _TASK.fullmatch(task) for task in matches)):
+                raise ValueError("thread binding response malformed")
+            self._thread_bindings[thread] = matches
+        matches = self._thread_bindings[thread]
+        if matches is None:
+            raise ValueError("thread binding unavailable; no retry was made")
+        return None if not matches else matches[0] if len(matches) == 1 else "AMBIGUOUS"
 
     def close(self) -> None:
         self.client.close()
@@ -1247,7 +1275,7 @@ def _sqlite_snapshot(path: Path):
         raise ValueError("SQLite snapshot unavailable or inconsistent") from None
 
 
-def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False):
+def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False, thread_binding=None):
     """Only evaluator code runs. Owner inputs and inspect values remain in memory."""
     from dataclasses import fields
     from pathlib import PurePosixPath
@@ -1257,7 +1285,8 @@ def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False):
     from .primary_scorecard_evidence import consistency_report, activation_capture_report
     from .primary_provider_evidence import _BoundedCaptureReader
     from .provider_validation import CaptureVerifier
-    from .langgraph_postgres import database_binding, read_postgres_qualification_evidence
+    from .langgraph_postgres import (database_binding, read_postgres_qualification_evidence,
+                                    read_postgres_slack_thread_binding)
     import psycopg
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
     from psycopg.rows import dict_row
@@ -1357,6 +1386,16 @@ def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False):
         selected = sorted(set(tasks))
         if len(selected) > 12 or any(not re.fullmatch(r"DIR-LG-[A-F0-9]{1,32}", task) for task in selected):
             raise ValueError("task selection invalid")
+        if thread_binding is not None:
+            if (selected or qualification_only or not isinstance(thread_binding, tuple) or len(thread_binding) != 2
+                    or thread_binding[0] != environment.get("SLACK_DIRECTOR_CHANNEL_ID")
+                    or not isinstance(thread_binding[1], str) or not _TS.fullmatch(thread_binding[1])):
+                raise ValueError("thread selection differs from owner-bound deployment")
+            return read_postgres_slack_thread_binding(primary_dsn,
+                channel_id=thread_binding[0], thread_ts=thread_binding[1],
+                schema=settings.langgraph_primary_postgres_schema,
+                accepted_storage_identity=storage, accepted_instance_id=instance,
+                wall_seconds=min(5.0, _remaining(5))), None
         if qualification_only:
             # Same owner/generation/transport binding, without recomputing unrelated
             # consistency counts or activation captures for each task read.
@@ -1400,7 +1439,6 @@ def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False):
 # Keep the expanded audit in docs/twenty-check-completion-scorecard.md in sync.
 _DEPLOYMENT_INPUTS = (
     ("owner selections; Docker inventory, configuration, networks and lifecycle", "T"),
-    ("Director /health prerequisite (environment and primary object)", "C"),
 )
 _ROUTE_INPUTS = (
     ("n8n active intake workflow via its bound database", "T"),
@@ -1418,7 +1456,7 @@ COLLECTOR_INPUTS = {
     "01": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + (("n8n upstream GET /health", "C"),),
     "02": _DEPLOYMENT_INPUTS + (("Windows Win32_Process gateway inventory", "T"),),
     "03": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + (
-        ("Director /v1/slack-thread-bindings", "C"),),
+        ("candidate-writable thread binding rows require native Slack correlation", "C"),),
     "04": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + (
         ("n8n active status workflow, executions and credential update time via bound database", "T"),
         ("candidate n8n/workflows/director-status.json", "C"),),
@@ -1427,7 +1465,7 @@ COLLECTOR_INPUTS = {
     "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
     "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
     "09": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
-        ("Director /v1/slack-thread-bindings", "C"),),
+        ("candidate-writable thread binding rows require native Slack correlation", "C"),),
     "10": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
         ("owner structural rubric and Slack conversations.history", "T"),),
     "11": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CAPTURE_INPUTS,
@@ -1445,13 +1483,16 @@ COLLECTOR_INPUTS = {
     "20": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS + (
         ("owner predeclared paid-answer rubric", "T"),),
 }
+# Source decoupling is not admission. These remain held until their independent
+# transitive evidence and sanctioned validation have been proved.
+_PENDING_TRUST_PROOF = frozenset({"02", "17"})
 _CONTAINED_CAPTURES = tuple(key for key in ("11", "12")
                             if any(trust == "C" for _, trust in COLLECTOR_INPUTS[key]))
 _CONTAINED_CANDIDATE = tuple(key for key in ("17",)
-                             if any(trust == "C" for _, trust in COLLECTOR_INPUTS[key]))
+                             if key in _PENDING_TRUST_PROOF or any(trust == "C" for _, trust in COLLECTOR_INPUTS[key]))
 _CONTAINED_RUNTIME = tuple(
     key for key, inputs in COLLECTOR_INPUTS.items()
-    if any(trust == "C" for _, trust in inputs)
+    if (key in _PENDING_TRUST_PROOF or any(trust == "C" for _, trust in inputs))
     and key not in _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE
 )
 
@@ -3995,3 +4036,4 @@ def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) ->
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]

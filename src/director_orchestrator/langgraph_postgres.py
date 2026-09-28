@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -2533,31 +2534,32 @@ class PostgresConditionalClaimStore:
                 return str(row["task_id"]), True
 
     def resolve_primary_slack_thread_binding(
-        self,
-        *,
-        channel_id: str,
-        thread_ts: str,
+        self, *, channel_id: str, thread_ts: str, deadline: float | None = None,
     ) -> tuple[str, ...]:
-        """Return every task whose persisted intake binding matches one thread."""
-
+        """Read at most two matches: zero, a unique task, or an ambiguous thread."""
         _require_id(channel_id, "channel_id")
         _require_id(thread_ts, "thread_ts")
+        deadline = monotonic() + 5.0 if deadline is None else deadline
         schema = self._schema
-        with self._pool.connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT task_id
-                    FROM {schema}.director_primary_task_projection
-                    WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
-                          = %(channel_id)s
-                      AND projection->'application'->'task_record'->'intake'->>'thread_ts'
-                          = %(thread_ts)s
-                    ORDER BY created_at, task_id
-                    """,
-                    {"channel_id": channel_id, "thread_ts": thread_ts},
-                )
-                rows = cursor.fetchall()
+        with bounded_connection(self._pool, deadline) as connection:
+            with connection.transaction():
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                bind_transaction_deadline(connection, deadline)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        SELECT task_id
+                        FROM {schema}.director_primary_task_projection
+                        WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
+                              = %(channel_id)s
+                          AND projection->'application'->'task_record'->'intake'->>'thread_ts'
+                              = %(thread_ts)s
+                        ORDER BY created_at, task_id LIMIT 2
+                        """,
+                        {"channel_id": channel_id, "thread_ts": thread_ts},
+                    )
+                    rows = cursor.fetchall()
+        require_deadline_remaining(deadline, "thread binding readback")
         return tuple(str(row["task_id"]) for row in rows)
 
     def record_primary_slack_status_receipt(
@@ -6010,20 +6012,14 @@ def open_provider_activation_store(dsn: str, *, schema: str,
 
 
 
-def read_postgres_qualification_evidence(dsn: str, task_id: str, *, schema: str,
-        accepted_storage_identity: str, accepted_instance_id: str,
-        wall_seconds: float = 5.0) -> dict[str, Any] | None:
-    """Read an existing task through the guarded factory, without runtime authority.
-
-    No schema setup, checkpoint saver, graph or writer is constructed. Only the
-    bounded snapshot escapes this function; the factory-bound store stays local.
-    The deadline includes connection acquisition and accepted-instance checks.
-    """
+@contextmanager
+def _open_postgres_readonly_evidence(dsn: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str, wall_seconds: float):
+    """Private factory shared by bounded readers; no store escapes their calls."""
     from psycopg.conninfo import conninfo_to_dict
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
 
-    _require_id(task_id, "task_id")
     if type(wall_seconds) not in {int, float} or not 0.1 <= wall_seconds <= 30:
         raise ValueError("wall_seconds must be between 0.1 and 30 seconds")
     deadline = monotonic() + float(wall_seconds)
@@ -6053,14 +6049,40 @@ def read_postgres_qualification_evidence(dsn: str, task_id: str, *, schema: str,
         store = PostgresConditionalClaimStore(_pool=pool, _schema=schema,
             storage_identity=accepted_storage_identity, database_instance_id=accepted_instance_id,
             _store_provenance=_FACTORY_PROVENANCE)
+        yield store, deadline
+    finally:
+        pool.close()
+    require_deadline_remaining(deadline, "evidence factory completion")
+
+
+def read_postgres_qualification_evidence(dsn: str, task_id: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str,
+        wall_seconds: float = 5.0) -> dict[str, Any] | None:
+    """Return one guarded read-only snapshot; no DDL, graph, saver or writer authority."""
+    _require_id(task_id, "task_id")
+    with _open_postgres_readonly_evidence(dsn, schema=schema,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id, wall_seconds=wall_seconds) as (store, deadline):
         remaining = require_deadline_remaining(deadline, "qualification factory")
         if remaining < 0.1:
             raise DeadlineExpired("qualification factory deadline expired before readback")
         result = store.read_primary_qualification_evidence(task_id, wall_seconds=remaining)
-    finally:
-        pool.close()
-    require_deadline_remaining(deadline, "qualification factory completion")
     return result
+
+
+def read_postgres_slack_thread_binding(dsn: str, *, channel_id: str, thread_ts: str,
+        schema: str, accepted_storage_identity: str, accepted_instance_id: str,
+        wall_seconds: float = 5.0) -> tuple[str, ...]:
+    """Return zero, one or two task identities through the same guarded reader factory."""
+    _require_id(channel_id, "channel_id")
+    _require_id(thread_ts, "thread_ts")
+    with _open_postgres_readonly_evidence(dsn, schema=schema,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id, wall_seconds=wall_seconds) as (store, deadline):
+        result = store.resolve_primary_slack_thread_binding(
+            channel_id=channel_id, thread_ts=thread_ts, deadline=deadline)
+    return result
+
 
 def open_postgres_control_plane(
     dsn: str,
@@ -6242,3 +6264,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]

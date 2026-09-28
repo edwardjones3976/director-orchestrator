@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:34 UTC | BEGIN]]
 import unittest
@@ -62,6 +63,30 @@ class QualificationReadOnlyFactoryTests(unittest.TestCase):
             pool.return_value.close.assert_called_once()
 
 
+    def test_thread_resolver_uses_same_identity_factory_and_bounded_readonly_query(self):
+        for matches in ((), ("DIR-LG-AB12",), ("DIR-LG-AB12", "DIR-LG-CD34")):
+            with self.subTest(matches=matches), patch("psycopg_pool.ConnectionPool") as pool, \
+                    patch.object(pg, "bind_transaction_deadline") as bind:
+                connection = pool.return_value.connection.return_value.__enter__.return_value
+                cursor = connection.cursor.return_value.__enter__.return_value
+                cursor.fetchall.return_value = [{"task_id": task} for task in matches]
+                result = pg.read_postgres_slack_thread_binding(self.dsn,
+                    channel_id="C123456789", thread_ts="1726000000.123456", **self.arguments())
+            self.assertEqual(result, matches)
+            connection.execute.assert_called_once_with("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            bind.assert_called_once()
+            sql, params = cursor.execute.call_args.args
+            self.assertIn("LIMIT 2", sql)
+            self.assertEqual(params, {"channel_id": "C123456789", "thread_ts": "1726000000.123456"})
+            self.assertGreater(pool.return_value.connection.call_args.kwargs["timeout"], 0)
+            self.assertLessEqual(pool.return_value.connection.call_args.kwargs["timeout"], 5)
+            pool.return_value.close.assert_called_once()
+        with patch("psycopg_pool.ConnectionPool") as pool, self.assertRaises(ValueError):
+            pg.read_postgres_slack_thread_binding(self.dsn.replace("verify-full", "require"),
+                channel_id="C123456789", thread_ts="1726000000.123456", **self.arguments())
+        pool.assert_not_called()
+
+
 class TrustedTaskConsumerTests(unittest.TestCase):
     def reader(self):
         import httpx
@@ -124,7 +149,85 @@ class TrustedTaskConsumerTests(unittest.TestCase):
             collect.assert_called_once()
 
 
+class IndependentAuthorityTests(unittest.TestCase):
+    def test_candidate_health_cannot_hide_daemon_identity(self):
+        from tests import test_completion_scorecard as f
+        from director_orchestrator import completion_scorecard as sc
+        world = f.World(self)
+        for options in ({"side_effect": ValueError("unavailable")},
+                        {"return_value": {"langgraph_primary": []}}):
+            with self.subTest(options=options), patch.object(sc, "_run_bytes", side_effect=world.run), \
+                    patch.object(sc, "_health", **options):
+                observations, runtime = sc._runtime(world.now, f.DEPLOYMENT)
+            self.assertEqual(runtime.container_id, f.DIRECTOR_ID)
+            self.assertEqual(runtime.health, {})
+            self.assertTrue(all(item.passed is not True for item in observations))
+
+    def test_route_failure_does_not_erase_gateway_inventory(self):
+        from tests import test_completion_scorecard as f
+        from director_orchestrator import completion_scorecard as sc
+        with patch.object(sc, "_workflow_matches", side_effect=ValueError("route unreadable")):
+            report = f.collect_topology(f.topology())
+        self.assertEqual(f.row(report, "01")["status"], "UNKNOWN")
+        self.assertEqual(f.row(report, "02")["status"], "PASS")
+        self.assertIn("02", sc._PENDING_TRUST_PROOF)  # rule result is still contained in live collection
+
+    def test_workflow_expectation_is_selected_by_pinned_evaluator(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from tests import test_completion_scorecard as f
+        from director_orchestrator import completion_scorecard as sc
+        document = json.loads((sc._REPO_ROOT / "n8n/workflows/director-intake.json").read_text())
+        accepted = next(node for node in document["nodes"] if node["name"] == "Accepted")
+        accepted["parameters"].setdefault("options", {})["responseCode"] = 201
+        changed = json.dumps(document).encode()
+        def matches():
+            return sc._workflow_matches(f.SHA, "director-intake.json", document["nodes"],
+                document["connections"], settings=document.get("settings", {}),
+                pin_data=document.get("pinData", {}))
+        with patch.object(sc, "_candidate_blob", return_value=changed):
+            self.assertFalse(matches())  # agreement between candidate and active workflow is insufficient
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                target = root / "n8n/workflows/director-intake.json"
+                target.parent.mkdir(parents=True)
+                with patch.object(sc, "_REPO_ROOT", root):
+                    self.assertIsNone(matches())
+                    target.write_bytes(changed)
+                    self.assertTrue(matches())  # 201 itself is valid when independently selected
+
+
+class ThreadBindingConsumerTests(unittest.TestCase):
+    reader = TrustedTaskConsumerTests.reader
+
+    def test_absent_unique_and_ambiguous_are_cached_without_http(self):
+        from director_orchestrator import completion_scorecard as sc
+        for matches, expected in (((), None), (("DIR-LG-AB12",), "DIR-LG-AB12"),
+                                   (("DIR-LG-AB12", "DIR-LG-CD34"), "AMBIGUOUS")):
+            reader, _, _ = self.reader()
+            with self.subTest(matches=matches), \
+                    patch.object(sc, "_trusted_collection", return_value=(matches, None)) as collect:
+                self.assertEqual(reader.binding("1726000000.123456"), expected)
+                self.assertEqual(reader.binding("1726000000.123456"), expected)
+            collect.assert_called_once_with(reader.runtime, [],
+                thread_binding=(reader.channel, "1726000000.123456"))
+
+    def test_failed_or_malformed_binding_is_not_retried(self):
+        from director_orchestrator import completion_scorecard as sc
+        for options in ({"side_effect": ValueError("unavailable")},
+                        {"return_value": (("foreign",), None)},
+                        {"return_value": (("DIR-LG-AB12",) * 3, None)}):
+            reader, _, _ = self.reader()
+            with self.subTest(options=options), patch.object(sc, "_trusted_collection", **options) as collect:
+                for _ in range(2):
+                    with self.assertRaises(ValueError):
+                        reader.binding("1726000000.123456")
+            collect.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]

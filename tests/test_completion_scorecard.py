@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
@@ -695,6 +696,20 @@ class World:
         reader.task = lambda task: reader.reads.get(API + "/v1/tasks/" + task,
                                                    params=dict(reader.m.READBACK_QUERY))
         reader.deliveries = lambda task: reader.reads.get(API + "/v1/primary/tasks/" + task + "/deliveries")[0]
+        def binding(thread):
+            status, body = reader._get(API + "/v1/slack-thread-bindings",
+                {"channel_id": reader.channel, "thread_ts": thread}, reader.env["ORCHESTRATOR_SHARED_SECRET"])
+            if status in (404, 409):
+                return None if status == 404 else "AMBIGUOUS"
+            if status != 200:
+                raise ValueError("fixture binding unavailable")
+            value = json.loads(body)
+            task = value.get("task_id") if isinstance(value, dict) else None
+            if (not isinstance(task, str) or not sc._TASK.fullmatch(task)
+                    or value.get("channel_id") != reader.channel or value.get("thread_ts") != thread):
+                raise ValueError("fixture binding does not echo the selected thread")
+            return task
+        reader.binding = binding
         return reader
 
     def observe(self, only_deployment=False, evaluate_rules=False, **options):
@@ -1664,6 +1679,17 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 self.assertEqual(len(entry["approval_receipts"]), 1)
                 # Local approval_resume is real, but has no authenticated gateway command.
                 self.assertFalse(entry["approval_receipts"][0]["authorized"])
+
+            from director_orchestrator.langgraph_postgres import read_postgres_slack_thread_binding
+            intake = snapshots[offline_tasks[0]]["projection"].projection["application"]["task_record"]["intake"]
+            expected = tuple(task for task in offline_tasks
+                if snapshots[task]["projection"].projection["application"]["task_record"]["intake"]["thread_ts"]
+                == intake["thread_ts"])
+            matches = read_postgres_slack_thread_binding(self.dsn,
+                channel_id=intake["channel_id"], thread_ts=intake["thread_ts"], schema=self.primary.schema,
+                accepted_storage_identity=self.primary.identity.database_identity,
+                accepted_instance_id=self.primary.identity.database_instance_id)
+            self.assertEqual(set(matches), set(expected[:2]))
 
             # Exercise the actual consumer against those same TLS-backed producers.
             # Slack authentication is outside this task/readback-focused fixture;
@@ -2866,27 +2892,29 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertTrue(all(name and trust in {"T", "C"} for name, trust in inputs))
         candidate = {key for key, inputs in sc.COLLECTOR_INPUTS.items()
                      if any(trust == "C" for _, trust in inputs)}
-        self.assertEqual(candidate, {"01", "02", "03", "04", "05", "06", "07", "08",
-                                     "09", "10", "11", "12", "15", "17", "19", "20"})
-        self.assertEqual(candidate, set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
+        self.assertEqual(candidate, {"01", "03", "04", "05", "06", "07", "08",
+                                     "09", "10", "11", "12", "15", "19", "20"})
+        self.assertEqual(sc._PENDING_TRUST_PROOF, {"02", "17"})
+        contained = candidate | sc._PENDING_TRUST_PROOF
+        self.assertEqual(contained, set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
         world = self.world()
         # Seed every candidate-dependent check with PASS inside collection, including
-        # the shared-health users 01/02/04. No rule-fixture containment bypass here.
+        # the still-held 02/17 paths. No rule-fixture containment bypass here.
         passing = [sc._observation(key, True, "candidate claims success", "fixture", {}, world.now,
-                                   candidate_sha=SHA, runtime_sha=SHA, image_id=IMAGE) for key in sorted(candidate)]
+                                   candidate_sha=SHA, runtime_sha=SHA, image_id=IMAGE) for key in sorted(contained)]
         with patch.object(sc, "_topology_observations", return_value=passing), \
                 patch.object(sc, "_status_observation", return_value=next(o for o in passing if o.check_id == "04")):
             observations = world.observe(topology=True)
         found = {item.check_id: item for item in observations}
         self.assertEqual(len(found), len(observations))
-        for key in candidate:
+        for key in contained:
             with self.subTest(check=key):
                 self.assertIsNone(found[key].passed)
                 self.assertEqual(found[key].explanation, "collector not yet trusted")
         document = (Path(__file__).resolve().parents[1] / "docs/twenty-check-completion-scorecard.md").read_text(
             encoding="utf-8")
         audited = dict(re.findall(r"^\| (\d{2}) \| .* \| (Yes|No) \|$", document, re.MULTILINE))
-        self.assertEqual(audited, {key: "Yes" if key in candidate else "No" for key in sc.COLLECTOR_INPUTS})
+        self.assertEqual(audited, {key: "Yes" if key in contained else "No" for key in sc.COLLECTOR_INPUTS})
 
     def test_trusted_reports_do_not_promote_remaining_candidate_inputs(self):
         world = self.world()
@@ -5935,3 +5963,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]
