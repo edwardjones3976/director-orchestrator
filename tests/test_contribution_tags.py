@@ -702,6 +702,35 @@ class GitAttributionTests(unittest.TestCase):
         self.git("commit", "--quiet", "--allow-empty", "-m", message)
         return self.git("rev-parse", "HEAD")
 
+    def test_github_update_branch_merge_commits_are_exempt_like_pr_merges(self):
+        side = self.commit("Side\n\nContributed-by: Codex | GPT-6")
+        self.git("checkout", "--quiet", self.base)
+        other = self.commit("Other\n\nContributed-by: Codex | GPT-6")
+        self.git("checkout", "--quiet", side)
+        for subject, exempt in (("Merge branch 'main' into codex/zai-enrollment", True), ("Merge remote-tracking branch", False)):
+            with self.subTest(subject=subject):
+                self.git("reset", "--quiet", "--hard", side)
+                self.git("-c", "user.name=GitHub", "-c", "user.email=noreply@github.com",
+                         "merge", "--no-ff", "--quiet", "-m", subject, other)
+                head = self.git("rev-parse", "HEAD")
+                self.assertEqual(self.checker.validate_commits(self.base, head) == [], exempt)
+
+    def test_pre_trailer_commits_are_grandfathered_by_their_envelope(self):
+        pair = "[[OpenAI Codex | GPT-6 | 2026-09-27 | 06:56 UTC | {}]]"
+        cases = (
+            (pair.format("BEGIN") + "\nOld change\n" + pair.format("END"), True),
+            (pair.format("BEGIN") + " Merge settled main\n\nBody\n" + pair.format("END"), True),
+            (pair.format("BEGIN") + "\nUnclosed", False),
+            (pair.format("BEGIN") + "\n[[OpenAI Codex | GPT-6 | 2026-09-27 | 06:57 UTC | END]]", False),
+            ("Plain old change", False),
+            (pair.format("BEGIN") + "\nOld change\n" + pair.format("END") + "\n\nContributed-by: broken", False),
+        )
+        for message, valid in cases:
+            with self.subTest(message=message.splitlines()[0]):
+                head = self.commit(message)
+                self.assertEqual(self.checker.validate_commits(self.base, head) == [], valid)
+                self.assertEqual(self.checker.message_attributed(message), valid)
+
     def test_every_commit_needs_trailer_not_only_head(self):
         missing = self.commit("Missing attribution")
         head = self.commit("Good\n\nContributed-by: OpenAI Codex | GPT-6")

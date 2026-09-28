@@ -19,7 +19,7 @@ SPEC.loader.exec_module(ci_local)
 
 REPOSITORY = "edwardjones3976/director-orchestrator"
 IDENTITY = "Test Author | fixture | 2026-09-27 | 10:00 UTC"
-BODY = f"**[[{IDENTITY} | BEGIN]]**\nPull request body.\n**[[{IDENTITY} | END]]**"
+BODY = f"Sole author: Test Author (fixture)\n\n**[[{IDENTITY} | BEGIN]]**\nPull request body.\n**[[{IDENTITY} | END]]**"
 EVIDENCE = "https://github.com/edwardjones3976/director-orchestrator/actions/runs/1"
 
 
@@ -123,11 +123,11 @@ class PullRequestEventTests(FixtureRepository):
         self.assertEqual(self.m1, json.loads(path.read_text(encoding="utf-8"))["pull_request"]["base"]["sha"])
         self.assertIn(f"event-base: {self.m1}", output)
         self.assertIn(f"merge-base: {self.m0}", output)
-        # The drift the merge base removes: the unrelated main revision would
-        # otherwise read as this pull request reverting a tagged document.
-        code, output = run(ci_local.run_checker, self.m1, self.h1, path)
+        # The checker is told the event base as its default-branch ref, so the
+        # fixture needs no fetched origin/main to exclude imported main history.
+        code, output = run(ci_local.run_checker, self.m0, self.h1, path)
         self.assertEqual(1, code, output)
-        self.assertIn("doc.md", output)
+        self.assertIn("default-branch ref unavailable", output)
 
     def test_unchanged_locked_head_and_newly_opened_frozen_pr_are_not_transitions(self):
         for event in (
@@ -150,7 +150,7 @@ class PullRequestEventTests(FixtureRepository):
                 checker.assert_not_called()
 
     def test_unlabelled_head_change_needs_no_exception(self):
-        h2 = self.commit(self.h1, envelope("Ordinary follow-up."), {"feature.fixture": "two\n"})
+        h2 = self.commit(self.h1, "Ordinary follow-up.\n\nContributed-by: Test Author | fixture\n", {"feature.fixture": "two\n"})
         code, output, checker = self.ci(self.synchronize(self.h1, h2))
         self.assertEqual(0, code, output)
         checker.assert_called_once()
@@ -176,8 +176,11 @@ class PullRequestEventTests(FixtureRepository):
             "bare domain evidence": (exception(self.h1, evidence="https://github.com"), "Evidence must be"),
             "unbounded reason": (exception(self.h1, reason="x " * 200), "Reason must be"),
             "one-word reason": (exception(self.h1, reason="fix"), "Reason must be"),
-            "missing envelope": (exception(self.h1).splitlines()[1] + "\n" + "\n".join(exception(self.h1).splitlines()[2:5]), "review exception commit:"),
-            "fields outside envelope": (envelope("Repair.") + "Review-exception: P1\n", "review exception commit:"),
+            "no attribution": ("\n".join(exception(self.h1).splitlines()[1:-1]) + "\n", "review exception commit:"),
+            "fields in the trailer block only": (
+                "Repair.\n\nReview-exception: P1\nContributed-by: Test Author | fixture\n",
+                "lacks a Review-exception field",
+            ),
         }
         for name, (message, expected) in cases.items():
             with self.subTest(case=name):
@@ -216,7 +219,7 @@ class PullRequestEventTests(FixtureRepository):
         untagged = self.commit(self.m0, "untagged change", {"feature.fixture": "untagged\n"})
         code, output, checker = self.ci({"action": "opened", "pull_request": self.pull(untagged)})
         self.assertEqual(1, code)
-        self.assertIn("pull-request head commit", output)
+        self.assertIn("Contributed-by trailer", output)
         checker.assert_called_once()
 
     def test_main_push_keeps_its_exemption_and_range(self):
