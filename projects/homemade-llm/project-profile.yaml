@@ -1,3 +1,58 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:30 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:29 UTC | BEGIN]]
+# MX-057
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:57 UTC | BEGIN]]
+# MX-055
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:42 UTC | BEGIN]]
+# MX-053
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:24 UTC | BEGIN]]
+# MX-050
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:03 UTC | BEGIN]]
+# MX-048
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | BEGIN]]
+# Maintenance MX-042
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
+# MX-086
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:41 UTC | BEGIN]]
+# MX-081
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:20 UTC | BEGIN]]
+# MX-056
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | BEGIN]]
+# MX-054
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:35 UTC | BEGIN]]
+# MX-052
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]]
+# MX-049
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:57 UTC | BEGIN]]
+# MX-047
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | BEGIN]]
+# MX-045
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | BEGIN]]
+# MX-043
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
@@ -15,7 +70,7 @@ project:
   state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-26T00:05:00Z"
+  updated_at: "2026-09-28T02:30:00Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -87,15 +142,27 @@ surfaces:
     allowed_sources:
       - "director-orchestrator repository docs, schemas, and PR history"
       - "Local orchestrator ledgers (held-out eval only)"
-      - "Exemplars from competing-only-clause providers (O-026), tagged source_provider + terms_tier"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
+      - "Exemplars from competing-only-clause providers (O-026), tagged source_provider + terms_tier; Perplexity is excluded from this set (O-050)"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
     prohibited_sources:
       - "Training use of Z.ai, xAI, Google consumer Gemini, or Antigravity outputs (grading only)"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
+      - "Training use of Perplexity output in any split (research specialist lane only, O-050; not in the DIRECTOR data v1 source_provider enum)"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
       - "Life_Coach.Modelfile and the old xo-fleet open-webui data directory (personal data)"
   browser_conversations:
     - "none"
   external_effects:
-    mode: "analysis_only" # analysis_only | explicitly_scoped
-    allowed: []
+    mode: "explicitly_scoped" # analysis_only | explicitly_scoped
+    allowed:
+      - "Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)"
+      - "Independent reviews through owner-approved provider routes, including the redacted Set B v2 review and authenticated batch-1 ACCEPT on the frozen packet (xai/20260926T225645Z-268799-d4c6.json, response ID 473bbadc-7d1a-93af-9b73-6299017e9b97); the prior incomplete rerun receipt remains historical evidence. pr-45 is retained as a known MINOR reference imperfection, disclosed with Set B results. M1 scoring gates remain separate [verified, receipts; joint disposition in PR #294 comment 5850665622]."
+      - "the guarded GitHub merge of PR #293 by the eligible non-contributing reviewer (Cursor), with --merge and --match-head-commit, only after the recorded gates and under B2 (the owner's specific direction)"
+      - "M2 paid provider calls under PR #340 (O-050, O-051): exemplar generation by Anthropic API, OpenAI/Codex and Cursor lanes, and grading by non-author graders, each carrying the purpose prefix homemade-llm M2, within the M2 caps (USD 10 generation, USD 6 grading, USD 8 evaluation, USD 25 total) and only after the spend meter carries the M2 window (#341, D-M2-8); Perplexity research calls only, never as a training source"
+      - "M2 GPU work on the host (O-051): the D-M1-F feasibility probe and QLoRA adapter training v0.1 to v0.3 on the O-045 winner inside the pinned Unsloth image, under the GPU lock and the storage guards; pilot expansion and v0.1 training also wait on gate G-M2-5 (input contract) in PR #340"
+      - "Archive of the two non-winning M1 bases to E:\\llm-archive with hash verification (O-053); their removal from C:\\llm only after the Qwen3-14B probe passes and on a recorded owner Go, each removal logged with its hash"
+    # Any new external effect requires a profile revision first (fallbacks.changed_scope: reshape_profile_before_dependent_work).
     prohibited:
       - "Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)"
 
@@ -117,7 +184,7 @@ modules:
     purpose: "gitleaks on datasets; hard-line suite from M4"
   review_to_merge:
     state: "enabled"
-    purpose: "Non-author review of every Director PR; owner merges"
+    purpose: "Non-author review; for #293 Cursor performs its own thorough current-head/base review and eligible guarded merge after all gates (O-040)"
   operations:
     state: "disabled"
     purpose: "Enabled at L1 (always-on serving)"
@@ -137,16 +204,26 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Non-author review of Director PRs (plan mode, read-only)"
+        - "Non-author review of Director PRs; for #293, Grok is API-only and cannot merge. Its recorded ACCEPTs are supplementary evidence, not a gate. The prior timed-out attempt at 57b90d2 was not a verdict. Cursor is the single required review-and-merge provider, subject to B2 and all other gates."
       forbidden_authority:
-        - "merge"
         - "training-data generation (xAI terms: grading only)"
+        - "merge"
+    - id: "review-cursor"
+      provider: "cursor"
+      role: "reviewer"
+      workflow_skill: "none"
+      responsibilities:
+        - "After PRESTAGE_REQUIRED and the skill discovery and readiness gate are satisfied, use the verified baseline contract (workflow_skill: none): local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble for non-author exact-head, current-base full-diff review of #293. The thorough reviewer's ACCEPT is the one required review and carries the guarded merge subject to B2 and all deterministic gates."
+      forbidden_authority:
+        - "authoring or maintaining #293"
+        - "reviewing or merging its own work"
+        - "merging without B2 and all required gates satisfied"
     - id: "review-codex"
       provider: "other"
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Fallback non-author reviewer (OpenAI Codex, read-only sandbox)"
+        - "Fallback non-author reviewer only where independent; Codex assisted #293 and is not its reviewer of record"
       forbidden_authority:
         - "merge"
     - id: "research-perplexity"
@@ -198,27 +275,45 @@ controls:
     - "Any paid call that would breach the milestone envelope"
     - "Any fan-out over 3 concurrent agents or dispatches"
     - "Downloads, deletions, config/ACL/Scheduled Task changes, messages to other Directors"
-    - "Every merge (owner, --merge --match-head-commit)"
+    - "Every merge requires thorough non-author review and all deterministic gates; Cursor is #293's eligible merger after its own current-head/base review, never Claude or Codex (--merge --match-head-commit; O-040)"
   acceptance_checks:
     - "L1 and L2 checklists in PLAN.md"
   serious_safety_stop: true
 
 review_chain:
   producer: "claude"
-  material_authors: ["claude"]
-  eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | BEGIN]]
+  material_authors: ["claude", "codex"] # claude is the sole author (52 %+ rule); codex assisted with maintenance edits on #293/#294 and is excluded from independent review of #294 by this chain, so the structured list names both.
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | BEGIN]]
+  eligible_reviewer: "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): use the catalog name in the assignment rather than a machine-specific absolute path; select none for #293; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble, and record that baseline verification before contact; otherwise stop. Then, per O-M2-F (owner, 2026-09-28 04:50 UTC, while the Codex Director is unavailable), Grok is the first non-author reviewer of #293 at its folded head, with Z.ai and then Cursor as fallbacks in that order; Grok is API-only and records verdicts only; Z.ai's enrollment (#317) is unmerged so its verdict is supplementary until it lands. O-049 (Cursor) stands as the fallback of record. Its thorough exact-head, current-base full-diff ACCEPT is the one required review. #293 targets protected main, and a protected-branch merge is tier 0 and owner-only under the current framework (AGENTS.md, human-out-of-the-loop-operation.md): the reviewer records its exact-head ACCEPT and the framework blocker on the PR and does not execute the merge, whatever direction it receives, until an authorized framework alignment (#305 plus phase-3 wiring) lands; earlier owner-directed agent merges are recorded as disclosed crossings (D-023), not as precedent. Grok is API-only and cannot merge. Claude is sole author; Codex assisted (MX maintenance commits and review-finding fixes routed as maintenance) and is not independent for #293. Neither may review or merge it."
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
   candidate:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
     # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
-    base_sha: "f0a7752e7aa780389fb78d4e45da1125254d650e"
-    head_sha: "bound on PR #277 review-of-record comment"
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
+    base_sha: "67d16ac814322e42b1c71e8026736e84a159fb7f" # github/main target tip and this branch's merge base after the owner folded PR #294 into PR #293 on 2026-09-28 05:46 UTC (merge commit b64d2086d72cc6e94d253c99b342657ac8be8318). The live target tip at review is bound on #293's review-of-record comment, not in this file. Historical merge bases: 99ab350233aecce698d4f9cb5d50119eef5efe40 (#294's base while stacked), 7b246860443926f8f59fbac0479dab97c5a231af (MX-086 sync), 3761bc0e49fba8ad4ef6c060668abb9a79e2d90e (MX-081 sync), 4ece6d1f7666e501971cb049e2ae41f52728ae65.
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]]
+    head_sha: "bound on PR #293's review-of-record comment (M0 record reconciliation plus the folded M1 plan and gate record)"
     artifact_digest: "none"
-    last_merged_candidate: "PR #275 at ed317a813f85d2405738461f9f40924ff94ea28b, xAI ACCEPT, merged 2026-09-25T23:31:37Z"
+    last_merged_candidate: "PR #291 at dfbb4f213e8b0803a5e721ac739d609d13158e08, merged 2026-09-27T07:08:00Z as 9bb982e4774d6382d96689087a9df1d2680237f1"
+    # Historical last_merged_candidate: PR #283 at d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88, merged 2026-09-26T16:40:15Z as 052553f.
   required_evidence:
-    - "different-provider exact-candidate review"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | BEGIN]]
+    - "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base reviewer packet (Grok first per O-M2-F, then Z.ai, then Cursor) outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): Use the catalog name in the assignment rather than a machine-specific absolute path. Skill discovery is required before selection; installation or a reported structural evaluation does not prove that the active provider session has loaded the skill. If a selected skill is unavailable after refresh, continue with the provider's baseline contract when that still satisfies acceptance, or reshape the plan under the assignment-specific retry budget. For #293 select none; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble. Record that baseline verification before contact; otherwise stop. The workload_policy_version: v1 plan carries immutable assignment workload_size (simple, short, medium, or long), 1–100 effort_points, fixed execution limits, any workload-variance reason, and one canonically digested pre-stage packet. The pre-stage packet binds packet_id, goal, terminal condition, exact repository, worktree, branch and lowercase 40-character base SHA, nullable candidate SHA, producer, different independent reviewer, nonempty owned paths, prohibited paths, nonempty required tests, nonempty required security evidence, budget, timeout, retry limit no greater than three, nonempty merge-eligibility conditions, and nonempty stopping conditions. For this review, candidate SHA must name the final exact head and base SHA the current base; the packet is not committed into this PR because that would change the head it names. Execution limits must specify effort, a 20-minute time cap, no-edit, and accept-only under B2: review only, do not merge unless the owner has directed this specific merge."
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
+    - "One non-author thorough exact-head, current-base full-diff ACCEPT (Grok first per O-M2-F, then Z.ai, then Cursor); the returned verdict must record the target-tip base_sha, merge_base_sha, head SHA, and share_record_sha256 binding the current share computation and exact UTF-8 share-record text (including the PR share table, maintenance-exclusion MX references, and human-attribution entries), per docs/templates/project-bootstrap/review-ready.md. Any change to any of the three SHAs or the share record invalidates the verdict. The one required non-author review is recorded with the framework blocker; the protected-main merge stays owner-only under the current framework"
     - "current security evidence when configured"
-    - "trusted CI when configured"
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | BEGIN]]
+    - "all required exact-head CI checks successful at the exact head; conflict-free non-draft PR"
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]]
   candidate_change_invalidates_evidence: true
   merge_authority: "deterministic_gate_after_all_required_approval"
 
@@ -228,7 +323,8 @@ assumptions:
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
     - "LM Studio on 127.0.0.1:1234 is reachable from containers through host.docker.internal (HTTP 200, 2026-09-25)"
-    - "Paid spend is metered from the provider-dispatch receipts (run scripts/spend_meter.py for the live figure); homemade-llm M0 was USD 0.55 at 2026-09-26 00:01 UTC"
+    - "Paid spend is metered from provider-dispatch receipts; the canonical live ledger is project-state-report.md, MX-049 ledger extension (including MX-045). Current reconciled M0 figures: USD 5.88268156 charged (lower bound), four uncosted attempts, conservative upper bound USD 7.44373756; the reserve is an estimate, not confirmed billing. Historical D-017 snapshot: USD 1.43271956 before the additional M0 charges; retained as history, not current M0 spend."
+    - "M0 gate closed and M1 entered on the owner's approval (decision O-031); phone chat with web search over the tailnet accepted (D-016)"
   provisional:
     - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
     - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
@@ -236,7 +332,7 @@ assumptions:
   not_applicable: []
 
 fallbacks:
-  unavailable_provider: "Rotate reviewer Grok -> Codex; research falls back to Claude web research"
+  unavailable_provider: "For #293, wait if Cursor is unavailable; Grok supplementary evidence is not a gate; Claude and Codex may not review or merge #293. Research falls back to Claude web research."
   incomplete_evidence: "Pause at the gate and report; the owner decides"
   ambiguous_paid_dispatch: "reconcile_existing_run_before_retry"
   slack_delivery:
@@ -248,9 +344,51 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Owner merges #277 (this report) when CI is green at its reviewed head; #276 after it is split into single-author candidates; then M1 held-out sets"
-  responsible_party: "owner, then Director"
-  expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
+  action: "M1 gate closed 2026-09-28 (O-052, D-M1-G): winner Qwen3-14B at 40c069824f4251a91eefaf281ebe4c544efd3e18 under O-045; M1-L1 license check complete. M2 proceeds under the owner-approved plan in PR #340 (O-050) with GPU and paid generation cleared (O-051): first M2-C1 (revised input contract, D-M2-10), M2-S1 validator, M2-G1 generator and M2-T1 trainer authoring, then the ~100-row pilot inside the USD 10 generation cap, validated and leak-walled under the revised contract; only then the D-M1-F feasibility probe on Qwen3-14B, because its two gates (training-row p95 after the real tokenizer and template; 40 timed QLoRA microsteps under 11.0 GiB) are defined on real validated rows, and no M2 training row exists yet. Any earlier VRAM smoke on placeholder text is diagnostic only and does not decide 14B versus 8B. #294 was folded into #293 on 2026-09-28 05:46 UTC; #293 (M0 record plus M1 gate record) and #340 merge after one non-author exact-head review each, Grok first per O-M2-F, then Z.ai, then Cursor (O-049 as fallback of record), with the owner executing the protected-main merge; #339 and the Nemo summary regeneration trail without blocking. The spend meter's M1 close and M2 start windows (D-M1-G at 2026-09-28T02:30Z, M2 from 2026-09-28T01:34:11Z; D-M2-8) are Codex maintenance in draft PR #341; no paid M2 call is made until it merges."
+  responsible_party: "Project Director (Claude Code) routes M2 packets and keeps the record; the executing session runs host work (probe, archive of the non-winning bases per O-053); Grok (then Z.ai, then Cursor) reviews #293 and #340 per O-M2-F; the owner merges."
+  expected_evidence: "One non-author exact-head ACCEPT (Grok first per O-M2-F) and all required exact-head CI checks green (currently seven, including Documentation changes) on #293 (folded) and on #340; reviewed and CI-green M2-C1, M2-S1, M2-G1 and M2-T1; pilot rows validated, leak-walled and graded under the revised contract; then a D-M1-F probe report JSON over those rows with row p95, mask coverage, peak reserved VRAM and the three-epoch estimate; M2 receipts within the USD 25 envelope."
+
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:24 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:30 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | END]]
