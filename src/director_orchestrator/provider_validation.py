@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
@@ -125,6 +126,13 @@ class ValidationCapture:
         value = asdict(self)
         value.pop("signature")
         return value
+
+
+@dataclass(frozen=True)
+class ValidationCaptureV2(ValidationCapture):
+    """V1 bytes remain unchanged; V2 signs the bridge's executable digest."""
+    version: str
+    executable_sha256: str
 
 
 class PostgresValidationStore:
@@ -504,13 +512,27 @@ class CaptureVerifier:
 
     def verified_output(self, binding: ProviderActivationBinding, evidence_digest: str, *,
                         expires_at=None) -> bytes | None:
-        """The exact provider output bytes this verification read and checked (one load_capture), or None when the
-        capture does not verify: a reader classifies what was verified, never a second read of the store."""
+        verified = self.verified_capture(binding, evidence_digest, expires_at=expires_at)
+        return verified[0] if verified is not None else None
+
+    def verified_capture(self, binding: ProviderActivationBinding, evidence_digest: str, *,
+                         expires_at=None) -> tuple[bytes, ValidationCapture] | None:
+        """Return output and signed metadata from one verified read, or None.
+
+        Product classification must use these bytes and this capture together,
+        never metadata from a second read of a mutable store.
+        """
         try:
             row = self.store.load_capture(evidence_digest)
             if row is None or row[3] or row[4] <= int(time.time()) or row[5] != "succeeded":
                 return None
-            capture = ValidationCapture(**row[0])
+            if "version" in row[0]:
+                capture = ValidationCaptureV2(**row[0])
+                if (capture.version != "director-validation-capture/v2"
+                        or not re.fullmatch(r"[0-9a-f]{64}", capture.executable_sha256)):
+                    return None
+            else:
+                capture = ValidationCapture(**row[0])
             # The expected tree is compared, not just carried: a valid signed
             # capture minted for another runtime tree under the same candidate
             # and generation must never qualify this one.
@@ -548,7 +570,7 @@ class CaptureVerifier:
             if digest(canonical_json_bytes(result)) != capture.result_digest or result["run_reference"] != capture.native_session:
                 return None
             expected = hmac.new(self.key.encode(),canonical_json_bytes(capture.payload()),hashlib.sha256).hexdigest()
-            return bytes(row[2]) if hmac.compare_digest(expected,capture.signature) else None
+            return (bytes(row[2]), capture) if hmac.compare_digest(expected,capture.signature) else None
         except (ValueError,TypeError,KeyError,ValidationError):
             return None
 
@@ -601,7 +623,8 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", re
         openai_responses_route=responses_route_from_environment())
 
 
-def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None, openai_responses_route=None) -> ValidationCapture:
+def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None,
+                 openai_responses_route=None, executable_sha256=None) -> ValidationCapture:
     """Only the bridge calls this after configured native execution returns."""
     if len(capture_key) < 32 or not output or len(output) > MAX_CAPTURE_BYTES:
         raise ValidationError("missing bounded execution capture")
@@ -621,8 +644,14 @@ def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route
                   input_digest=digest(admission["packet"]),output_digest=digest(output),
                   result_digest=digest(canonical_json_bytes(result)),
                   native_session=result["run_reference"],expires_at=admission["expires_at"])
+    capture_type = ValidationCapture
+    if executable_sha256 is not None:
+        if not isinstance(executable_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", executable_sha256):
+            raise ValidationError("invalid executable digest")
+        fields.update(version="director-validation-capture/v2", executable_sha256=executable_sha256)
+        capture_type = ValidationCaptureV2
     signature=hmac.new(capture_key.encode(),canonical_json_bytes(fields),hashlib.sha256).hexdigest()
-    return ValidationCapture(**fields,signature=signature)
+    return capture_type(**fields,signature=signature)
 
 
 def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None, openai_responses_route=None) -> dict:
@@ -838,6 +867,8 @@ class ValidationBridgeService:
             return self._run_openai_responses(request, owner_token)
         pin=production_configuration_digest(self.production,request.provider,
                                            account_files=self.account_files.get(request.provider,()))
+        from .host_provider_bridge_server import executable_digest
+        executable_sha256 = executable_digest(self.production.commands[request.provider])
         self.refuse_configuration_drift(request,pin,"production executable/account/workspace/adapter binding drift")
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
@@ -867,7 +898,10 @@ class ValidationBridgeService:
             if pin!=production_configuration_digest(self.production,request.provider,
                     account_files=self.account_files.get(request.provider,())):
                 raise ValidationError("native configuration changed during execution")
-            capture=make_capture(admission,raw_captures[0],capture_key=self.capture_key)
+            if executable_digest(executor.commands[request.provider]) != executable_sha256:
+                raise ValidationError("native executable changed during execution")
+            capture=make_capture(admission,raw_captures[0],capture_key=self.capture_key,
+                                 executable_sha256=executable_sha256)
             evidence=self.store.settle(admission,raw_captures[0],capture)
             return {"evidence_digest":evidence,"evidence_id":admission["reservation"],
                     "expires_at":capture.expires_at,"surfaces":["app","runtime_adapter"]}
@@ -1161,4 +1195,5 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

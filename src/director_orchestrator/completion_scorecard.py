@@ -1,6 +1,16 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
@@ -168,7 +178,7 @@ CHECKS = (
     Check("04", "Status workflow actually delivers to Slack", "runtime", "Read back a fresh scheduled status message and correlate its workflow execution."),
     Check("05", "Primary owns intake with fencing", "runtime", "Observe LangGraph ownership, disabled legacy intake and a positive fencing generation."),
     Check("06", "Checkpoint survives restart", "runtime", "Resume the same bounded task after restart, preserving checkpoint and unique task identity."),
-    Check("07", "Primary reconciliation is clear", "runtime", "Run the in-image read-only consistency command; it must report zero unresolved, ambiguous or conflicting records for the running generation."),
+    Check("07", "Primary reconciliation is clear", "runtime", "Run the evaluator-owned read-only consistency command; it must report zero unresolved, ambiguous or conflicting records for the running generation."),
     Check("08", "Owner approval is authenticated and scoped", "runtime", "Verify a real signed owner decision against its delivered prompt and approved work packet."),
     Check("09", "Final reply is durable and unambiguous", "runtime", "Read back exactly one terminal reply; prove duplicate input and ambiguous-post recovery."),
     # Owner ruling 2026-09-24 ("Offline = pipeline proof"): 10 proves the offline pipeline end to end; it does
@@ -183,7 +193,7 @@ CHECKS = (
     Check("17", "Independent exact-candidate ACCEPT exists", "candidate", "Verify one non-author review against this exact head and original product identity."),
     Check("18", "Exact-candidate Security scan is complete", "candidate", "Verify the sealed scan's manifest, coverage and findings disposition for this exact candidate."),
     Check("19", "Paid primary runtime and effect executor are active", "runtime", "Observe paid execution, primary runtime, effect executor and reconciliation worker active together."),
-    Check("20", "One real paid Slack result qualifies", "runtime", "Verify an actual-owner result with independent correctness, wall time under 60 seconds and actual cost below USD 1."),
+    Check("20", "One real paid Slack result qualifies", "runtime", "Verify an actual-owner result with independent correctness, fully evidenced delivery, with measured latency and correlated actual cost reported."),
 )
 
 
@@ -550,10 +560,15 @@ def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observat
     env = _environment(service)
     environment = env.get("APP_ENV", "").strip() or "local"
     health_url = f"http://127.0.0.1:{int(port)}/health"
-    health = _health(health_url, environment)
+    # Daemon identity remains collectable when candidate health refuses or lies.
+    # Health-dependent predicates receive missing evidence, never a replacement PASS.
+    try:
+        health = _health(health_url, environment)
+        if not isinstance(health.get("langgraph_primary", {}), dict):
+            raise ValueError("primary health is malformed")
+    except _SOURCE_ERRORS:
+        health = {}
     primary = health.get("langgraph_primary", {})
-    if not isinstance(primary, dict):
-        raise ValueError("primary health is malformed")
     # The Director's evidence lives in its control-plane store as much as in the process: the bound is the later
     # creation of the Director and the langgraph-primary-db its DSN resolves to.
     runtime = _Runtime(project, ids[0], image_id, runtime_sha,
@@ -699,11 +714,21 @@ def _workflow_matches(sha: str, reference: str, nodes: Any, connections: Any,
     types must match), and the parameter values the collector binds separately (``bound``: node name ->
     (parameter path, expected value)), such as the project channel.
     """
-    # The contract is the candidate commit's workflow file, never an unverified working tree.
-    blob = _candidate_blob(sha, "n8n/workflows/" + reference)
+    # The launcher runs an owner-pinned evaluator archive. Its contract, not
+    # agreement between a candidate file and its deployment, selects expectation.
+    if reference not in {"director-intake.json", "director-status.json"}:
+        return None
+    path = "n8n/workflows/" + reference
+    blob = _candidate_blob(sha, path)
+    try:
+        expected_blob = _read_bounded_file(_REPO_ROOT, path)
+    except (OSError, ValueError):
+        return None
     if blob is None:
         return None
-    document = json.loads(blob.decode("utf-8"))
+    if blob.replace(b"\r\n", b"\n") != expected_blob.replace(b"\r\n", b"\n"):
+        return False
+    document = json.loads(expected_blob.decode("utf-8"))
     if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
         return False
 
@@ -876,6 +901,46 @@ def _intake_route_verified(runtime: _Runtime, gateway: str) -> tuple[bool | None
     return True, max(_when(mark) for mark in marks)
 
 
+def _gateway_inventory_observation(at, runtime, gateway_env, gateway_identity, containers):
+    """Independent daemon/host inventory; no route or candidate health read."""
+    binding = runtime.binding
+    # A Slack app-level token carries its app's ID (xapp-<n>-<APP_ID>-...): that, not one credential
+    # instance, is the gateway's identity, so a rotated or second token of the same app still matches.
+    app = _slack_app_id(gateway_env.get("SLACK_APP_TOKEN", ""))
+    if app is None:
+        return _observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)
+    matches, unknown = [], 0
+    for row in containers:
+        token = _environment(row).get("SLACK_APP_TOKEN", "")
+        if not token:
+            continue
+        other = _slack_app_id(token)
+        if other is None:
+            unknown += 1  # an app token whose app cannot be read may be this app's
+            continue
+        if other != app:
+            continue
+        if _gateway_launch(row):
+            matches.append(row.get("Id"))
+        elif not _same(row.get("Id"), runtime.container_id):
+            # Only the already-identified Director container is exempt, by its exact ID: any other same-app
+            # container (a wrapper that also launches the API, say) is unclassified, never exempted by its command.
+            unknown += 1
+    host = None
+    try:
+        host = _run_json(["powershell", "-NoProfile", "-NonInteractive", "-Command", _HOST_GATEWAYS])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    passed = False if len(matches) != 1 else None
+    if len(matches) == 1 and unknown == 0 and isinstance(host, dict):
+        if type(host.get("unreadable")) is int and type(host.get("gateway_process_count")) is int and host["unreadable"] == 0 and host["gateway_process_count"] == 0:
+            passed = True
+    inventory = {**gateway_identity, "running_containers_inspected": len(containers),
+                 "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
+    return _observation("02", passed, "Compared the Slack app ID named by each running container's app token and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
+                               "Docker running inventory and Windows Win32_Process", inventory, at, **binding)
+
+
 def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
                            channel: str | None) -> list[Observation]:
     """Inspect every running container; the gateway is the caller's exact name, never a guess."""
@@ -913,114 +978,84 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     gateway_identity = {"expected_gateway": expected_gateway, "gateway_container_id": gateway["Id"],
                         "gateway_image_id": gateway_image}
     gateway_env = _environment(gateway)
-    gateway_project = _labels(gateway).get("com.docker.compose.project")
-    in_deployment = None if gateway_project is None else gateway_project == runtime.project
-    workflow = None
-    upstream = {}
-    # Only n8n's own execution store says which intake workflow it runs.
-    store = _n8n_store(n8n, n8n_db, containers) if n8n is not None else None
-    if n8n is not None and n8n_db is not None and store is True:
-        try:
-            workflow = _run_json(["docker", "exec", n8n_db["Id"], "psql", "-U", "n8n", "-d", "n8n",
-                                  "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
-            if (isinstance(workflow, dict) and workflow.get("supported_request") is True
-                    and workflow.get("active_version") and workflow.get("active_version") == workflow.get("stored_version")):
-                upstream = _run_json(["docker", "exec", n8n["Id"], "node", "-e", _UPSTREAM_HEALTH])
-        except _SOURCE_ERRORS:
-            workflow = None
-    channel_ok = channel is not None and gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == channel
-    relay = urlsplit(gateway_env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
-    route_ok = _relay_route_ok(relay, n8n)
-    facts = {**gateway_identity, "director_port_loopback": _loopback(director, 8080),
-             "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
-             "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
-             "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
-             # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
-             "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
-             "gateway_runs_director_image": gateway_image == runtime.image_id,
-             "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
-             "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
-             "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
-             "active_intake": workflow,
-             "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
-                                       for row in (director, gateway, n8n))}
-    route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
-                                   "gateway_n8n_route_matches": True, "containers_running": True,
-                                   "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
-                                   "gateway_credentials_match": True, "gateway_runs_director_image": True})
-    hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
-    if route_pass is False and None in hops and False not in hops and all(
-            facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
-                                           "gateway_n8n_route_matches", "containers_running")):
-        route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
-    if isinstance(workflow, dict):
-        # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
-        workflow["forwarding_contract"] = _workflow_matches(runtime.runtime_sha, "director-intake.json",
-                                                            workflow.pop("nodes", None),
-                                                            workflow.pop("connections", None),
-                                                            settings=workflow.pop("settings", None),
-                                                            pin_data=workflow.pop("pin_data", None))
-    workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
-                                             "supported_webhook": True, "direct_connection": True,
-                                             "forwarding_contract": True})
-    if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
-        workflow_ok = None  # An unsupported expression is not a proven wrong destination.
-    if workflow and workflow.get("forwarding_contract") is None:
-        workflow_ok = None  # The candidate's workflow file could not be read: unproven, not wrong.
-    if route_pass is True:
-        route_pass = workflow_ok
-        if route_pass is True:
-            route_pass = (bool(workflow.get("active_version")) and workflow["active_version"] == workflow.get("stored_version")
-                          and upstream.get("environment") == runtime.environment)
-    explanation = ("Observed the selected deployment's loopback Director and n8n ports, the gateway's --channel and relay, "
-                   "and the actual published intake version's supported forwarding URL, then checked that upstream's "
-                   "environment. Missing/unsupported workflow evidence cannot pass. Full task delivery is scored separately.")
-    if in_deployment is False:
-        route_pass, explanation = False, "The expected gateway belongs to another Compose project."
-    elif channel is None:
-        route_pass, explanation = None, "--channel was not supplied; the project channel was not compared."
-    elif n8n is None or n8n_db is None:
-        route_pass, explanation = None, "The selected deployment does not run exactly one n8n and one n8n-db service."
-    elif route_pass is not False and in_deployment is None:
-        route_pass, explanation = None, "The expected gateway carries no Compose labels; deployment membership is unproven."
-    result = [_observation("01", route_pass, explanation,
-                           "Docker topology and n8n upstream GET /health", facts, at, **binding)]
-    # A Slack app-level token carries its app's ID (xapp-<n>-<APP_ID>-...): that, not one credential
-    # instance, is the gateway's identity, so a rotated or second token of the same app still matches.
-    app = _slack_app_id(gateway_env.get("SLACK_APP_TOKEN", ""))
-    if app is None:
-        return result + [_observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)]
-    matches, unknown = [], 0
-    for row in containers:
-        token = _environment(row).get("SLACK_APP_TOKEN", "")
-        if not token:
-            continue
-        other = _slack_app_id(token)
-        if other is None:
-            unknown += 1  # an app token whose app cannot be read may be this app's
-            continue
-        if other != app:
-            continue
-        if _gateway_launch(row):
-            matches.append(row.get("Id"))
-        elif not _same(row.get("Id"), runtime.container_id):
-            # Only the already-identified Director container is exempt, by its exact ID: any other same-app
-            # container (a wrapper that also launches the API, say) is unclassified, never exempted by its command.
-            unknown += 1
-    host = None
+    inventory = _gateway_inventory_observation(at, runtime, gateway_env, gateway_identity, containers)
     try:
-        host = _run_json(["powershell", "-NoProfile", "-NonInteractive", "-Command", _HOST_GATEWAYS])
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass
-    passed = False if len(matches) != 1 else None
-    if len(matches) == 1 and unknown == 0 and isinstance(host, dict):
-        if type(host.get("unreadable")) is int and type(host.get("gateway_process_count")) is int and host["unreadable"] == 0 and host["gateway_process_count"] == 0:
-            passed = True
-    inventory = {**gateway_identity, "running_containers_inspected": len(containers),
-                 "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
-    result.append(_observation("02", passed, "Compared the Slack app ID named by each running container's app token and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
-                               "Docker running inventory and Windows Win32_Process", inventory, at, **binding))
-    return result
+        gateway_project = _labels(gateway).get("com.docker.compose.project")
+        in_deployment = None if gateway_project is None else gateway_project == runtime.project
+        workflow = None
+        upstream = {}
+        # Only n8n's own execution store says which intake workflow it runs.
+        store = _n8n_store(n8n, n8n_db, containers) if n8n is not None else None
+        if n8n is not None and n8n_db is not None and store is True:
+            try:
+                workflow = _run_json(["docker", "exec", n8n_db["Id"], "psql", "-U", "n8n", "-d", "n8n",
+                                      "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
+                if (isinstance(workflow, dict) and workflow.get("supported_request") is True
+                        and workflow.get("active_version") and workflow.get("active_version") == workflow.get("stored_version")):
+                    upstream = _run_json(["docker", "exec", n8n["Id"], "node", "-e", _UPSTREAM_HEALTH])
+            except _SOURCE_ERRORS:
+                workflow = None
+        channel_ok = channel is not None and gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == channel
+        relay = urlsplit(gateway_env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
+        route_ok = _relay_route_ok(relay, n8n)
+        facts = {**gateway_identity, "director_port_loopback": _loopback(director, 8080),
+                 "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
+                 "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
+                 "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
+                 # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
+                 "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
+                 "gateway_runs_director_image": gateway_image == runtime.image_id,
+                 "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
+                 "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
+                 "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
+                 "active_intake": workflow,
+                 "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
+                                           for row in (director, gateway, n8n))}
+        route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
+                                       "gateway_n8n_route_matches": True, "containers_running": True,
+                                       "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
+                                       "gateway_credentials_match": True, "gateway_runs_director_image": True})
+        hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
+        if route_pass is False and None in hops and False not in hops and all(
+                facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
+                                               "gateway_n8n_route_matches", "containers_running")):
+            route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
+        if isinstance(workflow, dict):
+            # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
+            workflow["forwarding_contract"] = _workflow_matches(runtime.runtime_sha, "director-intake.json",
+                                                                workflow.pop("nodes", None),
+                                                                workflow.pop("connections", None),
+                                                                settings=workflow.pop("settings", None),
+                                                                pin_data=workflow.pop("pin_data", None))
+        workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
+                                                 "supported_webhook": True, "direct_connection": True,
+                                                 "forwarding_contract": True})
+        if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
+            workflow_ok = None  # An unsupported expression is not a proven wrong destination.
+        if workflow and workflow.get("forwarding_contract") is None:
+            workflow_ok = None  # The candidate's workflow file could not be read: unproven, not wrong.
+        if route_pass is True:
+            route_pass = workflow_ok
+            if route_pass is True:
+                route_pass = (bool(workflow.get("active_version")) and workflow["active_version"] == workflow.get("stored_version")
+                              and upstream.get("environment") == runtime.environment)
+        explanation = ("Observed the selected deployment's loopback Director and n8n ports, the gateway's --channel and relay, "
+                       "and the actual published intake version's supported forwarding URL, then checked that upstream's "
+                       "environment. Missing/unsupported workflow evidence cannot pass. Full task delivery is scored separately.")
+        if in_deployment is False:
+            route_pass, explanation = False, "The expected gateway belongs to another Compose project."
+        elif channel is None:
+            route_pass, explanation = None, "--channel was not supplied; the project channel was not compared."
+        elif n8n is None or n8n_db is None:
+            route_pass, explanation = None, "The selected deployment does not run exactly one n8n and one n8n-db service."
+        elif route_pass is not False and in_deployment is None:
+            route_pass, explanation = None, "The expected gateway carries no Compose labels; deployment membership is unproven."
+        result = [_observation("01", route_pass, explanation,
+                               "Docker topology and n8n upstream GET /health", facts, at, **binding)]
+    except _SOURCE_ERRORS:
+        result = [_observation("01", None, "Intake route evidence unavailable; no retry was made.",
+                               "Docker topology and pinned workflow", {}, at, **binding)]
+    return result + [inventory]
 
 
 def _trial_module():
@@ -1035,7 +1070,7 @@ def _trial_module():
 
 
 class _SlackThreads:
-    """Bounded GET-only Slack and Director reads for the selected deployment.
+    """Bounded Slack reads and owner-bound task snapshots for the deployment.
 
     The collector module is a private instance whose API allowlist names only
     this deployment. Credentials come from the Director container's environment
@@ -1068,15 +1103,49 @@ class _SlackThreads:
             raise
         self.bot, self.owner, self.api, self.channel = auth["user_id"], self.env["SLACK_OWNER_USER_ID"], runtime.api_base, channel
         self.runtime = runtime
+        self._task_snapshots = {}
+        self._thread_bindings = {}
 
     def replies(self, thread: str):
         return self.reads.replies(thread)
 
     def task(self, task_id: str):
-        return self.reads.get(self.api + "/v1/tasks/" + task_id, params=dict(self.m.READBACK_QUERY))
+        from .models import TaskReadbackRecord
+        from .primary_default import DefaultPrimaryApplication
+
+        if not isinstance(task_id, str) or not _TASK.fullmatch(task_id):
+            raise ValueError("invalid task selection")
+        if task_id not in self._task_snapshots:
+            if len(self._task_snapshots) >= 17:  # Ten trials, five drills, approval and paid task.
+                raise ValueError("task snapshot limit exceeded")
+            # One attempt and one coherent snapshot per task in this collection.
+            # A failed store read is never retried against candidate HTTP.
+            self._task_snapshots[task_id] = None
+            snapshots, _ = _trusted_collection(self.runtime, [task_id], qualification_only=True)
+            evidence = snapshots[task_id]
+            if evidence is None or evidence.get("complete") is not True:
+                raise ValueError("task snapshot absent or incomplete")
+            evidence = dict(evidence)
+            projection = evidence.pop("projection")
+            record = DefaultPrimaryApplication._record_from_projection(projection)
+            body = TaskReadbackRecord.model_validate({**record.model_dump(mode="python"),
+                                                     "qualification_evidence": evidence}).model_dump(mode="json")
+            readback = body["qualification_evidence"]
+            if (body["task_id"] != task_id or readback["task_id"] != task_id
+                    or projection.task_id != task_id or not self.runtime.read_in_window(readback["captured_at"])):
+                raise ValueError("task snapshot binding or collection window differs")
+            headers = {"x-task-engine-owner": projection.engine_owner,
+                       "x-primary-projection-digest": projection.projection_digest}
+            self._task_snapshots[task_id] = body, headers
+        snapshot = self._task_snapshots[task_id]
+        if snapshot is None:
+            raise ValueError("task snapshot unavailable; no retry was made")
+        return snapshot
 
     def deliveries(self, task_id: str):
-        return self.reads.get(self.api + "/v1/primary/tasks/" + task_id + "/deliveries")[0]
+        body, _ = self.task(task_id)
+        return [{"task_id": task_id, **delivery}
+                for delivery in body["qualification_evidence"]["slack_deliveries"]]
 
     def _get(self, url: str, params: dict[str, str], token: str) -> tuple[int, bytes]:
         # The collector's one bounded read: bytes, a per-chunk clock check and an HTTPX timeout clamped to the
@@ -1107,21 +1176,22 @@ class _SlackThreads:
         raise ValueError("channel history exceeds its bound")
 
     def binding(self, thread: str) -> str | None:
-        """200 -> task ID, 404 -> None, 409 -> "AMBIGUOUS"; anything else is unavailable."""
-        status, body = self._get(self.api + "/v1/slack-thread-bindings",
-                                 {"channel_id": self.channel, "thread_ts": thread}, self.env["ORCHESTRATOR_SHARED_SECRET"])
-        if status == 404:
-            return None
-        if status == 409:
-            return "AMBIGUOUS"
-        if status != 200:
-            raise ValueError("thread binding unavailable")
-        value = json.loads(body)
-        task_id = value.get("task_id") if isinstance(value, dict) else None
-        if (not isinstance(task_id, str) or not _TASK.fullmatch(task_id)
-                or value.get("channel_id") != self.channel or value.get("thread_ts") != thread):
-            raise ValueError("thread binding does not echo this thread")
-        return task_id
+        """One bounded store snapshot: absent, unique, ambiguous, or unavailable."""
+        if not isinstance(thread, str) or not _TS.fullmatch(thread):
+            raise ValueError("invalid thread selection")
+        if thread not in self._thread_bindings:
+            if len(self._thread_bindings) >= len(DRILL_KINDS):
+                raise ValueError("thread binding limit exceeded")
+            self._thread_bindings[thread] = None
+            matches, _ = _trusted_collection(self.runtime, [], thread_binding=(self.channel, thread))
+            if (not isinstance(matches, tuple) or len(matches) > 2
+                    or any(not isinstance(task, str) or not _TASK.fullmatch(task) for task in matches)):
+                raise ValueError("thread binding response malformed")
+            self._thread_bindings[thread] = matches
+        matches = self._thread_bindings[thread]
+        if matches is None:
+            raise ValueError("thread binding unavailable; no retry was made")
+        return None if not matches else matches[0] if len(matches) == 1 else "AMBIGUOUS"
 
     def close(self) -> None:
         self.client.close()
@@ -1178,30 +1248,215 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
                     "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
                     "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
-_CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
-_CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
+_CONSISTENCY_SOURCE = "Pinned evaluator: owner-bound read-only consistency collection"
+_CAPTURES_SOURCE = "Pinned evaluator: owner-bound activation-capture verification"
+
+
+def _sqlite_snapshot(path: Path):
+    """Take a bounded, WAL-aware backup; never copy a live SQLite file."""
+    end = time.monotonic() + _remaining(10)
+    snapshot = sqlite3.connect(":memory:")
+    try:
+        if any(Path(str(path) + suffix).is_symlink() for suffix in ("", "-wal", "-shm")):
+            raise ValueError("SQLite snapshot source uses a link")
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as source:
+            page_size = source.execute("PRAGMA page_size").fetchone()[0]
+            def progress(status, remaining, total):
+                if time.monotonic() >= end or total * page_size > 134217728:
+                    raise ValueError("SQLite snapshot unavailable within collection bounds")
+            source.backup(snapshot, pages=128, progress=progress, sleep=0.05)
+        snapshot.execute("PRAGMA query_only=ON")
+        snapshot.set_progress_handler(lambda: time.monotonic() >= end, 1000)
+        if snapshot.execute("PRAGMA quick_check").fetchone() != ("ok",):
+            raise ValueError("SQLite snapshot is inconsistent")
+        return snapshot
+    except Exception:
+        snapshot.close()
+        raise ValueError("SQLite snapshot unavailable or inconsistent") from None
+
+
+def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False, thread_binding=None):
+    """Only evaluator code runs. Owner inputs and inspect values remain in memory."""
+    from dataclasses import fields
+    from pathlib import PurePosixPath
+    from .config import Settings
+    from .primary_activation_evidence import ActivationIdentity
+    from .primary_generation import require_generation
+    from .primary_scorecard_evidence import consistency_report, activation_capture_report
+    from .primary_provider_evidence import _BoundedCaptureReader
+    from .provider_validation import CaptureVerifier
+    from .langgraph_postgres import (database_binding, read_postgres_qualification_evidence,
+                                    read_postgres_slack_thread_binding)
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    from psycopg.rows import dict_row
+
+    try:
+        descriptor = cli_release_descriptor()
+        # The descriptor names an owner-injected environment variable, never a candidate file or command.
+        name = descriptor["trusted_collection_inputs_env"]
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", name):
+            raise ValueError("missing owner input reference")
+        raw = os.environ[name]
+        if len(raw) > MAX_BYTES:
+            raise ValueError("owner inputs exceed bound")
+        inputs = json.loads(raw)
+        environment = inputs["environment"]
+        # Exact inspected environment, including endpoint, generation and authority selections.
+        # The candidate cannot add a selector which the owner did not expect.
+        if environment != runtime.env:
+            raise ValueError("deployment differs from owner expectations")
+        values = inputs["settings"]
+        if set(values) != {f.name for f in fields(Settings)}:
+            raise ValueError("complete explicit settings required")
+        settings = Settings(**values)
+        pin = environment["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
+        if not re.fullmatch(r"[0-9a-f]{64}", pin):
+            raise ValueError("generation pin required")
+        if (environment.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION", pin) not in ("", pin)
+                or environment["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"] != runtime.runtime_sha
+                or environment["DIRECTOR_PROVIDER_VALIDATION_TREE"] != runtime.runtime_tree
+                or settings.langgraph_primary_pinned_commit_sha != runtime.runtime_sha
+                or settings.langgraph_primary_pinned_tree_sha != runtime.runtime_tree
+                or environment["DIRECTOR_RUNTIME_IMAGE_ID"] != runtime.image_id):
+            raise ValueError("candidate or generation differs")
+        commit = _run_json(["gh", "api", f"repos/{REPOSITORY}/git/commits/{_sha(runtime.runtime_sha)}",
+                            "--jq", "{tree: .tree.sha}"])
+        if not runtime.runtime_tree or commit.get("tree") != runtime.runtime_tree:
+            raise ValueError("image tree differs from repository commit")
+        inspected = _run_json(["docker", "inspect", runtime.container_id])[0]
+        if inspected["Image"] != runtime.image_id or _environment(inspected) != environment:
+            raise ValueError("deployment changed")
+        mounts = inputs["mounts"]
+        for mount in mounts:
+            if not any(m.get("Type") == "bind" and m.get("Destination") == mount["destination"]
+                       and m.get("Source") == mount["source"] for m in inspected["Mounts"]):
+                raise ValueError("owner mount differs from deployment")
+
+        def artifact(original):
+            remote = PurePosixPath(original)
+            choices = [m for m in mounts if remote.is_relative_to(PurePosixPath(m["destination"]))]
+            if not remote.is_absolute() or ".." in remote.parts or len(choices) != 1:
+                raise ValueError("artifact mount unavailable or ambiguous")
+            mount = choices[0]
+            root = Path(mount["source"])
+            relative = remote.relative_to(PurePosixPath(mount["destination"]))
+            path = root.joinpath(*relative.parts)
+            if not root.is_absolute() or not path.resolve().is_relative_to(root.resolve()):
+                raise ValueError("artifact escaped mount")
+            for entry in (path, *path.parents):
+                if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
+                    raise ValueError("artifact uses a link")
+            if not path.is_file() or path.stat().st_size > 134217728:
+                raise ValueError("artifact unavailable or oversized")
+            return path
+
+        def connection_dsn(original):
+            # No endpoint remapping. Both endpoints are owner-selected and inspect-matched.
+            parsed = conninfo_to_dict(original)
+            if any(key in parsed for key in ("service", "servicefile", "passfile")):
+                raise ValueError("implicit connection authority refused")
+            if not all(parsed.get(k) for k in ("host", "port", "dbname", "user")):
+                raise ValueError("explicit endpoint required")
+            if parsed.get("sslmode") != "verify-full":
+                raise ValueError("trusted collection requires verified TLS")
+            ca = inputs["ca"]
+            local = Path(ca["path"])
+            if not local.is_absolute() or local.is_symlink() or local.stat().st_size > MAX_BYTES:
+                raise ValueError("owner CA unavailable")
+            if hashlib.sha256(local.read_bytes()).hexdigest() != ca["sha256"]:
+                raise ValueError("owner CA differs")
+            if "options" in parsed:
+                raise ValueError("connection options are evaluator-owned")
+            return make_conninfo(original, sslrootcert=str(local))
+
+        if settings.langgraph_primary_postgres_dsn != environment["LANGGRAPH_PRIMARY_POSTGRES_DSN"]:
+            raise ValueError("primary endpoint differs")
+        primary_dsn = connection_dsn(settings.langgraph_primary_postgres_dsn)
+        validation_dsn = connection_dsn(environment["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"])
+        storage, instance = database_binding(primary_dsn, schema=settings.langgraph_primary_postgres_schema)
+        identity = ActivationIdentity(runtime.runtime_sha, runtime.runtime_tree, settings.app_env,
+            runtime.project, storage, instance, settings.langgraph_primary_postgres_schema,
+            settings.langgraph_primary_checkpoint_namespace)
+        with closing(_sqlite_snapshot(artifact(settings.langgraph_primary_acceptance_journal_path))) as journal:
+            manifest = require_generation(settings, identity, environment=environment,
+                                          local_artifact=artifact, journal_connection=journal)
+        # Only the connection copy changes; verification above used original deployment paths/configuration.
+        connected = replace(settings, langgraph_primary_postgres_dsn=primary_dsn)
+        selected = sorted(set(tasks))
+        if len(selected) > 12 or any(not re.fullmatch(r"DIR-LG-[A-F0-9]{1,32}", task) for task in selected):
+            raise ValueError("task selection invalid")
+        if thread_binding is not None:
+            if (selected or qualification_only or not isinstance(thread_binding, tuple) or len(thread_binding) != 2
+                    or thread_binding[0] != environment.get("SLACK_DIRECTOR_CHANNEL_ID")
+                    or not isinstance(thread_binding[1], str) or not _TS.fullmatch(thread_binding[1])):
+                raise ValueError("thread selection differs from owner-bound deployment")
+            return read_postgres_slack_thread_binding(primary_dsn,
+                channel_id=thread_binding[0], thread_ts=thread_binding[1],
+                schema=settings.langgraph_primary_postgres_schema,
+                accepted_storage_identity=storage, accepted_instance_id=instance,
+                wall_seconds=min(5.0, _remaining(5))), None
+        if qualification_only:
+            # Same owner/generation/transport binding, without recomputing unrelated
+            # consistency counts or activation captures for each task read.
+            return {task: read_postgres_qualification_evidence(
+                primary_dsn, task, schema=settings.langgraph_primary_postgres_schema,
+                accepted_storage_identity=storage, accepted_instance_id=instance,
+                wall_seconds=min(5.0, _remaining(5))) for task in selected}, None
+        with psycopg.connect(primary_dsn, connect_timeout=10, row_factory=dict_row,
+                options="-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=5000") as connection:
+            consistency = consistency_report(connected, identity, tasks=selected, connection=connection,
+                environment=environment, local_artifact=artifact,
+                authority_secrets=tuple(inputs[key].encode("utf-8") for key in
+                                        ("route_verifier_secret", "owner_authority_secret")))
+        if not runtime.read_in_window(consistency["captured_at"]):
+            raise ValueError("collection outside time window")
+        try:
+            # Optional routes come from the owner's evaluator environment, never inspected candidate values.
+            from .openai_responses_validation import responses_route_from_environment
+            from .provider_validation_team import team_route_from_environment
+            verifier = CaptureVerifier(_BoundedCaptureReader(validation_dsn),
+                capture_key=inputs["capture_key"], candidate=identity.candidate_commit,
+                generation=pin, tree=identity.candidate_tree,
+                openai_responses_route=responses_route_from_environment(), team_route=team_route_from_environment())
+            captures = activation_capture_report(connected, identity, manifest, verifier=verifier,
+                                                 environment=environment, descriptor=descriptor)
+            if (not runtime.read_in_window(captures["observed_at"])
+                    or any(not isinstance(surface, dict) or surface.get("capture_verified") is not True
+                           or surface.get("chain_valid") is not True
+                           for lane in captures["lanes"].values()
+                           for surface in (lane["surfaces"].get("app"), lane["surfaces"].get("runtime_adapter")))):
+                captures = None
+        except Exception:
+            captures = None  # Capture failure cannot invalidate an independently collected consistency snapshot.
+        return consistency, captures
+    except Exception:
+        # Drivers, parsers and filesystem exceptions may contain credentials or private paths.
+        raise ValueError("Trusted collection unavailable: owner binding, store, snapshot or verification failed") from None
 # Input trust is transitive, including prerequisites shared by collectors. T is
 # owner configuration, independent transport/store facts or pinned computation;
 # C is candidate-controlled data, even when fetched over authenticated transport.
 # Keep the expanded audit in docs/twenty-check-completion-scorecard.md in sync.
 _DEPLOYMENT_INPUTS = (
     ("owner selections; Docker inventory, configuration, networks and lifecycle", "T"),
-    ("Director /health prerequisite (environment and primary object)", "C"),
 )
 _ROUTE_INPUTS = (
     ("n8n active intake workflow via its bound database", "T"),
     ("candidate n8n/workflows/director-intake.json", "C"),
 )
 _SLACK_INPUTS = (("Slack auth.test, conversations.replies and owner configuration", "T"),)
-_TASK_INPUTS = (("Director /v1/tasks readback and /v1/primary/tasks/*/deliveries", "C"),)
+_TASK_INPUTS = (
+    ("owner-bound verified-TLS qualification snapshot and pinned task/delivery projection", "T"),
+    ("candidate-writable task, history and delivery rows require independent authority", "C"),
+)
 _RENDER_INPUTS = (("candidate renderer blobs compared with pinned evaluator renderer", "C"),)
-_CONSISTENCY_INPUTS = (("in-image consistency report (disabled; live input is None)", "C"),)
-_CAPTURE_INPUTS = (("in-image activation captures (disabled; live input is None)", "C"),)
+_CONSISTENCY_INPUTS = (("owner-bound verified-TLS stores and pinned consistency computation", "T"),)
+_CAPTURE_INPUTS = (("owner-bound verified-TLS activation chains and signed capture v2 executable digest", "T"),)
 COLLECTOR_INPUTS = {
     "01": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + (("n8n upstream GET /health", "C"),),
     "02": _DEPLOYMENT_INPUTS + (("Windows Win32_Process gateway inventory", "T"),),
     "03": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + (
-        ("Director /v1/slack-thread-bindings", "C"),),
+        ("candidate-writable thread binding rows require native Slack correlation", "C"),),
     "04": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + (
         ("n8n active status workflow, executions and credential update time via bound database", "T"),
         ("candidate n8n/workflows/director-status.json", "C"),),
@@ -1210,7 +1465,7 @@ COLLECTOR_INPUTS = {
     "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
     "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
     "09": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
-        ("Director /v1/slack-thread-bindings", "C"),),
+        ("candidate-writable thread binding rows require native Slack correlation", "C"),),
     "10": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
         ("owner structural rubric and Slack conversations.history", "T"),),
     "11": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CAPTURE_INPUTS,
@@ -1228,11 +1483,16 @@ COLLECTOR_INPUTS = {
     "20": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS + (
         ("owner predeclared paid-answer rubric", "T"),),
 }
-_CONTAINED_CAPTURES = ("11", "12")
-_CONTAINED_CANDIDATE = ("17",)
+# Source decoupling is not admission. These remain held until their independent
+# transitive evidence and sanctioned validation have been proved.
+_PENDING_TRUST_PROOF = frozenset({"02", "17"})
+_CONTAINED_CAPTURES = tuple(key for key in ("11", "12")
+                            if any(trust == "C" for _, trust in COLLECTOR_INPUTS[key]))
+_CONTAINED_CANDIDATE = tuple(key for key in ("17",)
+                             if key in _PENDING_TRUST_PROOF or any(trust == "C" for _, trust in COLLECTOR_INPUTS[key]))
 _CONTAINED_RUNTIME = tuple(
     key for key, inputs in COLLECTOR_INPUTS.items()
-    if any(trust == "C" for _, trust in inputs)
+    if (key in _PENDING_TRUST_PROOF or any(trust == "C" for _, trust in inputs))
     and key not in _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE
 )
 
@@ -1252,7 +1512,7 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
     # Zero health counters are never consistency proof: release 879 reported
     # exactly these while authoritative task/batch plan digests conflicted.
     if consistency is None:
-        return _observation("07", None, "The in-image read-only consistency command was unavailable; health hold counters "
+        return _observation("07", None, "The evaluator-owned read-only consistency command was unavailable; health hold counters "
                             "cannot prove reconciliation. Worker readiness is scored in 19.",
                             runtime.health_url, health_facts, at, **binding)
     counts = consistency.get("counts")
@@ -1280,7 +1540,7 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
     if busy:
         return _observation("07", None, "Work is in flight (" + ", ".join(busy) + "); observe again when quiescent.",
                             _CONSISTENCY_SOURCE, facts, at, **binding)
-    return _observation("07", True, "The in-image read-only consistency snapshot reports zero unresolved, ambiguous or "
+    return _observation("07", True, "The evaluator-owned read-only consistency snapshot reports zero unresolved, ambiguous or "
                         "conflicting records for the running generation and fence.", _CONSISTENCY_SOURCE, facts, at, **binding)
 
 
@@ -1348,7 +1608,7 @@ def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None
                              runtime.health_url, {"combined_live_ready": False}, at, **binding)
     elif captures is None:
         # A readiness flag never exposes capture identity or expiry.
-        obs12 = _observation("12", None, "The in-image activation-captures command was unavailable; a readiness flag "
+        obs12 = _observation("12", None, "The evaluator-owned activation-captures command was unavailable; a readiness flag "
                              "alone never attests captures.", runtime.health_url, {}, at, **binding)
     else:
         try:
@@ -1363,7 +1623,7 @@ def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None
     latest = (paid or {}).get("latest")
     if not latest or captures is None:
         obs11 = _observation("11", None, "Requires the paid thread's collected readback with provider attempts and the "
-                             "in-image activation captures.", _CAPTURES_SOURCE, {}, at, **binding)
+                             "evaluator-owned activation captures.", _CAPTURES_SOURCE, {}, at, **binding)
     else:
         obs11 = _product_observation(at, runtime, captures, paid)
     return [obs12, obs11]
@@ -1383,6 +1643,16 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
                       for surface in ((value.get("surfaces") or {}).get("app"),
                                       (value.get("surfaces") or {}).get("runtime_adapter"))]
         products[lane] = value.get("product") if classified == [value.get("product")] * 2 else None
+        # A mixed V1/V2 pair still lacks one executable attestation. Preserve
+        # UNKNOWN for the same product; a signed mismatch on either surface is
+        # positive contrary evidence. Distinct products remain substitutions.
+        if all(isinstance(product, str) for product in classified) and len(set(classified)) > 1:
+            bases = {product.removesuffix("-digest-mismatch").removesuffix(_UNATTESTED)
+                     for product in classified}
+            if len(bases) == 1 and bases <= REAL_PRODUCTS.get(lane, set()):
+                suffix = "-digest-mismatch" if any(product.endswith("-digest-mismatch")
+                                                   for product in classified) else _UNATTESTED
+                products[lane] = next(iter(bases)) + suffix
         times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
         transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
         # provider_ready needs both the app and the runtime-adapter surface: each must have verified, been
@@ -2162,7 +2432,7 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT":
         return 1
     attempts = (latest or {}).values() if isinstance(latest, dict) else []
-    # The shared lifecycle rule (the collector and the in-image consistency command apply it too): an impossible
+    # The shared lifecycle rule (the collector and the evaluator-owned consistency command apply it too): an impossible
     # order settles nothing.
     settled = (lifecycle_error(readback) is None and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
                # A bound remote object is external I/O: without terminal evidence it is unsettled, execution claim
@@ -2401,7 +2671,7 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
 
 
 def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | None:
-    """Check 20: each settled assignment's persisted provider result packet (read by the in-image report and
+    """Check 20: each settled assignment's persisted provider result packet (read by the evaluator-owned report and
     revalidated against its stored digest) is the one its result digest names, its outcome text is the graded
     outcome's result and its provider the graded outcome's provider, and the packets' assignment IDs are exactly
     the durable assignments' in both directions: an orphan packet is a mismatch, a missing one is unknown (not
@@ -2415,7 +2685,7 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     if not isinstance(artifacts, list) or not assignments:
         return None
     # Every dispatched assignment's work packet, revalidated, joined to its result packet under one authority
-    # snapshot (work_packet_error, the rule the in-image global count applies to every task).
+    # snapshot (work_packet_error, the rule the evaluator-owned global count applies to every task).
     work_packets = entry.get("work_packets")
     if not isinstance(work_packets, list):
         return None
@@ -2442,7 +2712,7 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
         rows = [row for row in artifacts if isinstance(row, dict)
                 and row.get("assignment_id") == assignment.get("assignment_id")]
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
-        # The one packet-to-assignment rule the in-image global count uses too (revalidated, the assignment's
+        # The one packet-to-assignment rule the evaluator-owned global count uses too (revalidated, the assignment's
         # agent, recorded between reservation and completion, the SUCCEEDED assignment's result digest). Both
         # lifecycle moments are inside the freshness window (_moments), so the packet is too.
         if (len(rows) != 1 or len(matching) != 1 or artifact_assignment_conflict(rows[0], assignment) is not None
@@ -2496,7 +2766,7 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
             != sorted(assignment.get("sequence") for assignment in assignments if isinstance(assignment.get("sequence"), int))
             or len({assignment.get("sequence") for assignment in assignments}) != len(assignments)):
         return False
-    # The shared per-task rules (the collector and the in-image consistency command apply the same): every
+    # The shared per-task rules (the collector and the evaluator-owned consistency command apply the same): every
     # assignment's moments in order, and, for paid runs, each assignment's status and digest agreeing with its last
     # attempt's final event (settlement_error; attempt ordinals 1..n are validate_attempt_history's).
     if lifecycle_error(readback) is not None:
@@ -2625,7 +2895,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         budgets = entry.get("budgets") if isinstance(entry, dict) else None
     unsigned = False
     if isinstance(budgets, list):
-        # A budget row counts only when the in-image report re-verified its owner signature
+        # A budget row counts only when the evaluator-owned report re-verified its owner signature
         # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
         # Each charged attempt must join the exact signed document it reserved against: same grant, same provider.
         spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
@@ -2779,6 +3049,11 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                 except _SOURCE_ERRORS:
                     paid = None
         consistency = captures = None
+        try:
+            tasks = [task for task in (approval_task, (paid or {}).get("task_id")) if task is not None]
+            consistency, captures = _trusted_collection(director_runtime, tasks)
+        except _SOURCE_ERRORS:
+            pass
         if t is not None:
             try:
                 if approval_task is None:
@@ -2824,7 +3099,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     finally:
         if t is not None:
             t.close()
-    # Final disposition: health, Slack and evaluator results cannot supply trusted reports.
+    # Trusted reports do not remove candidate inputs used by the same check.
     unknown(_CONTAINED_RUNTIME, "collector not yet trusted", _CONSISTENCY_SOURCE)
     unknown(_CONTAINED_CAPTURES, "collector not yet trusted", _CAPTURES_SOURCE)
     put([_observation(key, None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
@@ -3366,8 +3641,8 @@ def evaluate_run_record(row: dict[str, Any], *, mode: str,
         if any(not _amount(value) for value in values):
             return None, "Measurements must be finite numeric values."
         wall, pause, machine, cost = values
-        if not (0 <= pause <= wall < 60 and 0 <= machine < 60 and abs(wall - pause - machine) < 0.001 and 0 <= cost < 1):
-            return False, "Actual wall time, pause accounting or actual cost misses the standard."
+        if not (0 <= pause <= wall and 0 <= machine and abs(wall - pause - machine) < 0.001 and 0 <= cost):
+            return False, "Measured time accounting or actual cost is inconsistent or negative."
     except (ValueError, TypeError):
         return None, "Invalid measurements."
     expected = {"mode": mode, "actual_owner_event": True, "correctness_verified": True,
@@ -3572,7 +3847,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                     (runtime_sha and item.runtime_sha != runtime_sha) or (image_id and item.image_id != image_id)):
                 error = "Evidence is missing or mismatches the runtime image binding."
             row["status"] = "UNKNOWN" if error or item.passed is None else "PASS" if item.passed is True else "FAIL"
-            row["explanation"] = error or item.explanation
+            row["explanation"] = item.explanation if item.passed is None else error or item.explanation
             row["evidence"] = [{"source": item.source, "sha256": item.digest,
                                 "facts": item.facts,
                                 "observed_at": item.observed_at.isoformat(), "expires_at": item.expires_at.isoformat(),
@@ -3595,6 +3870,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                             "Checks " + ", ".join(sorted(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)) +
                             " are contained by the trusted-collection follow-up (#313 / PR #327); "
                             "other missing selections or unavailable sources also stay UNKNOWN.",
+                            "Trusted collection verifies store consistency and signatures with evaluator code. Rows and HMAC keys the candidate can write are not independent proof of execution or authorship; missing owner bindings or snapshots remain UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
@@ -3748,6 +4024,16 @@ def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) ->
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]

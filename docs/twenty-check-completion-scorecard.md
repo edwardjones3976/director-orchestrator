@@ -1,8 +1,18 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
@@ -83,10 +93,50 @@
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 # Twenty checks for a completed Director
 
+## Trusted TLS collector fixture: issue #313, round 3
+
+The full audit below contains 01–12, 15, 17, 19 and 20. Neither an unavailable
+nor a successful trusted report removes another candidate-served input,
+including health-dependent assertions and candidate-writable task records used by 06 and 10. Checks 02 and 17 retain explicit pending-proof holds.
+
+`TrustedCollectionLaneTests` uses the sanctioned `-Tls` lane. Its Claude capture
+runs a local native-result fixture through the bridge, parser, admission,
+execution claim, signed capture and settlement. Invocation usage and cumulative
+`modelUsage` are both present; resumed session totals replace invocation totals.
+The parser is unchanged. All provider responses and authority are test fixtures.
+
+The extended fixture creates ten offline trials through the production application
+and ledger, reconstructs the coordinator at an approval interrupt, and records
+approval-resume receipts. HTTP and subprocess boundaries are forbidden during
+those trials. A separate attempt uses the actual Responses transport with a mock
+HTTP response, signed enrollment, receive-time native meter and attempt/assignment
+settlement. The evaluator reads the resulting rows through `_trusted_collection`
+over verified TLS; no candidate report supplies these assertions.
+
+These are expected direct-predicate fixture verdicts, pending execution by the
+dispatcher. Live collection contains all of these checks, including 07, 12 and
+17. They are not deployment acceptance or evidence that CI ran for this revision.
+
+| Check | Expected reachability | Evidence or missing input |
+| --- | --- | --- |
+| 06 | UNKNOWN | Coordinator recovery and approval receipts exist; a trusted complete task readback, process-start chronology and correlated delivered final reply are missing. |
+| 07 | PASS in the quiescent baseline | Real generation reservation and direct consistency snapshot. Subsequent in-flight work must not retain PASS. |
+| 08 | UNKNOWN | Local approval-resume receipts exist; authenticated gateway command authorization and delivered, scoped Slack prompts are missing. |
+| 10 | UNKNOWN | Ten real offline ledger runs with zero network/native calls exist; ten consecutive authenticated owner threads, trusted complete task readbacks, canonical final deliveries and the rubric are missing. |
+| 11 | UNKNOWN | Signed Claude executable capture is pinned; paid-attempt readback joined to captures for every used provider is missing. |
+| 12 | PASS | Real signed capture and both validated activation chains, collected directly from their stores. |
+| 15 | UNKNOWN | Native metering and signed spend/budget settlement exist; complete current usage-monitor accounting and the bound paid-task evidence are missing. |
+| 17 | PASS | Owner-local adoption, including its fixture CI evidence, is validated by the real generation producer and journal reader at the candidate binding. |
+| 20 | UNKNOWN | Metered attempt and assignment settle; the complete paid task, persisted result artifact, authenticated owner thread, canonical delivery and rubric are missing. |
+
+The fixture deliberately does not manufacture Slack observations or task
+readbacks to promote these UNKNOWN results. Complete trusted task-readback
+collection and the missing lifecycle evidence remain open.
+
 This scorecard turns the owner's good-run contract into twenty fixed outcomes.
 It is a progress report, not an approval mechanism. The required outcome remains
-an actual owner request through Slack, a correct result in the same thread in
-under 60 seconds, and less than USD 1 of attributable actual charges. Simulated
+an actual owner request through Slack, a correct result in the same thread,
+with consistent measured timing and attributable actual charges reported. Simulated
 runs qualify orchestration only; the project is not complete until paid primary
 execution is active and a real run meets that outcome.
 
@@ -117,10 +167,10 @@ effect or use `/dispatch-reconciliation` for a legacy probe without one.
 
 ### Collector containment (2026-09-27)
 
-The trusted collector is not available yet. Live collection finishes checks
+Trusted consistency and capture collection is available, but the remaining candidate inputs keep live checks
 **01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20** as **UNKNOWN**, with the reason
 "collector not yet trusted" and a source naming the trusted-collection follow-up.
-It supplies no consistency or activation-capture report and never executes
+It computes consistency and activation-capture reports with pinned code and never executes
 candidate Python through docker exec. Health, Slack, later observations and
 final collection merging cannot promote these sixteen checks to PASS. Checks 03,
 06, 09 and 10 retain Slack-side collection. Candidate drill readbacks from
@@ -132,7 +182,7 @@ zero-call offline execution. Trusted collection moves to #313 / PR #327.
 ### All twenty collector inputs: trust audit
 
 `COLLECTOR_INPUTS` in `completion_scorecard.py` records this classification and
-derives `_CONTAINED_RUNTIME`; the capture and candidate containment groups remain
+derives `_CONTAINED_RUNTIME`; the capture and candidate containment groups are derived separately and remain
 separate. Report limitations use those same groups. The classification test checks
 all twenty entries, the documented containment column and live suppression even
 when collectors return PASS. Rule-path fixture tests remain separate from live
@@ -151,75 +201,143 @@ predicate. Shared inputs are expanded here once:
   creation/start/running state of Director, primary database, gateway, n8n and
   n8n database, and final deployment reinspection. No configuration values are
   reproduced here.
-- **Health prerequisite (C):** `_runtime` reads Director `/health`, validates its
-  environment and primary-object shape, then constructs the runtime required by
-  every deployment collector, including 02, 04 and 17. A malformed or unavailable
-  candidate response prevents their PASS even when their final predicate uses T.
-- **Route (T/C):** Docker route/credential/store bindings and the active intake
-  workflow/version/timestamps/nodes/connections/settings/pin data read by fixed
-  SQL from deployment-owned n8n-db (**T**); the candidate's
-  `n8n/workflows/director-intake.json` used as the comparison contract (**C**).
-  These database commands execute `psql` in the separate database service, not
-  candidate Python in the Director image.
+- **Health (C):** candidate `/health` supplies only health-dependent assertions.
+  Missing or malformed health does not prevent daemon identity collection, gateway
+  inventory (02) or the independent consistency path (17). Those two checks remain
+  explicitly held until transitive authority and sanctioned validation are proved.
+- **Route (T/C):** Docker route/credential/store bindings and active workflows are
+  read by fixed SQL from deployment-owned n8n-db (**T**). The expected intake and
+  status workflows come from the owner-pinned evaluator archive. Candidate workflow
+  bytes must equal that contract before active nodes/connections/settings/pin data
+  are compared. Candidate and active agreement cannot redefine expectation together;
+  a changed response code is valid only when independently selected in the pin.
+  Candidate workflow inputs remain conservatively classified **C** pending proof.
+  Database commands execute `psql` in the separate database service.
 - **Slack (T):** owner configuration, `auth.test`, complete `conversations.replies`
   pages and their message identities, timestamps, text, blocks and edit metadata.
-- **Task (C):** Director `/v1/tasks/{id}` body, headers and qualification readback
-  (task/intake, projections, checkpoints, assignments, attempts, effects, usage,
-  results and delivery rows), plus `/v1/primary/tasks/{id}/deliveries`.
+- **Task (T/C):** owner-bound verified-TLS qualification snapshots supply the task,
+  projection digest, history and delivery rows (**T** transport and pinned
+  computation). Task and delivery consumers share one snapshot per task; an
+  unavailable, incomplete, stale or foreign snapshot has no HTTP fallback.
+  Candidate-writable records still require independent authority/correlation
+  (**C**); moving a read to the database alone cannot authenticate a claim.
 - **Renderer (C):** candidate renderer blobs; the evaluator compares their bytes
   to its pinned renderer before local rendering. This equality does not
-  authenticate the candidate-supplied application record being rendered.
-- **Consistency (C, disabled):** former in-image consistency report: generation,
-  fence, counts, adoption, approval authorizations/receipts/bindings, result
-  artifacts, budgets, spend and verified-meter claims. Live collection now passes
-  `None`; only direct rule fixtures supply this report.
-- **Captures (C, disabled):** former in-image activation report: generation and
-  provider binding digests, required lanes, products, app/runtime-adapter surfaces,
-  verification/chain flags and observation/recording/expiry times. Live input is
-  `None`; these assertions require an independent collector before promotion.
+  authenticate the candidate-writable application record being rendered.
+- **Consistency (T):** pinned evaluator computation over owner-bound verified-TLS
+  stores, generation and a WAL-aware read-only journal snapshot; signed budget
+  and meter verification use owner-injected authority. Missing sources are UNKNOWN.
+- **Captures (T):** pinned activation-chain verification over the owner-bound
+  verified-TLS stores. Signed v2 captures carry the executable digest through
+  `CaptureVerifier` and `classify_attested` to the pinned release descriptor.
+  Legacy or unattested CLI captures cannot prove a CLI product.
 
 | Check | Inputs (including shared inputs above) | T/C | Contained? |
 | --- | --- | --- | --- |
-| 01 | Deployment; health prerequisite; route; n8n upstream GET `/health` environment | T: deployment, route store. C: health, candidate workflow, upstream HTTP | Yes |
-| 02 | Deployment; health prerequisite; Windows `Win32_Process` known gateway inventory | T: daemon and host inventory. C: shared health prerequisite | Yes |
-| 03 | Deployment; health prerequisite; route; Slack; task; `/v1/slack-thread-bindings` status/body for rejection and ambiguity drills | T: deployment, route store, Slack. C: health, workflow, task, thread binding | Yes |
-| 04 | Deployment; health prerequisite; Slack; bound n8n-db active status workflow/version, latest and posting executions, saved Slack response and credential update time; candidate `director-status.json` | T: deployment, n8n store, Slack. C: health prerequisite and candidate workflow contract | Yes |
-| 05 | Deployment; health prerequisite; `/health` intake owner, legacy disablement, writer lease readiness and fencing generation | T: deployment. C: health ownership assertions | Yes |
-| 06 | Deployment; health prerequisite; route; Slack; task; renderer; consistency approval/checkpoint/resume evidence | T: deployment, route store, Slack. C: health, workflow, task, renderer, consistency | Yes |
-| 07 | Deployment; health prerequisite; `/health` holds, ambiguous counts and fence; consistency generation/counts | T: deployment. C: health and consistency | Yes |
-| 08 | Deployment; health prerequisite; route; Slack; task; renderer; consistency approval authorizations, command receipts, application and effect bindings | T: deployment, route store, Slack. C: health, workflow, task, renderer, consistency | Yes |
-| 09 | Deployment; health prerequisite; route; Slack; task; renderer; `/v1/slack-thread-bindings` for duplicate/ambiguous-post drills | T: deployment, route store, Slack. C: health, workflow, task, renderer, binding | Yes |
-| 10 | Deployment; health prerequisite; route; Slack and `conversations.history`; task; renderer; owner structural rubric and digest | T: deployment, route store, Slack, rubric. C: health, workflow, task, renderer | Yes |
-| 11 | Deployment; health prerequisite; Slack; paid task and renderer; captures including products/transports and attempt-time validity | T: deployment, Slack. C: health, task, renderer, captures | Yes |
-| 12 | Deployment; health prerequisite; `/health` activation readiness; captures and chain expiry | T: deployment. C: health and captures | Yes |
+| 01 | Deployment; route; n8n upstream GET `/health` environment | T: deployment, route store. C: candidate workflow, upstream HTTP | Yes |
+| 02 | Deployment; Windows `Win32_Process` known gateway inventory | T: daemon and host inventory; pending independent proof | Yes |
+| 03 | Deployment; route; Slack; task; bounded read-only thread binding for rejection and ambiguity drills | T: deployment, route store, Slack. C: workflow, task, thread binding | Yes |
+| 04 | Deployment; Slack; bound n8n-db active status workflow/version, latest and posting executions, saved Slack response and credential update time; candidate `director-status.json` | T: deployment, n8n store, Slack. C: candidate workflow contract pending proof | Yes |
+| 05 | Deployment; `/health` intake owner, legacy disablement, writer lease readiness and fencing generation | T: deployment. C: health ownership assertions | Yes |
+| 06 | Deployment; route; Slack; task; renderer; consistency approval/checkpoint/resume evidence | T: deployment, route store, Slack, consistency. C: workflow, task, renderer | Yes |
+| 07 | Deployment; `/health` holds, ambiguous counts and fence; consistency generation/counts | T: deployment, consistency. C: health | Yes |
+| 08 | Deployment; route; Slack; task; renderer; consistency approval authorizations, command receipts, application and effect bindings | T: deployment, route store, Slack, consistency. C: workflow, task, renderer | Yes |
+| 09 | Deployment; route; Slack; task; renderer; bounded read-only thread binding for duplicate/ambiguous-post drills | T: deployment, route store, Slack. C: workflow, task, renderer, binding | Yes |
+| 10 | Deployment; route; Slack and `conversations.history`; task; renderer; owner structural rubric and digest | T: deployment, route store, Slack, rubric. C: workflow, task, renderer | Yes |
+| 11 | Deployment; Slack; paid task and renderer; captures including products/transports and attempt-time validity | T: deployment, Slack, captures. C: task, renderer | Yes |
+| 12 | Deployment; `/health` activation readiness; captures and chain expiry | T: deployment, captures. C: health | Yes |
 | 13 | Owner-controlled assignment journal, policy/cutover and twenty admissions; pinned ledger recomputation of integrity, completeness and reported usage bounds | T: independent local journal read and evaluator computation; operator attestations remain labelled | No |
 | 14 | Same journal/window; declared timeout/call/turn/output/USD bounds, cap attestation, evidence reference and digest | T: independent local journal read and evaluator computation; cap signatures are not claimed verified | No |
-| 15 | Deployment; health prerequisite; Slack; paid task and renderer; `/health` usage-monitor readiness, day, providers, counts, budgets and exposure; consistency signed-budget and spend/meter claims | T: deployment, Slack. C: health accounting, task, renderer, consistency | Yes |
+| 15 | Deployment; Slack; paid task and renderer; `/health` usage-monitor readiness, day, providers, counts, budgets and exposure; consistency signed-budget and spend/meter claims | T: deployment, Slack, consistency. C: health accounting, task, renderer | Yes |
 | 16 | GitHub exact-head runs/jobs/executed steps and workflow blobs; owner workflow hash or evaluator revision; fallback owner-signed replica, installed signer key, lane counts/failures/command digests and GitHub ancestry | T: GitHub facts and workflow equality to owner authority, owner-authenticated replica | No |
-| 17 | Deployment; health prerequisite; consistency generation/adoption repository, reviewed commit/tree, author/reviewer identities and acceptance mode | T: deployment. C: health prerequisite and disabled adoption report | Yes |
+| 17 | Deployment; consistency generation/adoption repository, reviewed commit/tree, author/reviewer identities and acceptance mode | T: deployment, consistency/adoption; pending independent proof | Yes |
 | 18 | Owner native Security index and sealed manifest, canonical coverage/findings and preserved-source hashes; descriptor security base, optional CLI equality, GitHub ancestry and evaluator git changed-path computation | T: owner-controlled scan store/descriptor, GitHub and pinned computation; CLI alone grants no authority | No |
-| 19 | Deployment; health prerequisite; `/health` paid switch, primary runtime, effect executor, reconciliation worker and combined provider readiness | T: deployment. C: health activation assertions | Yes |
-| 20 | Deployment; health prerequisite; route; Slack; paid task; renderer; owner predeclared answer rubric/digest; consistency artifacts and settled request-correlated meter claims | T: deployment, route store, Slack, rubric. C: health, workflow, task, renderer, consistency | Yes |
+| 19 | Deployment; `/health` paid switch, primary runtime, effect executor, reconciliation worker and combined provider readiness | T: deployment. C: health activation assertions | Yes |
+| 20 | Deployment; route; Slack; paid task; renderer; owner predeclared answer rubric/digest; consistency artifacts and settled request-correlated meter claims | T: deployment, route store, Slack, rubric, consistency. C: workflow, task, renderer | Yes |
 
 **Newly contained for #313 / PR #327: 01, 02, 04, 05 and 19.** In particular,
-02 and 04 require removal of the shared candidate-health prerequisite before
-their otherwise independent evidence can pass. The full contained set is
+02 and 17 now collect independently of candidate health but retain explicit
+pending-proof holds; source decoupling alone does not admit either check. The full contained set is
 01–12, 15, 17, 19 and 20. Checks 13/14 assume the selected journal is maintained
 outside candidate control; they prove consistency of reported admissions, not
 external usage authenticity. The native Security store and installed owner keys
-likewise belong outside candidate control. No newly trusted collector is added.
+likewise belong outside candidate control. Consistency and capture inputs are now T. Fourteen checks retain C inputs;
+02 and 17 retain pending-proof holds. All sixteen remain contained.
 
-The planned trusted-collection follow-up will run independently pinned collector
-code outside the candidate image, use independently enforced read-only data
-access, and return bounded, sanitized evidence. It must bind that evidence to
-the exact running image, commit, tree and generation, validate freshness and
-activation attestations independently, and expose no credentials or raw
-parallel-batch rows. This design is follow-up work, not implemented here.
+Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
+existing `read_primary_qualification_evidence` is bounded and read-only. The
+qualification-only `read_postgres_qualification_evidence` factory now opens an
+existing, identity-bound database over verified TLS with read-only defaults,
+reuses that reader and returns only its snapshot. It performs no DDL and exposes
+no writer, graph or checkpoint handle. Task/header/delivery consumers now derive
+their views from that same typed snapshot, using the pinned application projection
+code. A collection caches at most seventeen tasks (ten trials, five drills,
+approval and paid task), including failed reads, so it does not retry or fall back
+to HTTP. This source change remains unqualified until real-store testing and the
+remaining candidate-writable authority/correlation gaps are closed. Health also includes live process/worker/provider and
+usage-monitor state; a store snapshot alone cannot attest those facts. Route,
+renderer and candidate-writable thread-binding inputs remain C. Thread binding now
+uses the same identity-bound, verified-TLS read-only factory and existing store
+query, bounded to two matches and one shared deadline. The collector caches at
+most five thread selections, including failures, without HTTP fallback. This
+proves neither native Slack correlation nor independent key custody; replacing
+HTTP alone does not close those checks. No raw parallel-batch rows are exported.
 
-The evaluation rules below remain documented and tested directly with fixtures;
-descriptions of consistency and capture reports specify their evidence contract,
-not a currently trusted live collection path. The existing producer modules are
-retained for the stacked PR.
+### Trusted collection (2026-09-27)
+
+The pinned evaluator computes consistency and activation-capture reports using
+its own code, interpreter and dependencies. No candidate Python is executed.
+Live collection may inspect candidate-served readbacks, but the audit's final
+containment prevents every check with any C input from earning points. Direct
+rule tests can pass 07, 12 and 17 using trusted reports; that is not a live PASS.
+Unavailable or invalid owner inputs, stores, signatures or snapshots never earn
+a PASS. Image, candidate, generation, collection-window and final deployment-state
+gates still apply. Check 07 also counts OWNER_DECISION_REQUIRED assignments on
+settled tasks as open, including when their pending dependents are correctly blocked.
+
+The owner-installed `~/.director-scorecard/release-descriptor.json` selects
+`trusted_collection_inputs_env`: the name of an evaluator environment variable
+injected by the owner. Its JSON value is an in-memory input bundle, never a CLI
+argument, report, receipt or generated file. It contains:
+
+- `settings`: all fields of the deployment's `Settings`, explicitly supplied
+  without ambient defaults. Preserve original deployment paths and values.
+- `environment`: the complete expected Docker environment, compared exactly
+  with inspect. This independently selects both database endpoints, the
+  generation pin, candidate/tree, provider bindings and configuration digest.
+- `mounts`: owner-approved bind mounts, each with `destination` and `source`,
+  compared with Docker inspect. The source must be accessible to the evaluator.
+- `ca`: an absolute evaluator-local `path` and its owner-pinned `sha256`.
+- `capture_key`, `route_verifier_secret`, `owner_authority_secret`: owner-injected
+  verification material held only in memory. Optional Responses/team verifier
+  configuration comes from the owner's evaluator environment, never the
+  candidate environment. Existing route configuration and capture signatures
+  must still match; absent route verification cannot attest those captures.
+
+Both Postgres endpoints require explicit host, port, database and user, and TLS
+`verify-full` with the pinned CA. No endpoint is rewritten to a convenient host
+alias. The existing `database_binding()` checks the primary storage identity and
+instance against the pinned generation. Queries use read-only transactions and
+timeouts; consistency uses a repeatable-read snapshot. The capture store uses
+the existing bounded read-only reader and CaptureVerifier. Driver errors are
+replaced with a fixed message without their text.
+
+SQLite is read from the verified host mount with `mode=ro` and backed up using
+sqlite3's backup API into memory. This includes committed WAL pages. The backup
+has a time/size limit, is checked with `quick_check`, and is made query-only.
+Neither a live database file nor its WAL is copied with docker cp. Unavailable
+Docker Desktop mounts, links, invalid journals, inconsistent snapshots and
+backup timeouts leave collection UNKNOWN. Generation verification checks original
+manifest paths and configuration digests separately from local artifact access;
+it never rewrites a manifest to host paths or reserves a journal.
+
+**Limit:** rows and HMAC keys the candidate can write are not independent proof
+of execution or authorship. This collector proves that evaluator-owned validators
+accepted the observed, owner-bound stores and signed artifacts. It does not prove
+that a candidate with signing authority could not fabricate them. Existing CLI
+captures also lack executable digests; their product attestation remains UNKNOWN
+until the capture producer records that evidence. Collection alone does not lift
+that separate gate or authorize activation.
 
 | # | Required outcome | Evidence needed |
 |---|---|---|
@@ -242,7 +360,7 @@ retained for the stacked PR.
 | 17 | Independent ACCEPT | Adopted owner-local acceptance for the candidate with reviewer ≠ author |
 | 18 | Complete Security scan | Sealed complete coverage and disposition bound to exact candidate |
 | 19 | Paid primary active | Paid enabled, primary runtime, effect executor and reconciliation worker active |
-| 20 | Real paid result | Actual-owner Slack input, independent correctness, one reply, wall time <60s, actual charges <$1 from settled meter rows correlated by request id |
+| 20 | Real paid result | Actual-owner Slack input, independent correctness, one reply, reported wall/machine time and actual charges from settled meter rows correlated by request id |
 
 ## Run it
 
@@ -395,8 +513,8 @@ a container ID, never a name.
   same name. FAIL when a hop has no such network or the name has another
   owner, UNKNOWN when a container shows no network attachments. No probe runs
   inside the gateway.
-- 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
-  `GET /v1/slack-thread-bindings` and the task readback (see below). A receipt
+- 03, 09: `--drill-thread` Slack threads, the bot's replies, the bounded
+  identity-bound read-only thread resolver and task snapshot (see below). A receipt
   or `BLOCKED` notice counts only as a reply's leading header (after the
   gateway's contribution BEGIN tag), at most one receipt per reply; the words
   quoted in a body count as neither, and the 4xx, 5xx and transport drills need
@@ -446,11 +564,11 @@ a container ID, never a name.
   the task has a plan). An
   approval prompt Slack reports as edited or with a subtype is not the native
   prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.
-- 07, 17, 15 (budget and meter rows): the in-image `consistency` command. Its
+- 07, 17, 15 (budget and meter rows): the evaluator-owned `consistency_report()` function. Its
   verified generation commit and tree must equal the runtime image's commit
   and tree labels, and the tree must be the labelled commit's tree on GitHub
   (GET only); when any of these is unverified or differs, 07, 08, 11, 12, 15,
-  17 and 20 are UNKNOWN, because the in-image evidence belongs to that
+  17 and 20 are UNKNOWN, because the evaluator-owned evidence belongs to that
   generation, not to the labelled image. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: Owner ruling (2026-09-24), option chosen: "Offline = pipeline proof". Check 10 proves the pipeline works end to end offline (delivery, simulation labels, ten consecutive, committed structural rubric); answer correctness is check 20's job (the real paid run). Check 10 therefore does
@@ -463,7 +581,7 @@ a container ID, never a name.
   trial to the last. A trial whose terminal reply Slack reports as edited, or
   with any subtype, shows neither the simulation label nor the cost text, so it
   is neither offline nor rubric-correct.
-- 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
+- 11, 12: the evaluator-owned `activation_capture_report()` function; 11 also reads the paid run's lanes.
   The reference workflows for 01 and 04 are read from the running candidate
   commit (`git show <runtime sha>:n8n/workflows/...`), never the working tree;
   unavailable is UNKNOWN. The in-process renderer 08 and 20 use must be the
@@ -870,7 +988,7 @@ compared casefolded and must all be distinct.
 
 One per-task validation, `task_evidence_errors` in
 `primary_scorecard_evidence`, serves both readers. The collector's typed
-readback and the in-image consistency command run it on the same sections
+readback and the evaluator-owned consistency command run it on the same sections
 (`langgraph_postgres.qualification_section_sql`: one task, or every task in
 the snapshot): attempt histories, usage, external effects (terminal evidence
 joined by claim and task), deliveries and receipts, lifecycle order (every
@@ -952,7 +1070,7 @@ keep a close waiting on), joins its readers only until its end and abandons any
 still blocked; the offline collector's commands (`whoami`, `icacls`,
 `docker inspect`) go through it too. The Security index's SQLite read aborts
 any statement past its wall clock through a progress handler (sqlite3's
-`timeout` bounds only lock waits). The in-image consistency and captures commands open Postgres
+`timeout` bounds only lock waits). The evaluator-owned consistency and captures commands open Postgres
 with `connect_timeout` and `statement_timeout`, and their `docker exec` runs
 under `_run_bytes`. A Responses capture names `openai-responses` only when the
 verifier's Responses route, whose signed configuration digest pins its endpoint
@@ -990,7 +1108,7 @@ the gateway's own `source_event_id` (`<channel>:<ts>`, computed by the one
 `models.canonical_slack_source_event_id` both use), and every Director terminal
 classification counts as a final reply. The n8n status query casts its
 timestamps to `timestamptz` under a UTC session, so they always carry an offset. Check 20 also requires every settled assignment's persisted
-provider result packet (read by the in-image report and revalidated against
+provider result packet (read by the evaluator-owned report and revalidated against
 its stored digest) to be the one its result digest names, with outcome text
 equal to the graded outcome's result: a mismatch FAILs, an unread or missing
 artifact is UNKNOWN.
@@ -1283,14 +1401,14 @@ used to suppress their collector results, derived from the input classification:
 pending the trusted-collection follow-up in #313 / PR #327.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
-in-image from the batch's assignment rows (assignment_id, sequence,
+evaluator-owned from the batch's assignment rows (assignment_id, sequence,
 provider_id, deployment_id, dependencies, write_surfaces, retry_limit,
 allocation_profile) and the task record's DirectorPlan with register_plan's
 own hashing (`primary_parallel.registered_plan_digest`); it must equal the
 batch's plan digest and the projection's bound parallel plan digest
 (`registered_plan_mismatches` fails 07; the per-task entry fails 20). The
 collector's readback does not serve dependencies, write_surfaces,
-retry_limit or allocation_profile, so this recomputation runs only in-image.
+retry_limit or allocation_profile, so this recomputation runs only evaluator-owned.
 An effect's execution, remote binding and terminal rows join by reservation
 (or claim) alone and carry their own task id; another task's is an effects
 conflict, and `effect_children_cross_task` counts them globally. In check 15
@@ -1414,7 +1532,7 @@ task writer (`batch_authority_mismatches`); a result or work packet's writer
 generation bounded by the task writer's. A status receipt's id is recomputed
 with `create_status_receipt`'s derivation, its channel and thread must be its
 task's own intake, and its user the owner the evaluator is configured with
-(`--owner`, which the deployment must use); the in-image global count checks
+(`--owner`, which the deployment must use); the evaluator-owned global count checks
 the id, channel and thread only, because it has no evaluator configuration.
 
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
@@ -1435,11 +1553,11 @@ descriptor's exact shape:
 
 Each entry has exactly those three keys; a digest pinned twice, pinned to
 another provider or product, a malformed entry, another version, or a capture
-without the digest attests nothing. The descriptor and the executable digest
-on the capture are A2/R1 work: `cli_release_descriptor()` returns None until
-the owner installs the descriptor file, and no capture records the digest yet, so every CLI capture is
-`<product>-unattested` and check 11 cannot PASS on a CLI lane until A2 wires
-both.
+without the digest attests nothing. The owner must install the release descriptor. The v2 capture producer now signs
+an executable digest; the verifier carries that signed digest to the activation
+report classifier. Missing descriptors, legacy captures and unmatched executable
+digests remain unattested. This closes the digest plumbing, not check 11's task,
+renderer or candidate-writable evidence dependencies.
 
 Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
 paid task's collected attempts and fails when any lane is not one of the real
@@ -1477,8 +1595,9 @@ calls and the basis of actual cost. The CLI does not award points for a
 user-authored run JSON file.
 
 An estimate or reservation is not actual cost. Unknown cost is not zero.
-Machine time excluding an owner pause is shown separately and cannot substitute
-for the required under-60-second wall time. Actual Grok Bot is distinct from
+Wall time and machine time excluding owner pauses are reported metrics, not
+60-second acceptance gates. Cost has no USD 1 acceptance ceiling; separate
+campaign and daily spending caps remain enforced. Actual Grok Bot is distinct from
 direct xAI Grok and Cursor Grok, regardless of shared branding or quota labels.
 
 ## Offline trial records
@@ -1533,12 +1652,33 @@ stay `UNKNOWN`. No verdict from this function contributes points.
 
 ## Validation
 
+`TrustedCollectionLaneTests` uses the sanctioned Postgres endpoint for both
+owner expectations and inspected deployment bindings. Its TLS case exercises
+real generation/adoption, the journal snapshot, signed v2 executable captures,
+activation chains, coordinator task producers and metered settlement. Direct
+predicate PASS assertions for 07, 12 and 17 do not bypass live containment:
+collection still returns UNKNOWN because shared candidate health remains C.
+The non-TLS case separately proves transport refusal and ignored candidate PASS
+reports. The TLS fixture also exercises the qualification factory and task/delivery
+consumer against real local graph and Slack-ledger producers, with Director
+HTTP forbidden. This does not prove independent authority over candidate-writable
+records or process-health collection. The all-sixteen trusted live path is **NOT CLOSED**.
+
+`-Tls` and `-Parallel N` compose: the lane exports its verified-TLS connection
+and CA before invoking the runner; `shard_dsn` changes only `dbname`, and workers
+inherit the CA environment. The runner regression covers retention of both
+`sslmode=verify-full` and `sslrootcert` for every generated shard. This is a
+static/code-path finding pending dispatcher execution.
+
+Commands for the dispatcher (not run in this sandbox):
+
 ```powershell
 $env:PYTHONPATH = 'src'
-python -m unittest tests.test_completion_scorecard tests.test_primary_scorecard_evidence.ScorecardEvidenceUnitTests -v
-.\scripts\windows-postgres-test-lane.ps1 -Action Test -TestNames tests.test_primary_scorecard_evidence.ScorecardEvidencePostgresTests
+.\.venv\Scripts\python.exe -m unittest tests.test_run_tests_parallel -v
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -TestNames tests.test_completion_scorecard,tests.test_primary_scorecard_evidence,tests.test_provider_validation
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -TestNames tests.test_completion_scorecard.TrustedCollectionLaneTests
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -Parallel 2
 ```
-
 Every collector has a positive case, a negative control and an UNKNOWN case for
 a missing or unavailable source, and one test supplies every selection while
 every source fails to show that collection never raises and never emits a
@@ -1629,8 +1769,18 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]] -->
