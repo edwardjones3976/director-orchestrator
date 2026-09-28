@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
 # [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | BEGIN]]
@@ -332,7 +333,10 @@ def _canonical_digest(payload: object) -> str:
 
 
 def provider_run_digest(run: ProviderRun) -> str:
-    return _canonical_digest(run.model_dump(mode="json"))
+    payload = run.model_dump(mode="json")
+    if run.plan_generation is None:
+        payload.pop("plan_generation")  # Preserve digests written before this field existed.
+    return _canonical_digest(payload)
 
 
 def opaque_identifier_digest(value: str) -> str:
@@ -684,6 +688,26 @@ def assignment_is_approved(record: TaskRecord, assignment: Assignment) -> bool:
         and record.approved_assignment_digests.get(assignment.sequence)
         == assignment_approval_digest(assignment)
     )
+
+
+def orphaned_provider_intent(record: TaskRecord, assignment: Assignment) -> TaskEffectEvidence | None:
+    """Find one exact, unobserved intent; lease/owner checks belong to the engine."""
+    digest = assignment_approval_digest(assignment)
+    observed = {item.effect_key for item in record.task_effect_ledger if item.kind == "provider_observation"}
+    intents = [item for item in record.task_effect_ledger
+               if item.kind == "provider_intent" and item.effect_key not in observed
+               and item.plan_generation == record.plan_generation
+               and item.assignment_sequence == assignment.sequence
+               and item.assignment_digest == digest and item.provider == assignment.agent
+               and item.phase in {"dispatch", "revision"}]
+    if len(intents) != 1:
+        return None
+    intent = intents[0]
+    expected = _canonical_digest({
+        "task_id": record.task_id, "plan_generation": record.plan_generation,
+        "assignment_digest": digest, "phase": intent.phase, "attempt": intent.attempt,
+    })
+    return intent if hmac.compare_digest(intent.effect_key, expected) else None
 
 
 def unresolved_ambiguous_dispatch(
@@ -1326,6 +1350,7 @@ def apply_ambiguous_dispatch_resolution(
             ),
             evidence_source="unverified",
             raw={"reconciled_identifier_only": True},
+            plan_generation=record.plan_generation,
         )
         record.provider_runs.append(run)
         if ambiguous.phase == "revision":
@@ -1533,3 +1558,4 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
