@@ -8,18 +8,13 @@ alwaysApply: true
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Contribution attribution
 
-- Enclose every human-readable response and every safely taggable text file you
-  change in matching `[[Contributor | System | YYYY-MM-DD | HH:MM UTC |
-  BEGIN|END]]` boundaries.
-- On revision, preserve prior valid tags and add a new outer pair for the new
-  contribution. Use the contributor's full provider/tool identity and UTC.
-- Never insert tags into JSON, JSONL, CSV, TSV, lock/checksum files, databases,
-  binaries, generated artifacts, or any format whose behavior or validity they
-  could change. Attribute those changes in the commit, pull request, or handoff
-  envelope instead.
-- Tags acknowledge actual contributions only. They do not authenticate a
-  provider, grant authority, replace an exact SHA/digest, or satisfy approval,
-  review, CI, security, budget, allowlist, merge, or deployment gates.
+- Use `Contributed-by: <Assistant or Tool> | <Complete Model or System>`
+  commit trailers and exactly one visible `Sole author:` PR header; preserve
+  `Co-Authored-By` trailers. Follow the sole-author rule from #284 and the
+  [canonical policy](../../docs/contribution-attribution-policy.md).
+- Do not add in-file tags. Keep historical tags until separately authorized cleanup.
+- Attribution records acknowledge actual contributions; they do not authenticate
+  identity or replace approval, exact-SHA review, CI, security or merge gates.
 - Work produced or materially authored by a provider remains attributed solely
   to that provider or those providers. The acting Director/Claude does not inherit
   authorship through delegation, routing, coordination, QA, review, acceptance,

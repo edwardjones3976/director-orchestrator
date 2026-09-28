@@ -83,20 +83,37 @@ def validate_commits(base: str, head: str, default_branch_ref: str = "origin/mai
 
 def validate_pr_body(body: str) -> list[str]:
     """Require exactly one visible header, not a template, comment or code sample."""
-    body = re.sub(r"<!--.*?(?:-->|$)", "", body, flags=re.DOTALL)
     headers = []
     fence = None
+    comment = False
     for line in body.splitlines():
-        marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", line)
-        if marker:
-            token = marker.group(1)
-            if fence is None:
-                fence = token
-            elif token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip():
-                fence = None
+        if fence is not None:
+            marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", line)
+            if marker:
+                token = marker.group(1)
+                if token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip():
+                    fence = None
             continue
-        if fence is None and line.startswith("Sole author:"):
-            headers.append(line)
+        # Comment-looking text inside a fence is literal. Outside fences,
+        # comments may span lines or sit next to a visible author header.
+        visible = ""
+        while line:
+            if comment:
+                _, end, line = line.partition("-->")
+                if not end:
+                    break
+                comment = False
+            else:
+                before, start, line = line.partition("<!--")
+                visible += before
+                if not start:
+                    break
+                comment = True
+        marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", visible)
+        if marker:
+            fence = marker.group(1)
+        elif visible.startswith("Sole author:"):
+            headers.append(visible)
     if len(headers) == 1:
         match = SOLE_AUTHOR.fullmatch(headers[0])
         if match and all(value.strip() for value in match.groups() if value is not None):

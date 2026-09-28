@@ -856,6 +856,20 @@ class GitAttributionTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertTrue(self.checker.validate_pr_body(body))
 
+    def test_fenced_comment_text_cannot_hide_a_visible_author_header(self):
+        header = "Sole author: OpenAI Codex (GPT-6)"
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                self.assertTrue(self.checker.validate_pr_body(
+                    f"{header}\n{fence}text\n<!--\n{fence}\n{header}\n-->"
+                ))
+                self.assertEqual(self.checker.validate_pr_body(
+                    f"{fence}text\n<!--\n{fence}\n{header}\n-->"
+                ), [])
+        self.assertEqual(self.checker.validate_pr_body(
+            f"<!-- hidden\n```\n{header}\n-->\n{header}"
+        ), [])
+
     def test_event_file_pr_and_push_and_malformed_input(self):
         event = self.root / "event.json"
         for payload, valid in (({"pull_request": {"body": "Sole author: Codex (GPT-6)", "head": {"sha": self.base}}}, True),
@@ -949,7 +963,8 @@ class GitAttributionTests(unittest.TestCase):
         self.assertNotIn("Require safe changed", prompt)
         for name in ("AGENTS.md", "CLAUDE.md", "docs/team-operating-charter.md",
                      "docs/contribution-attribution-policy.md", ".github/pull_request_template.md",
-                     "docs/templates/contribution-submission.md"):
+                     "docs/templates/contribution-submission.md", "README.md",
+                     ".cursor/rules/contribution-attribution.mdc"):
             text = (root / name).read_text(encoding="utf-8")
             with self.subTest(name=name):
                 self.assertIn("Contributed-by:", text)
