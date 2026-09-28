@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
@@ -765,7 +766,7 @@ routes:
     providers_involved: [zai]
     carries:
       - "one validated work packet run by the Claude Code executable against Z.ai's Anthropic-compatible endpoint with the configured GLM model"
-      - "assignment-scoped tool grants only: repository read, fixed test runners, public web search, and isolated-branch writes confined to owned paths when the deployment allows them"
+      - "assignment-scoped tool grants only: repository read, fixed test runners, and isolated-branch writes confined to owned paths when the deployment allows them; any other grant, including public web search, is refused before launch"
     withheld_context:
       - "every other lane's credential; the child inherits no Anthropic or Claude credential and receives only the Z.ai key injected by the transport"
       - "host settings, hooks, sessions, and MCP servers; each attempt runs in a throwaway home and config directory"
@@ -786,7 +787,7 @@ routes:
       - "src/director_orchestrator/config.py:Settings.zai_production_readiness"
     prohibition_quote: null
     config: [ZAI_ENABLED, ZAI_MODE, ZAI_PRODUCTION_ACTIVATION, ZAI_API_KEY, ZAI_API_BASE, ZAI_MODEL, ZAI_CLI_EXECUTABLE, ZAI_MAX_TURNS, ZAI_PRODUCTION_TIMEOUT_SECONDS, ZAI_ALLOW_REPOSITORY_WRITE, LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS, LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED]
-    notes: "Composed only when every production readiness boolean holds; never discovered on PATH, because the same executable is the Claude lane there. Every result must prove the configured GLM model served it; cost is recorded as unknown, never zero. Not a Windows host-bridge lane."
+    notes: "Composed only when every production readiness boolean holds; never discovered on PATH, because the same executable is the Claude lane there. Every result must prove the configured GLM model served it; cost is recorded as unknown, never zero. The Docker Director reaches it only through the authenticated Windows host bridge (ZAI_TRANSPORT=host_bridge), whose zai entry runs this same transport in the bridge process."
 
   - route_id: "zai-lite-trial"
     name: "Z.ai Lite trial contact (trial-only, no production credit)"
@@ -1071,3 +1072,4 @@ provider_to_provider_rule:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | END]]
