@@ -24,7 +24,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Logical producer:** <provider>
 - **Material authors:** <all providers/people that materially shaped the artifact>
 - **PR sole author and shares:** <for a pull-request candidate only; for an artifact-only handoff with no PR, "n/a (no PR)" and non-blocking; the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines recomputed from the exact merge_base_sha and head SHA, excluding maintenance commits, with its receipt references. Tags are display evidence only. Recorded separately from the logical producer. Record a contributor below 48 % as "assisted by <identity> (<share> %)"; two contributors are co-authors only when one holds 52 % and the other the remaining 48 %. Only the sole author and its provider family are excluded from reviewing on authorship grounds under the policy; an assisting contributor may review subject to the material-author gates in the sole-author policy. For any review, acceptance or merge passing through those gates, contributor review eligibility is prospective until a separately reviewed runtime change aligns them, including Director-routed and manual reviews>
-- **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
+- **Contribution attribution:** <Contributed-by trailers on every commit; one Sole author PR header, assistance when applicable, per PR #284; preserve Co-Authored-By trailers>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>
 - **Target-tip base_sha:** <PR current target-tip, exact 40-hex SHA; exact-candidate binding>
@@ -116,7 +116,7 @@ Do not deploy, publish, change access, or infer authority from this request.
 - **Current CI/security evidence:** <exact status or pending>
 - **Next responsible party:** <producer, deterministic gate, Director, or owner>
 
-Contribution tags are provenance labels, not authenticated review evidence.
+Attribution records are provenance labels, not authenticated review evidence. Write no new in-file tags; existing tags are historical pending mechanical cleanup.
 The authenticated run/session, exact candidate, independent verdict, current
 CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->

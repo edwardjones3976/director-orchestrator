@@ -2,8 +2,8 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
-<!-- Replace every angle-bracketed field. Keep the two records identical except for the boundary. -->
-**[[<Assistant or Tool Name> | <Complete Model or System Label> | <YYYY-MM-DD> | <HH:MM UTC> | BEGIN]]**
+<!-- Replace placeholders. Add ; assistance: <id>[, <id>...] on the header line when applicable. Follow PR #284. -->
+Sole author: <assistant> (<model>)
 
 ## Outcome
 
@@ -22,7 +22,7 @@
 - Authority change: <none or exact owner-approved change>
 - Remaining limitations: <items or none>
 
-**[[<Assistant or Tool Name> | <Complete Model or System Label> | <YYYY-MM-DD> | <HH:MM UTC> | END]]**
+<!-- Every commit: Contributed-by: <Assistant or Tool> | <Complete Model or System>. Keep Co-Authored-By trailers; do not write new in-file tags. -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->

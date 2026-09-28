@@ -62,11 +62,7 @@ templates are optional and should be selected when they add value.
    `RESHAPED`, `PAUSED`, `COMPLETE`.
 10. Use `minimal-fix.md` only for the charter's up-to-three-attempt minimal-fix lane;
    changed candidates still require fresh exact-candidate evidence.
-11. Preserve existing valid contribution tags and enclose each completed,
-    human-readable template instance in a new matching UTC pair from
-    [`contribution-attribution-policy.md`](../../contribution-attribution-policy.md).
-    Keep tags outside syntax-sensitive or machine-readable payloads and record
-    their authorship in the surrounding submission envelope.
+11. Write no new in-file tags. Use `Contributed-by: <Assistant or Tool> | <Complete Model or System>` trailers on every commit and one `Sole author: <assistant> (<model>)` PR header, with assistance when applicable. Keep `Co-Authored-By` trailers. Follow [the attribution policy](../../contribution-attribution-policy.md) and PR #284. Existing tags are historical pending mechanical cleanup.
 
 Do not place secrets, credentials, tokens, raw private source, or unnecessary
 source-thread content in any template. Name Slack destinations only from the

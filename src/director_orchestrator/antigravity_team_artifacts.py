@@ -207,7 +207,7 @@ class GitTeamCandidateIntegrator:
                     contribution_time=completed.astimezone(timezone.utc).strftime("%Y-%m-%d | %H:%M UTC")
                     message = ("[[Antigravity | " + grant.model + " | " + contribution_time + " | BEGIN]]\n"
                         "Bounded engineering candidate for " + grant.assignment_id + "\nCapture: " + capture_digest + "\n"
-                        "[[Antigravity | " + grant.model + " | " + contribution_time + " | END]]\n")
+                        "[[Antigravity | " + grant.model + " | " + contribution_time + " | END]]\n\nContributed-by: Antigravity | " + grant.model + "\n")
                     candidate = self._git(["commit-tree", tree, "-p", grant.commit], data=message.encode()).decode().strip()
                     actual_paths = self._git(["diff-tree", "--no-commit-id", "--name-only", "-r", candidate]).decode().splitlines()
                     if not set(actual_paths).issubset(files):
