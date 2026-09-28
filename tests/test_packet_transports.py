@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
@@ -1074,6 +1075,7 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
 
             persisted = store.get(record.task_id)
             persisted_run = persisted.provider_runs[-1]
+            self.assertEqual(record.plan_generation, persisted_run.plan_generation)
             self.assertEqual("WAITING_CALLBACK", persisted_run.status)
             self.assertEqual("unverified", persisted_run.evidence_source)
             acknowledgement = project_interaction(
@@ -1106,6 +1108,33 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                     persisted_run.interaction_id,
                 ).state,
             )
+
+    def test_claude_acknowledgement_rejects_reset_before_first_write(self) -> None:
+        from director_orchestrator.approvals import reset_for_owner_clarification
+
+        for replacement in (False, True):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as root:
+                store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+                record, packet = self._packet(root, store, ProviderName.CLAUDE)
+                assignment = record.plan.assignments[0]
+                plan = record.plan.model_copy(deep=True)
+                transport = LegacyProviderPacketTransport(
+                    CapturingProvider(ProviderName.CLAUDE), task_store=store, poll_seconds=1)
+                reset_for_owner_clarification(record)
+                if replacement:
+                    record.plan = plan
+                    record.plan_generation += 1
+                store.save(record)
+                run = ProviderRun(provider=ProviderName.CLAUDE, run_id="stale-claude",
+                                  status="WAITING_CALLBACK", result="erased-claude-content")
+                with patch.object(store, "save", wraps=store.save) as save:
+                    with self.assertRaisesRegex(RuntimeError, "inactive plan generation"):
+                        transport._record_claude_dispatch(
+                            packet, self._context(record, packet), assignment, run)
+                    save.assert_not_called()
+                current = store.get(record.task_id)
+                self.assertEqual(current.provider_runs, [])
+                self.assertNotIn("erased-claude-content", current.model_dump_json())
 
     def test_claude_initial_response_effects_never_become_terminal_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -1360,3 +1389,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]

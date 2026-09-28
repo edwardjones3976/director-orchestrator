@@ -1,5 +1,15 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 """Atomic worst-case admission; no paid calls or external services."""
@@ -20,6 +30,7 @@ from unittest.mock import patch, AsyncMock
 
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.store import TaskStore
 from director_orchestrator.models import (
     AmbiguousDispatchResolution, Assignment, ProviderContactAttempt, ProviderName, ProviderRun, TaskStatus,
 )
@@ -48,6 +59,48 @@ def priced(provider, **overrides):
 
 
 class ProviderSpendBoundsTests(unittest.TestCase):
+    def test_released_readback_reinstates_unknown_zero_and_positive_requests(self):
+        from director_orchestrator.usage import UsageMonitor
+
+        for provider in ProviderDailySpendLedger._SUPPORTED:
+            for cost in (None, 0.0, 0.4):
+                with self.subTest(provider=provider, cost=cost), tempfile.TemporaryDirectory() as directory:
+                    settings = replace(Settings(), sqlite_path=str(Path(directory) / "spend.sqlite3"))
+                    ledger = ProviderDailySpendLedger(settings.sqlite_path)
+                    effect = key("released")
+                    now = datetime.now(timezone.utc)
+                    ledger.reserve(provider=provider, effect_key=effect, estimated_cost_usd=0.75,
+                                   request_limit=1, budget_usd=1, now=now)
+                    ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=0, now=now,
+                                         request_exists=False)
+                    ledger.release_not_created(provider=provider, effect_key=effect)
+                    monitor = UsageMonitor(settings, settlement.TaskStore(settings.sqlite_path))
+                    self.assertEqual(ledger.reservations(provider, now=now, include_released=False), [])
+                    self.assertEqual(ledger.reservations(provider, now=now), [(effect, 0.75)])
+                    self.assertEqual(ledger.exposure(provider, now=now), (0, 0))
+                    self.assertEqual(monitor._provider_request_count(provider.value, [], now), 0)
+                    self.assertEqual(monitor._exposure_usd(provider.value, [], now), 0)
+                    with ledger._connect() as db:
+                        self.assertEqual(db.execute("SELECT COUNT(*) FROM provider_daily_spend_reservations").fetchone()[0], 1)
+                    ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=cost, now=now)
+                    reopened = ProviderDailySpendLedger(settings.sqlite_path)
+                    # Both the obsolete release and its zero-cost precursor are
+                    # harmless after authenticated existence, even across restart.
+                    reopened.record_charge(provider=provider, effect_key=effect, actual_cost_usd=0,
+                                           now=now, request_exists=False)
+                    reopened.release_not_created(provider=provider, effect_key=effect)
+                    self.assertEqual(reopened.exposure(provider, now=now), (1, 0.75 if cost is None else cost))
+                    self.assertEqual(reopened.unreconciled(provider, stale_after=timedelta(hours=1), now=now),
+                                     [effect] if cost is None else [])
+                    self.assertEqual(monitor._provider_request_count(provider.value, [], now), 1)
+                    with self.assertRaises(ProviderDailyLimitExceeded):
+                        reopened.reserve(provider=provider, effect_key=key("next"), estimated_cost_usd=0.1,
+                                         request_limit=1, budget_usd=1, now=now)
+                    if cost is None:
+                        with self.assertRaises(ProviderDailyLimitExceeded):
+                            reopened.reserve(provider=provider, effect_key=key("over-budget"), estimated_cost_usd=0.3,
+                                             request_limit=10, budget_usd=1, now=now)
+
     def test_pre_settlement_upgrade_preserves_exposure_without_pending_hold(self):
         for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
@@ -116,6 +169,22 @@ class ProviderSpendBoundsTests(unittest.TestCase):
         self.assertIsNone(assignment_request_cost_bound(
             settings, assignment.model_copy(update={"allow_draft_pr": True}), "context"))
 
+    def test_engine_missing_or_mismatched_store_refuses_before_reserving(self):
+        for provider in ProviderDailySpendLedger._SUPPORTED:
+            for missing in (True, False):
+                with self.subTest(provider=provider, missing=missing), tempfile.TemporaryDirectory() as directory:
+                    engine = object.__new__(OrchestrationEngine)
+                    engine.settings = Settings()
+                    engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                    if not missing:
+                        engine.store = TaskStore(str(Path(directory) / "other.sqlite3"))
+                    assignment = Assignment(sequence=1, agent=provider, task="Answer", acceptance=["Evidence"])
+                    with patch.object(engine.provider_spend, "reserve") as reserve:
+                        with self.assertRaises(ProviderDailyLimitExceeded):
+                            engine._reserve_provider_daily_spend(assignment, effect_key=key("refused"))
+                    reserve.assert_not_called()
+                    self.assertEqual(engine.provider_spend.reservations(provider), [])
+
     def test_priced_unbounded_transports_still_serialize(self):
         assignments = (
             test_provider_contracts.ProviderContractTests.gemini_assignment(),
@@ -130,6 +199,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     engine = object.__new__(OrchestrationEngine)
                     engine.settings = priced(provider.value, **{f"{provider.value}_daily_budget_usd": 1})
                     engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                    engine.store = TaskStore(engine.provider_spend.path)
                     self.assertIsNone(assignment_request_cost_bound(
                         engine.settings, assignment, "context", revision_prompt=revision))
                     engine._reserve_provider_daily_spend(
@@ -190,6 +260,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
             engine = object.__new__(OrchestrationEngine)
             engine.settings = priced("grok", grok_daily_budget_usd=10)
             engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+            engine.store = TaskStore(engine.provider_spend.path)
             assignment = Assignment(sequence=1, agent=ProviderName.GROK, task="Answer", acceptance=["Evidence"])
             bound = assignment_request_cost_bound(engine.settings, assignment, "context")
             for index, (floor, estimate) in enumerate(((0.01, 0), (0.5, 0), (0.01, 0.7))):
@@ -265,6 +336,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
             maximum = assignment_request_cost_bound(settings, assignment, "context")
             engine.settings = replace(settings, grok_daily_budget_usd=maximum * 2.5)
             engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+            engine.store = TaskStore(engine.provider_spend.path)
             barrier = threading.Barrier(4)
 
             def admit(index):
@@ -319,6 +391,7 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     f"{provider.value}_daily_budget_usd": 1,
                 })
                 engine.provider_spend = ProviderDailySpendLedger(str(Path(directory) / "spend.sqlite3"))
+                engine.store = TaskStore(engine.provider_spend.path)
                 assignment = Assignment(sequence=1, agent=provider, task="Answer", acceptance=["Evidence"],
                                         estimated_cost_usd=0)
                 engine._reserve_provider_daily_spend(assignment, effect_key=key("first"), context="context")
@@ -377,6 +450,7 @@ class UnpricedRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def test_owner_not_created_reconciliation_releases_only_its_effect(self):
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = settlement.ProviderSpendSettlementTests()._world(directory)
+            settings = replace(settings, gemini_daily_request_limit=1)
             engine = OrchestrationEngine(settings, store)
             effect = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
             record_provider_effect_observation(record, assignment, effect_key=effect,
@@ -403,12 +477,15 @@ class UnpricedRecoveryTests(unittest.IsolatedAsyncioTestCase):
             restarted = OrchestrationEngine(settings, store)
             restarted._settle_reconciled_spend(store.get(record.task_id))
             restarted._settle_reconciled_spend(store.get(record.task_id))
-            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 0))
+            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (0, 0))
+            self.assertEqual(len(restarted.provider_spend.reservations(assignment.agent)), 1)
+            self.assertEqual(len(restarted.provider_spend.reservations(assignment.agent, include_released=False)), 0)
             self.assertEqual(restarted.provider_spend.exposure(ProviderName.GROK), (1, 0.5))
+            record = store.get(record.task_id)
             next_effect = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
             self.assertNotEqual(next_effect, effect)
             restarted._reserve_provider_daily_spend(assignment, effect_key=next_effect)
-            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (2, 1))
+            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 1))
 
     def test_owner_created_resolution_keeps_hold_until_terminal_settlement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -442,5 +519,15 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]

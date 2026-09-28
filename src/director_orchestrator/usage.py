@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
@@ -306,7 +307,7 @@ class UsageMonitor:
             return None
         probes = {_probe_key(record.cycle_id, provider, attempt)
                   for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
-        return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now))
+        return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now, include_released=False))
 
     def _unreconciled_request_count(self, provider: str, records: list[UsageCheckRecord], now: datetime) -> int | None:
         try:
@@ -853,3 +854,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]
