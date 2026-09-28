@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | BEGIN]] -->
@@ -134,7 +135,9 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Project-local provider boundaries (`director-provider-roles/v1`), with the Director deviation recorded |
 | [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; analysis-only, all Slack identities pending |
 | [`workstream-plan.md`](workstream-plan.md) | Current phase (M0) assignments, providers, acceptance, stops |
-| [`workstream-plan-m2.md`](workstream-plan-m2.md) | M2 draft (planning only, not dispatchable): DIRECTOR data v1 packets, adapter v0.1 to v0.3, gates and stops; row contract in `schemas/director-data-v1-row.schema.json` |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | BEGIN]] -->
+| [`workstream-plan-m2.md`](workstream-plan-m2.md) | M2 plan, owner-approved 2026-09-28 (O-M2-A): DIRECTOR data v1 packets, adapter v0.1 to v0.3, gates and stops; packets dispatch only under their own gates, caps and the D-M2-8 meter rule; row contract in `schemas/director-data-v1-row.schema.json` |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (latest: M0 gate, 2026-09-25) |
 
@@ -162,3 +165,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
