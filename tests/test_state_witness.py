@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
 """No receipt, no state: the Witness Ledger.
 
@@ -292,11 +293,10 @@ class WitnessGateWiringTests(unittest.TestCase):
         return fixtures, FakeGitHub
 
     def _service(self, fixtures, github, **kw):
-        from director_orchestrator.oracle_merge import OracleMergePolicy, OracleMergeService, OracleMergeStore
-
-        return OracleMergeService(
-            OracleMergePolicy(fixtures.settings), OracleMergeStore(fixtures.database), github, **kw
-        )
+        # Issue #306 removed the legacy no-boundary merge, so the wiring goes
+        # through the phase 3 harness: a pinned, Ed25519-signed standing
+        # boundary whose merge transport is this fixture's gateway.
+        return fixtures.service(github, **kw)
 
     def _checks_oracle(self, api):
         return lambda repo, sha: gh_checks_green(
@@ -458,3 +458,4 @@ class WitnessGateWiringTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

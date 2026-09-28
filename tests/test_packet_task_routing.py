@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | BEGIN]]
@@ -28,6 +29,15 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 from __future__ import annotations
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+import contextlib
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
 
 import copy
 import json
@@ -772,6 +782,62 @@ class RepositoryInventorySnapshots:
         ]
 
 
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+def _remove_snapshot_tree(root: str) -> None:
+    """Remove a snapshot repository the way TemporaryDirectory does.
+
+    Git writes loose objects read-only, and on Windows ``os.unlink`` of a
+    read-only file raises ``PermissionError``, so a plain ``shutil.rmtree``
+    can never delete ``.git/objects`` there. Clear the read-only bit on the
+    path and its parent, then retry that one operation, as
+    ``tempfile.TemporaryDirectory`` does; anything else is re-raised.
+    """
+
+    def handle(function, path, error):
+        if not isinstance(error, PermissionError):
+            raise error
+        for target in (path, os.path.dirname(path)):
+            try:
+                os.chmod(target, stat.S_IRWXU)
+            except OSError:
+                pass
+        function(path)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(root, onexc=handle)
+    else:  # pragma: no cover - older interpreters pass an exc_info triple
+        shutil.rmtree(root, onerror=lambda function, path, info: handle(function, path, info[1]))
+
+
+@contextlib.contextmanager
+def _snapshot_repository():
+    """A temporary snapshot repository whose removal tolerates Windows handle lag.
+
+    A just-terminated git child releases its handles inside ``.git``
+    asynchronously on Windows, so removal can hit ``PermissionError`` for a
+    moment after the test body has passed. Retry the removal for up to about
+    five seconds instead of failing the test; the last error is raised, so a
+    real leak still surfaces.
+    """
+
+    root = tempfile.mkdtemp(prefix="director-blob-test-")
+    try:
+        yield root
+    finally:
+        last_error: PermissionError | None = None
+        for _attempt in range(10):
+            try:
+                _remove_snapshot_tree(root)
+                last_error = None
+                break
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.5)
+        if last_error is not None:
+            raise last_error
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
+
+
 class CompactProviderViewTests(unittest.TestCase):
     TEXT = "Project: demo\nSummarize README.md for the owner."
 
@@ -882,10 +948,9 @@ class CompactProviderViewTests(unittest.TestCase):
         """A large blob is refused on its size, never read into memory."""
 
         import subprocess as subprocess_module
-        import tempfile as tempfile_module
         from director_orchestrator.packet_routing import git_blob_reader
 
-        with tempfile_module.TemporaryDirectory() as root:
+        with _snapshot_repository() as root:
             def git(*args, data=None):
                 return subprocess_module.run(
                     ("git", "-c", f"safe.directory={root}", *args), cwd=root, check=True,
@@ -943,6 +1008,15 @@ class CompactProviderViewTests(unittest.TestCase):
             self.assertEqual(1, len(processes))
             self.assertIsNotNone(processes[0].returncode)
             self.assertTrue(processes[0].stdout.closed)
+            # Reap the recorded child synchronously and close its pipes before
+            # the snapshot repository is removed: on Windows a terminated
+            # process releases its handles asynchronously, and rmtree on a
+            # still-open .git object raises PermissionError.
+            for recorded in processes:
+                recorded._process.wait(timeout=5.0)
+                for pipe in (recorded._process.stdout, recorded._process.stderr):
+                    if pipe is not None and not pipe.closed:
+                        pipe.close()
 
     def test_screens_ignore_case_where_the_format_does(self) -> None:
         """Lower, upper and mixed case of the same identifier or credential."""
@@ -1746,3 +1820,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:47 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]

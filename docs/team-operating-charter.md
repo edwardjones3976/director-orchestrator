@@ -711,7 +711,7 @@ candidate never converts the Director into one of its authors, and the Director
 still may not independently accept or merge code it actually materially
 authored.
 
-Provider output retains its accurate identity and provenance. Contribution tags
+Provider output retains its accurate identity and provenance. Contribution records
 acknowledge actual contributions only and never imply inherited authorship, so a
 Director relay envelope records the relay rather than authorship of the relayed
 work.
@@ -765,19 +765,23 @@ goes to Codex, and other authoring is still routed by capability as before.
 
 ## Contribution attribution
 
-Every safe human-visible response and changed taggable artifact uses a matching
-UTC `BEGIN`/`END` contribution pair. Revisions add a fresh outer pair; they do
-not erase prior contributor records. Cursor records the
-logical producer and material contributors with the exact candidate evidence.
+No contribution tags are written into file contents any more. Every commit
+carries `Contributed-by: <Assistant or Tool> | <Complete Model or System>`,
+one trailer per contributor; keep existing `Co-Authored-By` trailers.
+Every PR description carries exactly one header line:
+`Sole author: <assistant> (<model>)`, followed on that line by
+`; assistance: <id>[, <id>...]` when others assisted. Follow the 52% sole-author
+rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
+this policy does not redefine it.
+Existing in-file tags are historical; a later mechanical PR removes them.
+Attribution records acknowledge actual contributions only and never imply
+inherited authorship. They never authenticate provider identity, grant authority,
+or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
 
-JSON, JSONL, CSV, TSV, lock files, checksums, binaries, exact callback or review
-payloads, and other syntax-sensitive artifacts must not receive inline tags.
-Their commit, pull request, handoff, or Director relay carries the contribution
-envelope instead. Tags acknowledge work but never authenticate provider
-identity, grant authority, replace Git provenance, or satisfy review, security,
-CI, approval, merge, or deployment gates. The canonical formats and validation
-rules are in
-[`docs/contribution-attribution-policy.md`](contribution-attribution-policy.md).
+Cursor records the logical producer and material contributors with the exact
+candidate evidence, using the commit trailers and the PR's Sole author header line.
+
+See [the attribution policy](contribution-attribution-policy.md).
 
 ## Review-to-merge handoff
 

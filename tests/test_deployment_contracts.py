@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -518,12 +520,12 @@ process.stdout.write(JSON.stringify({outputs, store}));
             "secret-hygiene": "Secret hygiene",
             "recovery-probe": "Cross-process recovery probe",
         }
-        self.assertEqual(set(expected_names) | {"changes"}, set(jobs))
+        self.assertEqual(set(expected_names) | {"changes", "scope"}, set(jobs))
         for job, name in expected_names.items():
             self.assertIn(f"    name: {name}\n", jobs[job])
             if job in {"containers", "recovery-probe"}:
-                self.assertIn("    needs: changes\n", jobs[job])
-                self.assertRegex(jobs[job], r"(?m)^    if: \$\{\{ always\(\) \}\}$")
+                self.assertIn("    needs: [changes, scope]\n", jobs[job])
+                self.assertRegex(jobs[job], r"(?m)^    if: \$\{\{ always\(\) && !cancelled\(\) \}\}$")
                 steps = re.split(r"(?m)^      - ", jobs[job].split("    steps:\n", 1)[1])[1:]
                 self.assertGreater(len(steps), 1)
                 self.assertIn("name: Docs-only no-op\n", steps[0])
@@ -543,8 +545,19 @@ process.stdout.write(JSON.stringify({outputs, store}));
                     )
                 if job == "containers":
                     self.assertIn("if: always() && runner.environment == 'self-hosted' &&", steps[-1])
+            elif job == "python":
+                self.assertIn("    needs: scope\n", jobs[job])
+                self.assertRegex(jobs[job], r"(?m)^    if: \$\{\{ always\(\) && !cancelled\(\) \}\}$")
             else:
                 self.assertNotRegex(jobs[job], r"(?m)^    (if|needs):")
+        for system in ("Linux", "Windows"):
+            self.assertIn(
+                f"      - name: Stop disposable PostgreSQL (self-hosted {system}, test lane)\n"
+                f"        if: always() && runner.environment == 'self-hosted' && runner.os == '{system}'"
+                " && env.DIRECTOR_CI_PG_LANE != ''\n",
+                jobs["python"],
+            )
+        self.assertIn("    name: CI scope\n", jobs["scope"])
         self.assertIn('echo "docs_only=false"', jobs["changes"])
         self.assertIn('python scripts/run-tests-parallel.py --docs-only "$BASE_SHA" "$HEAD_SHA"', jobs["changes"])
         self.assertIn("docker compose --env-file .env.example config --quiet", workflow)
@@ -698,3 +711,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:09 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:38 UTC | END]]

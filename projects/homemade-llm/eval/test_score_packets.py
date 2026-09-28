@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:50 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | BEGIN]]
@@ -760,6 +761,14 @@ class ScorePacketsTests(unittest.TestCase):
             cands_dir.mkdir()
             (refs_dir / "p1.json").write_text(json.dumps(ref), encoding="utf-8")
             (cands_dir / "p1.json").write_text(json.dumps(ref), encoding="utf-8")
+            packet_sha = hashlib.sha256((cands_dir / "p1.json").read_bytes()).hexdigest()
+            expected_candidate_manifest = hashlib.sha256(
+                f"cands/p1.json\t{packet_sha}\n".encode("utf-8")
+            ).hexdigest()
+            (cands_dir / "run.json").write_text(
+                json.dumps({"candidate_manifest": expected_candidate_manifest}),
+                encoding="utf-8",
+            )
             grades_path = tmp_path / "grades.jsonl"
             grades_path.write_text(
                 "\n".join(json.dumps(row) for row in grades) + "\n",
@@ -783,7 +792,7 @@ class ScorePacketsTests(unittest.TestCase):
             self.assertEqual(code, 0)
             summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["reference_manifest"], refs_manifest)
-            self.assertEqual(summary["candidate_manifest"], score_packets.manifest(cands_dir))
+            self.assertEqual(summary["candidate_manifest"], expected_candidate_manifest)
             self.assertEqual(summary["grades_sha256"], score_packets.sha256_file_bytes(grades_path))
             self.assertIsNone(summary["exclude_file_sha256"])
             self.assertEqual(summary["n_references"], 1)
@@ -805,3 +814,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:50 UTC | END]]

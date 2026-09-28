@@ -490,13 +490,12 @@ GitHub is the delegation, review and merge channel for this repository
   is a GitHub Actions billing stub - nothing executed - and is neither a code
   failure nor green. When the account is restored, close and reopen the pull
   request to trigger a real run; `gh run rerun` replays the stale payload.
-- **Write within the envelope.** Every commentable file changed in a submission
-  carries a fresh outer contribution pair; pull request bodies carry the pair in
-  bold on the first and last lines; JSON, JSONL, CSV, lock files and checksums
-  are never tagged inline (`docs/contribution-attribution-policy.md`). Run
-  `PYTHONPATH=src python scripts/check_contribution_tags.py --base <main-sha>
-  --head <head>` before a push; the CI attribution job diffs against the current
-  `main`, so merge `main` in first.
+- **Record attribution in Git.** Every commit carries `Contributed-by:` trailers
+  for actual contributors; preserve `Co-Authored-By` trailers. PR bodies have
+  exactly one visible `Sole author:` header under the #284 sole-author rule.
+  Add no in-file tags; historical tags remain until authorized cleanup. Follow
+  `docs/contribution-attribution-policy.md` and run its exact-range checker
+  before handoff, using `--default-branch-ref github/main` for this local remote.
 - **Merge commits only.** Squash and rebase are disabled at the repository
   level, so `gh pr merge <n> --merge --match-head-commit <sha>` is the only
   form; `--match-head-commit` binds the merge to the reviewed SHA. `--delete-branch`
