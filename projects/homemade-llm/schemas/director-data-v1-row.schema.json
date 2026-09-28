@@ -55,11 +55,10 @@
         "openai",
         "gemini_api",
         "cursor",
-        "perplexity",
         "owner",
         "repository_history"
       ],
-      "description": "Only competing-only-clause providers, the owner, or repository history may appear (O-026). Excluded-tier providers (Z.ai, xAI, Google consumer Gemini, Antigravity) are not valid values by construction."
+      "description": "Only competing-only-clause providers, the owner, or repository history may appear (O-026). Excluded-tier providers (Z.ai, xAI, Google consumer Gemini, Antigravity) are not valid values by construction. Perplexity is withheld from this enum: the 2026-09-28 official-source recheck (PR #294 comment 5861548635) could not confirm a customer training grant in its API terms, so its output is research-only until the owner records a clearer grant; re-adding it needs a new owner decision."
     },
     "source_model": {
       "type": "string",
@@ -247,8 +246,7 @@
               "anthropic_api",
               "openai",
               "gemini_api",
-              "cursor",
-              "perplexity"
+              "cursor"
             ]
           }
         }
