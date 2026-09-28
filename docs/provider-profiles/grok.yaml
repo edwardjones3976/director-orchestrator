@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -113,6 +114,8 @@ models_and_effort:
 
 budgets_and_limits:
   variables:
+    - { variable: "GROK_INPUT_USD_PER_MTOK", kind: "token_price_usd_per_mtok", settings_field: "grok_input_usd_per_mtok", default: null, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GROK_OUTPUT_USD_PER_MTOK", kind: "token_price_usd_per_mtok", settings_field: "grok_output_usd_per_mtok", default: null, documented_in_env_example: true, values_recorded: false }
     - { variable: "GROK_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "grok_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
     - { variable: "GROK_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "grok_daily_request_limit", default: 50, documented_in_env_example: true, values_recorded: false }
     - { variable: "GROK_REQUEST_COST_FLOOR_USD", kind: "per_request_cost_floor_usd", settings_field: "grok_request_cost_floor_usd", default: 0.01, documented_in_env_example: true, values_recorded: false }
@@ -300,4 +303,5 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

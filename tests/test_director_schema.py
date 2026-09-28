@@ -1,5 +1,6 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -1086,6 +1087,7 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(moderator=moderator, abstain=abstain), tempfile.TemporaryDirectory() as directory:
                     settings = replace(
                         Settings(), workload_policy_enabled=False, allow_paid_runs=True,
+                        grok_input_usd_per_mtok=1.0, grok_output_usd_per_mtok=1.0,
                         openai_api_key="test-openai", claude_routine_url="https://claude.invalid/fire",
                         claude_routine_token="test-claude", cursor_api_key="test-cursor",
                         grok_enabled=True, grok_api_key="test-grok", project_allowlist=("demo",),
@@ -1644,5 +1646,6 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

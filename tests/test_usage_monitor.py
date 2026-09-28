@@ -1,3 +1,11 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
@@ -9,7 +17,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -25,6 +33,7 @@ from director_orchestrator.models import (
 )
 from director_orchestrator.store import TaskStore
 from director_orchestrator.providers import (
+    ProviderDailyLimitExceeded,
     GeminiAdapter,
     ProviderDailySpendLedger,
     ProviderError,
@@ -34,6 +43,12 @@ from director_orchestrator.usage import (
     normalize_reported_cost,
     normalize_usage,
 )
+
+
+# Grok has a bounded token-only request. Other probes serialize until reconciled.
+BOUNDED_SETTINGS = replace(Settings(), gemini_usage_probe_cost_ceiling_usd=0.01,
+                           perplexity_usage_probe_cost_ceiling_usd=0.01,
+                           grok_input_usd_per_mtok=0.000001, grok_output_usd_per_mtok=0.000001)
 
 
 class SuccessfulCursorProbe:
@@ -200,7 +215,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                         {"id": "resp", "status": []}, []):
             with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
                 settings = replace(
-                    Settings(), allow_paid_runs=True, usage_check_enabled=True,
+                    BOUNDED_SETTINGS, allow_paid_runs=True, usage_check_enabled=True,
                     usage_check_provider_delay_seconds=0,
                     usage_check_providers=("openai",), openai_api_key="test-openai",
                     slack_bot_token="", sqlite_path=str(Path(directory) / "tasks.sqlite3"),
@@ -229,7 +244,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -269,7 +284,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -310,7 +325,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -329,7 +344,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -350,7 +365,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -380,7 +395,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 openai_api_key="test-openai",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
@@ -417,7 +432,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulGrokProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -439,6 +454,205 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(records[0].total_tokens, 20)
             self.assertEqual(monitor.health()["unsupported_providers"], [])
 
+    async def test_probes_are_reported_apart_from_real_provider_requests(self):
+        """The monitor's own USAGE_CHECK_PROMPT probes are never real provider requests: daily_accounting reports
+        usage_check_count and provider_request_count (the ledger's work reservations, its probe keys excluded)."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            adapter = SuccessfulGrokProbe()
+            settings = replace(
+                BOUNDED_SETTINGS,
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("grok",),
+                grok_enabled=True,
+                grok_api_key="test-xai",
+                grok_allow_review_verdict=False,
+                sqlite_path=database,
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.GROK: adapter})
+            await monitor.run_once(force=True)
+            accounting = monitor.health()["daily_accounting"]["grok"]
+            # One probe: reserved in the shared ledger, counted by request_count, never a provider request.
+            self.assertEqual((accounting["request_count"], accounting["usage_check_count"],
+                              accounting["provider_request_count"]), (1, 1, 0))
+            ProviderDailySpendLedger(database).reserve(
+                provider=ProviderName.GROK, effect_key="b" * 64, estimated_cost_usd=0.01,
+                request_limit=10, budget_usd=1.0)
+            accounting = monitor.health()["daily_accounting"]["grok"]
+            self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
+
+    async def test_unbounded_probe_serializes_and_settlement_releases_capacity(self):
+        """An unbounded request holds remaining capacity; only a known charge releases it."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(database)
+            adapter = QuotaFailingGeminiProbe()
+            unbounded = replace(BOUNDED_SETTINGS, gemini_usage_probe_cost_ceiling_usd=None, usage_check_enabled=True,
+                                allow_paid_runs=True, usage_check_provider_delay_seconds=0,
+                                usage_check_providers=("gemini",), gemini_api_key="test-gemini",
+                                sqlite_path=database, slack_bot_token="")
+            records = await UsageMonitor(unbounded, TaskStore(database),
+                                         adapters={ProviderName.GEMINI: adapter}).run_once(force=True)
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, unbounded.gemini_daily_budget_usd))
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(database)
+            bounded = replace(unbounded, gemini_usage_probe_cost_ceiling_usd=0.05, sqlite_path=database)
+            await UsageMonitor(bounded, TaskStore(database),
+                               adapters={ProviderName.GEMINI: QuotaFailingGeminiProbe()}).run_once(force=True)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, bounded.gemini_daily_budget_usd))
+            [(key, _)] = ledger.reservations(ProviderName.GEMINI)
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.01)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.01))
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.2)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.2))
+
+    async def test_each_reservation_counts_on_the_utc_day_it_is_made(self):
+        """Review 4112206672: a probe reserved after UTC midnight counts toward the new day, whatever day its
+        usage-check cycle started on."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(database)
+            settings = replace(BOUNDED_SETTINGS, sqlite_path=database, slack_bot_token="")
+            monitor = UsageMonitor(settings, TaskStore(database))
+            started = datetime(2026, 9, 26, 23, 59, 59, tzinfo=timezone.utc)
+            after_midnight = datetime(2026, 9, 27, 0, 0, 1, tzinfo=timezone.utc)
+            _, reserve = monitor._probe_reserver("cycle-1", "grok", started)
+            with patch("director_orchestrator.usage.datetime") as usage_datetime:
+                usage_datetime.now.return_value = after_midnight
+                reserve(1)
+            self.assertEqual(ledger.exposure(ProviderName.GROK, now=after_midnight)[0], 1)
+            self.assertEqual(ledger.exposure(ProviderName.GROK, now=started)[0], 0)
+
+    async def test_unpriced_gemini_probe_does_not_retry_before_reconciliation(self):
+        """A request without a cost bound cannot repeat before its first charge is reconciled."""
+        for statuses, expected in (([200], [1]), ([429, 429, 200], [1])):
+            with self.subTest(statuses=statuses), tempfile.TemporaryDirectory() as directory:
+                database = str(Path(directory) / "tasks.sqlite3")
+                ledger = ProviderDailySpendLedger(database)
+                settings = replace(
+                    BOUNDED_SETTINGS, allow_paid_runs=True, usage_check_enabled=True,
+                    usage_check_provider_delay_seconds=0, usage_check_providers=("gemini",),
+                    gemini_api_key="test-gemini", gemini_usage_max_attempts=3, gemini_daily_request_limit=10,
+                    sqlite_path=database, slack_bot_token="")
+                replies, held = list(statuses), []
+
+                def handler(request: httpx.Request) -> httpx.Response:
+                    held.append(ledger.exposure(ProviderName.GEMINI)[0])  # reservations when this request is sent
+                    status = replies.pop(0)
+                    if status == 429:
+                        return httpx.Response(429, request=request, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
+                    return httpx.Response(200, request=request, json={
+                        "id": "interaction-1", "status": "completed",
+                        "outputs": [{"type": "text", "text": "STATUS=OK"}]})
+
+                monitor = UsageMonitor(settings, TaskStore(database),
+                                       adapters={ProviderName.GEMINI: GeminiAdapter(settings)})
+                with patch("director_orchestrator.providers.httpx.AsyncClient",
+                           return_value=httpx.AsyncClient(transport=httpx.MockTransport(handler))), \
+                        patch("director_orchestrator.providers.asyncio.sleep", new=AsyncMock()):
+                    await monitor.run_once(force=True)
+                self.assertEqual(held, expected)
+                self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], 1)
+
+    async def test_every_probe_attempt_is_reserved_before_dispatch(self):
+        """Review 4111508051 (as refined by 4111996174): a usage check's attempt is reserved in the spend ledger,
+        under its own effect key, through reserve() immediately before it is sent; a refused reservation dispatches
+        nothing, and a failed or zero-cost probe keeps its reservation."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            ledger = ProviderDailySpendLedger(database)
+            seen = []
+
+            class CountingProbe(QuotaFailingGeminiProbe):
+                async def usage_check(self, prompt: str) -> ProviderRun:
+                    seen.append(ledger.exposure(ProviderName.GEMINI)[0])  # reservations held at dispatch
+                    return await super().usage_check(prompt)
+
+            adapter = CountingProbe()
+            settings = replace(
+                BOUNDED_SETTINGS,
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("gemini",),
+                gemini_api_key="test-gemini",
+                gemini_usage_max_attempts=3,
+                gemini_daily_request_limit=4,
+                sqlite_path=database,
+                slack_bot_token="",
+            )
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: adapter})
+            records = await monitor.run_once(force=True)
+            self.assertEqual(seen, [1])  # its one request reserved immediately before it was sent, never ahead
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], 1)  # a failed probe keeps its reservation
+            self.assertEqual(monitor.health()["daily_accounting"]["gemini"]["provider_request_count"], 0)
+        # A ledger already at its request cap refuses the probe's reservation: nothing is dispatched.
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            full = ProviderDailySpendLedger(database)
+            for index in range(4):
+                full.reserve(provider=ProviderName.GEMINI, effect_key=str(index + 1) * 64, estimated_cost_usd=0.0,
+                             request_limit=4, budget_usd=2.0)
+            adapter = QuotaFailingGeminiProbe()
+            monitor = UsageMonitor(replace(settings, sqlite_path=database), TaskStore(database),
+                                   adapters={ProviderName.GEMINI: adapter})
+            records = await monitor.run_once(force=True)
+            self.assertEqual(adapter.calls, 0)
+            self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
+            self.assertIn("ProviderDailyLimitExceeded", records[0].error or "")
+
+    async def test_exposure_reconciles_each_reservation_with_its_actual_charge(self):
+        """Review 4111174705: a $0.50 probe reserved at a $0.01 floor beside a $0.75 work reservation is $1.25 of
+        exposure (each reservation at the larger of its actual charge and its reservation), not max(0.50, 0.76)."""
+        class CostlyGrokProbe(SuccessfulGrokProbe):
+            async def usage_check(self, prompt: str) -> ProviderRun:
+                run = await super().usage_check(prompt)
+                return run.model_copy(update={"raw": {"usage": {"input_tokens": 14, "output_tokens": 6,
+                                                                "cost": 0.5}}})
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "tasks.sqlite3")
+            store = TaskStore(database)
+            settings = replace(
+                BOUNDED_SETTINGS,
+                allow_paid_runs=True,
+                usage_check_enabled=True,
+                usage_check_provider_delay_seconds=0,
+                usage_check_providers=("grok",),
+                grok_enabled=True,
+                grok_api_key="test-xai",
+                grok_allow_review_verdict=False,
+                grok_daily_budget_usd=1.0,
+                grok_request_cost_floor_usd=0.01,
+                sqlite_path=database,
+                slack_bot_token="",
+            )
+            ledger = ProviderDailySpendLedger(database)
+            ledger.reserve(provider=ProviderName.GROK, effect_key="c" * 64, estimated_cost_usd=0.75,
+                           request_limit=10, budget_usd=1.0)
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.GROK: CostlyGrokProbe()})
+            await monitor.run_once(force=True)  # reserves its $0.01 floor, then records its $0.50 charge
+            accounting = monitor.health()["daily_accounting"]["grok"]
+            self.assertEqual((accounting["reported_cost_usd"], accounting["reserved_cost_usd"]), (0.5, 0.76))
+            self.assertEqual(accounting["exposure_usd"], 1.25)
+            # Review 4111357778: the runtime gates use the same reconciled exposure. The ledger refuses the next
+            # reservation, and the monitor's own gate refuses the next probe.
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (2, 1.25))
+            with self.assertRaises(ProviderDailyLimitExceeded):
+                ledger.reserve(provider=ProviderName.GROK, effect_key="d" * 64, estimated_cost_usd=0.0,
+                               request_limit=10, budget_usd=1.0)
+            self.assertEqual(monitor._supplemental_limit_error("grok", datetime.now(timezone.utc)),
+                             "Provider daily cost limit reached")
+
     async def test_grok_probe_and_assignment_share_one_atomic_daily_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "tasks.sqlite3")
@@ -453,7 +667,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             adapter = SuccessfulGrokProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -484,7 +698,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = QuotaFailingGeminiProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -508,6 +722,10 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(health["all_configured_completion_verified"])
             self.assertEqual(health["missing_or_stale_providers"], ["gemini"])
             self.assertEqual(health["daily_accounting"]["gemini"]["request_count"], 3)
+            # The UTC day every daily_accounting entry covers, named by the monitor itself.
+            self.assertRegex(health["accounting_day"], r"^\d{4}-\d{2}-\d{2}$")
+            self.assertLessEqual(
+                abs((date.fromisoformat(health["accounting_day"]) - datetime.now(timezone.utc).date()).days), 1)
             self.assertEqual(health["daily_accounting"]["gemini"]["retry_count"], 2)
             self.assertEqual(
                 health["daily_accounting"]["gemini"]["quota_failure_count"], 1
@@ -521,7 +739,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulPerplexityProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -570,7 +788,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -627,11 +845,11 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 settings.gemini_daily_request_limit,
             )
 
-    async def test_gemini_transport_failure_preserves_all_attempted_requests(self):
+    async def test_unpriced_gemini_stops_before_a_second_transport_attempt(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -672,13 +890,13 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             ):
                 records = await monitor.run_once(force=True)
 
-            self.assertEqual(outbound_calls, 2)
+            self.assertEqual(outbound_calls, 1)
             self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
-            self.assertEqual(records[0].attempt_count, 2)
-            self.assertEqual(records[0].provider_error_code, "transport_error")
+            self.assertEqual(records[0].attempt_count, 1)
+            self.assertEqual(records[0].provider_error_code, "resource_exhausted")
             self.assertEqual(
                 monitor.health()["daily_accounting"]["gemini"]["request_count"],
-                2,
+                1,
             )
 
     async def test_health_distinguishes_claude_prompt_from_completed_response(self):
@@ -703,7 +921,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             monitor = UsageMonitor(
                 replace(
-                    Settings(),
+                    BOUNDED_SETTINGS,
                     allow_paid_runs=True,
                     usage_check_enabled=True,
                     usage_check_providers=("claude", "cursor"),
@@ -725,7 +943,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             monitor = UsageMonitor(
-                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                replace(BOUNDED_SETTINGS, sqlite_path=str(Path(directory) / "tasks.sqlite3")),
                 store,
                 adapters={},
             )
@@ -745,7 +963,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             monitor = UsageMonitor(
-                replace(Settings(), sqlite_path=str(Path(directory) / "tasks.sqlite3")),
+                replace(BOUNDED_SETTINGS, sqlite_path=str(Path(directory) / "tasks.sqlite3")),
                 store,
                 adapters={},
             )
@@ -764,7 +982,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=False,
                 usage_check_enabled=True,
                 usage_check_providers=("cursor",),
@@ -782,7 +1000,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_interval_minutes=360,
@@ -812,7 +1030,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -835,7 +1053,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -856,7 +1074,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -880,7 +1098,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -907,7 +1125,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -931,7 +1149,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -961,7 +1179,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -989,7 +1207,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1023,7 +1241,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_providers=("cursor",),
@@ -1045,7 +1263,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_providers=("cursor",),
@@ -1076,7 +1294,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             adapter = SuccessfulCursorProbe()
             settings = replace(
-                Settings(),
+                BOUNDED_SETTINGS,
                 allow_paid_runs=True,
                 usage_check_enabled=True,
                 usage_check_provider_delay_seconds=0,
@@ -1106,3 +1324,11 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]

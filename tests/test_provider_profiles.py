@@ -1,5 +1,6 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -637,6 +638,20 @@ class ConfigMirrorTests(unittest.TestCase):
             )
         )
 
+    def test_supplemental_token_prices_are_documented_without_values(self):
+        for lane, provider in (("antigravity", "gemini"), ("grok", "grok"), ("perplexity", "perplexity")):
+            variables = {item["variable"]: item for item in self.profiles[lane]["budgets_and_limits"]["variables"]}
+            for direction in ("input", "output"):
+                field = f"{provider}_{direction}_usd_per_mtok"
+                with self.subTest(field=field):
+                    item = variables[field.upper()]
+                    self.assertEqual(item["settings_field"], field)
+                    self.assertEqual(item["kind"], "token_price_usd_per_mtok")
+                    self.assertIsNone(item["default"])
+                    self.assertFalse(item["values_recorded"])
+                    self.assertTrue(item["documented_in_env_example"])
+                    self.assertEqual(self.env[field.upper()], "")
+
     def test_credential_allowlists_mirror_transport_maps(self):
         for lane, profile in self.profiles.items():
             credentials = profile["credential_environment"]
@@ -1058,5 +1073,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

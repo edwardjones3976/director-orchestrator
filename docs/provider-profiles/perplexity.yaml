@@ -1,4 +1,6 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -115,8 +117,11 @@ models_and_effort:
 
 budgets_and_limits:
   variables:
+    - { variable: "PERPLEXITY_INPUT_USD_PER_MTOK", kind: "token_price_usd_per_mtok", settings_field: "perplexity_input_usd_per_mtok", default: null, documented_in_env_example: true, values_recorded: false }
+    - { variable: "PERPLEXITY_OUTPUT_USD_PER_MTOK", kind: "token_price_usd_per_mtok", settings_field: "perplexity_output_usd_per_mtok", default: null, documented_in_env_example: true, values_recorded: false }
     - { variable: "PERPLEXITY_DAILY_BUDGET_USD", kind: "daily_budget_usd", settings_field: "perplexity_daily_budget_usd", default: 2.0, documented_in_env_example: true, values_recorded: false }
     - { variable: "PERPLEXITY_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "perplexity_daily_request_limit", default: 100, documented_in_env_example: true, values_recorded: false }
+    - { variable: "PERPLEXITY_USAGE_PROBE_COST_CEILING_USD", kind: "per_request_cost_floor_usd", settings_field: "perplexity_usage_probe_cost_ceiling_usd", default: null, documented_in_env_example: true, values_recorded: false }
     - { variable: "PERPLEXITY_MAX_RESULTS", kind: "max_results", settings_field: "perplexity_max_results", default: 10, documented_in_env_example: true, values_recorded: false }
     - { variable: "PERPLEXITY_TIMEOUT_SECONDS", kind: "timeout_seconds", settings_field: "perplexity_timeout_seconds", default: 180, documented_in_env_example: true, values_recorded: false }
     - { variable: "PERPLEXITY_SEARCH_CONTEXT_SIZE", kind: "search_context_size", settings_field: "perplexity_search_context_size", default: "high", documented_in_env_example: true, values_recorded: false }
@@ -258,4 +263,6 @@ sources:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -62,6 +64,7 @@ from .oracle_diff import (
     require_rest_text,
 )
 from .policy import canonical_repository
+from .hotl_execution import MergeExecutionBoundary, Outcome, ProposedAction
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
 from .state_witness import (
     ClaimKind,
@@ -497,7 +500,7 @@ class OracleMergePolicy:
         "ORACLE_AUTOMERGE_BASE_REF is not configured"
     )
     PROTECTED_BASE_REF_REASON = (
-        "tier 0 forbids merging into a protected branch: ORACLE_AUTOMERGE_BASE_REF "
+        "Oracle project scope: ORACLE_AUTOMERGE_BASE_REF "
         "must name this project's own base ref, not a shared trunk"
     )
     _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -593,8 +596,8 @@ class OracleMergePolicy:
             errors.append("Oracle automatic merge kill switch is active")
         if not self.required_checks:
             errors.append("required exact-head checks are not configured")
-        if snapshot.base_protected is not False:
-            errors.append("base branch protection is protected or unverified")
+        if snapshot.base_protected is None:
+            errors.append("base branch protection is unverified")
         if not self.base_ref:
             errors.append(self.UNCONFIGURED_BASE_REF_REASON)
         elif _is_shared_trunk_ref(self.base_ref):
@@ -1457,6 +1460,7 @@ class OracleMergeService:
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
         state_witness: StateWitnessLedger | None = None,
         checks_green_oracle: Callable[[str, str], WitnessRow] | None = None,
+        standing_merge_boundary: MergeExecutionBoundary | None = None,
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
     ):
         if mergeable_poll_attempts < 1:
@@ -1489,6 +1493,7 @@ class OracleMergeService:
         # step counts; the forge snapshot carries none, so without one the
         # green claim is UNOBSERVABLE and the gate denies.
         self._checks_green_oracle = checks_green_oracle
+        self._standing_merge_boundary = standing_merge_boundary
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
@@ -1535,6 +1540,11 @@ class OracleMergeService:
         snapshot, unreadable = self._read_snapshot(artifact)
         if unreadable is not None:
             return unreadable
+        if snapshot.base_protected and self._standing_merge_boundary is None:
+            decision = self.policy.evaluate(artifact, snapshot)
+            decision.status = OracleMergeStatus.REJECTED
+            decision.reasons.append("standing merge evidence boundary is not configured")
+            return self._complete(decision)
         transitioned_from_draft = snapshot.draft
         if snapshot.draft:
             preflight = self.policy.evaluate(
@@ -1618,11 +1628,30 @@ class OracleMergeService:
 
         try:
             self._renew_claim(artifact)
+            if self._standing_merge_boundary is not None:
+                boundary = self._standing_merge_boundary
+                if boundary.assignment_id != artifact.assignment_id:
+                    raise RuntimeError("standing merge boundary assignment does not match review")
+                action = ProposedAction(
+                    "eligible_merge_protected_branch" if final_snapshot.base_protected
+                    else "eligible_merge_non_protected_branch",
+                    self.policy.repository, boundary.environment, artifact.head_sha,
+                    artifact.reviewer_provider,
+                )
+                execution = boundary.execute(action, artifact.pull_number)
+                if execution.outcome is not Outcome.EXECUTE:
+                    decision.status = OracleMergeStatus.REJECTED
+                    decision.reasons.extend(execution.blockers)
+                    return self._complete(decision)
+                decision.status = OracleMergeStatus.MERGED
+                decision.merge_commit_sha = execution.merged_sha
+                decision.actor = artifact.reviewer_provider
+                return self._complete(decision)
+            if final_snapshot.base_protected is not False:
+                raise RuntimeError("standing merge evidence boundary is not configured")
             merged = self.github.merge(
-                self.policy.repository,
-                artifact.pull_number,
-                artifact.head_sha,
-                artifact.base_sha,
+                self.policy.repository, artifact.pull_number,
+                artifact.head_sha, artifact.base_sha,
             )
         except OracleMergeClaimExpired:
             raise
@@ -2863,7 +2892,7 @@ class GitHubOracleGateway:
         if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
             raise RuntimeError("GitHub pull request changed during final merge validation")
         if self._base_protected(repository, pull["base"]["ref"], expected_base_sha):
-            raise RuntimeError("protected base branch cannot be merged automatically")
+            raise RuntimeError("protected base: legacy Oracle transport lacks standing merge evidence; use MergeExecutionBoundary")
         actor = (
             self._token_provider.actor
             if self._token_provider is not None
@@ -2925,3 +2954,5 @@ class GitHubOracleGateway:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:01 UTC | END]]

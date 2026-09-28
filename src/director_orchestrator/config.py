@@ -1,5 +1,8 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
@@ -124,6 +127,20 @@ def _float(name: str, default: float) -> float:
 
 def _positive_float(name: str, default: float) -> float:
     value = _float(name, default)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
+    return value
+
+
+def _optional_positive_float(name: str) -> float | None:
+    """A finite positive amount, or None when the variable is unset (a caller then refuses fail-closed)."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except (ValueError, OverflowError):
+        raise ValueError(f"{name} must be finite and greater than zero") from None
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value
@@ -861,6 +878,9 @@ class Settings:
     gemini_max_total_tokens: int = _int("GEMINI_MAX_TOTAL_TOKENS", 20_000)
     gemini_daily_budget_usd: float = _float("GEMINI_DAILY_BUDGET_USD", 2.0)
     gemini_daily_request_limit: int = _int("GEMINI_DAILY_REQUEST_LIMIT", 50)
+    # The most one usage-check probe request may cost: every probe attempt reserves it before it is sent. Unset,
+    # the monitor refuses gemini probes rather than reserve nothing.
+    gemini_usage_probe_cost_ceiling_usd: float | None = _optional_positive_float("GEMINI_USAGE_PROBE_COST_CEILING_USD")
     gemini_mode: str = os.getenv(
         "GEMINI_MODE", "antigravity_subordinate"
     ).strip().lower()
@@ -876,6 +896,12 @@ class Settings:
     grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
     grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
     grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
+    gemini_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GEMINI_INPUT_USD_PER_MTOK"))
+    gemini_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GEMINI_OUTPUT_USD_PER_MTOK"))
+    grok_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GROK_INPUT_USD_PER_MTOK"))
+    grok_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GROK_OUTPUT_USD_PER_MTOK"))
+    perplexity_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("PERPLEXITY_INPUT_USD_PER_MTOK"))
+    perplexity_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("PERPLEXITY_OUTPUT_USD_PER_MTOK"))
     grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 262_144)
     grok_daily_budget_usd: float = _float("GROK_DAILY_BUDGET_USD", 2.0)
     grok_daily_request_limit: int = _int("GROK_DAILY_REQUEST_LIMIT", 50)
@@ -909,6 +935,10 @@ class Settings:
     perplexity_daily_budget_usd: float = _float("PERPLEXITY_DAILY_BUDGET_USD", 2.0)
     perplexity_daily_request_limit: int = _int(
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
+    )
+    # As gemini_usage_probe_cost_ceiling_usd, for perplexity usage-check probes.
+    perplexity_usage_probe_cost_ceiling_usd: float | None = _optional_positive_float(
+        "PERPLEXITY_USAGE_PROBE_COST_CEILING_USD"
     )
 
     # Z.ai GLM Coding Plan. The owner enrolled `zai` as a production lane
@@ -1201,6 +1231,51 @@ class Settings:
 
     def grok_cli_repository_map(self) -> dict[str, str]:
         return dict(self.grok_cli_repository_roots)
+
+    def __post_init__(self) -> None:
+        for provider in ("gemini", "grok", "perplexity"):
+            self.provider_token_prices(provider)
+
+    def provider_token_prices(self, provider: str) -> tuple[float, float] | None:
+        prices = tuple(getattr(self, f"{provider}_{kind}_usd_per_mtok") for kind in ("input", "output"))
+        for price in prices:
+            if price is not None and (isinstance(price, bool) or not isinstance(price, (int, float))
+                                      or not math.isfinite(price) or price <= 0):
+                raise ValueError("Provider token prices must be finite and positive")
+        return None if None in prices else prices
+
+    def provider_price_readiness(self) -> dict[str, bool]:
+        return {provider: self.provider_token_prices(provider) is not None
+                for provider in ("gemini", "grok", "perplexity")}
+
+    def token_request_cost_bound_usd(
+        self, provider: str, payload: dict, max_output_tokens: int,
+    ) -> float | None:
+        prices = self.provider_token_prices(provider)
+        if prices is None:
+            return None
+        if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or max_output_tokens <= 0:
+            raise ValueError("A positive enforced output token limit is required")
+        # One token per encoded byte overestimates text tokenization; the complete
+        # JSON envelope also covers framing. Do not apply to tools/hidden inputs.
+        input_bound = len(json.dumps(payload, ensure_ascii=True).encode("utf-8"))
+        bound = (input_bound * prices[0] + max_output_tokens * prices[1]) / 1_000_000
+        if not math.isfinite(bound) or bound <= 0:
+            raise ValueError("Provider request cost bound must be finite and positive")
+        return math.nextafter(bound, math.inf)
+
+    def request_cost_bound_usd(self, provider: str) -> float | None:
+        """Legacy minimum used alongside a proven request maximum, never as that maximum.
+
+        Grok supplies a floor; the other settings describe probe ceilings, not
+        arbitrary assignments. Unbounded requests instead serialize and hold
+        remaining daily capacity.
+        """
+        bound = {"gemini": self.gemini_usage_probe_cost_ceiling_usd, "grok": self.grok_request_cost_floor_usd,
+                 "perplexity": self.perplexity_usage_probe_cost_ceiling_usd}.get(provider)
+        if not isinstance(bound, (int, float)) or isinstance(bound, bool) or not math.isfinite(bound) or bound <= 0:
+            return None
+        return float(bound)
 
     def readiness(self) -> dict[str, bool]:
         slack_gateway_ready = bool(
@@ -2687,5 +2762,8 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

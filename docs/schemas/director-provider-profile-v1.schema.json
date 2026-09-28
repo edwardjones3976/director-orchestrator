@@ -426,7 +426,7 @@
                     "properties": {
                       "kind": {
                         "type": "string",
-                        "enum": ["daily_budget_usd", "daily_request_limit", "per_request_cost_floor_usd", "estimated_cost_usd", "token_ceiling", "context_ceiling_chars", "timeout_seconds", "max_output_tokens", "max_results", "max_attempts", "retry_delay_seconds", "parallel_cap", "max_turns", "prompt_chars", "requests_per_minute", "search_context_size"]
+                        "enum": ["token_price_usd_per_mtok", "daily_budget_usd", "daily_request_limit", "per_request_cost_floor_usd", "estimated_cost_usd", "token_ceiling", "context_ceiling_chars", "timeout_seconds", "max_output_tokens", "max_results", "max_attempts", "retry_delay_seconds", "parallel_cap", "max_turns", "prompt_chars", "requests_per_minute", "search_context_size"]
                       }
                     }
                   }

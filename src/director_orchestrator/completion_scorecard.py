@@ -1,3 +1,67 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
@@ -21,28 +85,72 @@ running in the same process, nor an attestation of an uncompromised local host.
 from __future__ import annotations
 
 import hashlib
+import hmac
+import html
+import importlib.util
 import json
 import math
+import os
 import re
 import sqlite3
 import subprocess
 import tempfile
+import threading
+import time
 from contextlib import closing
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, build_opener
 
+import httpx
+
+from .primary_activation_evidence import actors_distinct, canonical_actor
+from .process_isolation import ProcessContainmentError, launch_contained_process, stop_contained_process
+from .primary_scorecard_evidence import (
+    ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
+    EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
+    ci_workflow_pin, cli_release_descriptor, evaluator_pin, security_base_pin, decision_follows_prompt, delivery_settled as _delivery_settled,
+    lifecycle_error, missing_result_packets,
+    ordered as _ordered,
+    required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
 from .state_witness import StateWitnessLedger, WitnessStatus, gh_checks_green
 
 REPOSITORY = "edwardjones3976/director-orchestrator"
-CHANNEL = "C0BQ6GSCNLR"
-HEALTH_URL = "http://127.0.0.1:8080/health"
 MAX_BYTES = 2 * 1024 * 1024
 FRESH_FOR = timedelta(minutes=5)
 _COLLECTED = object()
+# Exact selectors. There is no default deployment and no committed channel.
+_PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
+_CHANNEL = re.compile(r"[CG][A-Z0-9]{8,20}")
+_TASK = re.compile(r"DIR-LG-[A-F0-9]{1,32}")
+_TS = re.compile(r"\d{10,}\.\d{1,6}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+DRILL_KINDS = ("refusal-4xx", "reserved-5xx", "transport-failure", "duplicate-input", "ambiguous-post")
+# Owner decision 2026-09-23: every runtime lane actually used must be its real product.
+# The product each lane's transport IDs (primary_transports / primary_parallel transport_kind) run. A capture must be
+# the product its attempts' transport ran; "<product>-unattested" (primary_scorecard_evidence: an unofficial
+# Responses endpoint, or a CLI capture no pinned release descriptor attests) is UNKNOWN on that product's transport and
+# a substitution on another's.
+_CLI_TRANSPORTS = ("native-cli", "authenticated-windows-host-bridge")
+_TRANSPORT_PRODUCTS = {"openai": {"responses-api": "openai-responses", **dict.fromkeys(_CLI_TRANSPORTS, "openai-codex")},
+                       "grok": dict.fromkeys(_CLI_TRANSPORTS, "xai-grok-cli"),
+                       "claude": dict.fromkeys(_CLI_TRANSPORTS, "anthropic-claude")}
+_UNATTESTED = "-unattested"
+REAL_PRODUCTS = {lane: set(by_transport.values()) for lane, by_transport in _TRANSPORT_PRODUCTS.items()}
+# Fixed, owner-installed verification key with no CLI override, the same
+# stance as _native_security_index: a caller cannot nominate its own signer.
+CI_REPLICA_KEY = Path.home() / ".director-scorecard" / "ci-replica-signer.ed25519.pub"
+# Any of these from a source becomes UNKNOWN. Exception text is never reported:
+# third-party errors can contain credentials or response bodies. ArithmeticError
+# covers malformed decimal timestamps; ImportError an unavailable reader module.
+_SOURCE_ERRORS = (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, RecursionError,
+                  ArithmeticError, ImportError, subprocess.SubprocessError, sqlite3.Error, httpx.HTTPError)
+_SLACK_UNAVAILABLE = ("--channel not supplied or differs from the deployment's configured channel; "
+                      "no other channel was read.")
+_SLACK_SOURCE = "Slack conversations.replies and the deployment's authenticated Director readback"
 
 
 @dataclass(frozen=True)
@@ -54,22 +162,24 @@ class Check:
 
 
 CHECKS = (
-    Check("01", "Correct project route and Slack channel", "runtime", "Verify Director 8080, n8n 5678 and the permitted project channel together."),
+    Check("01", "Correct project route and Slack channel", "runtime", "Verify the selected deployment's loopback Director and n8n ports, the --channel project channel and the correlated intake route together."),
     Check("02", "One active Slack gateway for this app", "runtime", "Count every Docker gateway sharing the app token and inspect known host gateway launch signatures."),
     Check("03", "Active intake handles rejection and ambiguity correctly", "runtime", "Execute the deployed 4xx, 5xx-after-reservation and transport-failure cases."),
     Check("04", "Status workflow actually delivers to Slack", "runtime", "Read back a fresh scheduled status message and correlate its workflow execution."),
     Check("05", "Primary owns intake with fencing", "runtime", "Observe LangGraph ownership, disabled legacy intake and a positive fencing generation."),
     Check("06", "Checkpoint survives restart", "runtime", "Resume the same bounded task after restart, preserving checkpoint and unique task identity."),
-    Check("07", "Primary reconciliation is clear", "runtime", "Collect fresh generation-bound consistency proof over durable projections, batches, assignments and unresolved effects from an authoritative collector. This collector does not exist yet."),
+    Check("07", "Primary reconciliation is clear", "runtime", "Run the in-image read-only consistency command; it must report zero unresolved, ambiguous or conflicting records for the running generation."),
     Check("08", "Owner approval is authenticated and scoped", "runtime", "Verify a real signed owner decision against its delivered prompt and approved work packet."),
     Check("09", "Final reply is durable and unambiguous", "runtime", "Read back exactly one terminal reply; prove duplicate input and ambiguous-post recovery."),
-    Check("10", "Ten actual offline Slack runs qualify", "runtime", "Run ten consecutive actual-owner Slack trials with independent correctness, time and zero-call evidence."),
-    Check("11", "Real team products and transports are supported", "runtime", "Attest the actual Codex, Grok Bot and Gemini/Antigravity routes; do not substitute direct xAI or Cursor Grok."),
+    # Owner ruling 2026-09-24 ("Offline = pipeline proof"): 10 proves the offline pipeline end to end; it does
+    # not verify answers, which is check 20's job.
+    Check("10", "Ten actual offline Slack runs qualify", "runtime", "Run ten consecutive actual-owner Slack trials with a committed structural rubric (pipeline proof, not answer correctness), time and zero-call evidence."),
+    Check("11", "Every runtime lane used is its real product", "runtime", "Attest every lane the paid run used as its real product (OpenAI/Codex Responses, xAI Grok, Claude) from verified validation-store captures; no substitution (owner decision 2026-09-23)."),
     Check("12", "Native activation evidence is fresh", "runtime", "Verify current native captures, binding digests, identities and expiry through the activation verifier."),
     Check("13", "Rolling twenty admissions recompute reported resource bounds", "coordination", "Use the authoritative append-only assignment ledger, including failed and ambiguous attempts. The ledger does not authenticate operator-reported usage or attestations; it only recomputes reported bound violations from journal rows."),
-    Check("14", "Attempts, time and output are bounded", "runtime", "Verify enforced attempt, cancellation deadline and output/token limits on every selected route."),
+    Check("14", "Attempts, time and output are bounded", "coordination", "Use the workload-ledger window: twenty post-cutover admissions whose bounds are all set and whose hard USD cap the operator attests with an evidence reference and SHA-256 (operator-attested, not cryptographically verified; owner ruling 2026-09-25)."),
     Check("15", "Daily monetary cap and actual usage are enforced", "runtime", "Verify enrolled daily budget reservations and correlated actual charges; unknown cost is not zero."),
-    Check("16", "Exact candidate CI really executed and passed", "candidate", "Run all six required CI jobs on this candidate; billing stubs and missing jobs do not pass."),
+    Check("16", "Exact candidate CI really executed and passed", "candidate", "Run the six required jobs at this exact head on hosted or registered self-hosted runners with executed steps; if none executed, supply an owner-signed local-replica receipt (owner decision 2026-09-23)."),
     Check("17", "Independent exact-candidate ACCEPT exists", "candidate", "Verify one non-author review against this exact head and original product identity."),
     Check("18", "Exact-candidate Security scan is complete", "candidate", "Verify the sealed scan's manifest, coverage and findings disposition for this exact candidate."),
     Check("19", "Paid primary runtime and effect executor are active", "runtime", "Observe paid execution, primary runtime, effect executor and reconciliation worker active together."),
@@ -91,13 +201,17 @@ class Observation:
     digest: str = ""
     facts: Any = field(default_factory=dict)
     _origin: object = field(default=None, repr=False, compare=False)
+    # The latest stamp at which a PASS still holds (a capture's expiry less FRESH_FOR), if time-limited.
+    valid_until: Any = field(default=None, repr=False, compare=False)
+    # When the observation was actually made: after every read it rests on, so never backdated.
+    _made: Any = field(default=None, repr=False, compare=False)
 
 
 def _observation(check_id: str, passed: bool | None, explanation: str,
                  source: str, facts: Any, at: datetime, **binding: Any) -> Observation:
     digest = hashlib.sha256(json.dumps(facts, sort_keys=True, allow_nan=False).encode()).hexdigest()
     return Observation(check_id, passed, explanation, source, at, at + FRESH_FOR,
-                       digest=digest, facts=facts, _origin=_COLLECTED, **binding)
+                       digest=digest, facts=facts, _origin=_COLLECTED, _made=datetime.now(timezone.utc), **binding)
 
 
 def _sha(value: str) -> str:
@@ -106,32 +220,197 @@ def _sha(value: str) -> str:
     return value
 
 
-def _run_bytes(arguments: list[str]) -> bytes:
-    # No shell, secret-bearing stderr, retries or caller-provided commands.
-    result = subprocess.run(arguments, capture_output=True, timeout=15, check=False)
-    if result.returncode or len(result.stdout) > MAX_BYTES:
+def _when(value: Any) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp lacks a timezone")
+    return parsed
+
+
+# The running collection's monotonic deadline (set by collect); None outside a collection.
+COLLECTION_SECONDS = 600
+_DEADLINE: list[float | None] = [None]
+
+
+def _left(end: float) -> float:
+    """What remains before a monotonic ``end``, rounded down to the microsecond: ``(t + cap) - t`` in floating point
+    can exceed ``cap`` by a few ulps (seen on Windows as 0.40000000002 for a 0.4 s deadline), and a timeout handed to
+    a blocking call must never exceed the configured cap or the time actually left."""
+    return math.floor((end - time.monotonic()) * 1_000_000) / 1_000_000
+
+
+def _remaining(cap: float) -> float:
+    """One blocking call's wall-clock allowance: its own cap, clamped to what remains of the collection. A spent
+    collection raises, so the source reads as unavailable."""
+    if _DEADLINE[0] is None:
+        return cap
+    left = _left(_DEADLINE[0])
+    if left <= 0:
+        raise ValueError("collection deadline reached")
+    return min(cap, left)
+
+
+def _git_environment() -> dict[str, str]:
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"}}
+    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    return env
+
+
+def _reject_git_metadata(repo: str, end: float) -> None:
+    def probe(*arguments: str) -> bytes:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired("git metadata verification", 0)
+        return _run_bytes(["git", "-C", repo, *arguments], timeout=remaining)
+
+    if probe("for-each-ref", "--format=%(refname)", "refs/replace/").strip():
+        raise ValueError("replace refs are not permitted")
+    common = os.fsdecode(probe("rev-parse", "--path-format=absolute", "--git-common-dir")).strip()
+    if not common or not Path(common).is_absolute():
+        raise ValueError("Git common directory could not be verified")
+    try:
+        (Path(common) / "info" / "grafts").lstat()
+    except FileNotFoundError:
+        return
+    raise ValueError("grafts metadata is not permitted")
+
+
+def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
+    """Run one read-only command (no shell, stdin closed, no retries) as a contained process tree: a kill-on-close
+    Job Object on Windows, a new session on POSIX (process_isolation, the transports' own boundary). Both pipes are
+    streamed and capped at MAX_BYTES while the child runs: an overflow on either kills it at once, and an overflow,
+    timeout or failure raises, so the source reads as unavailable and nothing partial is parsed. stderr is never
+    returned. Its wall clock is its timeout clamped to the collection deadline, and nothing waits past it: the whole
+    tree is ended (stop_contained_process, under its own short grace), the readers read the raw pipe fds, never the
+    buffered streams (a descendant that kept a pipe open would otherwise hold the buffered lock a close waits on), and
+    readers still blocked when the time is up are abandoned as daemons after their fds are closed."""
+    end = time.monotonic() + _remaining(timeout)
+    options = {}
+    if arguments[0] == "git":
+        # All local Git reads share this boundary, including security diffs and candidate blobs.
+        # Only the two metadata probes bypass rejection, never the isolation flags/environment.
+        if arguments[3:] not in (["for-each-ref", "--format=%(refname)", "refs/replace/"],
+                                 ["rev-parse", "--path-format=absolute", "--git-common-dir"]):
+            _reject_git_metadata(arguments[2], end)
+        arguments = ["git", "--no-replace-objects", *arguments[1:]]
+        options["env"] = _git_environment()
+    process, guard = launch_contained_process(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, **options)
+    streams = {"stdout": process.stdout, "stderr": process.stderr}
+    process.stdout = process.stderr = None  # stop_contained_process must not touch what a reader may still hold
+    captured = {name: bytearray() for name in streams}
+    overflow, done = threading.Event(), threading.Event()
+
+    def drain(name: str) -> None:
+        fd = streams[name].fileno()
+        try:
+            while not done.is_set() and (chunk := os.read(fd, 65536)):
+                if len(captured[name]) + len(chunk) > MAX_BYTES:
+                    overflow.set()
+                    process.kill()
+                    return
+                captured[name] += chunk
+        except OSError:
+            pass
+
+    readers = [threading.Thread(target=drain, args=(name,), daemon=True) for name in streams]
+    for reader in readers:
+        reader.start()
+    timed_out = False
+    try:
+        try:
+            process.wait(timeout=max(0.0, end - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+    finally:
+        # Cleanup spends only what remains of the command's own deadline (review 4111508057): with nothing left the
+        # tree is killed at once (a zero grace) and reaping is abandoned to a daemon thread, never waited on.
+        try:
+            stop_contained_process(process, guard, grace_seconds=min(5.0, max(0.0, _left(end))))
+            contained = True
+        except ProcessContainmentError:
+            contained = False
+            threading.Thread(target=process.wait, daemon=True).start()
+        for reader in readers:
+            reader.join(timeout=max(0.0, end - time.monotonic()))
+        drained = not any(reader.is_alive() for reader in readers)
+        done.set()
+        for stream in streams.values():
+            try:
+                stream.close()  # never contended: the readers use os.read on the fd, not this buffered object
+            except OSError:
+                pass
+    if timed_out:
+        raise subprocess.TimeoutExpired(arguments, timeout)
+    if overflow.is_set() or process.returncode or not contained or not drained:
         raise ValueError("read-only command failed or exceeded its output bound")
-    return result.stdout
+    return bytes(captured["stdout"])
 
 
-def _run_json(arguments: list[str]) -> Any:
-    return json.loads(_run_bytes(arguments))
+def _run_json(arguments: list[str], timeout: int = 15) -> Any:
+    return json.loads(_run_bytes(arguments, timeout))
 
 
-def _health() -> dict[str, Any]:
-    class NoRedirect(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
+def bounded_get(client: httpx.Client, url: str, *, end: float, params: dict | None = None,
+                headers: dict | None = None) -> tuple[int, dict[str, str], bytes]:
+    """The one HTTP read path of the scorecard and the offline collector (Slack, Director API, /health).
 
-    with build_opener(NoRedirect).open(HEALTH_URL, timeout=5) as response:
-        if response.geturl() != HEALTH_URL:
-            raise ValueError("health endpoint redirected")
-        raw = response.read(MAX_BYTES + 1)
-    if len(raw) > MAX_BYTES:
-        raise ValueError("health response exceeds its bound")
+    A streamed GET bounded in bytes and in wall clock: it ends by `end` (a time.monotonic() value, already the
+    earlier of the read's own cap and the collection deadline). HTTPX's timeouts bound only each connect or read's
+    inactivity, so a peer that trickles its status line and headers could hold `client.stream()` open past any
+    deadline. The whole request - resolve, connect, TLS, headers and body - therefore runs in a worker thread that
+    this call waits for only until `end`: past it the read raises, the worker is told to stop at its next chunk and
+    is abandoned as a daemon, never joined. The body is also checked against the clock and the byte cap after every
+    chunk (iter_bytes unsized: a sized iterator buffers until the size fills, which a trickle never reaches). The
+    client must not follow redirects.
+    """
+    now = time.monotonic()
+    if now >= end:
+        raise ValueError("Collection deadline reached")
+    stop = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def fetch() -> None:
+        try:
+            with client.stream("GET", url, params=params, headers=headers or {},
+                               timeout=max(0.001, _left(end))) as response:
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_BYTES or stop.is_set() or time.monotonic() >= end:
+                        raise ValueError("Read exceeded byte/time bound")
+                outcome["value"] = (response.status_code, dict(response.headers), bytes(body))
+        except BaseException as exc:  # handed to the caller, never lost with the thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(timeout=max(0.0, end - time.monotonic()))
+    if worker.is_alive():
+        stop.set()  # ponytail: an abandoned worker holds its socket until the peer's next byte or httpx's read timeout
+        raise ValueError("Read exceeded byte/time bound")
+    if "error" in outcome:
+        raise outcome["error"]
+    if time.monotonic() > end:
+        raise ValueError("Read exceeded byte/time bound")
+    return outcome["value"]
+
+
+def _http_client() -> httpx.Client:
+    """A client that never follows a redirect or reads proxy settings from the environment."""
+    return httpx.Client(follow_redirects=False, trust_env=False)
+
+
+def _health(url: str, environment: str) -> dict[str, Any]:
+    with _http_client() as client:
+        status, _, raw = bounded_get(client, url, end=time.monotonic() + _remaining(5))
+    if status != 200:  # a redirect is not followed and answers nothing
+        raise ValueError("health endpoint did not answer 200")
     value = json.loads(raw)
-    if not isinstance(value, dict) or value.get("environment") != "local":
-        raise ValueError("endpoint is not the local Director")
+    if not isinstance(value, dict) or value.get("environment") != environment:
+        raise ValueError("endpoint is not the selected deployment's Director")
     return value
 
 
@@ -143,58 +422,183 @@ def _all_fields(data: dict[str, Any], expected: dict[str, Any]) -> bool | None:
                for key, wanted in expected.items())
 
 
-def _runtime_observations(at: datetime) -> list[Observation]:
-    """Observe only the named Director service; never probe sibling endpoints."""
-    docker = _run_json(["docker", "inspect", "director-orchestrator-orchestrator-1"])
-    service = docker[0]
-    labels = service.get("Config", {}).get("Labels") or {}
+@dataclass(frozen=True)
+class _Runtime:
+    project: str
+    container_id: str
+    image_id: str
+    runtime_sha: str
+    created_at: datetime
+    started_at: datetime
+    environment: str
+    health_url: str
+    api_base: str
+    health: dict = field(repr=False)
+    env: dict = field(repr=False)  # holds secrets: memory only, never in facts
+    runtime_tree: str = ""  # the image's tree label; "" when absent or malformed
+    collected_at: datetime | None = None  # the collection's start: no source may have been read before it
+    # The collection's end, read when grading (a callable): the upper bound of every evidence moment.
+    collection_end: Any = field(default=None, repr=False, compare=False)
+
+    def until(self) -> datetime | None:
+        """The evidence cutoff: the collection's end, never a time frozen before the live reads."""
+        return self.collection_end() if callable(self.collection_end) else self.collected_at
+
+    def read_in_window(self, value: Any) -> bool:
+        """A source's own read time (a snapshot's captured_at, a report's observed_at) lies inside the
+        collection: at or after its start and no later than its end."""
+        until = self.until()
+        try:
+            return (isinstance(value, str) and until is not None and self.collected_at is not None
+                    and self.collected_at <= _when(value) <= until)
+        except ValueError:
+            return False
+
+    @property
+    def binding(self) -> dict[str, str]:
+        return {"runtime_sha": self.runtime_sha, "image_id": self.image_id}
+
+
+def _is_current(since: datetime, until: datetime | None, *moments: datetime | None) -> bool:
+    """The one freshness rule every collector applies before grading anything, positive or negative.
+
+    Evidence counts only when each of its moments (a Slack post, a task's creation, an execution's
+    start) lies in [since, until]: at or after the latest creation of the components that handled it,
+    and no later than the collection time. No producer records the executing image, so older evidence
+    belongs to a predecessor, and a moment after the collection had not happened when it was read:
+    either grades nothing here, and its outcome is UNKNOWN, never PASS and never FAIL.
+    """
+    return until is not None and all(moment is not None and since <= moment <= until for moment in moments)
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Constant-time equality for secrets and digests; anything but two non-empty strings never matches, so two
+    unset values (an empty bearer the Director rejects, a missing digest) never agree."""
+    return (isinstance(a, str) and isinstance(b, str) and bool(a) and bool(b)
+            and hmac.compare_digest(a.encode(), b.encode()))
+
+
+def _labels(container: dict[str, Any] | None) -> dict[str, str]:
+    return ((container or {}).get("Config") or {}).get("Labels") or {}
+
+
+def _compose_ids(project: str, service: str) -> list[str]:
+    """Running containers of one Compose service, discovered by labels only."""
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc",
+                      "--filter", f"label=com.docker.compose.project={project}",
+                      "--filter", f"label=com.docker.compose.service={service}"]).decode().split()
+    if len(ids) > 16 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
+        raise ValueError("Compose service inventory is malformed")
+    return ids
+
+
+# Every Compose service whose state backs evidence: the Director, its primary control-plane database, n8n and
+# n8n's database (its workflows and saved executions); the gateway is named separately.
+_EVIDENCE_SERVICES = ("orchestrator", "langgraph-primary-db", "n8n", "n8n-db")
+
+
+def _deployment_state(project: str, gateway: str | None) -> tuple:
+    """Identity and run state (Id, Image, Created, StartedAt, Running) of every container whose state backs
+    evidence and of the named gateway, compared whole between the deployment probe and the final cutoff."""
+    ids = [item for service in _EVIDENCE_SERVICES for item in _compose_ids(project, service)]
+    rows = _run_json(["docker", "inspect", *ids, *([gateway] if gateway else [])])
+    return tuple(sorted((str(row.get("Id")), str(row.get("Image")), str(row.get("Created")),
+                         str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True)
+                        for row in rows))
+
+
+def _still_deployed(observations: list[Observation], state: tuple | None, project: str,
+                    gateway: str | None) -> list[Observation]:
+    """Re-inspect the containers after every source was read: if any changed (or could not be re-inspected), the
+    runtime evidence may describe a predecessor, so no runtime-derived PASS or FAIL is extended to the final cutoff."""
+    if state is None:  # no baseline (the probe itself failed): nothing to extend, and no retry
+        current = None
+    else:
+        try:
+            current = _deployment_state(project, gateway)
+        except _SOURCE_ERRORS:
+            current = None
+    if state is not None and current == state:
+        return observations
+    return [item if item.passed is None else replace(
+        item, passed=None, explanation="The Director, gateway or n8n containers changed, or could not be re-inspected, "
+        "between the deployment probe and the final cutoff: " + item.explanation) for item in observations]
+
+
+def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observation], _Runtime]:
+    """Observe only the selected deployment's Director; never a default name or port."""
+    ids = _compose_ids(project, "orchestrator")
+    if len(ids) != 1:
+        raise ValueError("the selected deployment has no single running Director")
+    service = _run_json(["docker", "inspect", ids[0]])[0]
+    labels = _labels(service)
+    if (service.get("Id") != ids[0] or labels.get("com.docker.compose.project") != project
+            or labels.get("com.docker.compose.service") != "orchestrator"
+            or service.get("State", {}).get("Running") is not True):
+        raise ValueError("inspected container is not the selected deployment's running Director")
     runtime_sha = _sha(labels.get("org.director.candidate.commit", ""))
+    tree_label = labels.get("org.director.candidate.tree", "")
+    runtime_tree = tree_label if isinstance(tree_label, str) and re.fullmatch(r"[a-f0-9]{40}", tree_label) else ""
     image_id = service.get("Image", "")
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+    if not isinstance(image_id, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
         raise ValueError("runtime image identity unavailable")
-    ports = service.get("NetworkSettings", {}).get("Ports", {})
-    if not any(p.get("HostIp") == "127.0.0.1" and p.get("HostPort") == "8080"
-               for p in ports.get("8080/tcp", []) or []):
-        raise ValueError("inspected image is not bound to the Director endpoint")
-    health = _health()
+    published = (service.get("NetworkSettings", {}).get("Ports") or {}).get("8080/tcp") or []
+    port = str(published[0].get("HostPort", "")) if len(published) == 1 else ""
+    if (len(published) != 1 or published[0].get("HostIp") != "127.0.0.1"
+            or not re.fullmatch(r"[0-9]{4,5}", port) or not 1024 <= int(port) <= 65535):
+        raise ValueError("Director is not published on exactly one loopback port")
+    env = _environment(service)
+    environment = env.get("APP_ENV", "").strip() or "local"
+    health_url = f"http://127.0.0.1:{int(port)}/health"
+    health = _health(health_url, environment)
     primary = health.get("langgraph_primary", {})
     if not isinstance(primary, dict):
         raise ValueError("primary health is malformed")
-    binding = {"runtime_sha": runtime_sha, "image_id": image_id}
+    # The Director's evidence lives in its control-plane store as much as in the process: the bound is the later
+    # creation of the Director and the langgraph-primary-db its DSN resolves to.
+    runtime = _Runtime(project, ids[0], image_id, runtime_sha,
+                       max(_when(service["Created"]), _primary_store_created(project, service)),
+                       _when(service["State"]["StartedAt"]), environment, health_url,
+                       f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at, end)
+    binding = runtime.binding
     result = []
-    owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True})
+    # The persisted owner row alone is not ownership: this process must hold the live writer lease.
+    owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True,
+                                  "writer_lease_ready": True})
     generation = primary.get("intake_fencing_generation")
     if owner is not None:
         owner = owner and type(generation) is int and generation > 0
     result.append(_observation("05", owner, "Observed database-derived intake owner and fencing health.",
-                               HEALTH_URL, {key: primary.get(key) for key in
-                               ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation")}, at, **binding))
-    blocked = (any(type(primary.get(key)) is int and primary[key] > 0
-                   for key in ("ambiguous_effect_count", "historical_parallel_plan_hold_count"))
-               or isinstance(primary.get("reconciliation_hold_reason"), str)
-               and bool(primary["reconciliation_hold_reason"].strip()))
-    # Zero counters and a null hold reason are not consistency proof: release 879
-    # reported exactly these while preserved authoritative task/batch plan digests
-    # conflicted. Health can only report a blocker; clearance needs the missing
-    # generation-bound authoritative consistency collector.
-    result.append(_observation("07", False if blocked else None,
-                               "Health reports a historical hold, hold reason or ambiguous primary effect." if blocked else
-                               "Health hold counters cannot prove reconciliation. Missing collector: generation-bound authoritative consistency of durable projections, batches, assignments and unresolved effects. Worker readiness is scored in 19.",
-                               HEALTH_URL, {key: primary.get(key) for key in
-                               ("ambiguous_effect_count", "historical_parallel_plan_hold_count", "reconciliation_hold_reason")}, at, **binding))
+                               health_url, {key: primary.get(key) for key in
+                               ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation",
+                                "writer_lease_ready")}, at, **binding))
     active = _all_fields(primary, {"primary_runtime_active": True, "effect_executor_ready": True,
                                    "reconciliation_worker_ready": True})
     if active is not None:
-        active = active and health.get("paid_runs_enabled") is True
+        # A paid runtime is active only with its provider lanes live-activated too.
+        active = (active and health.get("paid_runs_enabled") is True
+                  and (primary.get("provider_activation") or {}).get("combined_live_ready") is True)
     result.append(_observation("19", active, "Observed paid switch and operational primary components together.",
-                               HEALTH_URL, {"paid": health.get("paid_runs_enabled"), "active": active}, at, **binding))
-    activation = primary.get("provider_activation", {})
-    if isinstance(activation, dict) and activation.get("combined_live_ready") is False:
-        result.append(_observation("12", False, "The running activation verifier reports combined_live_ready=false.",
-                                   HEALTH_URL, {"combined_live_ready": False}, at, **binding))
-    # A true readiness flag does not expose the capture identity and expiry needed
-    # to independently verify check 12; never promote it to a capture attestation.
-    return result
+                               health_url, {"paid": health.get("paid_runs_enabled"), "active": active}, at, **binding))
+    return result, runtime
+
+
+def _primary_store_created(project: str, director: dict[str, Any]) -> datetime:
+    """Creation time of the Director's control-plane store: the deployment's one running langgraph-primary-db,
+    which the host of the Director's LANGGRAPH_PRIMARY_POSTGRES_DSN names and no other container answers (the same
+    hop rule as n8n's store). Evidence read from it is bounded by its creation, as 04 bounds n8n's executions."""
+    stores = _compose_ids(project, "langgraph-primary-db")
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
+    if (len(stores) != 1 or not ids or len(ids) > 128
+            or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)):
+        raise ValueError("the selected deployment does not run exactly one primary database")
+    containers = _run_json(["docker", "inspect", *ids])
+    store = next((row for row in containers if row.get("Id") == stores[0]), None)
+    host = urlsplit(_environment(director).get("LANGGRAPH_PRIMARY_POSTGRES_DSN", "")).hostname
+    if (store is None or (store.get("State") or {}).get("Running") is not True or not host
+            or _hop(director, store, host, containers) is not True):
+        raise ValueError("the Director's primary DSN does not resolve to the deployment's primary database")
+    return _when(store["Created"])
 
 
 _HOST_GATEWAYS = r"""$ErrorActionPreference='Stop';
@@ -204,24 +608,132 @@ $matches=@($p | Where-Object { $_.CommandLine -match '(?i)(director_orchestrator
 @{inspected=$p.Count;unreadable=$missing;gateway_process_count=$matches.Count} | ConvertTo-Json -Compress
 """
 _UPSTREAM_HEALTH = """fetch('http://orchestrator:8080/health',{signal:AbortSignal.timeout(5000),redirect:'error'}).then(async r=>{if(!r.ok)throw Error('health'); const b=await r.text();if(b.length>1048576)throw Error('bound'); const h=JSON.parse(b);console.log(JSON.stringify({environment:h.environment}));}).catch(()=>{process.exitCode=1;});"""
-_ACTIVE_INTAKE = """BEGIN READ ONLY;
+_ACTIVE_INTAKE = """BEGIN READ ONLY; SET LOCAL search_path TO public; SET LOCAL TimeZone TO 'UTC';
 SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",'stored_version',h."versionId",
+'active_version_at',h."createdAt"::timestamptz,'workflow_updated_at',w."updatedAt"::timestamptz,
 'http_node_count',(SELECT count(*) FROM json_array_elements(h.nodes::json) n WHERE n->>'type'='n8n-nodes-base.httpRequest'),
 'static_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'url' LIKE 'http%' AND n->'parameters'->>'url' NOT LIKE '%{{%'),
 'supported_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'method'='POST' AND n->'parameters'->>'url'='http://orchestrator:8080/v1/intake'),
 'supported_webhook',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Slack Gateway Webhook' AND n->>'type'='n8n-nodes-base.webhook' AND n->'parameters'->>'httpMethod'='POST' AND n->'parameters'->>'path'='director-intake'),
-'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task')
+'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task',
+'nodes',h.nodes::json,'connections',h.connections::json,'settings',w.settings::json,'pin_data',w."pinData"::json)
 FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
 WHERE w.id='directorIntake'; COMMIT;"""
+# Newest saved, successful, scheduled Director Status run that posted, within the
+# 72-hour retention window; the Slack node's response is read from its data.
+# Every timestamp is cast to timestamptz under a UTC session, so row_to_json always emits an offset whether n8n's
+# column is timestamp or timestamptz (a naive value would be unreadable, never guessed).
+_STATUS_EXECUTION = """BEGIN READ ONLY; SET LOCAL search_path TO public; SET LOCAL TimeZone TO 'UTC';
+SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE name='Director Status'),
+ 'latest',(SELECT row_to_json(y) FROM (SELECT e.id,e.status,e.finished,e."startedAt"::timestamptz AS "startedAt",
+   e."stoppedAt"::timestamptz AS "stoppedAt"
+   FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id
+   WHERE w.name='Director Status' AND e.mode='trigger' AND e."startedAt" > now()-interval '72 hours'
+   ORDER BY e."startedAt" DESC, e.id DESC LIMIT 1) y),
+ 'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,
+   e."startedAt"::timestamptz AS "startedAt",e."stoppedAt"::timestamptz AS "stoppedAt",d.data
+   ,w.active AS workflow_active,w."activeVersionId" AS active_version,
+     to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt"::timestamptz AS workflow_updated_at,
+     (SELECT h."createdAt"::timestamptz FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
+       AS active_version_at,
+     (SELECT h.nodes::json FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
+       AS active_nodes,
+     (SELECT h.connections::json FROM workflow_history h
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_connections,
+     w.settings::json AS workflow_settings, w."pinData"::json AS pin_data,
+     (SELECT c."updatedAt"::timestamptz FROM credentials_entity c WHERE c.id = (
+        SELECT n->'credentials'->'slackApi'->>'id' FROM workflow_history h, json_array_elements(h.nodes::json) n
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId" AND n->>'name'='Post Status' LIMIT 1))
+       AS credential_updated_at
+   FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
+   WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
+     AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
+   ORDER BY e."stoppedAt" DESC LIMIT 1) x)); COMMIT;"""
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# The in-process renderer checks 08 and 20 trust: they must be the running candidate's own files.
+_RENDERER_FILES = ("src/director_orchestrator/primary_slack_delivery.py", "src/director_orchestrator/contribution_tags.py",
+                   "src/director_orchestrator/models.py")
+
+
+def _git_root() -> Path:
+    """Where git reads commits: the repository the launcher named (the evaluator runs from an archived tree that is
+    not a git checkout), else this checkout."""
+    return Path(os.environ.get("DIRECTOR_SCORECARD_REPO") or _REPO_ROOT)
+
+
+def _candidate_blob(sha: str, path: str) -> bytes | None:
+    """A file exactly as the candidate commit holds it (read-only git show), or None when unavailable."""
+    try:
+        return _run_bytes(["git", "-C", str(_git_root()), "show", f"{_sha(sha)}:{path}"])
+    except _SOURCE_ERRORS:
+        return None
+
+
+def _candidate_renderer(sha: str) -> bool:
+    """The scorecard's own renderer files are byte-for-byte the candidate's (line endings aside)."""
+    for path in _RENDERER_FILES:
+        blob = _candidate_blob(sha, path)
+        try:
+            local = (_REPO_ROOT / path).read_bytes()
+        except OSError:
+            return False
+        if blob is None or blob.replace(b"\r\n", b"\n") != local.replace(b"\r\n", b"\n"):
+            return False
+    return True
+
+
+# Node fields n8n or the operator sets at deploy time and that never change behaviour. Everything else
+# (type, typeVersion, parameters, disabled, retry and error settings, credential types, the connection
+# graph and the node set) must equal the repository workflow.
+_WORKFLOW_DEPLOY_FIELDS = frozenset({"id", "position", "webhookId", "credentials"})
+
+
+def _workflow_matches(sha: str, reference: str, nodes: Any, connections: Any,
+                      bound: dict[str, tuple[tuple[str, ...], Any]] | None = None, *,
+                      settings: Any, pin_data: Any) -> bool | None:
+    """The active workflow version is exactly n8n/workflows/<reference>, node for node and edge for edge.
+
+    Allowed to differ: node ids, canvas positions, webhookId, credential ids and names (the credential
+    types must match), and the parameter values the collector binds separately (``bound``: node name ->
+    (parameter path, expected value)), such as the project channel.
+    """
+    # The contract is the candidate commit's workflow file, never an unverified working tree.
+    blob = _candidate_blob(sha, "n8n/workflows/" + reference)
+    if blob is None:
+        return None
+    document = json.loads(blob.decode("utf-8"))
+    if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
+        return False
+
+    def normal(node: dict[str, Any]) -> dict[str, Any]:
+        out = {key: value for key, value in node.items() if key not in _WORKFLOW_DEPLOY_FIELDS}
+        out["disabled"] = node.get("disabled", False) is True  # n8n skips a disabled node
+        out["credentials"] = sorted(node.get("credentials") or {}) if isinstance(node.get("credentials") or {}, dict) else None
+        return out
+
+    expected = {node["name"]: normal(json.loads(json.dumps(node))) for node in document["nodes"]}
+    for name, (path, value) in (bound or {}).items():
+        target = expected[name]["parameters"]
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+    active = {node.get("name"): normal(node) for node in nodes}
+    # Workflow-level settings (execution order, timeouts, save-data policy, error workflow, timezone) change
+    # how n8n runs the graph, so they must equal the file too; pinned node data must be absent. Tags and
+    # static data (trigger bookkeeping) change nothing at run time and are not compared.
+    return (len(active) == len(nodes) and active == expected and connections == document["connections"]
+            and settings == document["settings"] and pin_data in (None, {}))
 
 
 def _environment(container: dict[str, Any]) -> dict[str, str]:
     return dict(value.split("=", 1) for value in container.get("Config", {}).get("Env", []) if "=" in value)
 
 
-def _port(container: dict[str, Any], port: int) -> bool:
-    return any(row.get("HostIp") == "127.0.0.1" and row.get("HostPort") == str(port)
-               for row in container.get("NetworkSettings", {}).get("Ports", {}).get(f"{port}/tcp", []) or [])
+def _loopback(container: dict[str, Any], port: int) -> bool:
+    rows = (container.get("NetworkSettings", {}).get("Ports") or {}).get(f"{port}/tcp") or []
+    return len(rows) == 1 and rows[0].get("HostIp") == "127.0.0.1"
 
 
 def _container_name(value: str) -> str:
@@ -230,14 +742,144 @@ def _container_name(value: str) -> str:
     return value
 
 
+# Every setting slack_bot.py reads that the Director must share (bearer, intake signing secret, Slack bot,
+# owner and channel). test_gateway_identities_cover_every_gateway_secret derives the gateway's secret and
+# identity reads from slack_bot.py and config.py, so a new one cannot be missed silently. SLACK_APP_TOKEN
+# is gateway-only; its app identity is check 02's.
+# The proof version the gateway's signed approval command carries (models.SlackGatewayProof).
+_APPROVAL_PROOF_VERSION = "v1"
+_GATEWAY_IDENTITIES = ("SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET",
+                       "SLACK_GATEWAY_SECRET")
+_GATEWAY_ONLY = ("SLACK_APP_TOKEN",)
+
+
+# The minimum length the product enforces on a gateway credential: slack_bot refuses to start, and
+# Settings.readiness is not ready, without a 32+ character SLACK_GATEWAY_SECRET distinct from the bearer;
+# main.require_auth rejects every request while ORCHESTRATOR_SHARED_SECRET is empty. Every other identity
+# must be set (non-empty) for the gateway to start or to match an event.
+_CREDENTIAL_MINIMUM = {"SLACK_GATEWAY_SECRET": 32}
+
+
+def _gateway_credentials_match(gateway_env: dict[str, str], director_env: dict[str, str]) -> bool:
+    """The gateway holds the Director's Slack bot, owner, channel, bearer and intake signing secret, each set and
+    at the product's minimum length, the signing secret distinct from the bearer (constant time, never reported)."""
+    usable = all(isinstance(director_env.get(name), str) and len(director_env[name]) >= _CREDENTIAL_MINIMUM.get(name, 1)
+                 for name in _GATEWAY_IDENTITIES)
+    return (usable and all(_same(gateway_env.get(name), director_env.get(name)) for name in _GATEWAY_IDENTITIES)
+            and not _same(director_env.get("SLACK_GATEWAY_SECRET"), director_env.get("ORCHESTRATOR_SHARED_SECRET")))
+
+
+def _slack_app_id(token: str) -> str | None:
+    """The Slack app ID an app-level token names; never the token or any part of its secret."""
+    match = re.fullmatch(r"xapp-\d+-(A[A-Z0-9]{6,20})-\d+-[A-Za-z0-9]+", token or "")
+    return match.group(1) if match else None
+
+
 def _gateway_launch(container: dict[str, Any]) -> bool:
     command = (container.get("Config", {}).get("Entrypoint") or []) + (container.get("Config", {}).get("Cmd") or [])
     return ("director_orchestrator.slack_bot" in command
             or any(str(arg).replace("\\", "/").endswith("/slack_bot.py") for arg in command))
 
 
-def _topology_observations(at: datetime, binding: dict[str, str], expected_gateway: str) -> list[Observation]:
+def _networks(row: dict[str, Any] | None) -> list[dict[str, Any]]:
+    value = ((row or {}).get("NetworkSettings") or {}).get("Networks")
+    return [a for a in value.values() if isinstance(a, dict) and a.get("NetworkID")] if isinstance(value, dict) else []
+
+
+def _hop(source: dict[str, Any] | None, target: dict[str, Any] | None, host: str | None,
+         containers: list[dict[str, Any]]) -> bool | None:
+    """From docker inspect only: source and target share a network on which target, and no
+    other container, answers to host. None when either shows no network attachments."""
+    ours, theirs = _networks(source), _networks(target)
+    if not ours or not theirs:
+        return None
+    # /etc/hosts wins over network DNS: an ExtraHosts entry for the name sends the hop elsewhere.
+    config = (source or {}).get("HostConfig") or {}
+    extra = config.get("ExtraHosts") or []
+    if not isinstance(extra, list) or any(str(entry).split(":", 1)[0].split("=", 1)[0].strip() == host
+                                          for entry in extra):
+        return False
+    # Host networking, replaced hosts or resolver files, and custom resolvers or search domains change
+    # resolution in ways inspect cannot prove: unproven, not wrong.
+    mounts = (source or {}).get("Mounts") or []
+    if (config.get("NetworkMode") == "host" or config.get("Dns") or config.get("DnsSearch")
+            or any(isinstance(m, dict) and m.get("Destination") in ("/etc/hosts", "/etc/resolv.conf") for m in mounts)):
+        return None
+    reachable = {attach["NetworkID"] for attach in ours}
+
+    def answers(attach: dict[str, Any]) -> bool:
+        return host in {*(attach.get("Aliases") or []), *(attach.get("DNSNames") or [])}
+
+    if not any(attach["NetworkID"] in reachable and answers(attach) for attach in theirs):
+        return False
+    # The source resolves host on every network it is attached to: another owner of the
+    # name on any of them makes resolution ambiguous, so the hop is not bound to target.
+    return not any(row.get("Id") != (target or {}).get("Id") and other["NetworkID"] in reachable and answers(other)
+                   for row in containers for other in _networks(row))
+
+
+def _relay_route_ok(relay: Any, n8n: dict[str, Any] | None) -> bool:
+    """The gateway's relay URL is n8n's intake webhook: plain http to n8n (or its container name) on 5678."""
+    n8n_name = (n8n or {}).get("Name", "").lstrip("/")
+    return (relay.scheme == "http" and relay.hostname in {"n8n", *([n8n_name] if n8n_name else [])}
+            and relay.port == 5678 and relay.path == "/webhook/director-intake"
+            and not relay.username and not relay.password and not relay.query and not relay.fragment)
+
+
+def _intake_route_verified(runtime: _Runtime, gateway: str) -> tuple[bool | None, datetime | None]:
+    """Check 01's route predicates, re-evaluated now for the Slack-derived checks (03, 08, 09, 10, 20).
+
+    The selected gateway's relay URL, its credentials, the gateway-to-n8n and n8n-to-Director hops, n8n's
+    own execution store, and the active intake workflow version equal to the candidate's workflow file.
+    Historical Slack evidence says nothing about an intake route that no longer holds.
+
+    Returns the verdict and, when verified, the moment the active intake workflow took its current form: the later
+    of its active version's creation (workflow_history.createdAt) and the workflow row's last update (n8n updates it
+    on import, edit and activation). A thread handled before that moment ran a previous workflow version, so it is
+    part of the freshness bound, like a container's creation.
+    """
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
+    if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
+        raise ValueError("running container inventory unavailable or exceeds 128")
+    containers = _run_json(["docker", "inspect", *ids])
+
+    def service(name: str) -> list[dict[str, Any]]:
+        return [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
+                and _labels(row).get("com.docker.compose.service") == name]
+
+    gate = next((row for row in containers if row.get("Name", "").lstrip("/") == gateway), None)
+    n8n, databases = service("n8n"), service("n8n-db")
+    director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
+    if gate is None or director is None or len(n8n) != 1 or len(databases) != 1:
+        return None, None
+    env = _environment(gate)
+    relay = urlsplit(env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
+    if not _relay_route_ok(relay, n8n[0]) or not _gateway_credentials_match(env, runtime.env):
+        return False, None
+    hops = (_hop(gate, n8n[0], relay.hostname, containers), _hop(n8n[0], director, "orchestrator", containers),
+            _n8n_store(n8n[0], databases[0], containers))
+    if not all(hop is True for hop in hops):
+        return (False if False in hops else None), None
+    workflow = _run_json(["docker", "exec", databases[0]["Id"], "psql", "-U", "n8n", "-d", "n8n",
+                          "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
+    if (not isinstance(workflow, dict) or workflow.get("active") is not True or not workflow.get("active_version")
+            or workflow.get("active_version") != workflow.get("stored_version")):
+        return False, None
+    matches = _workflow_matches(runtime.runtime_sha, "director-intake.json", workflow.get("nodes"),
+                                workflow.get("connections"), settings=workflow.get("settings"),
+                                pin_data=workflow.get("pin_data"))
+    marks = (workflow.get("active_version_at"), workflow.get("workflow_updated_at"))
+    if matches is not True:
+        return matches, None
+    if not all(isinstance(mark, str) for mark in marks):
+        return None, None  # the active version's time is unknown, so no thread can be shown to postdate it
+    return True, max(_when(mark) for mark in marks)
+
+
+def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
+                           channel: str | None) -> list[Observation]:
     """Inspect every running container; the gateway is the caller's exact name, never a guess."""
+    binding = runtime.binding
     ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
     if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
         raise ValueError("running container inventory unavailable or exceeds 128")
@@ -246,10 +888,19 @@ def _topology_observations(at: datetime, binding: dict[str, str], expected_gatew
     if set(ids) != set(after) or {row.get("Id") for row in containers} != set(ids):
         raise ValueError("container inventory changed during observation")
     by_name = {row.get("Name", "").lstrip("/"): row for row in containers}
-    director = by_name["director-orchestrator-orchestrator-1"]
-    n8n = by_name["director-orchestrator-n8n-1"]
-    if director.get("Image") != binding["image_id"]:
+    director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
+    if director is None:
+        raise ValueError("Director left the running inventory during topology collection")
+    if director.get("Image") != runtime.image_id:
         raise ValueError("Director image changed during topology collection")
+
+    def service(name: str) -> list[dict[str, Any]]:
+        return [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
+                and _labels(row).get("com.docker.compose.service") == name]
+
+    n8n_rows, db_rows = service("n8n"), service("n8n-db")
+    n8n = n8n_rows[0] if len(n8n_rows) == 1 else None
+    n8n_db = db_rows[0] if len(db_rows) == 1 else None
     gateway = by_name.get(expected_gateway)
     if gateway is None or gateway.get("State", {}).get("Running") is not True or not _gateway_launch(gateway):
         facts = {"expected_gateway": expected_gateway, "running": bool(gateway) and gateway.get("State", {}).get("Running") is True,
@@ -262,52 +913,99 @@ def _topology_observations(at: datetime, binding: dict[str, str], expected_gatew
     gateway_identity = {"expected_gateway": expected_gateway, "gateway_container_id": gateway["Id"],
                         "gateway_image_id": gateway_image}
     gateway_env = _environment(gateway)
+    gateway_project = _labels(gateway).get("com.docker.compose.project")
+    in_deployment = None if gateway_project is None else gateway_project == runtime.project
     workflow = None
     upstream = {}
-    try:
-        workflow = _run_json(["docker", "exec", "director-orchestrator-n8n-db-1", "psql", "-U", "n8n", "-d", "n8n",
-                              "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
-        if (isinstance(workflow, dict) and workflow.get("supported_request") is True
-                and workflow.get("active_version") and workflow.get("active_version") == workflow.get("stored_version")):
-            upstream = _run_json(["docker", "exec", "director-orchestrator-n8n-1", "node", "-e", _UPSTREAM_HEALTH])
-    except (OSError, ValueError, subprocess.SubprocessError):
-        workflow = None
-    channel_ok = gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == CHANNEL
+    # Only n8n's own execution store says which intake workflow it runs.
+    store = _n8n_store(n8n, n8n_db, containers) if n8n is not None else None
+    if n8n is not None and n8n_db is not None and store is True:
+        try:
+            workflow = _run_json(["docker", "exec", n8n_db["Id"], "psql", "-U", "n8n", "-d", "n8n",
+                                  "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
+            if (isinstance(workflow, dict) and workflow.get("supported_request") is True
+                    and workflow.get("active_version") and workflow.get("active_version") == workflow.get("stored_version")):
+                upstream = _run_json(["docker", "exec", n8n["Id"], "node", "-e", _UPSTREAM_HEALTH])
+        except _SOURCE_ERRORS:
+            workflow = None
+    channel_ok = channel is not None and gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == channel
     relay = urlsplit(gateway_env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
-    route_ok = (relay.scheme == "http" and relay.hostname in {"n8n", "director-orchestrator-n8n-1"}
-                and relay.port == 5678 and relay.path == "/webhook/director-intake"
-                and not relay.username and not relay.password and not relay.query and not relay.fragment)
-    facts = {**gateway_identity, "director_port_8080": _port(director, 8080), "n8n_port_5678": _port(n8n, 5678),
+    route_ok = _relay_route_ok(relay, n8n)
+    facts = {**gateway_identity, "director_port_loopback": _loopback(director, 8080),
+             "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
+             "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
-             "n8n_upstream_environment": upstream.get("environment"),
+             # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
+             "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
+             "gateway_runs_director_image": gateway_image == runtime.image_id,
+             "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
+             "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
+             "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
              "active_intake": workflow,
-             "containers_running": all(row.get("State", {}).get("Running") is True for row in (director, gateway, n8n))}
-    route_pass = _all_fields(facts, {"director_port_8080": True, "n8n_port_5678": True, "gateway_channel_matches": True,
-                                   "gateway_n8n_route_matches": True, "containers_running": True})
+             "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
+                                       for row in (director, gateway, n8n))}
+    route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
+                                   "gateway_n8n_route_matches": True, "containers_running": True,
+                                   "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
+                                   "gateway_credentials_match": True, "gateway_runs_director_image": True})
+    hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
+    if route_pass is False and None in hops and False not in hops and all(
+            facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
+                                           "gateway_n8n_route_matches", "containers_running")):
+        route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
+    if isinstance(workflow, dict):
+        # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
+        workflow["forwarding_contract"] = _workflow_matches(runtime.runtime_sha, "director-intake.json",
+                                                            workflow.pop("nodes", None),
+                                                            workflow.pop("connections", None),
+                                                            settings=workflow.pop("settings", None),
+                                                            pin_data=workflow.pop("pin_data", None))
     workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
-                                             "supported_webhook": True, "direct_connection": True})
+                                             "supported_webhook": True, "direct_connection": True,
+                                             "forwarding_contract": True})
     if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
         workflow_ok = None  # An unsupported expression is not a proven wrong destination.
+    if workflow and workflow.get("forwarding_contract") is None:
+        workflow_ok = None  # The candidate's workflow file could not be read: unproven, not wrong.
     if route_pass is True:
         route_pass = workflow_ok
         if route_pass is True:
             route_pass = (bool(workflow.get("active_version")) and workflow["active_version"] == workflow.get("stored_version")
-                          and upstream.get("environment") == "local")
-    result = [_observation("01", route_pass, "Observed Director 8080, n8n 5678, gateway channel/relay and the actual published intake version's supported forwarding URL, then checked that upstream's environment. Missing/unsupported workflow evidence cannot pass. Full task delivery is scored separately.",
+                          and upstream.get("environment") == runtime.environment)
+    explanation = ("Observed the selected deployment's loopback Director and n8n ports, the gateway's --channel and relay, "
+                   "and the actual published intake version's supported forwarding URL, then checked that upstream's "
+                   "environment. Missing/unsupported workflow evidence cannot pass. Full task delivery is scored separately.")
+    if in_deployment is False:
+        route_pass, explanation = False, "The expected gateway belongs to another Compose project."
+    elif channel is None:
+        route_pass, explanation = None, "--channel was not supplied; the project channel was not compared."
+    elif n8n is None or n8n_db is None:
+        route_pass, explanation = None, "The selected deployment does not run exactly one n8n and one n8n-db service."
+    elif route_pass is not False and in_deployment is None:
+        route_pass, explanation = None, "The expected gateway carries no Compose labels; deployment membership is unproven."
+    result = [_observation("01", route_pass, explanation,
                            "Docker topology and n8n upstream GET /health", facts, at, **binding)]
-    app_token = gateway_env.get("SLACK_APP_TOKEN", "")
-    if not app_token:
+    # A Slack app-level token carries its app's ID (xapp-<n>-<APP_ID>-...): that, not one credential
+    # instance, is the gateway's identity, so a rotated or second token of the same app still matches.
+    app = _slack_app_id(gateway_env.get("SLACK_APP_TOKEN", ""))
+    if app is None:
         return result + [_observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)]
-    fingerprint = hashlib.sha256(app_token.encode()).digest()
     matches, unknown = [], 0
     for row in containers:
         token = _environment(row).get("SLACK_APP_TOKEN", "")
-        if not token or hashlib.sha256(token.encode()).digest() != fingerprint:
+        if not token:
             continue
-        command = (row.get("Config", {}).get("Entrypoint") or []) + (row.get("Config", {}).get("Cmd") or [])
+        other = _slack_app_id(token)
+        if other is None:
+            unknown += 1  # an app token whose app cannot be read may be this app's
+            continue
+        if other != app:
+            continue
         if _gateway_launch(row):
             matches.append(row.get("Id"))
-        elif "director_orchestrator.main:app" not in command:
+        elif not _same(row.get("Id"), runtime.container_id):
+            # Only the already-identified Director container is exempt, by its exact ID: any other same-app
+            # container (a wrapper that also launches the API, say) is unclassified, never exempted by its command.
             unknown += 1
     host = None
     try:
@@ -320,9 +1018,1818 @@ def _topology_observations(at: datetime, binding: dict[str, str], expected_gatew
             passed = True
     inventory = {**gateway_identity, "running_containers_inspected": len(containers),
                  "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
-    result.append(_observation("02", passed, "Compared app-token fingerprints in memory across all running containers and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
+    result.append(_observation("02", passed, "Compared the Slack app ID named by each running container's app token and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
                                "Docker running inventory and Windows Win32_Process", inventory, at, **binding))
     return result
+
+
+def _trial_module():
+    """A fresh private instance of the offline collector for one collection."""
+    path = Path(__file__).resolve().parents[2] / "scripts" / "collect-offline-slack-trials.py"
+    spec = importlib.util.spec_from_file_location("director_scorecard_trials", path)
+    if spec is None or spec.loader is None:
+        raise OSError("offline trial collector unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _SlackThreads:
+    """Bounded GET-only Slack and Director reads for the selected deployment.
+
+    The collector module is a private instance whose API allowlist names only
+    this deployment. Credentials come from the Director container's environment
+    and stay in memory; the expected channel comes only from --channel.
+    """
+
+    def __init__(self, runtime: _Runtime, channel: str | None, owner: str | None = None, *,
+                 client: httpx.Client | None = None):
+        if channel is None or runtime.env.get("SLACK_DIRECTOR_CHANNEL_ID") != channel:
+            raise ValueError("channel differs from deployment")
+        # The owner is the evaluator's configuration (--owner), never taken from the candidate's own settings.
+        if owner is None or runtime.env.get("SLACK_OWNER_USER_ID") != owner:
+            raise ValueError("owner differs from deployment")
+        self.m = _trial_module()
+        self.m.API = runtime.api_base
+        self.env = {"SLACK_DIRECTOR_CHANNEL_ID": channel,
+                    **{key: runtime.env[key] for key in ("SLACK_BOT_TOKEN", "ORCHESTRATOR_SHARED_SECRET", "SLACK_OWNER_USER_ID")}}
+        self.client = client or httpx.Client(timeout=5, follow_redirects=False, trust_env=False)
+        try:
+            self.reads = self.m.Collector(self.client, None, self.env)
+            # Its reads end by the scorecard's collection deadline too, never only by the collector's own.
+            if _DEADLINE[0] is not None:
+                self.reads.deadline = min(self.reads.deadline, _DEADLINE[0])
+            auth, _ = self.reads.get(self.m.SLACK + "auth.test")
+            if (auth.get("ok") is not True or not re.fullmatch(r"[UW][A-Z0-9]+", str(auth.get("user_id", "")))
+                    or not re.fullmatch(r"B[A-Z0-9]+", str(auth.get("bot_id", "")))):
+                raise ValueError("native Slack identity unavailable")
+        except Exception:
+            self.client.close()
+            raise
+        self.bot, self.owner, self.api, self.channel = auth["user_id"], self.env["SLACK_OWNER_USER_ID"], runtime.api_base, channel
+        self.runtime = runtime
+
+    def replies(self, thread: str):
+        return self.reads.replies(thread)
+
+    def task(self, task_id: str):
+        return self.reads.get(self.api + "/v1/tasks/" + task_id, params=dict(self.m.READBACK_QUERY))
+
+    def deliveries(self, task_id: str):
+        return self.reads.get(self.api + "/v1/primary/tasks/" + task_id + "/deliveries")[0]
+
+    def _get(self, url: str, params: dict[str, str], token: str) -> tuple[int, bytes]:
+        # The collector's one bounded read: bytes, a per-chunk clock check and an HTTPX timeout clamped to the
+        # earlier of its own cap and the collection deadline.
+        status, _, body = self.reads.drain(url, params, token)
+        return status, body
+
+    def history(self, oldest: str, latest: str) -> list[dict[str, Any]]:
+        """Top-level --channel messages between two timestamps, inclusive; at most five pages."""
+        messages, cursor, cursors = [], None, set()
+        for _ in range(5):
+            params = {"channel": self.channel, "oldest": oldest, "latest": latest, "inclusive": "true", "limit": "200"}
+            if cursor:
+                params["cursor"] = cursor
+            status, body = self._get(self.m.SLACK + "conversations.history", params, self.env["SLACK_BOT_TOKEN"])
+            page = json.loads(body) if status == 200 else None
+            if not isinstance(page, dict) or page.get("ok") is not True or not isinstance(page.get("messages"), list):
+                raise ValueError("channel history unavailable")
+            messages.extend(page["messages"])
+            cursor = (page.get("response_metadata") or {}).get("next_cursor", "")
+            # The replies collector's rule: only an explicit has_more=false with no cursor ends the listing; a
+            # missing flag, or a missing, repeated or malformed cursor on a continued page, is not complete.
+            if page.get("has_more") is False and not cursor:
+                return messages
+            if page.get("has_more") is not True or not isinstance(cursor, str) or not cursor or len(cursor) > 1024                     or cursor in cursors:
+                raise ValueError("channel history pagination is incomplete or repeated")
+            cursors.add(cursor)
+        raise ValueError("channel history exceeds its bound")
+
+    def binding(self, thread: str) -> str | None:
+        """200 -> task ID, 404 -> None, 409 -> "AMBIGUOUS"; anything else is unavailable."""
+        status, body = self._get(self.api + "/v1/slack-thread-bindings",
+                                 {"channel_id": self.channel, "thread_ts": thread}, self.env["ORCHESTRATOR_SHARED_SECRET"])
+        if status == 404:
+            return None
+        if status == 409:
+            return "AMBIGUOUS"
+        if status != 200:
+            raise ValueError("thread binding unavailable")
+        value = json.loads(body)
+        task_id = value.get("task_id") if isinstance(value, dict) else None
+        if (not isinstance(task_id, str) or not _TASK.fullmatch(task_id)
+                or value.get("channel_id") != self.channel or value.get("thread_ts") != thread):
+            raise ValueError("thread binding does not echo this thread")
+        return task_id
+
+    def close(self) -> None:
+        self.client.close()
+
+
+# The offline collector's native receipt wording (REQUEST RECEIVED, legacy ACCEPTED).
+_RECEIPT = re.compile(r"\*?(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\*?")
+_BLOCKED = "*DIRECTOR — BLOCKED*"
+
+
+def _thread_counts(t: _SlackThreads, thread: str,
+                   messages: list[dict[str, Any]]) -> tuple[int, list[str], int, int]:
+    owner_inputs = sum(1 for m in messages if m.get("user") == t.owner and not m.get("bot_id") and t.m.unedited(m)
+                       and (m.get("ts") == thread or m.get("thread_ts") == thread))
+    replies = [m for m in messages if m.get("user") == t.bot and m.get("thread_ts") == thread]
+    # The bot never edits its replies: an edited or subtyped one no longer shows what was
+    # posted, so its text is never parsed and the caller grades nothing in that thread. An edited
+    # or subtyped owner post is a second, altered input the drill did not isolate: same rule.
+    posts = [m for m in messages if m.get("user") == t.owner and not m.get("bot_id")
+             and (m.get("ts") == thread or m.get("thread_ts") == thread)]
+    altered = sum(1 for m in replies + posts if not t.m.unedited(m))
+    bot = [html.unescape(str(m.get("text", ""))) for m in replies if t.m.unedited(m)]
+    # At most one receipt per reply, and only as its header: a quoted or repeated receipt is not another.
+    receipts = [match.group(1) for text in bot if (match := _RECEIPT.fullmatch(t.m.reply_header(text)))]
+    blocked = sum(1 for text in bot if t.m.reply_header(text) == _BLOCKED)
+    return owner_inputs, receipts, blocked, altered
+
+
+def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> dict[str, Any]:
+    """One thread snapshot plus the task's typed readback, summarized by the offline collector."""
+    messages, complete, _ = replies or t.replies(thread)
+    task, headers = t.task(task_id)
+    deliveries = t.deliveries(task_id)
+    row = t.m.summarize(thread, task_id, task, deliveries, messages, complete, t.owner, t.bot, headers, t.channel)
+    readback, latest, state, _ = t.m._readback(task_id, task, t.owner)
+    # One read-time rule for every snapshot (consistency, captures, qualification readbacks): its own captured_at
+    # lies inside this collection, or it grades nothing here.
+    collected = state == "collected" and t.runtime.read_in_window((readback or {}).get("captured_at"))
+    return {"task_id": task_id, "row": row, "task": task if isinstance(task, dict) else {}, "messages": messages,
+            "complete": complete, "readback": readback if collected else None, "latest": latest if collected else None}
+
+
+_FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
+                "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
+                # Every task's evidence through the same per-task rules (primary_scorecard_evidence).
+                "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
+                "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "work_packets_invalid",
+                "projection_digest_mismatches", "batches_without_assignments", "effect_children_cross_task",
+                "registered_plan_mismatches", "terminal_evidence_without_reservation", "batch_authority_mismatches",
+                "projections_missing_batch",
+                "batches_without_projection",
+                "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
+                "projection_batch_digest_conflicts", "projections_ahead_of_fence")
+_INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
+                    "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
+                    "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
+_CONSISTENCY_SOURCE = "Trusted-collection follow-up: independent read-only consistency collector (not yet available)"
+_CAPTURES_SOURCE = "Trusted-collection follow-up: independent activation-capture collector (not yet available)"
+# Input trust is transitive, including prerequisites shared by collectors. T is
+# owner configuration, independent transport/store facts or pinned computation;
+# C is candidate-controlled data, even when fetched over authenticated transport.
+# Keep the expanded audit in docs/twenty-check-completion-scorecard.md in sync.
+_DEPLOYMENT_INPUTS = (
+    ("owner selections; Docker inventory, configuration, networks and lifecycle", "T"),
+    ("Director /health prerequisite (environment and primary object)", "C"),
+)
+_ROUTE_INPUTS = (
+    ("n8n active intake workflow via its bound database", "T"),
+    ("candidate n8n/workflows/director-intake.json", "C"),
+)
+_SLACK_INPUTS = (("Slack auth.test, conversations.replies and owner configuration", "T"),)
+_TASK_INPUTS = (("Director /v1/tasks readback and /v1/primary/tasks/*/deliveries", "C"),)
+_RENDER_INPUTS = (("candidate renderer blobs compared with pinned evaluator renderer", "C"),)
+_CONSISTENCY_INPUTS = (("in-image consistency report (disabled; live input is None)", "C"),)
+_CAPTURE_INPUTS = (("in-image activation captures (disabled; live input is None)", "C"),)
+COLLECTOR_INPUTS = {
+    "01": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + (("n8n upstream GET /health", "C"),),
+    "02": _DEPLOYMENT_INPUTS + (("Windows Win32_Process gateway inventory", "T"),),
+    "03": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + (
+        ("Director /v1/slack-thread-bindings", "C"),),
+    "04": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + (
+        ("n8n active status workflow, executions and credential update time via bound database", "T"),
+        ("candidate n8n/workflows/director-status.json", "C"),),
+    "05": _DEPLOYMENT_INPUTS + (("/health intake owner, legacy disablement, writer lease and fence", "C"),),
+    "06": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
+    "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
+    "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
+    "09": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
+        ("Director /v1/slack-thread-bindings", "C"),),
+    "10": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + (
+        ("owner structural rubric and Slack conversations.history", "T"),),
+    "11": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CAPTURE_INPUTS,
+    "12": _DEPLOYMENT_INPUTS + _CAPTURE_INPUTS + (("/health provider activation readiness", "C"),),
+    "13": (("owner-controlled assignment journal; pinned ledger recomputation of reported usage", "T"),),
+    "14": (("owner-controlled assignment journal; pinned recomputation of declared bounds and cap attestations", "T"),),
+    "15": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS + (
+        ("/health usage_monitor readiness, accounting day, provider counts, caps and exposure", "C"),),
+    "16": (("GitHub exact-head runs, jobs, steps, workflow blobs and ancestry", "T"),
+           ("owner release descriptor or pinned evaluator workflow; owner-signed replica and installed key", "T")),
+    "17": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS,
+    "18": (("owner-controlled native Security index, seal, manifest, artifacts and preserved-source hashes", "T"),
+           ("owner release descriptor security base; CLI base equality; GitHub ancestry; pinned git diff", "T")),
+    "19": _DEPLOYMENT_INPUTS + (("/health paid switch, runtime, executor, reconciliation and provider readiness", "C"),),
+    "20": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS + (
+        ("owner predeclared paid-answer rubric", "T"),),
+}
+_CONTAINED_CAPTURES = ("11", "12")
+_CONTAINED_CANDIDATE = ("17",)
+_CONTAINED_RUNTIME = tuple(
+    key for key, inputs in COLLECTOR_INPUTS.items()
+    if any(trust == "C" for _, trust in inputs)
+    and key not in _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE
+)
+
+
+def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
+    primary = runtime.health.get("langgraph_primary", {})
+    binding = runtime.binding
+    blocked = (any(type(primary.get(key)) is int and primary[key] > 0
+                   for key in ("ambiguous_effect_count", "historical_parallel_plan_hold_count"))
+               or isinstance(primary.get("reconciliation_hold_reason"), str)
+               and bool(primary["reconciliation_hold_reason"].strip()))
+    health_facts = {key: primary.get(key) for key in
+                    ("ambiguous_effect_count", "historical_parallel_plan_hold_count", "reconciliation_hold_reason")}
+    if blocked:
+        return _observation("07", False, "Health reports a historical hold, hold reason or ambiguous primary effect.",
+                            runtime.health_url, health_facts, at, **binding)
+    # Zero health counters are never consistency proof: release 879 reported
+    # exactly these while authoritative task/batch plan digests conflicted.
+    if consistency is None:
+        return _observation("07", None, "The in-image read-only consistency command was unavailable; health hold counters "
+                            "cannot prove reconciliation. Worker readiness is scored in 19.",
+                            runtime.health_url, health_facts, at, **binding)
+    counts = consistency.get("counts")
+    keys = _FAIL_COUNTS + _INFLIGHT_COUNTS
+    if not isinstance(counts, dict) or any(not _counter(counts.get(key)) for key in keys):
+        return _observation("07", None, "The consistency command returned malformed counts.",
+                            _CONSISTENCY_SOURCE, health_facts, at, **binding)
+    generation = consistency.get("generation") if isinstance(consistency.get("generation"), dict) else {}
+    fence = consistency.get("intake_fencing_generation")
+    facts = {"counts": {key: counts[key] for key in keys}, "manifest_sha256": generation.get("manifest_sha256"),
+             "intake_fencing_generation": fence, "captured_at": consistency.get("captured_at")}
+    failing = [key for key in _FAIL_COUNTS if counts[key] > 0]
+    if failing:
+        return _observation("07", False, "Authoritative records are unresolved, ambiguous or conflicting: " + ", ".join(failing) + ".",
+                            _CONSISTENCY_SOURCE, facts, at, **binding)
+    pin = generation.get("manifest_sha256")
+    captured = consistency.get("captured_at")
+    if (not isinstance(pin, str) or not _HEX64.fullmatch(pin)
+            or not runtime.read_in_window(captured)
+            or not _same(pin, runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))
+            or type(fence) is not int or fence != primary.get("intake_fencing_generation")):
+        return _observation("07", None, "The consistency snapshot is not bound to the running generation pin and intake fence.",
+                            _CONSISTENCY_SOURCE, facts, at, **binding)
+    busy = [key for key in _INFLIGHT_COUNTS if counts[key] > 0]
+    if busy:
+        return _observation("07", None, "Work is in flight (" + ", ".join(busy) + "); observe again when quiescent.",
+                            _CONSISTENCY_SOURCE, facts, at, **binding)
+    return _observation("07", True, "The in-image read-only consistency snapshot reports zero unresolved, ambiguous or "
+                        "conflicting records for the running generation and fence.", _CONSISTENCY_SOURCE, facts, at, **binding)
+
+
+def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[bool | None, str, dict]:
+    pin = runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
+    if not pin or not _same(captures.get("generation_manifest_sha256"), pin):
+        return None, "The captures are not bound to the running generation pin.", {}
+    raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
+    if raw is None:
+        return None, "The running provider bindings are unavailable.", {}
+    if not _same(captures.get("provider_bindings_sha256"), hashlib.sha256(raw.encode()).hexdigest()):
+        return False, "The captures are bound to other provider bindings than the running ones.", {}
+    lanes = captures.get("lanes")
+    if not isinstance(lanes, dict) or not lanes:
+        return None, "No activation lanes were reported.", {}
+    required = captures.get("required_providers")
+    if not isinstance(required, list) or set(lanes) != set(required):
+        return False, "The captured lanes are not exactly the generation's required providers.", {
+            "required_providers": required if isinstance(required, list) else None, "captured_lanes": sorted(lanes)}
+    facts, stale = {}, []
+    for lane, value in sorted(lanes.items()):
+        surfaces = value["surfaces"]
+        ok = isinstance(value.get("binding_digest"), str) and bool(_HEX64.fullmatch(value["binding_digest"]))
+        lane_facts = {"binding_digest": value.get("binding_digest")}
+        for name in ("app", "runtime_adapter"):
+            surface = surfaces.get(name)
+            if surface is None:
+                ok, lane_facts[name] = False, None
+                continue
+            # The registry's validated chain lapses when any stage expires, not only the latest one.
+            expires = _chain_expiry(surface)
+            lane_facts[name] = {"stage": surface.get("stage"), "expires_at": expires.isoformat(),
+                                "capture_verified": surface.get("capture_verified"),
+                                "chain_valid": surface.get("chain_valid")}
+            # A capture not yet observed, or not yet persisted, at collection time is future-dated, not current.
+            observed = _when(surface["observed_at"]) if surface.get("observed_at") else None
+            recorded = _when(surface["recorded_at"]) if surface.get("recorded_at") else None
+            # Observed then persisted no later than the collection's end, and still valid FRESH_FOR past it.
+            end = runtime.until() or at
+            if (surface.get("chain_valid") is not True or surface.get("stage") != "LIVE_OK"
+                    or surface.get("capture_verified") is not True
+                    or expires < end + FRESH_FOR or observed is None or recorded is None
+                    or not observed <= recorded <= end):
+                ok = False
+        facts[lane] = lane_facts
+        if not ok:
+            stale.append(lane)
+    if stale:
+        return False, "Missing, unverified, non-LIVE_OK or expiring captures for: " + ", ".join(stale) + ".", facts
+    return True, ("Every lane's app and runtime-adapter captures are LIVE_OK, natively verified, unexpired and bound "
+                  "to the manifest's provider_bindings_sha256."), facts
+
+
+def _chain_expiry(surface: dict[str, Any]) -> datetime:
+    """A surface's effective expiry: the earlier of its latest record's and its validated chain's."""
+    return min(_when(surface["expires_at"]), _when(surface["chain_expires_at"]))
+
+
+def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None,
+                          paid: dict | None) -> list[Observation]:
+    binding = runtime.binding
+    activation = runtime.health.get("langgraph_primary", {}).get("provider_activation", {})
+    if isinstance(activation, dict) and activation.get("combined_live_ready") is False:
+        obs12 = _observation("12", False, "The running activation verifier reports combined_live_ready=false.",
+                             runtime.health_url, {"combined_live_ready": False}, at, **binding)
+    elif captures is None:
+        # A readiness flag never exposes capture identity or expiry.
+        obs12 = _observation("12", None, "The in-image activation-captures command was unavailable; a readiness flag "
+                             "alone never attests captures.", runtime.health_url, {}, at, **binding)
+    else:
+        try:
+            passed, explanation, facts = _capture_verdict(at, runtime, captures)
+        except _SOURCE_ERRORS:
+            passed, explanation, facts = None, "The activation captures were malformed.", {}
+        expiries = [_when(surface["expires_at"]) for lane in facts.values() if isinstance(lane, dict)
+                    for surface in (lane.get("app"), lane.get("runtime_adapter")) if isinstance(surface, dict)]
+        # Valid only while the collection's final cutoff plus FRESH_FOR stays within every capture's expiry.
+        obs12 = _observation("12", passed, explanation, _CAPTURES_SOURCE, facts, at, **binding,
+                             valid_until=min(expiries) - FRESH_FOR if passed is True and expiries else None)
+    latest = (paid or {}).get("latest")
+    if not latest or captures is None:
+        obs11 = _observation("11", None, "Requires the paid thread's collected readback with provider attempts and the "
+                             "in-image activation captures.", _CAPTURES_SOURCE, {}, at, **binding)
+    else:
+        obs11 = _product_observation(at, runtime, captures, paid)
+    return [obs12, obs11]
+
+
+def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: dict) -> Observation:
+    """11: the captures that attest each lane are the ones that gated the paid run's attempts."""
+    binding = runtime.binding
+    attempts = paid["readback"]["provider_attempts"]
+    used = sorted({str(event["provider_id"]) for event in paid["latest"].values()})
+    lanes = captures.get("lanes") if isinstance(captures.get("lanes"), dict) else {}
+    products, transports, unbound = {}, {}, []
+    for lane in used:
+        value = lanes.get(lane) if isinstance(lanes.get(lane), dict) else {}
+        # The lane's product only when both activation surfaces classified as it (review 4111508065).
+        classified = [surface.get("product") if isinstance(surface, dict) else None
+                      for surface in ((value.get("surfaces") or {}).get("app"),
+                                      (value.get("surfaces") or {}).get("runtime_adapter"))]
+        products[lane] = value.get("product") if classified == [value.get("product")] * 2 else None
+        times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
+        transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
+        # provider_ready needs both the app and the runtime-adapter surface: each must have verified, been
+        # observed and persisted before the attempts, and stayed unexpired through them. A capture that fails
+        # that cannot attest the attempt: its missing product is unknown, not a substitution.
+        surfaces = value.get("surfaces") or {}
+
+        def gated(surface: Any) -> bool:
+            return (isinstance(surface, dict) and surface.get("chain_valid") is True
+                    and surface.get("capture_verified") is True
+                    and bool(surface.get("observed_at")) and bool(surface.get("recorded_at"))
+                    and _when(surface["observed_at"]) <= min(times) <= max(times) < _chain_expiry(surface)
+                    and _when(surface["observed_at"]) <= _when(surface["recorded_at"]) <= min(times))
+
+        if (not times or runtime.until() is None or max(times) > runtime.until()
+                or not all(gated(surfaces.get(name)) for name in ("app", "runtime_adapter"))):
+            unbound.append(lane)
+    facts = {"lanes_used": used, "products": products, "transports": transports}
+    raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
+    if (runtime.created_at > _when(paid["readback"]["task_created_at"]) or raw is None
+            or not _same(captures.get("generation_manifest_sha256"),
+                         runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))
+            or not _same(captures.get("provider_bindings_sha256"), hashlib.sha256(raw.encode()).hexdigest())):
+        return _observation("11", None, "The paid task predates the running container, or the captures are not bound to "
+                            "its generation and provider bindings; they cannot attest that run.",
+                            _CAPTURES_SOURCE, facts, at, **binding)
+
+    # Each attempt's transport must be one a product of the lane is known to run: an unknown transport is unknown,
+    # never assumed to be any product. An unattested capture is unknown on its own product's transport; on another
+    # product's it is a substitution. A capture naming no product of the lane is a substitution whatever the transport.
+    known = {transport for by_transport in _TRANSPORT_PRODUCTS.values() for transport in by_transport}
+
+    def ran(lane: str, transport: str) -> str | None:
+        # The lane's product on that transport; a transport only another lane's product runs is that other product.
+        return _TRANSPORT_PRODUCTS.get(lane, {}).get(transport) or ("another product" if transport in known else None)
+
+    mapped = {lane: {ran(lane, transport) for transport in transports[lane]} for lane in used}
+    for lane in used:
+        product, real = products.get(lane), REAL_PRODUCTS.get(lane, set())
+        if lane in unbound or not isinstance(product, str):
+            continue
+        base = product[:-len(_UNATTESTED)] if product.endswith(_UNATTESTED) else None
+        if base in real and (None in mapped[lane] or mapped[lane] == {base}):
+            unbound.append(lane)
+        elif product in real and None in mapped[lane]:
+            unbound.append(lane)
+
+    def attested(lane: str) -> bool:
+        # The capture must be a real product of the lane, and the product the attempts' transport ran.
+        return products[lane] in REAL_PRODUCTS.get(lane, set()) and mapped[lane] == {products[lane]}
+
+    substituted = [lane for lane in used if lane not in REAL_PRODUCTS or (lane not in unbound and not attested(lane))]
+    if substituted:
+        return _observation("11", False, "Lanes used without an attested real product: " + ", ".join(substituted) + ".",
+                            _CAPTURES_SOURCE, facts, at, **binding)
+    if unbound:
+        return _observation("11", None, "No verified capture observed before and unexpired through the paid attempts of: "
+                            + ", ".join(unbound) + ".", _CAPTURES_SOURCE, facts, at, **binding)
+    return _observation("11", True, "Every lane the paid run used is attested as its real product by a verified "
+                        "validation-store capture that was current when its attempts ran, under the running "
+                        "generation and provider bindings.", _CAPTURES_SOURCE, facts, at, **binding)
+
+
+def _acceptance_observation(at: datetime, candidate_sha: str, consistency: dict | None) -> Observation:
+    source = _CONSISTENCY_SOURCE + " generation.adoption"
+    generation = (consistency or {}).get("generation")
+    generation = generation if isinstance(generation, dict) else {}
+    adoption = generation.get("adoption")
+    if (consistency is None or generation.get("acceptance_mode") != "owner-local-evidence-v1"
+            or not isinstance(adoption, dict)):
+        return _observation("17", None, "No adopted owner-local acceptance artifact was read for the running generation.",
+                            source, {}, at, candidate_sha=candidate_sha)
+    facts = {key: adoption.get(key) for key in ("repository", "pull_request_number", "pull_request_author",
+             "independent_reviewer", "security_reviewer", "adoption_digest", "reviewed_source_tree")}
+    # Forks share commit SHAs: an adoption for another repository cannot accept this one's candidate.
+    if adoption.get("repository") != REPOSITORY:
+        return _observation("17", None, "The adopted acceptance is not for " + REPOSITORY + ".",
+                            source, facts, at, candidate_sha=candidate_sha)
+    reviewed = adoption.get("reviewed_source_commit")
+    bound = reviewed if isinstance(reviewed, str) and re.fullmatch(r"[a-f0-9]{40}", reviewed) else None
+    actors = [adoption.get(key) for key in ("pull_request_author", "independent_reviewer", "security_reviewer")]
+    # The adoption loader's own identity rule (canonical_actor): non-canonical actors (surrounding whitespace, empty,
+    # control characters) are never normalized into a match or a mismatch; canonical ones compare by casefold.
+    canonical = all(canonical_actor(actor) is not None for actor in actors)
+    if canonical and not actors_distinct(*actors):
+        return _observation("17", False, "The adopted acceptance names one identity in two of the author, independent "
+                            "reviewer and security reviewer roles.", source, facts, at, candidate_sha=bound)
+    if bound is None or not canonical:
+        return _observation("17", None, "The adopted acceptance does not name a full reviewed source commit.",
+                            source, facts, at, candidate_sha=candidate_sha)
+    return _observation("17", True, "The running generation's pinned owner-local adoption accepts this reviewed source "
+                        "commit with independent and security reviewers distinct from the author.",
+                        source, facts, at, candidate_sha=bound)
+
+
+def _flatted(text: str) -> Any:
+    """Decode n8n's flatted execution data: strings inside containers are table indices."""
+    table = json.loads(text)
+    if not isinstance(table, list) or not table:
+        raise ValueError("execution data is not a flatted table")
+    memo: dict[int, Any] = {}
+
+    def resolve(index: int) -> Any:
+        if not 0 <= index < len(table):
+            raise ValueError("flatted reference out of range")
+        if index in memo:
+            return memo[index]
+        value = table[index]
+        if isinstance(value, dict):
+            out: Any = {}
+            memo[index] = out
+            for key, member in value.items():
+                out[key] = resolve(int(member)) if isinstance(member, str) else member
+            return out
+        if isinstance(value, list):
+            out = []
+            memo[index] = out
+            out.extend(resolve(int(member)) if isinstance(member, str) else member for member in value)
+            return out
+        return value
+
+    try:
+        return resolve(0)
+    except RecursionError:
+        raise ValueError("execution data nests beyond its bound") from None
+
+
+def _n8n_store(n8n: dict[str, Any] | None, database: dict[str, Any] | None,
+               containers: list[dict[str, Any]]) -> bool | None:
+    """From docker inspect only: n8n's own DB_* settings name the n8n/n8n PostgreSQL database on the
+    queried container, which alone answers to that host on n8n's networks. No value is ever reported."""
+    env = _environment(n8n or {})
+    # Only the default public schema is supported; both n8n queries pin search_path to it.
+    if (env.get("DB_POSTGRESDB_SCHEMA", "public") != "public"
+            or env.get("DB_TYPE") != "postgresdb" or env.get("DB_POSTGRESDB_DATABASE") != "n8n"
+            or env.get("DB_POSTGRESDB_USER") != "n8n" or env.get("DB_POSTGRESDB_PORT", "5432") != "5432"
+            or not env.get("DB_POSTGRESDB_HOST") or database is None):
+        return False
+    # n8n must be able to open that store: the server's user, database and password are n8n's (the
+    # password compared in memory, in constant time, never reported).
+    served = _environment(database)
+    if not (_same(served.get("POSTGRES_USER"), env["DB_POSTGRESDB_USER"])
+            and _same(served.get("POSTGRES_DB", served.get("POSTGRES_USER")), env["DB_POSTGRESDB_DATABASE"])
+            and _same(served.get("POSTGRES_PASSWORD"), env.get("DB_POSTGRESDB_PASSWORD"))):
+        return False
+    return _hop(n8n, database, env["DB_POSTGRESDB_HOST"], containers)
+
+
+def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | None, datetime | None]:
+    """(n8n reaches the selected Director as orchestrator, n8n's store is the queried n8n-db, that db's ID,
+    the later creation of n8n and its database: an execution saved before either was recreated belongs to a
+    predecessor execution store)."""
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
+    if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
+        raise ValueError("running container inventory unavailable or exceeds 128")
+    containers = _run_json(["docker", "inspect", *ids])
+
+    def service(name: str) -> list[dict[str, Any]]:
+        return [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
+                and _labels(row).get("com.docker.compose.service") == name]
+
+    n8n, databases = service("n8n"), service("n8n-db")
+    director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
+    if len(n8n) != 1 or len(databases) != 1 or director is None:
+        return None, None, None, None
+    return (_hop(n8n[0], director, "orchestrator", containers), _n8n_store(n8n[0], databases[0], containers),
+            databases[0].get("Id"), max(_when(n8n[0]["Created"]), _when(databases[0]["Created"])))
+
+
+def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
+    """The runtime whose freshness bound is the latest creation of the Director and its primary database (the
+    base bound), the selected gateway, the deployment's n8n and n8n's database.
+
+    Slack intake passes through the gateway and n8n, whose active intake workflow lives in n8n-db, so a drill,
+    trial, approval or paid run handled by a predecessor of any of them cannot attest the one running now.
+    """
+    row = _run_json(["docker", "inspect", gateway])[0]
+    if (row.get("Name", "").lstrip("/") != gateway or row.get("State", {}).get("Running") is not True
+            or not _gateway_launch(row) or _labels(row).get("com.docker.compose.project") != runtime.project):
+        raise ValueError("the selected gateway is not a running gateway of this deployment")
+    # The readback uses the Director's Slack bot, owner, channel and bearer: the gateway that handled the
+    # threads must hold the same ones (compared in constant time, never reported).
+    if not _gateway_credentials_match(_environment(row), runtime.env):
+        raise ValueError("the selected gateway does not hold the Director's Slack and bearer identities")
+    if row.get("Image") != runtime.image_id:  # the deployment binds the gateway to the Director's image
+        raise ValueError("the selected gateway does not run the Director's image")
+    relays = _compose_ids(runtime.project, "n8n")
+    if len(relays) != 1:
+        raise ValueError("the selected deployment does not run exactly one n8n")
+    relay = _run_json(["docker", "inspect", relays[0]])[0]
+    if relay.get("Id") != relays[0] or relay.get("State", {}).get("Running") is not True:
+        raise ValueError("the deployment's n8n is not running")
+    stores = _compose_ids(runtime.project, "n8n-db")
+    if len(stores) != 1:
+        raise ValueError("the selected deployment does not run exactly one n8n-db")
+    store = _run_json(["docker", "inspect", stores[0]])[0]
+    if store.get("Id") != stores[0] or store.get("State", {}).get("Running") is not True:
+        raise ValueError("the deployment's n8n-db is not running")
+    return replace(runtime, created_at=max(runtime.created_at, _when(row["Created"]), _when(relay["Created"]),
+                                           _when(store["Created"])))
+
+
+def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
+    binding = runtime.binding
+    source = "n8n Director Status saved execution (READ ONLY) and Slack conversations.replies"
+    hop, store, database, n8n_created = _n8n_bindings(runtime)
+    if database is None:
+        return _observation("04", None, "The selected deployment does not run exactly one n8n and one n8n-db service.",
+                            source, {}, at, **binding)
+    # The status workflow reads health from orchestrator: timing alone cannot say which Director that was.
+    if hop is not True:
+        return _observation("04", None, "The deployment's n8n is not shown to reach the selected Director, and only "
+                            "it, as orchestrator; its status posts cannot attest this runtime.", source, {}, at, **binding)
+    if store is not True:
+        return _observation("04", None, "n8n's own database settings do not name the queried n8n-db as its only "
+                            "execution store; its saved executions cannot be read as n8n's.", source, {}, at, **binding)
+    found = _run_json(["docker", "exec", database, "psql", "-U", "n8n", "-d", "n8n",
+                       "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _STATUS_EXECUTION])
+    if not isinstance(found, dict) or found.get("workflows") != 1 or not isinstance(found.get("execution"), dict):
+        return _observation("04", None, "No single Director Status workflow has a saved successful posting execution "
+                            "in the last 72 hours.", source, {}, at, **binding)
+    execution = found["execution"]
+    # The newest scheduled run, of any outcome, is graded first: a retained older success behind newer
+    # failures is not operational delivery. (Runs post only on a readiness change, so the graded post
+    # may be older than a newer successful run that had nothing to post.)
+    latest = found.get("latest") if isinstance(found.get("latest"), dict) else {}
+    marks = [latest.get("startedAt"), latest.get("stoppedAt")]
+    if not all(isinstance(mark, str) for mark in marks) or not _ordered(
+            latest, ("startedAt", "stoppedAt"), ("startedAt", "stoppedAt")) or not _is_current(
+            max(runtime.created_at, n8n_created), runtime.until(), *(_when(mark) for mark in marks)):
+        return _observation("04", None, "The newest scheduled Director Status run lacks a start or stop time, stopped "
+                            "before it started, started before the running Director container or n8n was created, "
+                            "or ran after the collection ended.", source, {"latest_execution_id": latest.get("id")}, at, **binding)
+    if latest.get("status") in ("error", "crashed", "failed", "canceled"):
+        return _observation("04", False, "The newest scheduled Director Status run did not succeed.",
+                            source, {"latest_execution_id": latest.get("id")}, at, **binding)
+    if (latest.get("status") != "success" or latest.get("finished") is not True
+            or not isinstance(latest.get("startedAt"), str) or _when(latest["startedAt"]) < _when(execution["startedAt"])):
+        return _observation("04", None, "The newest scheduled Director Status run is unfinished or not shown to "
+                            "have succeeded.", source, {"latest_execution_id": latest.get("id")}, at, **binding)
+    if execution.get("workflow_active") is not True:
+        return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
+                            "show that status delivery is operational.", source, {}, at, **binding)
+    if _workflow_matches(runtime.runtime_sha, "director-status.json", execution.get("active_nodes"),
+                         execution.get("active_connections"),
+                             {"Post Status": (("channelId", "value"), t.channel)},
+                         settings=execution.get("workflow_settings"), pin_data=execution.get("pin_data")) is not True:
+        return _observation("04", None, "The active Director Status version is not exactly "
+                            "n8n/workflows/director-status.json (every node, setting and edge), posting to the "
+                            "project channel.",
+                            source, {}, at, **binding)
+    out = _flatted(execution["data"])["resultData"]["runData"]["Post Status"][-1]["data"]["main"][0][0]["json"]
+    ts = out.get("ts") or (out.get("message") or {}).get("ts")
+    started, stopped = _when(execution["startedAt"]), _when(execution["stoppedAt"])
+    well_formed = isinstance(ts, str) and bool(_TS.fullmatch(ts))
+    facts = {"execution_id": execution.get("id"), "stopped_at": stopped.isoformat(), "message_ts": ts if well_formed else None}
+    # The execution must have run the version active now: by its recorded version where n8n
+    # stores one, otherwise by starting after that version existed and the workflow last changed.
+    version = execution.get("execution_version")
+    if version is not None:
+        current = isinstance(version, str) and bool(version) and version == execution.get("active_version")
+    else:
+        marks = (execution.get("active_version_at"), execution.get("workflow_updated_at"))
+        current = all(isinstance(mark, str) for mark in marks) and started >= max(_when(mark) for mark in marks)
+    if not current:
+        return _observation("04", None, "The saved execution is not shown to have run the workflow's active version.",
+                            source, facts, at, **binding)
+    # The post must have used the Post Status credential as it is now: only its update time is read, never its data.
+    credential_at = execution.get("credential_updated_at")
+    if not isinstance(credential_at, str) or started < _when(credential_at):
+        return _observation("04", None, "The posting execution is not shown to postdate the Post Status credential's "
+                            "latest update.", source, facts, at, **binding)
+    # No producer records the posting image: an execution that started before the
+    # running container was created was posted by an earlier runtime.
+    if not _ordered(execution, ("startedAt", "stoppedAt"), ("startedAt", "stoppedAt")) or not _is_current(
+            max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
+        return _observation("04", None, "The newest saved status execution started before the running Director "
+                            "container or the running n8n was created, so it cannot attest them.",
+                            source, facts, at, **binding)
+    if (out.get("ok") is not True or not well_formed or out.get("channel") != t.channel
+            or not Decimal(str(started.timestamp())) <= Decimal(ts) <= Decimal(str(stopped.timestamp())) + 1):
+        return _observation("04", None, "The saved execution's Slack response is not a correlated post to the project channel.",
+                            source, facts, at, **binding)
+    messages, complete, _ = t.replies(ts)
+    posted = [m for m in messages if m.get("ts") == ts]
+    if any(not t.m.unedited(m) for m in posted):
+        return _observation("04", None, "The message at the execution's posted timestamp was edited or has a subtype, "
+                            "so its text is not what the execution posted.", source, facts, at, **binding)
+    # The read-back text is exactly what the execution's Slack response says it posted.
+    sent = (out.get("message") or {}).get("text")
+    status = [m for m in posted if m.get("bot_id") and m.get("user") == t.bot and isinstance(sent, str)
+              and html.unescape(str(m.get("text", ""))) == html.unescape(sent)
+              and html.unescape(sent).startswith("*STATUS —")]
+    if complete and len(posted) == 1 and len(status) == 1:
+        return _observation("04", True, "A saved successful scheduled execution's Slack post was read back as the bot's "
+                            "STATUS message in the project channel.", source, facts, at, **binding)
+    if complete and posted and not status:
+        return _observation("04", False, "The message at the execution's posted timestamp is not the bot's STATUS message.",
+                            source, facts, at, **binding)
+    return _observation("04", None, "The status message readback was incomplete.", source, facts, at, **binding)
+
+
+def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] | None) -> bool:
+    """The one final-reply correlation every drill branch uses: a single terminal delivery row, DELIVERED
+    and read back with its Slack ts, matching the native final message, whose text is the Director's own
+    canonical terminal rendering (the check-20 rule): a correlated message with other text is not a final reply."""
+    terminal = [r for r in (readback or {}).get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
+    return (len(terminal) == 1 and _delivery_settled(terminal[0]) and bool(terminal[0].get("slack_ts"))
+            and _final_correlated(snapshot) and _final_is_rendering(snapshot or {}))
+
+
+def _final_correlated(snapshot: dict[str, Any] | None) -> bool:
+    """The one identity join between the three views of a task's Slack delivery (06, 09, 10, 20): the collector's
+    correlation of the /deliveries terminal receipt with the native final message, the readback's own terminal
+    row, and the native final, all naming one client_msg_id and Slack ts; and the /deliveries receipt list and
+    the readback's delivery rows are the same set of (key, client_msg_id, state, ts) in both directions."""
+    row = (snapshot or {}).get("row") or {}
+    readback = (snapshot or {}).get("readback") or {}
+    finals = row.get("terminal_messages") or []
+    terminal = [r for r in readback.get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
+
+    def identity(item: dict[str, Any]) -> tuple:
+        return tuple(str(item.get(key)) for key in ("notification_key", "client_msg_id", "state", "slack_ts"))
+
+    receipts = row.get("delivery_receipts")
+    return (row.get("final_receipt_matches_native_message") is True and row.get("delivery_receipt_list_complete") is True
+            and isinstance(receipts, list) and len(finals) == 1 and len(terminal) == 1
+            and _same(terminal[0].get("client_msg_id"), finals[0].get("client_msg_id"))
+            and _same(terminal[0].get("slack_ts"), finals[0].get("ts"))
+            # 4110399590: the terminal delivery was enqueued from the projection of the task record being graded.
+            and _same(terminal[0].get("projection_digest"), readback.get("projection_digest"))
+            and sorted(map(identity, receipts)) == sorted(map(identity, readback.get("slack_deliveries") or [])))
+
+
+def _final_is_rendering(facts: dict[str, Any]) -> bool:
+    """The single unedited final reply is the Director's canonical terminal rendering of the record: its fallback
+    text and its complete blocks (normalized as check 08 compares them), since the blocks are what Slack shows."""
+    finals = (facts.get("row") or {}).get("terminal_messages") or []
+    final = [m for m in facts.get("messages") or [] if len(finals) == 1 and m.get("ts") == finals[0]["ts"]]
+    rendered, blocks = facts.get("terminal_render"), facts.get("terminal_blocks")
+    if (len(final) != 1 or facts.get("finals_unedited") is not True or not isinstance(rendered, str)
+            or not isinstance(blocks, list)):
+        return False
+    return (html.unescape(str(final[0].get("text", ""))) in (rendered, rendered.replace("\n", " "))
+            and _slack_blocks(final[0].get("blocks")) == blocks)
+
+
+def _blocks_text(blocks: Any) -> str:
+    """Every text string in a block tree (each text object's text), one per line: the content the owner sees."""
+    if isinstance(blocks, list):
+        return "\n".join(_blocks_text(item) for item in blocks)
+    if isinstance(blocks, dict):
+        return "\n".join(value if key == "text" and isinstance(value, str) else _blocks_text(value)
+                         for key, value in blocks.items())
+    return ""
+
+
+def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
+    """Every Slack and readback moment a task verdict rests on: task creation and update, each delivery's
+    creation, claim, acknowledgement, delivery and owner decision, each provider attempt, assignment and effect
+    moment, the gateway's intake claim, each status receipt and reconciliation event, the owner input and the
+    terminal replies: every timestamp the readback carries. All of them must fall inside the freshness bound."""
+    readback = (snapshot or {}).get("readback") or {}
+    row = (snapshot or {}).get("row") or {}
+    moments = [_when(readback[key]) for key in ("task_created_at", "task_updated_at", "captured_at") if readback.get(key)]
+    for delivery in readback.get("slack_deliveries") or []:
+        moments += [_when(delivery[key]) for key in ("created_at", "claimed_at", "acknowledged_at", "delivered_at",
+                                                     "owner_decision_at") if delivery.get(key)]
+    moments += [_when(event["recorded_at"]) for event in readback.get("provider_attempts") or []]
+    for assignment in readback.get("assignments") or []:
+        moments += [_when(assignment[key]) for key in ("reserved_at", "completed_at") if assignment.get(key)]
+    for effect in readback.get("effects") or []:
+        moments += [_when(effect[key]) for key in ("reserved_at", "execution_started_at", "bound_at",
+                                                    "terminal_recorded_at") if effect.get(key)]
+    moments += [_when(item["created_at"]) for item in readback.get("intake_auth_claims") or []]
+    moments += [_when(item["created_at"]) for item in readback.get("status_receipts") or []]
+    moments += [_when(item["recorded_at"]) for item in readback.get("reconciliation_events") or []]
+    stamps = [row.get("input_message_ts"), *(m.get("ts") for m in row.get("terminal_messages") or [])]
+    moments += [datetime.fromtimestamp(float(Decimal(str(ts))), timezone.utc) for ts in stamps if ts]
+    return moments
+
+
+def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
+                   until: datetime | None = None, sha: str | None = None) -> tuple[bool | None, dict[str, Any]]:
+    messages, complete, _ = t.replies(thread)
+    owner_inputs, receipts, blocked, altered = _thread_counts(t, thread, messages)
+    if altered:
+        return None, {"altered_bot_replies": altered, "verdict": None}
+    bound = t.binding(thread)
+    status = 404 if bound is None else 409 if bound == "AMBIGUOUS" else 200
+    facts: dict[str, Any] = {"owner_inputs": owner_inputs, "blocked": blocked, "receipts": len(receipts),
+                             "altered_bot_replies": altered,
+                             "binding_status": status, "thread_tasks": None}
+    snapshot = _task_facts(t, thread, bound, (messages, complete, None)) if status == 200 and kind != "refusal-4xx" else None
+    if snapshot is not None and sha is not None and kind in ("duplicate-input", "ambiguous-post"):
+        snapshot = _with_rendering(t, snapshot, sha)
+    readback = (snapshot or {}).get("readback")
+    # The one correlation every task-backed drill verdict needs: the task is the one this thread's owner input
+    # created (task_record_bound) through the attested gateway (task_api_gateway_attested).
+    correlated = snapshot is not None and all(snapshot["row"].get(key) is True
+                                              for key in ("task_record_bound", "task_api_gateway_attested"))
+    facts["task_correlated"] = correlated
+    tasks = readback["task_scope_counters"]["thread_tasks"] if readback else None
+    replies = snapshot["row"]["terminal_reply_count"] if snapshot else None
+    facts.update(thread_tasks=tasks, terminal_reply_count=replies)
+    # No producer records the executing image: a drill posted, or a task created,
+    # before the running container was created cannot attest it.
+    # Every post the verdict reads (the root, owner inputs, receipts, BLOCKED notices, final replies).
+    posts = [datetime.fromtimestamp(float(Decimal(str(m["ts"]))), timezone.utc) for m in messages
+             if m.get("ts") and (m.get("ts") == thread or m.get("thread_ts") == thread)]
+    current = _is_current(since, until, datetime.fromtimestamp(float(Decimal(thread)), timezone.utc),
+                          *posts, *_moments(snapshot))
+    facts["after_container_created"] = current
+    verdict: bool | None = None
+    if not current:
+        facts["verdict"] = None
+        return None, facts
+    if kind == "refusal-4xx":
+        if status != 404 or receipts:
+            verdict = False
+        elif complete and owner_inputs == 1 and blocked == 1:
+            verdict = True
+    elif kind == "reserved-5xx":
+        if status == 409 or (tasks is not None and tasks > 1):
+            verdict = False
+        # A receipt means the gateway answered 202, so the reserved 5xx was not exercised.
+        elif (status == 200 and correlated and complete and owner_inputs == 1 and blocked == 1 and tasks == 1
+              and not receipts):
+            verdict = True
+    elif kind == "transport-failure":
+        # No status reached the gateway: the task may or may not exist, but never twice.
+        # A receipt means the relay answered 202, so the failure was not exercised.
+        if status == 409 or (tasks is not None and tasks > 1):
+            verdict = False
+        elif (complete and owner_inputs == 1 and blocked == 1 and not receipts
+              and (status == 404 or (status == 200 and correlated and tasks == 1))):
+            verdict = True
+    elif kind == "duplicate-input":
+        if status == 409 or len(set(receipts)) > 1 or (tasks or 0) > 1 or (replies or 0) > 1:
+            verdict = False
+        elif (len(receipts) >= 2 and status == 200 and correlated and complete and owner_inputs == 1
+              and set(receipts) == {bound} and tasks == 1 and replies == 1 and _delivered_final(readback, snapshot)):
+            verdict = True
+    else:
+        terminal = [r for r in readback["slack_deliveries"] if r.get("notification_key") == "terminal"] if readback else []
+        row = terminal[0] if len(terminal) == 1 else {}
+        facts.update(terminal_rows=len(terminal), terminal_state=row.get("state"))
+        if ((replies or 0) > 1 or (tasks is not None and tasks > 1)
+                or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2)):
+            verdict = False
+        elif (status == 200 and correlated and complete and owner_inputs == 1 and tasks == 1
+              and row.get("acknowledged_at") is None
+              # PrimarySlackDelivery.readback increments readback_attempts (at most twice) before it can settle
+              # an unacknowledged row as DELIVERED: zero attempts is not that recovery.
+              and type(row.get("readback_attempts")) is int and 1 <= row["readback_attempts"] <= 2
+              and replies == 1 and _delivered_final(readback, snapshot)):
+            verdict = True
+    facts["verdict"] = verdict
+    return verdict, facts
+
+
+def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
+                        drills: dict[str, str]) -> list[Observation]:
+    verdicts: dict[str, bool | None] = {}
+    facts: dict[str, Any] = {}
+    for kind, thread in drills.items():
+        try:
+            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at, runtime.until(), runtime.runtime_sha)
+        except _SOURCE_ERRORS:
+            verdicts[kind], facts[kind] = None, {"verdict": None, "source_unavailable": True}
+    result = []
+    for check, kinds, proven in (
+            ("03", ("refusal-4xx", "reserved-5xx", "transport-failure"),
+             "The 4xx refusal created no task or receipt, the 5xx after reservation kept exactly one task, and the "
+             "operator-labelled transport-failure thread was answered BLOCKED with no receipt and at most one task. "
+             "That outcome matches a refusal or a reserved 5xx, so the relay transport failure itself is "
+             "operator-attested, not observed."),
+            ("09", ("duplicate-input", "ambiguous-post"),
+             "Duplicate input kept one task and one final reply; the ambiguous post was recovered by readback "
+             "to exactly one delivered final reply.")):
+        values = [verdicts.get(kind) for kind in kinds]
+        missing = [kind for kind in kinds if kind not in drills]
+        if any(value is False for value in values):
+            passed, explanation = False, "A drill thread shows a refused, duplicated or ambiguous outcome: " + ", ".join(
+                kind for kind in kinds if verdicts.get(kind) is False) + "."
+        elif all(value is True for value in values):
+            passed, explanation = True, proven
+        else:
+            passed = None
+            stale = [kind for kind in kinds if (facts.get(kind) or {}).get("after_container_created") is False]
+            altered = [kind for kind in kinds if (facts.get(kind) or {}).get("altered_bot_replies")]
+            explanation = ("Missing --drill-thread selections: " + ", ".join(missing) + "." if missing else
+                           "Drill threads hold edited or subtyped bot replies, so nothing in them is graded: "
+                           + ", ".join(altered) + "." if altered else
+                           "Drills that predate the running Director or gateway container cannot attest it: "
+                           + ", ".join(stale) + "."
+                           if stale else "A drill was not exercised or its evidence was incomplete or unavailable.")
+        result.append(_observation(check, passed, explanation, _SLACK_SOURCE,
+                                   {kind: facts.get(kind) for kind in kinds}, at, **runtime.binding))
+    return result
+
+
+def _render(sha: str, application: Any, projection: dict[str, Any], digest: str | None, created_at: datetime,
+            channel: str, owner: str) -> dict[str, Any] | None:
+    """The Director's own Slack rendering (primary_slack_delivery.render_notification) of a persisted
+    application record (task record, execution mode, effect grant, ...), only when the in-process renderer is
+    the candidate's own; otherwise None."""
+    from types import SimpleNamespace
+    from .primary_slack_delivery import render_notification
+
+    if (not isinstance(application, dict) or not isinstance(application.get("task_record"), dict)
+            or not _candidate_renderer(sha)):
+        return None
+    record = {key: value for key, value in application["task_record"].items() if key != "qualification_evidence"}
+    row = {"projection": {**projection, "application": {**application, "task_record": record}},
+           "projection_digest": digest, "created_at": created_at}
+    try:
+        return render_notification(row, SimpleNamespace(slack_channel_id=channel, slack_owner_user_id=owner))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _slack_blocks(value: Any) -> Any:
+    """Blocks exactly as rendered, minus only what Slack adds itself: block_id, and emoji: true on plain_text.
+
+    Every other field (text, fields, accessories, elements, confirm dialogs, URLs, values, styles) is
+    compared, so nothing the owner could see or act on is projected away.
+    """
+    if isinstance(value, list):
+        return [_slack_blocks(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _slack_blocks(item) for key, item in value.items()
+                if key != "block_id" and not (key == "emoji" and item is True and value.get("type") == "plain_text")}
+    return value
+
+
+def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], application: Any,
+                   sha: str, channel: str, owner: str) -> bool:
+    """The delivered prompt is exactly the Director's canonical rendering of this request: the task record's
+    complete proposed scope (plan outcome, every assignment, repository, limits and acceptance), the kind,
+    and the approve button value, rendered by primary_slack_delivery.render_notification from the persisted
+    record and the approval's kind, request and projection digests; compared on every visible block."""
+
+    key, projection = str(delivery.get("notification_key", "")), str(delivery.get("projection_digest"))
+    if not key.startswith("approval:") or not key.endswith(":" + projection):
+        return False
+    request = key[len("approval:"):-len(":" + projection)]
+    blocks = message.get("blocks") if isinstance(message.get("blocks"), list) else []
+    buttons = [item for block in blocks if isinstance(block, dict) and block.get("type") == "actions"
+               for item in block.get("elements") or [] if isinstance(item, dict)
+               and item.get("action_id") == "director_primary_approve"]
+    if len(buttons) != 1:
+        return False
+    try:
+        value = json.loads(buttons[0].get("value") or "")
+    except ValueError:
+        return False
+    kind = value.get("kind") if isinstance(value, dict) else None
+    if not isinstance(kind, str) or value != {"task_id": task_id, "projection_digest": projection, "kind": kind,
+                                               "request_digest": request}:
+        return False
+    payload = _render(sha, application, {"pending_approval": {"kind": kind, "request_digest": request},
+                                         "terminal_classification": None},
+                      projection, _when(delivery["created_at"]), channel, owner)
+    try:
+        # Fallback text as PrimarySlackDelivery.readback compares it (Slack may flatten its newlines), and blocks.
+        return (payload is not None and message.get("text") in (payload["text"], payload["text"].replace("\n", " "))
+                and _slack_blocks(blocks) == _slack_blocks(payload["blocks"]))
+    except ValueError:
+        return False
+
+
+def _approval_kind(message: dict[str, Any]) -> str | None:
+    """The approval kind the delivered prompt's approve button carries (render_notification's button value)."""
+    for block in message.get("blocks") or []:
+        for item in (block.get("elements") or []) if isinstance(block, dict) else []:
+            if isinstance(item, dict) and item.get("action_id") == "director_primary_approve":
+                try:
+                    value = json.loads(item.get("value") or "")
+                except ValueError:
+                    return None
+                return value.get("kind") if isinstance(value, dict) else None
+    return None
+
+
+def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, task_id: str,
+                           consistency: dict | None) -> list[Observation]:
+    binding = runtime.binding
+    task, _ = t.task(task_id)
+    thread = ((task or {}).get("intake") or {}).get("thread_ts")
+    if not isinstance(thread, str) or not _TS.fullmatch(thread):
+        raise ValueError("approval task has no Slack thread")
+    snapshot = _task_facts(t, thread, task_id)
+    row, readback = snapshot["row"], snapshot["readback"]
+    if readback is None:
+        reason = "The approval task's typed readback was not collected complete."
+        return [_observation(key, None, reason, _SLACK_SOURCE, {}, at, **binding) for key in ("06", "08")]
+    # Only a container set that already existed when the approval task was created can have handled it:
+    # a predecessor's approval evidence grades nothing here, positive or negative.
+    if not _is_current(runtime.created_at, runtime.until(), *_moments(snapshot)):
+        reason = ("The approval task was created before the running Director container, gateway or n8n, so it "
+                  "cannot attest this runtime.")
+        return [_observation(key, None, reason, _SLACK_SOURCE, {"task_created_at": readback["task_created_at"]},
+                             at, **binding) for key in ("06", "08")]
+    counters = readback["task_scope_counters"]
+    ordinals, contiguous = _attempt_ordinals(readback)
+    redispatched = sorted(key for key, values in ordinals.items() if len(values) > 1)
+    replies = row.get("terminal_reply_count")
+    terminal = [r for r in readback["slack_deliveries"] if r.get("notification_key") == "terminal"]
+    facts06 = {"thread_tasks": counters["thread_tasks"], "redispatched_assignments": len(redispatched),
+               "terminal_reply_count": replies, "terminal_classification": readback["terminal_classification"],
+               "process_started_at": runtime.started_at.isoformat(), "task_created_at": readback["task_created_at"],
+               "terminal_delivery_created_at": terminal[0]["created_at"] if len(terminal) == 1 else None,
+               "attempt_ordinals_contiguous": contiguous}
+    if counters["thread_tasks"] > 1 or redispatched or (replies or 0) > 1:
+        obs06 = _observation("06", False, "The approval task was duplicated, redispatched or replied to more than once.",
+                             _SLACK_SOURCE, facts06, at, **binding)
+    else:
+        # A task record that merely survived is not a resume: an approval prompt enqueued or a
+        # provider attempt recorded must precede the process start, and the terminal delivery follow it.
+        processed = (any(_when(r["created_at"]) < runtime.started_at for r in readback["slack_deliveries"]
+                         if t.m.notification_key_family(r.get("notification_key")) == "approval")
+                     or any(_when(e["recorded_at"]) < runtime.started_at for e in readback["provider_attempts"]))
+        facts06["processed_before_start"] = processed
+        # A terminal notification enqueued after the restart is not the graph resuming: a provider attempt
+        # recorded, or the task projection updated, after the process start must show that it did.
+        continued = (any(_when(e["recorded_at"]) > runtime.started_at for e in readback["provider_attempts"])
+                     or _when(readback["task_updated_at"]) > runtime.started_at)
+        facts06["continued_after_start"] = continued
+        # Every moment the resume rests on happened before the collection, and the terminal delivery is a settled
+        # DELIVERED lifecycle (the rule every final reply is graded by in 03, 09, 10 and 20).
+        spans = (len(terminal) == 1 and _delivery_settled(terminal[0]) and processed and continued
+                 and _is_current(runtime.created_at, runtime.until(), _when(terminal[0]["created_at"]),
+                                 *(_when(e["recorded_at"]) for e in readback["provider_attempts"]))
+                 and _when(readback["task_created_at"]) < runtime.started_at < _when(terminal[0]["created_at"]))
+        settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
+        resumed = (readback["terminal_classification"] is not None and counters["thread_tasks"] == 1 and spans and settled
+                   and contiguous
+                   and counters["started_attempts"] == counters["attempt_ordinals"]
+                   # The one settlement rule: every latest attempt and started effect is terminal.
+                   and _ambiguous_effects(row, readback, snapshot.get("latest")) == 0
+                   and replies == 1 and _final_correlated(snapshot))
+        obs06 = _observation("06", True if resumed else None,
+                             "One task was processed before the current Director process start and finished after it "
+                             "with one dispatch per assignment and one final reply." if resumed else
+                             "The task was not demonstrably processed before the current process start and finished "
+                             "after it, or it is unsettled.",
+                             _SLACK_SOURCE, facts06, at, **binding)
+    approvals = [r for r in readback["slack_deliveries"]
+                 if t.m.notification_key_family(r.get("notification_key")) == "approval"]
+    messages, complete = snapshot["messages"], snapshot["complete"]
+    entry = ((consistency or {}).get("tasks") or {}).get(task_id)
+    receipts = entry.get("approval_receipts") if isinstance(entry, dict) else None
+    receipts = receipts if isinstance(receipts, list) else []
+    failures, gaps, joined = [], 0, []
+    for delivery in approvals:
+        slack_ts = delivery.get("slack_ts")
+        decided = _when(delivery["owner_decision_at"]) if delivery.get("owner_decision_at") else None
+        prompt = [m for m in messages if slack_ts and m.get("ts") == slack_ts]
+        if delivery.get("owner_decision") == "approve" and delivery.get("state") != "DELIVERED":
+            failures.append("decision recorded on an undelivered prompt")
+        if not decision_follows_prompt(delivery):
+            failures.append("decision precedes its prompt")
+        if complete and prompt and any(m.get("user") != t.bot for m in prompt):
+            failures.append("prompt message is from another user")
+        native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot
+                  and t.m.unedited(m)]
+        # The prompt the owner saw must show this request's scope and carry its exact button value.
+        scoped = len(native) == 1 and _prompt_scoped(
+            native[0], task_id, delivery, entry.get("application") if isinstance(entry, dict) else None,
+            runtime.runtime_sha, t.channel, t.owner)
+        command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
+        # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
+        # The receipt must join the command authorization the webhook-verification path admitted: same
+        # command digest and writer fence, the gateway proof version, and the owner as actor.
+        matches = [index for index, receipt in enumerate(receipts) if decided is not None and (
+            isinstance(receipt, dict) and _same(receipt.get("command_id_sha256"), command)
+            and isinstance(receipt.get("recorded_at"), str) and _when(receipt["recorded_at"]) == decided
+            and receipt.get("authorized") is True and receipt.get("authorized_command_digest") is True
+            and receipt.get("authorized_fence") is True and receipt.get("proof_version") == _APPROVAL_PROOF_VERSION
+            and _same(receipt.get("actor_id"), runtime.env.get("SLACK_OWNER_USER_ID"))
+            # The authorization was claimed before the receipt, inside its signed-proof window, and before
+            # the collection; the decision itself was not future-dated.
+            and isinstance(receipt.get("authorization_claimed_at"), str)
+            and isinstance(receipt.get("authorization_proof_expires_at"), str)
+            and _when(receipt["authorization_claimed_at"]) <= _when(receipt["recorded_at"])
+            # The owner can only authorize what was already posted: the claim follows the prompt.
+            and bool(slack_ts) and Decimal(str(_when(receipt["authorization_claimed_at"]).timestamp())) >= Decimal(slack_ts)
+            and _when(receipt["authorization_claimed_at"]) < _when(receipt["authorization_proof_expires_at"])
+            and runtime.until() is not None and decided <= runtime.until())]
+        # One receipt per approved delivery, and (below) no receipt left without its delivery.
+        receipted = len(matches) == 1
+        # The approved work never began before its authorization (review 4107814573): an execution approval precedes
+        # every provider attempt of the task (the graph dispatches only after it resumes); an external-effect approval
+        # precedes the execution start of the effect the graph bound to it (director_primary_effect_approval_binding:
+        # this request digest's effect key). An approval of the other kind, or an effect with no binding, is unproven.
+        if receipted and len(native) == 1:
+            claimed = _when(receipts[matches[0]]["authorization_claimed_at"])
+            kind, request = _approval_kind(native[0]), str(delivery.get("notification_key", "")).split(":")
+            request = ":".join(request[1:3]) if len(request) == 5 else None
+            if kind == "execution":
+                if any(_when(event["recorded_at"]) <= claimed for event in readback["provider_attempts"]):
+                    failures.append("a provider attempt began before its execution approval was authorized")
+            elif kind == "external_effect":
+                bindings = [item for item in (entry.get("effect_approval_bindings") or [] if isinstance(entry, dict)
+                                              else []) if isinstance(item, dict)
+                            and _same(item.get("approval_request_digest"), request)]
+                if len(bindings) != 1:
+                    receipted = False
+                elif any(effect.get("execution_started_at") and _when(effect["execution_started_at"]) <= claimed
+                         for effect in readback["effects"]
+                         if _same(effect.get("effect_key_digest"), bindings[0].get("effect_key_digest"))):
+                    failures.append("an external effect began executing before its approval was authorized")
+            else:
+                receipted = False
+        if len(matches) > 1:
+            failures.append("one approved delivery matches more than one approval_resume receipt")
+        if delivery.get("owner_decision") == "approve":
+            joined += matches
+        if not (_delivery_settled(delivery) and slack_ts and delivery.get("owner_decision") == "approve"
+                and delivery.get("owner_command_id") and decided is not None
+                and decision_follows_prompt(delivery)
+                and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
+                and complete and len(native) == 1 and scoped and receipted):
+            gaps += 1
+    # The reverse join: every approval_resume receipt of this task belongs to exactly one approved delivery. A
+    # receipt no delivery claims, or one two deliveries claim, is a resume the Slack record does not account for.
+    if sorted(joined) != list(range(len(receipts))):
+        failures.append("an approval_resume receipt is not the one receipt of exactly one approved delivery")
+    # And every approval prompt the bot posted in the thread (render_notification's pending header) is one of the
+    # approval deliveries: a prompt with no delivery row is an approval surface the ledger does not account for.
+    header = task_id + " — OWNER DECISION REQUIRED"
+    posted = {m.get("ts") for m in messages if m.get("user") == t.bot and t.m.reply_header(m.get("text", "")) == header}
+    if complete and not posted <= {delivery.get("slack_ts") for delivery in approvals}:
+        failures.append("a posted approval prompt has no approval delivery")
+    facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
+               "task_api_gateway_attested": row.get("task_api_gateway_attested"),
+               "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
+    if failures:
+        passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
+    elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
+        passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
+                                         "an approval_resume command receipt re-read from the control plane whose command "
+                                         "and time match the digest-bound decision. The gateway authenticates the owner.")
+    else:
+        passed08, explanation08 = None, "No complete, digest-bound owner approval was observed for this task."
+    return [obs06, _observation("08", passed08, explanation08, _SLACK_SOURCE, facts08, at, **binding)]
+
+
+def _attempt_ordinals(readback: dict[str, Any]) -> tuple[dict[Any, set[Any]], bool]:
+    """Each assignment's attempt ordinals, and whether every assignment's run 1..n without a gap: the roster
+    numbers an assignment's attempts from 1, so a set that lacks attempt 1 or skips one is missing rows and is
+    not dispatch evidence (06 and 20 count dispatches only from contiguous ordinals)."""
+    ordinals: dict[Any, set[Any]] = {}
+    for event in readback.get("provider_attempts") or []:
+        ordinals.setdefault(event.get("assignment_id"), set()).add(event.get("attempt_ordinal"))
+    return ordinals, all(values == set(range(1, len(values) + 1)) for values in ordinals.values())
+
+
+def _run_mode(offline: bool, counters: dict[str, Any] | None, readback: dict[str, Any] | None) -> str | None:
+    """The run's kind from its evidence, only when the persisted execution mode (the value paid_dispatch_allowed
+    and offline_dispatch_allowed decide by) agrees: offline needs offline_simulation or paid_off, paid needs live.
+    Inconsistent readback is unknown (None)."""
+    persisted = (readback or {}).get("execution_mode")
+    if offline:
+        return "offline" if persisted in ("offline_simulation", "paid_off") else None
+    if counters is not None and counters["attempt_ordinals"] >= 1:
+        return "paid" if persisted == "live" else None
+    return None
+
+
+def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, latest: Any) -> int | None:
+    """1 for an ambiguous delivery effect; 0 only when every latest provider attempt is terminal (SUCCEEDED or
+    FAILED) and every started external effect has a terminal disposition; otherwise unknown (None)."""
+    if readback is None:
+        return None
+    if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT":
+        return 1
+    attempts = (latest or {}).values() if isinstance(latest, dict) else []
+    # The shared lifecycle rule (the collector and the in-image consistency command apply it too): an impossible
+    # order settles nothing.
+    settled = (lifecycle_error(readback) is None and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
+               # A bound remote object is external I/O: without terminal evidence it is unsettled, execution claim
+               # or not (4110399589).
+               and all(effect.get("terminal_disposition")
+                       or not (effect.get("execution_started_at") or effect.get("remote_identifier"))
+                       for effect in readback.get("effects") or []))
+    return 0 if settled else None
+
+
+def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, label: str) -> dict[str, Any]:
+    """A RUN_RECORD_FIELDS row built only from task-level evidence, never the mode switch."""
+    row, readback = snapshot["row"], snapshot["readback"]
+    counters = readback["task_scope_counters"] if readback else None
+    finals = row.get("terminal_messages") or []
+    offline = (row.get("all_recorded_outcomes_are_offline_doubles") is True
+               and row.get("zero_calls_in_exposed_task_projection") is True and counters is not None
+               and counters["attempt_ordinals"] == 0 and len(finals) == 1 and finals[0].get("simulation_label_present") is True
+               and _assignments_joined(snapshot, attempts=False) is True)
+    states = {str(receipt.get("state")) for receipt in row.get("delivery_receipts") or []}
+    delivered = [item for item in (readback or {}).get("slack_deliveries") or [] if item.get("state") == "DELIVERED"]
+    if (_final_correlated(snapshot)
+            and states <= {"DELIVERED", "SUPERSEDED", "SUPPRESSED"} and all(_delivery_settled(item) for item in delivered)):
+        delivery_ambiguous: bool | None = False
+    else:
+        delivery_ambiguous = True if "AMBIGUOUS" in states else None
+    # Only a container that already existed when the task was created can be
+    # the image that executed it; no producer records the executing image.
+    bound = readback is not None and _is_current(runtime.created_at, runtime.until(), *_moments(snapshot))
+    return {"run_id": row.get("task_id"),
+            "mode": _run_mode(offline, counters, readback),
+            "actual_owner_event": (row.get("owner_account_input_matched") is True and row.get("task_api_gateway_attested") is True
+                                   and row.get("task_record_bound") is True),
+            "correctness_verified": correctness,
+            "task_count": counters["thread_tasks"] if counters else None,
+            "terminal_reply_count": row.get("terminal_reply_count"),
+            "wall_seconds": row.get("wall_seconds"), "owner_pause_seconds": row.get("owner_pause_seconds"),
+            "machine_seconds": row.get("machine_seconds"),
+            # Zero only once every attempt and every started effect is terminal; anything unsettled is unknown.
+            "ambiguous_effects": _ambiguous_effects(row, readback, snapshot.get("latest")),
+            "delivery_ambiguous": delivery_ambiguous,
+            "operational_provider_attempts": counters["attempt_ordinals"] if counters else None,
+            "actual_cost_usd": 0 if offline else None, "cost_basis": "simulation_zero_calls" if offline else None,
+            "runtime_sha": runtime.runtime_sha if bound else None, "image_id": runtime.image_id if bound else None,
+            "simulation_label": label if offline else None}
+
+
+_RECORD_ORDER = ("run_id", "mode", "actual_owner_event", "correctness_verified", "task_count", "terminal_reply_count",
+                 "wall_seconds", "owner_pause_seconds", "machine_seconds", "ambiguous_effects", "delivery_ambiguous",
+                 "operational_provider_attempts", "actual_cost_usd", "cost_basis", "runtime_sha", "image_id")
+
+
+def _run_records_observation(check: str, mode: str, at: datetime, runtime: _Runtime,
+                             records: list[dict[str, Any]], source: str) -> Observation:
+    # For offline runs the correctness field holds the structural (pipeline) rubric, never answer correctness.
+    shown = {"correctness_verified": "structural_rubric_passed"} if mode == "offline" else {}
+    facts = {"records": [{shown.get(key, key): record[key] for key in ("run_id", "mode", "correctness_verified",
+                                                                       "terminal_reply_count", "wall_seconds",
+                                                                       "operational_provider_attempts", "actual_cost_usd",
+                                                                       "runtime_sha", "image_id")} for record in records]}
+    # Freshness first: a run the running containers cannot have handled grades nothing, positive or negative.
+    stale = [record["run_id"] for record in records if record["runtime_sha"] is None or record["image_id"] is None]
+    if stale:
+        return _observation(check, None, "Runs not bound to the running containers (no runtime_sha): "
+                            + ", ".join(map(str, stale)) + "; they grade nothing here.", source, facts, at, **runtime.binding)
+    wrong = [record["run_id"] for record in records if record["mode"] not in (None, mode)]
+    if wrong:
+        return _observation(check, False, f"Task evidence shows these are not {mode} runs: " + ", ".join(map(str, wrong)) + ".",
+                            source, facts, at, **runtime.binding)
+    order = _RECORD_ORDER + (("simulation_label",) if mode == "offline" else ())
+    missing = next(((record["run_id"], key) for record in records for key in order if record[key] is None), None)
+    if missing:
+        return _observation(check, None, f"Run {missing[0]} lacks measured {shown.get(missing[1], missing[1])}; unknown is not zero or compliant.",
+                            source, facts, at, **runtime.binding)
+    passed, reason = evaluate_run_records(records, mode=mode, runtime_sha=runtime.runtime_sha, image_id=runtime.image_id)
+    return _observation(check, passed, reason, source, facts, at, **runtime.binding)
+
+
+def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials: list[str] | None,
+                       rubric_path: Path | None) -> Observation:
+    if not trials or len(set(trials)) != 10 or len(trials) != 10 or rubric_path is None:
+        return _observation("10", None, "Ten distinct --trial threads and their --rubric are required.",
+                            _SLACK_SOURCE, {}, at, **runtime.binding)
+    rubric, digest = t.m.load_rubric(Path(rubric_path))
+    records = []
+    for thread in trials:
+        replies = t.replies(thread)
+        task_id = t.m.task_from_accepted(thread, replies[0], replies[1], t.bot)
+        snapshot = _with_rendering(t, _task_facts(t, thread, task_id, replies), runtime.runtime_sha)
+        row = snapshot["row"]
+        markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((snapshot["task"].get("intake") or {}).get("text", "")))
+        row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
+        # Owner ruling 2026-09-24: the committed structural rubric proves the pipeline, not the answer; the outcomes
+        # graded must be the ones the durable ledger rows fix.
+        structural, bound = t.m.evaluate_rubric(row, rubric, digest)["passed"], _offline_outcomes_bound(snapshot, t.m.LABEL)
+        # The final reply must be the candidate renderer's canonical terminal rendering (text and blocks), as for
+        # 09 and 20; an unavailable renderer is unknown, another reply is a mismatch.
+        rendered = None if snapshot.get("terminal_render") is None else _final_is_rendering(snapshot)
+        succeeded = _succeeded_task(snapshot)  # the same classification-to-status agreement as check 20
+        correctness = (False if False in (structural, bound, rendered, succeeded)
+                       else None if None in (bound, rendered, succeeded) else structural)
+        records.append(_run_record(runtime, snapshot, correctness, t.m.LABEL))
+    observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
+    if observed.passed is not True:
+        return observed
+    # Consecutive: the ten threads are the only top-level owner posts between the first and the last.
+    # Only what the gateway itself ignores is excluded, so any post it could forward counts.
+    ordered = sorted(trials, key=Decimal)
+    window = t.history(ordered[0], ordered[-1])
+    posts = {str(m.get("ts")) for m in window
+             if m.get("user") == t.owner and not m.get("bot_id")
+             and m.get("subtype") not in ("bot_message", "message_changed", "message_deleted")}
+    # A deleted post that had replies leaves a hidden tombstone, which may be a skipped trial.
+    removed = sum(1 for m in window if m.get("subtype") == "tombstone" or m.get("hidden") is True)
+    if posts != set(trials) or removed:
+        return _observation("10", None, f"The ten trials are not consecutive: {len(posts - set(trials))} other top-level "
+                            f"owner post(s) and {removed} deleted or hidden message(s) fall between them, or a trial "
+                            "is not a top-level owner post.",
+                            _SLACK_SOURCE + " and conversations.history", observed.facts, at, **runtime.binding)
+    return _observation("10", True, observed.explanation + " The ten are the only top-level owner posts in the "
+                        "channel between the first and the last, so they are consecutive.",
+                        _SLACK_SOURCE + " and conversations.history", observed.facts, at, **runtime.binding)
+
+
+def _paid_facts(t: _SlackThreads, thread: str, sha: str) -> dict[str, Any]:
+    replies = t.replies(thread)
+    task_id = t.m.task_from_accepted(thread, replies[0], replies[1], t.bot)
+    return _with_rendering(t, _task_facts(t, thread, task_id, replies), sha)
+
+
+def _with_rendering(t: _SlackThreads, facts: dict[str, Any], sha: str) -> dict[str, Any]:
+    finals = {m.get("ts") for m in facts["row"].get("terminal_messages") or []}
+    facts["finals_unedited"] = all(t.m.unedited(m) for m in facts["messages"] if m.get("ts") in finals)
+    # The Director's own terminal rendering of this task (truncation included) and its fixed wrapper (the same
+    # rendering with every provider result removed): only answer text that survived into it is gradable.
+    readback = facts.get("readback") or {}
+    task = facts.get("task") or {}
+    terminal = [r for r in readback.get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
+    rendered = wrapper = None
+    if len(terminal) == 1:
+        projection = {"terminal_classification": readback.get("terminal_classification"),
+                      "reason_code": readback.get("terminal_reason_code")}
+        created = _when(terminal[0]["created_at"])
+        application = {"task_record": task, "execution_mode": readback.get("execution_mode")}
+        rendered = _render(sha, application, projection, None, created, t.channel, t.owner)
+        wrapper = _render(sha, {**application, "task_record": {**task, "assignment_outcomes": []}},
+                          projection, None, created, t.channel, t.owner)
+    facts["terminal_render"] = html.unescape(rendered["text"]) if rendered else None
+    facts["terminal_wrapper"] = html.unescape(wrapper["text"]) if wrapper else None
+    facts["terminal_blocks"] = _slack_blocks(rendered["blocks"]) if rendered and isinstance(rendered.get("blocks"), list) else None
+    facts["terminal_wrapper_blocks"] = _slack_blocks(wrapper.get("blocks")) if wrapper else None
+    return facts
+
+
+def _load_paid_rubric(path: Path) -> tuple[dict[str, Any], str]:
+    with Path(path).open("rb") as stream:
+        raw = stream.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("paid rubric exceeds its bound")
+    value = json.loads(raw)
+    substrings = value.get("expected_answer_substrings") if isinstance(value, dict) else None
+    if (not isinstance(value, dict)
+            or set(value) != {"schema", "rubric_id", "declared_at", "expected_answer_substrings"}
+            or value["schema"] != "director-paid-answer-rubric/v1"
+            or not isinstance(value["rubric_id"], str) or not re.fullmatch(r"[a-z0-9-]{1,80}", value["rubric_id"])
+            or not isinstance(substrings, list) or not 1 <= len(substrings) <= 5
+            or any(not isinstance(item, str) or not item or len(item) > 200 for item in substrings)):
+        raise ValueError("unsupported paid answer rubric")
+    _when(value["declared_at"])
+    return value, hashlib.sha256(raw).hexdigest()
+
+
+def _succeeded_task(facts: dict[str, Any]) -> bool | None:
+    """The run ended SUCCEEDED, and the served task status is the one the product derives from that classification
+    (DefaultPrimaryApplication._record_from_projection's own mapping, applied to the served task record): DONE with a
+    non-success classification, or a disagreeing status, is not a success. None when unreadable."""
+    from types import SimpleNamespace
+    from .primary_default import DefaultPrimaryApplication
+    readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else None
+    task = {key: value for key, value in (facts.get("task") or {}).items() if key != "qualification_evidence"}
+    if readback is None or not task:
+        return None
+    classification = readback.get("terminal_classification")
+    try:
+        mapped = DefaultPrimaryApplication._record_from_projection(SimpleNamespace(projection={
+            "application": {"task_record": task}, "terminal_classification": classification})).status.value
+    except (ValueError, TypeError, RuntimeError):
+        return None
+    return classification == "SUCCEEDED" and task.get("status") == mapped
+
+
+def _paid_correct(paid: dict[str, Any], rubric_path: Path, consistency: dict | None = None) -> bool | None:
+    rubric, digest = _load_paid_rubric(rubric_path)
+    row = paid["row"]
+    markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((paid["task"].get("intake") or {}).get("text", "")))
+    finals = row.get("terminal_messages") or []
+    if not (row.get("task_record_bound") is True and len(markers) == 1 and _same(markers[0], digest)
+            and row.get("input_message_ts")
+            and _when(rubric["declared_at"]).timestamp() <= float(row["input_message_ts"])
+            and row.get("task_status") == "DONE" and len(finals) == 1 and _succeeded_task(paid) is not False):
+        return False
+    if _succeeded_task(paid) is None:
+        return None
+    answer = _answer_verified(paid, rubric["expected_answer_substrings"])
+    persisted = _artifacts_match(paid, consistency)
+    # The graded text must be the persisted provider result: a mismatch fails, an unread artifact is unknown.
+    return False if False in (answer, persisted) else None if None in (answer, persisted) else True
+
+
+def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
+    """Answer-specific correctness (check 20): each expected substring is in the persisted provider
+    results and in the delivered final reply, which must be the Director's own rendering of them (truncation
+    included), and none is in the owner's question or the Director's fixed terminal wrapper."""
+    finals = facts["row"].get("terminal_messages") or []
+    final = [m for m in facts["messages"] if len(finals) == 1 and m.get("ts") == finals[0]["ts"]]
+    # Slack keeps an edited message's ts but returns its new text: grade only the unedited reply.
+    if len(final) != 1 or facts.get("finals_unedited") is not True:
+        return False
+    answer = "\n".join(str(item.get("result", "")) for item in facts["task"].get("assignment_outcomes") or []
+                       if isinstance(item, dict))
+    question = html.unescape(str((facts["task"].get("intake") or {}).get("text", "")))
+    wrapper = facts.get("terminal_wrapper")
+    visible = html.unescape(str(final[0].get("text", "")))
+    # Unverifiable (renderer not the candidate's, or the native reply's text or blocks are not its rendering):
+    # unknown, not wrong. The answer is graded on the canonical blocks' content too, which is what Slack shows.
+    if not isinstance(wrapper, str) or not _final_is_rendering(facts):
+        return None
+    shown = _blocks_text(facts["terminal_blocks"])
+    wrapper += "\n" + _blocks_text(facts.get("terminal_wrapper_blocks"))
+    if any(item in question or item in wrapper for item in expected):
+        return False
+    joined = _assignments_joined(facts, attempts=True)
+    if joined is not True:
+        return joined
+    return bool(answer) and all(item in answer and item in visible and item in shown for item in expected)
+
+
+def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | None:
+    """Check 20: each settled assignment's persisted provider result packet (read by the in-image report and
+    revalidated against its stored digest) is the one its result digest names, its outcome text is the graded
+    outcome's result and its provider the graded outcome's provider, and the packets' assignment IDs are exactly
+    the durable assignments' in both directions: an orphan packet is a mismatch, a missing one is unknown (not
+    read). Each packet was recorded between its assignment's reservation and completion. Any other difference
+    is a mismatch."""
+    entry = ((consistency or {}).get("tasks") or {}).get(facts.get("task_id"))
+    artifacts = entry.get("result_artifacts") if isinstance(entry, dict) else None
+    readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else {}
+    outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
+    assignments = readback.get("assignments") or []
+    if not isinstance(artifacts, list) or not assignments:
+        return None
+    # Every dispatched assignment's work packet, revalidated, joined to its result packet under one authority
+    # snapshot (work_packet_error, the rule the in-image global count applies to every task).
+    work_packets = entry.get("work_packets")
+    if not isinstance(work_packets, list):
+        return None
+    # The registered plan recomputed from the durable assignment rows and task record (review 4110798537).
+    registered = entry.get("registered_plan")
+    orphans = entry.get("terminal_evidence_without_reservation")
+    if not isinstance(registered, dict) or not _counter(orphans):
+        return None
+    if registered.get("error") is not None or orphans:
+        return False
+    if work_packet_error({"assignments": assignments, "provider_attempts": readback.get("provider_attempts") or [],
+                          "result_artifacts": artifacts, "work_packets": work_packets}) is not None:
+        return False
+    persisted = {row.get("assignment_id") for row in artifacts if isinstance(row, dict)}
+    durable = {assignment.get("assignment_id") for assignment in assignments}
+    if persisted - durable:
+        return False  # a packet for no durable assignment of this task
+    # A live roster success must have its packet (missing_result_packets, the rule the global count applies).
+    if missing_result_packets({**readback, "result_artifacts": artifacts}, facts.get("latest")):
+        return False
+    if durable - persisted:
+        return None  # a settled assignment whose packet was not read
+    for assignment in assignments:
+        rows = [row for row in artifacts if isinstance(row, dict)
+                and row.get("assignment_id") == assignment.get("assignment_id")]
+        matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        # The one packet-to-assignment rule the in-image global count uses too (revalidated, the assignment's
+        # agent, recorded between reservation and completion, the SUCCEEDED assignment's result digest). Both
+        # lifecycle moments are inside the freshness window (_moments), so the packet is too.
+        if (len(rows) != 1 or len(matching) != 1 or artifact_assignment_conflict(rows[0], assignment) is not None
+                or not _same(rows[0].get("provider"), matching[0].get("provider"))
+                or not isinstance(rows[0].get("outcome"), str) or rows[0]["outcome"] != matching[0].get("result")):
+            return False
+    return True
+
+
+def _offline_outcomes_bound(facts: dict[str, Any], label: str) -> bool | None:
+    """Check 10: offline doubles persist no result packet (only paid results are recorded as
+    director_primary_result_packet_artifact rows), so each offline outcome is bound to the strongest durable
+    evidence there is: its assignment's ledger row. primary_default's dispatch_offline_assignment writes run_id
+    `offline-double:<the reservation's digest>` and the fixed simulation label as its result, and the settlement
+    join (_assignments_joined) ties its digest to the row's result digest; so no field is left free. A row
+    without its reservation digest is unknown; any other outcome is a mismatch."""
+    readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else {}
+    outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
+    assignments = readback.get("assignments") or []
+    if not assignments:
+        return None
+    if len(outcomes) != len(assignments):
+        return False  # an outcome without its ledger row, or a row without its outcome
+    for assignment in assignments:
+        matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        reservation = assignment.get("reservation_digest")
+        if len(matching) != 1 or not isinstance(reservation, str) or not reservation:
+            return None
+        if matching[0].get("run_id") != "offline-double:" + reservation or matching[0].get("result") != label:
+            return False
+    return True
+
+
+def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None:
+    """The one settlement join for a run's work (checks 10 and 20): every readback assignment is SUCCEEDED and
+    carries exactly one outcome of its sequence whose provider_result_digest is its result digest, and every
+    outcome has its assignment; for paid runs each assignment's latest attempt is SUCCEEDED with that digest
+    too (as primary_default records them). Each outcome names its assignment's provider (primary_default records
+    AssignmentOutcome.provider as the plan item's agent, and the ledger row's provider_id as that agent's lane).
+    Unreadable, or attempt ordinals that do not run 1..n, is unknown; any unsettled or mismatched row is not."""
+    from .primary_default import _PRIMARY_LANE_AGENT
+    readback = facts.get("readback")
+    latest = facts.get("latest") if isinstance(facts.get("latest"), dict) else {}
+    outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
+    assignments = readback.get("assignments") or [] if isinstance(readback, dict) else []
+    if not isinstance(readback, dict) or not outcomes or not assignments:
+        return None
+    # A bijection by sequence: as many outcomes as assignments, the same sequence set, each exactly once.
+    if (len(outcomes) != len(assignments)
+            or sorted(item.get("assignment_sequence") for item in outcomes if isinstance(item.get("assignment_sequence"), int))
+            != sorted(assignment.get("sequence") for assignment in assignments if isinstance(assignment.get("sequence"), int))
+            or len({assignment.get("sequence") for assignment in assignments}) != len(assignments)):
+        return False
+    # The shared per-task rules (the collector and the in-image consistency command apply the same): every
+    # assignment's moments in order, and, for paid runs, each assignment's status and digest agreeing with its last
+    # attempt's final event (settlement_error; attempt ordinals 1..n are validate_attempt_history's).
+    if lifecycle_error(readback) is not None:
+        return False
+    if attempts:
+        if validate_attempt_history(assignments, readback.get("provider_attempts") or [])[1] is not None:
+            return None  # the attempt history itself is not readable evidence
+        if settlement_error({**readback, "execution_mode": "live"}, latest) is not None:
+            return False  # a paid assignment's status or digest disagrees with its last attempt
+    for assignment in assignments:
+        matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        digest = "sha256:" + str(matching[0].get("provider_result_digest")) if len(matching) == 1 else None
+        agent = _PRIMARY_LANE_AGENT.get(str(assignment.get("provider_id")))
+        if (digest is None or assignment.get("status") != "SUCCEEDED"
+                or not _same(assignment.get("result_digest"), digest)
+                or agent is None or not _same(matching[0].get("provider"), agent.value)):
+            return False
+    return True
+
+
+def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
+    """Actual charges only from settled usage rows correlated to request and response IDs."""
+    entry = ((consistency or {}).get("tasks") or {}).get(paid["task_id"])
+    attempts = {event["attempt_digest"] for event in (paid.get("latest") or {}).values()}
+    if not isinstance(entry, dict) or entry.get("usage_tables_present") is not True:
+        return None, None
+    spend = entry.get("spend") or []
+    if not attempts or {row.get("attempt_digest") for row in spend} != attempts:
+        return None, None
+    # The spend row's only durable time is its UTC budget_day, the day PrimaryProviderBudgetAuthority.reserve ran:
+    # after the assignment was reserved and before the attempt's first event (the roster reserves, then records).
+    readback = paid.get("readback") or {}
+    reserved = {item.get("assignment_id"): item.get("reserved_at") for item in readback.get("assignments") or []}
+    for row in spend:
+        events = [event for event in readback.get("provider_attempts") or []
+                  if event.get("attempt_digest") == row.get("attempt_digest")]
+        if not events or not reserved.get(events[0].get("assignment_id")):
+            return None, None
+        first = min(_when(event["recorded_at"]) for event in events)
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(row.get("budget_day"))) or not (
+                _when(reserved[events[0]["assignment_id"]]).astimezone(timezone.utc).date().isoformat()
+                <= str(row.get("budget_day")) <= first.astimezone(timezone.utc).date().isoformat()):
+            return None, None
+    if any(not _counter(row.get("actual_microusd")) or row.get("request_correlated") is not True
+           or row.get("usage_verified") is not True for row in spend):
+        return None, None
+    return sum(row["actual_microusd"] for row in spend) / 1_000_000, "correlated_actual_charges"
+
+
+def _paid_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] | None, rubric_path: Path | None,
+                      consistency: dict | None, label: str) -> Observation:
+    if paid is None or rubric_path is None:
+        return _observation("20", None, "A --paid-thread and its --paid-rubric are required.", _SLACK_SOURCE, {}, at,
+                            **runtime.binding)
+    cost, basis = _settled_cost(consistency, paid)
+    record = _run_record(runtime, paid, _paid_correct(paid, rubric_path, consistency), label)
+    if record["mode"] == "paid":
+        record.update(actual_cost_usd=cost, cost_basis=basis)
+    return _run_records_observation("20", "paid", at, runtime, [record], _SLACK_SOURCE + " and settled meter rows")
+
+
+def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] | None,
+                          consistency: dict | None, cost: float | None) -> Observation:
+    over: list[str] = []
+    unpriced: list[str] = []
+    monitor = runtime.health.get("usage_monitor") or {}
+    accounting = monitor.get("daily_accounting")
+    # A monitor counts only when enabled with the paid gate open and every configured provider current.
+    ready = (monitor.get("enabled") is True and monitor.get("paid_run_gate_open") is True
+             and monitor.get("gate_state") == "open" and monitor.get("unsupported_providers") == []
+             and monitor.get("missing_or_stale_providers") == []
+             and monitor.get("all_configured_have_recent_signal") is True)
+    # Every budget and cost read must be a finite, non-negative number (JSON admits NaN and Infinity, which
+    # compare false against everything); anything else is not monitored accounting.
+    providers = monitor.get("providers")
+    # usage.py builds daily_accounting over exactly its configured providers: the key set must be that set.
+    listed = (isinstance(providers, list) and bool(providers)
+              and all(isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name) for name in providers)
+              and len(set(providers)) == len(providers))
+    # The monitor names the UTC day its accounting covers (usage.py health, from the same clock read); budgets and
+    # charges are graded for that day only. A snapshot without its day is not monitored accounting.
+    day = monitor.get("accounting_day")
+    dated = isinstance(day, str) and bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", day))
+    monitored = ready and listed and dated and isinstance(accounting, dict) and set(accounting) == set(providers) and all(
+        isinstance(value, dict) and all(value.get(key) is None or _amount(value.get(key))
+                                        for key in ("daily_budget_usd", "reported_cost_usd", "reserved_cost_usd"))
+        # A monitor that does not separate its probes from real requests is not monitored accounting.
+        and "provider_request_count" in value
+        and (value["provider_request_count"] is None or _counter(value["provider_request_count"]))
+        # Nor one that does not report settled requests missing their actual charge (review 4112533824).
+        and "unreconciled_request_count" in value
+        and (value["unreconciled_request_count"] is None or _counter(value["unreconciled_request_count"]))
+        and _amount(value.get("exposure_usd"))
+        for value in accounting.values())
+    uncapped: list[str] = []
+    unreconciled: list[str] = []
+    if monitored:
+        for provider, value in sorted(accounting.items()):
+            if type(value["unreconciled_request_count"]) is int and value["unreconciled_request_count"] > 0:
+                # A settled work request with no recorded actual charge counts only at its reservation: the
+                # exposure is a lower bound, so the cap cannot be verified (review 4112533824).
+                unreconciled.append(str(provider))
+            budget = value.get("daily_budget_usd")
+            requests = value.get("request_count")
+            # Spend, not request_count: for most providers request_count counts the monitor's own usage-check
+            # probes (usage.py _daily_accounting); grok's paid requests carry reserved_cost_usd.
+            # A real provider request is an attempt before any cap or price test (review 4110798529). The monitor's
+            # own usage-check probes never are: usage.py reports them apart (usage_check_count), and
+            # provider_request_count counts only real requests (None: the monitor sees none for that provider).
+            real = value.get("provider_request_count")
+            attempted = type(real) is int and real > 0
+            if attempted and type(budget) not in (int, float):
+                uncapped.append(str(provider))  # an attempted provider with no numeric cap has no monetary control
+            if type(budget) in (int, float):
+                # The monitor's per-reservation reconciliation (usage.py _exposure_usd), never max of two totals.
+                used = value["exposure_usd"]
+                if used > budget:
+                    over.append("usage monitor " + str(provider))
+            if (attempted and value.get("cost_visibility_complete") is not True
+                    and value.get("reserved_cost_usd") is None and str(provider) not in over):
+                # reported_cost_usd sums known costs only; unknown cost is not zero.
+                unpriced.append(str(provider))
+    budgets = None
+    if paid is not None and consistency is not None:
+        entry = (consistency.get("tasks") or {}).get(paid["task_id"])
+        budgets = entry.get("budgets") if isinstance(entry, dict) else None
+    unsigned = False
+    if isinstance(budgets, list):
+        # A budget row counts only when the in-image report re-verified its owner signature
+        # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
+        # Each charged attempt must join the exact signed document it reserved against: same grant, same provider.
+        spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
+        # The enrolled caps and charges graded with the monitor are the rows of the monitor's own accounting day;
+        # without that day nothing is graded (unsigned, so 15 cannot pass).
+        spend = [row for row in spend if dated and row.get("budget_day") == day]
+        budgets = [row for row in budgets if row.get("day") == day]
+        unsigned = not spend or any(row.get("signature_verified") is not True for row in budgets) or not all(
+            any(_same(budget.get("authority_digest"), charge.get("grant_digest"))
+                and (budget.get("task_id"), budget.get("project_id"), budget.get("day"), budget.get("provider_id"))
+                == (charge.get("task_id"), charge.get("project_id"), charge.get("budget_day"), charge.get("provider_id"))
+                for budget in budgets) for charge in spend)
+        budgets = [row for row in budgets if row.get("signature_verified") is True]
+        # The monitor has numeric caps only for gemini, grok and perplexity (usage.py _daily_accounting); a
+        # provider's owner-signed enrolled budget is its cap otherwise.
+        uncapped = [provider for provider in uncapped if provider not in {row.get("provider_id") for row in budgets}]
+        for row in budgets:
+            if not _counter(row["day_held_microusd"]) or not _counter(row["daily_limit_microusd"]):
+                raise ValueError("malformed enrolled budget row")
+            if row["day_held_microusd"] > row["daily_limit_microusd"]:
+                over.append("enrolled daily budget")
+    # Review 4111508070: accounting for one UTC day grades only a collection inside that day. A collection that
+    # crosses midnight, or whose final cutoff is on another day, is UNKNOWN; a PASS never outlives the rollover.
+    started_at, cutoff = runtime.collected_at, runtime.until() or at
+    same_day = (dated and started_at is not None and started_at.astimezone(timezone.utc).date().isoformat() == day
+                and cutoff.astimezone(timezone.utc).date().isoformat() == day)
+    rollover = (datetime.fromisoformat(day).replace(tzinfo=timezone.utc) + timedelta(days=1)) if dated else None
+    facts = {"usage_monitor_providers": sorted(accounting) if monitored else None, "over_cap": over,
+             "accounting_day": day if dated else None,
+             "unknown_cost_providers": unpriced, "unreconciled_charge_providers": unreconciled,
+             "enrolled_budget_rows": len(budgets) if isinstance(budgets, list) else None, "settled_actual_cost_usd": cost}
+    source = "Director /health usage_monitor and " + _CONSISTENCY_SOURCE
+    if over:
+        return _observation("15", False, "A daily monetary cap is exceeded: " + ", ".join(over) + ".", source, facts, at, **runtime.binding)
+    if unreconciled:
+        return _observation("15", None, "Settled provider requests have no recorded actual charge: "
+                            + ", ".join(unreconciled) + "; their reservations are only a lower bound.", source, facts,
+                            at, **runtime.binding)
+    if unpriced:
+        return _observation("15", None, "Usage-monitor cost is incomplete and unreserved for attempted providers: "
+                            + ", ".join(unpriced) + "; unknown cost is not zero.", source, facts, at, **runtime.binding)
+    facts.update(usage_monitor_ready=ready, uncapped_attempted_providers=uncapped)
+    if not ready:
+        return _observation("15", None, "The usage monitor is disabled, its paid gate is closed, or a configured "
+                            "provider is unsupported, missing or stale.", source, facts, at, **runtime.binding)
+    if uncapped:
+        return _observation("15", None, "Attempted providers have no numeric daily budget: " + ", ".join(uncapped) + ".",
+                            source, facts, at, **runtime.binding)
+    if unsigned:
+        return _observation("15", None, "A budget row is unsigned, fails the owner-signed budget contract, or a charged "
+                            "attempt does not join the signed budget of its own grant and provider.",
+                            source, facts, at, **runtime.binding)
+    if not same_day:
+        return _observation("15", None, "The collection crosses a UTC midnight, or its accounting day is not the UTC "
+                            "day at the final cutoff.", source, facts, at, **runtime.binding)
+    if monitored and isinstance(budgets, list) and budgets and cost is not None:
+        return _observation("15", True, "Enrolled signed daily caps hold, usage-monitor accounting is within budget and the "
+                            "paid task's actual charges are settled request-correlated meter rows.", source, facts, at, **runtime.binding,
+                            valid_until=rollover - FRESH_FOR)
+    return _observation("15", None, "Requires the paid task's enrolled budgets, usage-monitor accounting and settled "
+                        "request-correlated meter rows; unknown cost is not zero.", source, facts, at, **runtime.binding)
+
+
+def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
+                             owner: str | None = None,
+                             gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
+                             trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
+                             paid_rubric_path: Path | None,
+                             collection_end: Any = None) -> tuple[list[Observation], tuple | None]:
+    try:
+        runtime_rows, runtime = _runtime(at, project, collection_end)
+    except _SOURCE_ERRORS:
+        return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
+                             "Docker Compose labels and Director /health", {}, at),
+                *[_observation(key, None, "collector not yet trusted",
+                               _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
+                               {}, at, candidate_sha=candidate_sha if key == "17" else None)
+                  for key in (*_CONTAINED_RUNTIME, *_CONTAINED_CAPTURES, *_CONTAINED_CANDIDATE)
+                  if key != "19"]], None
+    try:  # the containers as the deployment probe saw them, re-inspected before the final cutoff
+        state: tuple | None = _deployment_state(project, gateway)
+        if not any(row[:2] == (runtime.container_id, runtime.image_id) for row in state):
+            state = None
+    except _SOURCE_ERRORS:
+        state = None
+    binding = runtime.binding
+    found: dict[str, Observation] = {item.check_id: item for item in runtime_rows}
+
+    def put(items: list[Observation]) -> None:
+        for item in items:
+            found[item.check_id] = item
+
+    def unknown(keys: tuple[str, ...], reason: str, source: str) -> None:
+        put([_observation(key, None, reason, source, {}, at, **binding) for key in keys])
+
+    if topology:
+        try:
+            if gateway is None:
+                unknown(("01", "02"), "No expected gateway identity was supplied (--gateway); topology was not inspected.",
+                        "Docker / Windows process inventory")
+            else:
+                put(_topology_observations(at, runtime, gateway, channel))
+        except _SOURCE_ERRORS:
+            unknown(("01", "02"), "Deployment topology could not be verified; no retry was made.", "Docker / Windows process inventory")
+    t = None
+    if channel is not None:
+        try:
+            t = _SlackThreads(runtime, channel, owner)
+        except _SOURCE_ERRORS:
+            t = None
+    paid = None
+    label = None
+    director_runtime, runtime = runtime, None
+    if gateway is not None:
+        try:
+            runtime = _gateway_bound(director_runtime, gateway)
+        except _SOURCE_ERRORS:
+            runtime = None
+    gateway_unbound = runtime is None
+    runtime = runtime or director_runtime
+    route_verified: bool | None = None
+    if not gateway_unbound:
+        try:
+            route_verified, activated = _intake_route_verified(director_runtime, gateway)
+            if activated is not None:
+                # Slack intake evidence must postdate the active intake workflow version as well as the containers.
+                runtime = replace(runtime, created_at=max(runtime.created_at, activated))
+        except _SOURCE_ERRORS:
+            route_verified = None
+    try:
+        if t is None:
+            unknown(("03", "04", "06", "08", "09", "10", "11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
+        else:
+            label = t.m.LABEL
+            try:
+                put(_drill_observations(at, runtime, t, drills))
+            except _SOURCE_ERRORS:
+                unknown(("03", "09"), "Drill threads could not be read; no retry was made.", _SLACK_SOURCE)
+            try:
+                put([_trial_observation(at, runtime, t, trials, rubric_path)])
+            except _SOURCE_ERRORS:
+                unknown(("10",), "The offline trial threads could not be read; no retry was made.", _SLACK_SOURCE)
+            try:
+                put([_status_observation(at, director_runtime, t)])
+            except _SOURCE_ERRORS:
+                unknown(("04",), "The status execution or its Slack readback could not be read; no retry was made.",
+                        "n8n Director Status saved execution")
+            if paid_thread is not None:
+                try:
+                    paid = _paid_facts(t, paid_thread, runtime.runtime_sha)
+                except _SOURCE_ERRORS:
+                    paid = None
+        consistency = captures = None
+        if t is not None:
+            try:
+                if approval_task is None:
+                    unknown(("06", "08"), "No --approval-task was supplied.", _SLACK_SOURCE)
+                else:
+                    put(_approval_observations(at, runtime, t, approval_task, consistency))
+            except _SOURCE_ERRORS:
+                unknown(("06", "08"), "The approval task could not be read; no retry was made.", _SLACK_SOURCE)
+        try:
+            put([_reconciliation_observation(at, runtime, consistency)])
+        except _SOURCE_ERRORS:
+            unknown(("07",), "The consistency snapshot could not be evaluated.", _CONSISTENCY_SOURCE)
+        try:
+            put(_capture_observations(at, runtime, captures, paid))
+        except _SOURCE_ERRORS:
+            unknown(("11", "12"), "The activation captures could not be evaluated.", _CAPTURES_SOURCE)
+        try:
+            put([_acceptance_observation(at, candidate_sha, consistency)])
+        except _SOURCE_ERRORS:
+            put([_observation("17", None, "The adopted acceptance could not be evaluated.", _CONSISTENCY_SOURCE, {}, at,
+                              candidate_sha=candidate_sha)])
+        try:
+            put([_paid_observation(at, runtime, paid, paid_rubric_path, consistency, label or "")])
+        except _SOURCE_ERRORS:
+            unknown(("20",), "The paid run or its settlement could not be evaluated; no retry was made.", _SLACK_SOURCE)
+        try:
+            cost = _settled_cost(consistency, paid)[0] if paid is not None else None
+            put([_monetary_observation(at, runtime, paid, consistency, cost)])
+        except _SOURCE_ERRORS:
+            unknown(("15",), "The monetary sources could not be evaluated; no retry was made.", _CONSISTENCY_SOURCE)
+        if gateway_unbound and t is not None:
+            unknown(("03", "08", "09", "10", "20"), "No running --gateway and single n8n of this deployment were "
+                    "resolved, so Slack intake evidence cannot be bound to the relay that handled it.", _SLACK_SOURCE)
+        elif route_verified is not True and t is not None:
+            unknown(("03", "08", "09", "10", "20"), "The current intake route (gateway relay and credentials, both "
+                    "hops, n8n's store and the candidate's active intake workflow) is not verified, so historical "
+                    "Slack intake evidence cannot attest it.", _SLACK_SOURCE)
+        if t is None:
+            unknown(("11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
+        elif paid_thread is not None and paid is None:
+            unknown(("20",), "The --paid-thread could not be read or bound to exactly one task; no retry was made.",
+                    _SLACK_SOURCE)
+    finally:
+        if t is not None:
+            t.close()
+    # Final disposition: health, Slack and evaluator results cannot supply trusted reports.
+    unknown(_CONTAINED_RUNTIME, "collector not yet trusted", _CONSISTENCY_SOURCE)
+    unknown(_CONTAINED_CAPTURES, "collector not yet trusted", _CAPTURES_SOURCE)
+    put([_observation(key, None, "collector not yet trusted", _CONSISTENCY_SOURCE, {}, at,
+                      candidate_sha=candidate_sha) for key in _CONTAINED_CANDIDATE])
+    return list(found.values()), state
 
 
 def _native_security_index() -> Path:
@@ -351,24 +2858,29 @@ def _read_bounded_file(root: Path, relative: str) -> bytes:
     return raw
 
 
-def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Observation:
+def _security_observation(scan_id: str, candidate_sha: str, at: datetime, security_base: str | None = None) -> Observation:
     if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", scan_id):
         raise ValueError("native Security scan ID must be a UUID")
     index = _native_security_index()
     if not index.is_file() or index.is_symlink():
         raise ValueError("native Security index unavailable")
-    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
+    end = time.monotonic() + _remaining(5)
+    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(5))) as db:
+        # sqlite3's timeout bounds only lock waits; the progress handler aborts any statement past the wall clock.
+        db.set_progress_handler(lambda: time.monotonic() > end, 1000)
         db.row_factory = sqlite3.Row
         row = db.execute("SELECT id,status,scan_dir,target_path,target_revision,mode,diff_base_revision,"
                          "diff_head_revision,seal_manifest_digest,completed_at FROM scans WHERE id=?", (scan_id,)).fetchone()
-        if row is None or row["status"] != "complete" or row["mode"] != "diff" or row["diff_head_revision"] != candidate_sha:
+        # The scanned checkout, not only the diff head, must be the candidate.
+        if (row is None or row["status"] != "complete" or row["mode"] != "diff" or row["diff_head_revision"] != candidate_sha
+                or row["target_revision"] != candidate_sha):
             raise ValueError("native index has no complete scan for this candidate")
         indexed = dict(row)
     root = Path(indexed["scan_dir"])
     if not root.is_absolute() or root.is_symlink() or getattr(root, "is_junction", lambda: False)():
         raise ValueError("native scan directory is not canonical")
     manifest_raw = _read_bounded_file(root, "scan-manifest.json")
-    if "sha256:" + hashlib.sha256(manifest_raw).hexdigest() != indexed["seal_manifest_digest"]:
+    if not _same("sha256:" + hashlib.sha256(manifest_raw).hexdigest(), indexed["seal_manifest_digest"]):
         raise ValueError("manifest does not match the native indexed seal")
     manifest = json.loads(manifest_raw)
     scan = manifest["scan"]
@@ -382,6 +2894,9 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     sealed = datetime.fromisoformat(scan["sealedAt"].replace("Z", "+00:00"))
     if sealed.tzinfo is None or sealed > at:
         raise ValueError("native seal is future dated")
+    # The seal closes a completed scan: its completion time is a durable moment of the same lifecycle.
+    if _when(scan["completedAt"]) > sealed:
+        raise ValueError("native seal precedes the scan's completion")
     artifacts = scan.get("artifacts", [])
     preserved = scan.get("preservedSources", {})
     if len(artifacts) > 20 or len(preserved) > 100:
@@ -396,13 +2911,28 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
         # _encoded/_digest uses normalized JSON for preserved checkpoints.
         hashed = (json.dumps(json.loads(raw), ensure_ascii=True, allow_nan=False, sort_keys=True,
                              separators=(",", ":")).encode() if relative in preserved else raw)
-        if hashlib.sha256(hashed).hexdigest() != digest:
+        if not _same(hashlib.sha256(hashed).hexdigest(), digest):
             raise ValueError("native artifact digest mismatch")
         if relative in {"coverage.json", "findings.json"}:
             contents[relative] = json.loads(raw)
     coverage, findings = contents["coverage.json"], contents["findings.json"]
     if coverage.get("scanId") != scan_id or findings.get("scanId") != scan_id:
         raise ValueError("canonical evidence belongs to another scan")
+    # The reviewed base is pinned (review 4111174707): once the candidate is on main (the trusted-checkout rule), its
+    # merge base is itself and a base..candidate diff would be empty. The owner's release descriptor names it
+    # (security_base_sha); a CLI value may only repeat it. An arbitrary strict ancestor can omit reviewed changes.
+    pinned = security_base_pin(cli_release_descriptor())
+    if pinned is None or (security_base is not None and security_base != pinned):
+        return _observation("18", None, "security base not owner-authenticated: the release descriptor must name "
+                            "security_base_sha and any --security-base must match it exactly.", str(root / "scan-manifest.json"),
+                            {"scan_id": scan_id, "scan_base": base}, at, candidate_sha=candidate_sha)
+    _sha(pinned)
+    if base != pinned or _compare_status(pinned, candidate_sha) != "ahead":
+        return _observation("18", None, "The sealed scan's base is not the pinned reviewed base, or that base is not a "
+                            "strict ancestor of the candidate, so its changed-path coverage may omit the candidate's "
+                            "changes.", str(root / "scan-manifest.json"),
+                            {"scan_id": scan_id, "scan_base": base, "pinned_base": pinned},
+                            at, candidate_sha=candidate_sha)
     changed = set(_run_bytes(["git", "-C", indexed["target_path"], "diff", "--name-only", "-z", base, candidate_sha, "--"]).decode().rstrip("\0").split("\0"))
     surfaces = coverage.get("surfaces", [])
     covered = {item.get("label") for item in surfaces if item.get("disposition") in {"no_issue_found", "rejected", "validated"}}
@@ -421,21 +2951,206 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
 CI_JOBS = ("Contribution attribution", "Python 3.12 (ubuntu-latest)",
            "Python 3.12 (windows-latest)", "Compose and container build",
            "Secret hygiene", "Cross-process recovery probe")
+# The only workflow whose jobs can fill CI_JOBS. Fixed here, never taken from the
+# candidate: ci.yml itself routes to hosted or registered self-hosted runners.
+CI_WORKFLOW = ".github/workflows/ci.yml"
+_REPLICA_LANES = ("ubuntu-replica", "windows-postgres-lane")
+_RUN_PAGES = 10  # 1000 runs at one head; more is UNKNOWN, never a partial listing.
+_REPLICA_LANE_KEYS = {"lane", "head_tests_run", "base_tests_run", "head_failures", "base_failures", "command_sha256"}
 
 
-def _ci_observation(candidate_sha: str, at: datetime) -> Observation:
+def _workflow_blob(ref: str) -> bytes:
+    """ci.yml's exact bytes at ``ref`` through the GitHub contents API, bound to the git blob id the API names."""
+    import base64
+    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/contents/{CI_WORKFLOW}?ref={ref}"])
+    if not isinstance(value, dict) or value.get("type") != "file" or value.get("encoding") != "base64":
+        raise ValueError("ci.yml is not a readable file at that ref")
+    content = base64.b64decode(str(value.get("content", "")), validate=False)
+    if hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest() != value.get("sha"):
+        raise ValueError("ci.yml content does not match its git blob id")
+    return content
+
+
+def _ci_workflow_trust(candidate_sha: str) -> tuple[bool, dict[str, Any]]:
+    """Check 16's jobs prove anything only if the workflow that ran them is trusted: the ci.yml at the candidate
+    (runs are listed at that exact head_sha) must equal the ci.yml on current main, or match the owner's pin
+    (release descriptor ``ci_workflow_sha256``). A candidate that rewrote ci.yml into no-op jobs with the required
+    names would otherwise pass."""
+    # The trusted definition is the owner's ci_workflow_sha256, else the ci.yml at the pinned evaluator revision
+    # (review 4111508075/4111508073), never anything the candidate chose.
+    ran = _workflow_blob(candidate_sha)
+    digest = hashlib.sha256(ran).hexdigest()
+    descriptor = cli_release_descriptor()
+    pin = ci_workflow_pin(descriptor)
+    evaluator = evaluator_pin(descriptor)
+    if pin is not None:
+        trusted = hmac.compare_digest(pin, digest)
+    else:
+        trusted = evaluator is not None and ran == _workflow_blob(evaluator)
+    return trusted, {"ci_workflow_sha256": digest, "owner_pin": pin is not None, "evaluator_sha": evaluator}
+
+
+def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | None = None) -> Observation:
+    paths: dict[Any, Any] = {}
+    source = f"https://github.com/{REPOSITORY}/commit/{candidate_sha}/checks"
+
+    def executed(args: list[str]) -> Any:
+        # Zero-step jobs are billing stubs and are dropped, so an older executed
+        # ci.yml job of the same name (hosted or self-hosted) can stand. A job of
+        # any other workflow is renamed by its workflow path: it can still fail
+        # 16, but it can never stand in for a required ci.yml job.
+        # "No required job executed" admits the replica receipt, so absence is concluded
+        # only from a complete listing: every page of runs (bounded) and every job of a run.
+        if "/jobs?" not in args[-1]:
+            if "&per_page=20" not in args[-1]:
+                raise ValueError("unexpected workflow-runs query")
+            runs: list[dict[str, Any]] = []
+            for page in range(1, _RUN_PAGES + 1):
+                value = _run_json(["gh", *args[:-1], args[-1].replace("&per_page=20", f"&per_page=100&page={page}")])
+                total, batch = value["total_count"], value["workflow_runs"]
+                runs.extend(batch)
+                if len(runs) >= total or not batch:
+                    break
+            if type(total) is not int or len(runs) != total or len({run["id"] for run in runs}) != total:
+                raise ValueError("workflow runs at this head were not listed completely")
+            paths.update((run["id"], run.get("path")) for run in runs)
+            return {"total_count": total, "workflow_runs": runs}
+        value = _run_json(["gh", *args])
+        if value.get("total_count") != len(value["jobs"]):
+            raise ValueError("a run's jobs were not listed completely")
+        path = paths.get(int(args[-1].split("/runs/")[1].split("/")[0]))
+        # A job executed only if at least one step completed and was not skipped; only those steps count.
+        jobs = []
+        for job in value["jobs"]:
+            ran = [step for step in job.get("steps") or [] if isinstance(step, dict)
+                   and step.get("status") == "completed" and step.get("conclusion") not in (None, "skipped")]
+            if ran:
+                job = {**job, "steps": ran}
+                jobs.append(job if path == CI_WORKFLOW else {**job, "name": f"{path}: {job.get('name')}"})
+        return {**value, "jobs": jobs}
+
     # Reuse the project's oracle rather than invent a second CI truth predicate.
     with tempfile.TemporaryDirectory(prefix="director-scorecard-") as folder:
         ledger = StateWitnessLedger(Path(folder) / "witness.sqlite3")
         row = gh_checks_green(ledger, REPOSITORY, candidate_sha, agent="completion-scorecard",
-                              required=CI_JOBS, gh_json=lambda args: _run_json(["gh", *args]))
-    passed = {WitnessStatus.MATCH: True, WitnessStatus.MISMATCH: False}.get(row.status)
-    return _observation("16", passed, "Existing Witness Ledger CI oracle: every required job must have executed steps and concluded success.",
-                        f"https://github.com/{REPOSITORY}/commit/{candidate_sha}/checks", row.observed,
-                        at, candidate_sha=candidate_sha)
+                              required=CI_JOBS, gh_json=executed)
+    jobs = row.observed.get("jobs") if isinstance(row.observed, dict) else None
+    if isinstance(jobs, dict) and not set(CI_JOBS) & set(jobs) and replica_receipt is not None             and all(job.get("conclusion") == "success" for job in jobs.values()):
+        # Owner amendment: the receipt stands in only when no required job executed. It names no workflow; its
+        # trust is the owner's signature over the lanes and their command digests.
+        return _ci_replica_observation(replica_receipt, candidate_sha, at)
+    # Every job-based verdict rests on the workflow that ran them (review 4110671092).
+    trusted, workflow = _ci_workflow_trust(candidate_sha)
+    if not trusted:
+        return _observation("16", None, "workflow changed by candidate; owner pin required: the ci.yml at this head "
+                            "is neither the owner-pinned ci_workflow_sha256 nor the pinned evaluator revision's.",
+                            source, {"workflow": workflow}, at, candidate_sha=candidate_sha)
+    if row.status == WitnessStatus.MATCH:
+        return _observation("16", True, "Existing Witness Ledger CI oracle: every required ci.yml job executed steps at this "
+                            "exact head, on hosted or registered self-hosted runners, and concluded success.",
+                            source, row.observed, at, candidate_sha=candidate_sha)
+    if not isinstance(jobs, dict):
+        return _observation("16", None, "GitHub CI could not be verified; no retry was made.", source, {}, at,
+                            candidate_sha=candidate_sha)
+    if any(job.get("conclusion") != "success" for job in jobs.values()):
+        return _observation("16", False, "An executed job at this exact head did not conclude success.",
+                            source, row.observed, at, candidate_sha=candidate_sha)
+    return _observation("16", False, "Required jobs did not execute at this exact head; billing stubs and missing jobs do not pass.",
+                        source, row.observed, at, candidate_sha=candidate_sha)
 
 
-def _workload_observation(path: Path, at: datetime) -> Observation:
+def _ci_replica_document(document: Any) -> dict[str, Any]:
+    if (not isinstance(document, dict)
+            or set(document) != {"schema", "repository", "candidate_sha", "base_sha", "produced_at", "lanes"}
+            or document["schema"] != "director-ci-local-replica/v1" or document["repository"] != REPOSITORY):
+        raise ValueError("unsupported local-replica receipt")
+    _sha(document["candidate_sha"])
+    _sha(document["base_sha"])
+    lanes = document["lanes"]
+    if (not isinstance(lanes, list) or len(lanes) != 2 or any(not isinstance(lane, dict) or set(lane) != _REPLICA_LANE_KEYS
+                                                              for lane in lanes)
+            or sorted(str(lane["lane"]) for lane in lanes) != list(_REPLICA_LANES)):
+        raise ValueError("the receipt must carry exactly the two replica lanes")
+    for lane in lanes:
+        if any(type(lane[key]) is not int or lane[key] <= 0 for key in ("head_tests_run", "base_tests_run")):
+            raise ValueError("replica lanes must have run tests")
+        for key in ("head_failures", "base_failures"):
+            values = lane[key]
+            if (not isinstance(values, list) or len(values) > 10000 or len(set(map(str, values))) != len(values)
+                    or any(not isinstance(item, str) or not item or len(item) > 512 for item in values)):
+                raise ValueError("malformed replica failure set")
+        if not isinstance(lane["command_sha256"], str) or not _HEX64.fullmatch(lane["command_sha256"]):
+            raise ValueError("malformed replica command digest")
+    return document
+
+
+def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Observation:
+    """Owner-signed local replica: no new failure against the base on both lanes."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    if CI_REPLICA_KEY.is_symlink() or not CI_REPLICA_KEY.is_file():
+        raise ValueError("owner replica signer key unavailable")
+    key_hex = CI_REPLICA_KEY.read_text(encoding="ascii").strip()
+    if not _HEX64.fullmatch(key_hex):
+        raise ValueError("owner replica signer key is malformed")
+    source = Path(path)
+    if source.is_symlink():
+        raise ValueError("replica receipt must not be a link")
+    with source.open("rb") as stream:
+        raw = stream.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("replica receipt exceeds its bound")
+    envelope = json.loads(raw)
+    if not isinstance(envelope, dict) or set(envelope) != {"document", "signature"}:
+        raise ValueError("unsupported replica receipt envelope")
+    signature = envelope["signature"]
+    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{128}", signature):
+        raise ValueError("malformed replica signature")
+    signed = json.dumps(envelope["document"], sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                        allow_nan=False).encode()
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(key_hex)).verify(bytes.fromhex(signature), signed)
+    except InvalidSignature:
+        raise ValueError("replica receipt signature invalid") from None
+    document = _ci_replica_document(envelope["document"])
+    if _when(document["produced_at"]) > at:
+        raise ValueError("replica receipt is future dated")
+    lanes = {lane["lane"]: lane for lane in document["lanes"]}
+    new = {name: sorted(set(lane["head_failures"]) - set(lane["base_failures"])) for name, lane in lanes.items()}
+    base, candidate = document["base_sha"], document["candidate_sha"]
+    # The diff means something only against a main commit the candidate descends
+    # from, and only when the head lane ran at least the base lane's tests.
+    base_on_main = (_compare_status(base, candidate) == "ahead"
+                    and _compare_status(base, "main") in ("ahead", "identical"))
+    facts = {"receipt_sha256": hashlib.sha256(raw).hexdigest(),
+             "signer_key_sha256": hashlib.sha256(bytes.fromhex(key_hex)).hexdigest(), "base_sha": base,
+             "base_is_main_ancestor_of_candidate": base_on_main,
+             "lanes": {name: {"head_tests_run": lanes[name]["head_tests_run"], "base_tests_run": lanes[name]["base_tests_run"],
+                              "new_failure_count": len(new[name])} for name in sorted(lanes)}}
+    if not base_on_main:
+        return _observation("16", None, "The replica's base_sha is not a main commit that the candidate descends from.",
+                            str(source.resolve()), facts, at, candidate_sha=candidate)
+    short = [name for name in sorted(lanes) if lanes[name]["head_tests_run"] < lanes[name]["base_tests_run"]]
+    if short:
+        return _observation("16", None, "The replica's head lane ran fewer tests than its base on: " + ", ".join(short) + ".",
+                            str(source.resolve()), facts, at, candidate_sha=candidate)
+    regressed = [name for name in sorted(new) if new[name]]
+    return _observation("16", not regressed,
+                        ("The owner-signed local replica shows new failures against the base on: " + ", ".join(regressed) + "."
+                         if regressed else "No required job executed at this exact head; the owner-signed Windows Postgres "
+                         "and Ubuntu replica receipt, diffed against a main ancestor, shows no failure beyond the base's "
+                         "failure set."),
+                        str(source.resolve()), facts, at, candidate_sha=candidate)
+
+
+def _compare_status(base: str, head: str) -> str:
+    """GitHub's ahead/behind/identical/diverged status of head against base (GET only)."""
+    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/compare/{base}...{head}", "--jq", "{status: .status}"])
+    return value["status"] if isinstance(value, dict) and isinstance(value.get("status"), str) else ""
+
+
+def _workload_observation(path: Path, at: datetime) -> list[Observation]:
     from .engineering_workload_ledger import EngineeringWorkloadLedger
 
     status = EngineeringWorkloadLedger(path).status()
@@ -445,12 +3160,14 @@ def _workload_observation(path: Path, at: datetime) -> Observation:
     passed = None
     explanation = "A complete observed window of twenty prospective admissions is not yet available."
     rows = status.get("records", [])
+    complete = False
     consistent = _all_fields(status.get("journal_consistency", {}),
                              {"sqlite_integrity_ok": True, "policy_digest_matches": True})
     if consistent is True and status.get("rolling_window_complete") is True and len(rows) == 20:
         cutover = datetime.fromisoformat(status["cutover_at"].replace("Z", "+00:00"))
         times = [datetime.fromisoformat(row["admitted_at"].replace("Z", "+00:00")) for row in rows]
         if cutover.tzinfo is not None and all(value.tzinfo is not None and cutover < value <= at for value in times):
+            complete = True
             # The ledger already exposes an authoritative tri-state resource-bound
             # result. Unknown or incomplete reported usage is never treated as
             # compliant; only a known violation fails, and only fully known,
@@ -468,59 +3185,161 @@ def _workload_observation(path: Path, at: datetime) -> Observation:
             explanation = "This window includes imported, future or unbound history; the tool does not authenticate its attestations."
     facts = {key: status.get(key) for key in ("history_mode", "cutover_at", "rolling_window_complete",
              "real_assignments_in_window", "utilization", "holds", "journal_consistency", "current_window_checks")}
-    return _observation("13", passed, explanation, str(path.resolve()), facts, at)
+    source = str(path.resolve())
+
+    def bounded(bounds: Any) -> bool:
+        return (isinstance(bounds, dict)
+                and all(type(bounds.get(key)) is int and bounds[key] > 0
+                        for key in ("timeout_seconds", "call_limit", "turn_limit", "output_bytes_limit"))
+                and _amount(bounds.get("usd_limit")) and bounds["usd_limit"] > 0
+                and bounds.get("hard_usd_cap_verified") is True
+                and isinstance(bounds.get("usd_cap_evidence"), dict)
+                and isinstance(bounds["usd_cap_evidence"].get("reference"), str)
+                and bool(bounds["usd_cap_evidence"]["reference"].strip())
+                and bool(_HEX64.fullmatch(str(bounds["usd_cap_evidence"].get("sha256", "")))))
+
+    uncapped = sum(1 for row in rows if not isinstance(row.get("bounds"), dict) or row["bounds"].get("usd_limit") is None
+                   or row["bounds"].get("hard_usd_cap_verified") is not True)
+    passed14, explanation14 = None, "A complete window of twenty post-cutover admissions is not yet available."
+    if complete and uncapped:
+        passed14, explanation14 = False, "An admission in the window lacks a USD limit or an operator-attested hard USD cap."
+    elif complete and all(bounded(row.get("bounds")) for row in rows):
+        # Owner ruling 2026-09-25 ("Attestation, labelled"): the caps are the operator's attestation, never verification.
+        passed14, explanation14 = True, ("Every one of the twenty post-cutover admissions declares positive timeout, call, "
+                                         "turn and output bounds and an operator-attested hard USD cap with an evidence "
+                                         "reference and SHA-256. The caps are operator-attested, not cryptographically "
+                                         "verified: the ledger reports operator_attestations_are_not_cryptographic_proof.")
+    elif complete:
+        explanation14 = "An admission's declared bounds or cap evidence reference are malformed."
+    facts14 = {"admissions": len(rows), "window_complete": complete, "uncapped_admissions": uncapped,
+               "cap_evidence": "operator_attestation",
+               "operator_attestations_are_not_cryptographic_proof": (status.get("journal_consistency") or {}).get(
+                   "operator_attestations_are_not_cryptographic_proof")}
+    return [_observation("13", passed, explanation, source, facts, at),
+            _observation("14", passed14, explanation14, source, facts14, at)]
 
 
-def collect(candidate_sha: str, *, now: datetime | None = None, github: bool = False,
-            ledger_path: Path | None = None, gateway: str | None = None, topology: bool = True,
-            security_scan_id: str | None = None) -> list[Observation]:
-    """One bounded local collection and, only when selected, one GitHub collection.
+def collect(candidate_sha: str, **options: Any) -> list[Observation]:
+    """One collection, bounded in wall clock: every subprocess, HTTP read and database connection it makes is
+    clamped to COLLECTION_SECONDS from its start (_remaining), and a spent deadline reads as unavailable."""
+    _DEADLINE[0] = time.monotonic() + COLLECTION_SECONDS
+    try:
+        return _collect(candidate_sha, **options)
+    finally:
+        _DEADLINE[0] = None
 
-    Topology (01, 02) is inspected only for an explicitly named running gateway.
+
+def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str | None = None,
+            owner: str | None = None,
+            now: datetime | None = None, github: bool = False, ledger_path: Path | None = None,
+            gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
+            security_base: str | None = None,
+            drill_threads: dict[str, str] | None = None, approval_task: str | None = None,
+            trials: list[str] | None = None, rubric_path: Path | None = None, paid_thread: str | None = None,
+            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None,
+            until: datetime | None = None) -> list[Observation]:
+    """One bounded collection of the explicitly selected deployment and sources.
+
+    Without ``deployment`` no container, port or Director endpoint is probed;
+    the expected Slack channel comes only from ``channel``. Topology (01, 02)
+    is inspected only for an explicitly named running gateway.
     """
     _sha(candidate_sha)
     if gateway is not None:
         _container_name(gateway)
+    if deployment is not None and (not isinstance(deployment, str) or not _PROJECT.fullmatch(deployment)):
+        raise ValueError("--deployment must be an exact Compose project name")
+    if channel is not None and (not isinstance(channel, str) or not _CHANNEL.fullmatch(channel)):
+        raise ValueError("--channel must be an exact Slack channel ID")
+    drills = dict(drill_threads or {})
+    if (any(kind not in DRILL_KINDS for kind in drills) or len(set(drills.values())) != len(drills)
+            or any(not isinstance(value, str) or not _TS.fullmatch(value) for value in drills.values())):
+        raise ValueError("--drill-thread takes distinct KIND=THREAD_TS values of known drill kinds")
+    trial_list = list(trials) if trials else None
+    if trial_list is not None and (len(trial_list) > 10 or len(set(trial_list)) != len(trial_list)
+                                   or any(not isinstance(value, str) or not _TS.fullmatch(value) for value in trial_list)):
+        raise ValueError("--trial takes one to ten distinct THREAD_TS values")
+    if approval_task is not None and (not isinstance(approval_task, str) or not _TASK.fullmatch(approval_task)):
+        raise ValueError("--approval-task must be an exact DIR-LG task ID")
+    if paid_thread is not None and (not isinstance(paid_thread, str) or not _TS.fullmatch(paid_thread)):
+        raise ValueError("--paid-thread must be a THREAD_TS")
+    if ci_replica_receipt is not None and not github:
+        raise ValueError("--ci-replica-receipt requires --github")
+    if rubric_path is not None and trial_list is None:
+        raise ValueError("--rubric requires --trial")
+    if paid_rubric_path is not None and paid_thread is None:
+        raise ValueError("--paid-rubric requires --paid-thread")
+    # The collection runs from its start (at) to its end, which is only known once the live reads finish:
+    # evidence is bounded by the end, every source's own read time must lie in [start, end], and every
+    # observation is stamped at the end so nothing read during the collection is backdated.
     at = now or datetime.now(timezone.utc)
+    end = until or at if now is not None else None
+
+    def collection_end() -> datetime:
+        return end if end is not None else datetime.now(timezone.utc)
+
     result: list[Observation] = []
-    try:
-        result.extend(_runtime_observations(at))
-    except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.SubprocessError):
-        # No exception text: third-party errors can contain credentials or bodies.
-        result.append(_observation("19", None, "Director identity/health could not be verified; no retry was made.",
-                                   HEALTH_URL, {}, at))
-    runtime = next((item for item in result if item.runtime_sha and item.image_id), None)
-    if runtime and topology:
-        binding = {"runtime_sha": runtime.runtime_sha, "image_id": runtime.image_id}
-        reason = "No expected gateway identity was supplied (--gateway); topology was not inspected."
-        try:
-            if gateway is not None:
-                result.extend(_topology_observations(at, binding, gateway))
-                reason = ""
-        except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.SubprocessError):
-            reason = "Deployment topology could not be verified; no retry was made."
-        if reason:
-            result.extend(_observation(key, None, reason, "Docker / Windows process inventory", {}, at, **binding)
-                          for key in ("01", "02"))
+    deployed: list[Observation] = []
+    state = None
+
+    def since(started: datetime, items: list[Observation]) -> list[Observation]:
+        # A composite (health, Slack, consistency, captures, ...) is stamped when its source phase began reading,
+        # so none is stamped after its earliest dependency read.
+        return [replace(item, _made=started) for item in items]
+
+    if deployment is None:
+        result.append(_observation("19", None, "No --deployment was selected; no runtime was inspected.",
+                                   "Docker Compose labels", {}, at))
+    else:
+        started = datetime.now(timezone.utc)
+        deployed, state = _deployment_observations(
+            at, candidate_sha, deployment, channel=channel, owner=owner, gateway=gateway, topology=topology,
+            drills=drills,
+            approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
+            paid_rubric_path=paid_rubric_path, collection_end=collection_end)
+        deployed = since(started, deployed)
     if github:
+        started = datetime.now(timezone.utc)
         try:
-            result.append(_ci_observation(candidate_sha, at))
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            result.append(_observation("16", None, "GitHub CI could not be verified; no retry was made.",
+            result.extend(since(started, [_ci_observation(candidate_sha, collection_end(), ci_replica_receipt)]))
+        except _SOURCE_ERRORS:
+            result.append(_observation("16", None, "GitHub CI or the local-replica receipt could not be verified; no retry was made.",
                                        "GitHub Actions", {}, at, candidate_sha=candidate_sha))
     if ledger_path is not None:
         try:
-            result.append(_workload_observation(ledger_path, at))
-        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
-            result.append(_observation("13", None, "The assignment journal could not be verified; no retry was made.",
-                                       str(ledger_path.resolve()), {}, at))
+            started = datetime.now(timezone.utc)
+            result.extend(since(started, list(_workload_observation(ledger_path, collection_end()))))
+        except _SOURCE_ERRORS:
+            result.extend(_observation(key, None, "The assignment journal could not be verified; no retry was made.",
+                                       str(ledger_path.resolve()), {}, at) for key in ("13", "14"))
     if security_scan_id is not None:
         try:
-            result.append(_security_observation(security_scan_id, candidate_sha, at))
-        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError):
+            started = datetime.now(timezone.utc)
+            result.extend(since(started, [_security_observation(security_scan_id, candidate_sha, collection_end(),
+                                                                security_base)]))
+        except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
-    return result
+    if deployment is not None:
+        deployed = _still_deployed(deployed, state, deployment, gateway)
+    return _finalize(deployed + result, collection_end(), live=now is None)
+
+
+def _finalize(observations: list[Observation], finished: datetime, *, live: bool = False) -> list[Observation]:
+    """Stamp each observation when its source phase began reading (never after its earliest dependency read, and
+    never later than the collection's end), so a PASS read before slower sources is not carried forward, and revalidate
+    every time-limited PASS against its stamp. A fixed-clock collection (now given) stamps at its frozen end."""
+    out = []
+    for item in observations:
+        stamp = min(item._made, finished) if live and isinstance(item._made, datetime) else finished
+        item = replace(item, observed_at=stamp, expires_at=stamp + FRESH_FOR)
+        # Time-limited evidence must hold through the collection's FINAL cutoff (not only its own stamp): check 12's
+        # capture expiries, check 15's UTC-day rollover.
+        if item.passed is True and item.valid_until is not None and max(stamp, finished) > item.valid_until:
+            item = replace(item, passed=None, explanation="Time-limited evidence does not stay valid FRESH_FOR past "
+                           "the collection's final cutoff: " + item.explanation)
+        out.append(item)
+    return out
 
 
 RUN_RECORD_FIELDS = frozenset({
@@ -544,7 +3363,7 @@ def evaluate_run_record(row: dict[str, Any], *, mode: str,
         return False, "Run IDs must be distinct."
     try:
         values = [row[key] for key in ("wall_seconds", "owner_pause_seconds", "machine_seconds", "actual_cost_usd")]
-        if any(type(value) not in {int, float} for value in values):
+        if any(not _amount(value) for value in values):
             return None, "Measurements must be finite numeric values."
         wall, pause, machine, cost = values
         if not (0 <= pause <= wall < 60 and 0 <= machine < 60 and abs(wall - pause - machine) < 0.001 and 0 <= cost < 1):
@@ -609,6 +3428,11 @@ QUALIFICATION_RECORD_FIELDS = frozenset({
 _STATUS_RECEIPT_KEYS = ("tasks_created", "assignments_created", "provider_attempts_created", "deduplicated_receipts")
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
 _ASSERTED = "asserted links only; authenticated collector correlation is a separate requirement"
+
+
+def _amount(value: Any) -> bool:
+    """A finite, non-negative int or float; booleans, NaN and Infinity are not amounts."""
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
 def _counter(value: Any) -> bool:
@@ -697,6 +3521,19 @@ def _file_references(folder: Path | None) -> list[dict[str, str]]:
     return result
 
 
+def _launcher():
+    # Source comes from the evaluator tree. The installed copy remains the only
+    # trust root; its --verify-report entry point independently checks saved reports.
+    spec = importlib.util.spec_from_file_location("scorecard_launcher", _REPO_ROOT / "scripts" / "scorecard-launcher.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def report_is_attested(report: dict[str, Any]) -> bool:
+    return _launcher().report_is_attested(report)
+
+
 def score(candidate_sha: str, observations: list[Observation] | None = None, *,
           now: datetime | None = None, runtime_sha: str | None = None,
           image_id: str | None = None, evidence_dir: Path | None = None) -> dict[str, Any]:
@@ -705,6 +3542,16 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
     at = now or datetime.now(timezone.utc)
     if at.tzinfo is None:
         raise ValueError("score time must be timezone-aware")
+    # Runtime evidence scores for exactly one runtime binding: the one supplied, or else the single binding every
+    # runtime observation carries. Mixed deployments or images score no runtime check.
+    runtime_checks = {check.id for check in CHECKS if check.scope == "runtime"}
+    bindings = {(item.runtime_sha, item.image_id) for item in observations or []
+                if isinstance(item, Observation) and item._origin is _COLLECTED and item.check_id in runtime_checks
+                and item.runtime_sha and item.image_id and (not runtime_sha or item.runtime_sha == runtime_sha)
+                and (not image_id or item.image_id == image_id)}
+    mixed = not (runtime_sha and image_id) and len(bindings) > 1
+    if not (runtime_sha and image_id) and len(bindings) == 1:
+        runtime_sha, image_id = next(iter(bindings))
     rows = []
     for check in CHECKS:
         row = {**asdict(check), "status": "UNKNOWN", "explanation": "No authoritative collector proof is available.", "evidence": []}
@@ -719,6 +3566,8 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                 error = "Evidence is future-dated, stale or has an invalid expiry."
             elif check.scope == "candidate" and item.candidate_sha != candidate_sha:
                 error = "Evidence belongs to another candidate."
+            elif check.scope == "runtime" and mixed:
+                error = "Runtime evidence carries more than one runtime binding; no single runtime is scored."
             elif check.scope == "runtime" and (not item.runtime_sha or not item.image_id or
                     (runtime_sha and item.runtime_sha != runtime_sha) or (image_id and item.image_id != image_id)):
                 error = "Evidence is missing or mismatches the runtime image binding."
@@ -730,25 +3579,84 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                                 "candidate_sha": item.candidate_sha, "runtime_sha": item.runtime_sha, "image_id": item.image_id}]
         rows.append(row)
     passed = sum(row["status"] == "PASS" for row in rows)
+    launcher = _launcher()
+    attestation = launcher.run_attestation(_REPO_ROOT)
+    attested = attestation is not None
     return {"schema": "director-completion-scorecard/v1", "generated_at": at.isoformat(),
+            "attested": attested, "attestation": attestation,
+            "origin": "Owner-installed launcher" if attested else launcher.UNATTESTED,
             "candidate_sha": candidate_sha, "runtime_sha": runtime_sha, "image_id": image_id,
-            "passed": passed, "total": 20, "percent": passed * 5, "all_checks_verified": passed == 20,
+            "passed": passed if attested else "UNATTESTED", "total": 20,
+            "percent": passed * 5 if attested else "UNATTESTED", "all_checks_verified": attested and passed == 20,
             "activation_authorized": False, "readiness": "NOT_AUTHORIZED_BY_SCORECARD",
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Collectors currently cover checks 01, 02, 05, 13, 16, 18 and 19, plus negative evidence for 07 and 12; other checks, including authoritative reconciliation consistency for 07, require source-verifier integration.",
+                            "Checks " + ", ".join(sorted(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)) +
+                            " are contained by the trusted-collection follow-up (#313 / PR #327); "
+                            "other missing selections or unavailable sources also stay UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
 
-def render_markdown(report: dict[str, Any]) -> str:
+TRUSTED_CHECKOUT_REFUSAL = "scorecard not run from the pinned evaluator checkout"
+
+
+def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | None:
+    """Check evaluator/candidate consistency, not launcher origin (environment claims are forgeable).
+    Attestation is checked separately. The owner-installed launcher
+    (scripts/scorecard-launcher.py) extracts exactly that commit's tree with git archive and runs it; this code must
+    be running from that tree (DIRECTOR_SCORECARD_TREE), the pin must be on github/main and an ancestor of (or equal
+    to) the candidate graded as data. None when it holds, else why not."""
+    pinned = evaluator_pin(cli_release_descriptor())
+    if pinned is None:
+        return "evaluator revision not pinned"
+    root = root or _REPO_ROOT
+    tree, repo = os.environ.get("DIRECTOR_SCORECARD_TREE"), os.environ.get("DIRECTOR_SCORECARD_REPO")
+    if not tree or not repo or os.path.normcase(str(Path(tree).resolve())) != os.path.normcase(str(root.resolve())):
+        return "not started by the owner-installed launcher from the archived evaluator tree"
+    # Review 4112533825: the archived tree is bound to the exact pin the launcher extracted; a descriptor rotated
+    # since (a different evaluator_sha) refuses rather than grading one revision's code under another's pin.
+    if os.environ.get("DIRECTOR_SCORECARD_EVALUATOR_SHA") != pinned:
+        return "the release descriptor no longer pins the evaluator revision the launcher extracted"
+
+    def git(*arguments: str) -> str:
+        return _run_bytes(["git", "-C", repo, *arguments]).decode().strip()
+    try:
+        git("merge-base", "--is-ancestor", pinned, "github/main")  # a nonzero exit raises: not on main
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "the pinned evaluator revision could not be verified on github/main"
+    try:
+        git("merge-base", "--is-ancestor", pinned, candidate_sha)  # an ancestor of, or equal to, the candidate
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "the pinned evaluator revision is not an ancestor of the candidate"
+    return None
+
+
+def refuse_untrusted(report: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Every check UNKNOWN: an evaluator the candidate could control grades nothing."""
+    for row in report["checks"]:
+        row.update(status="UNKNOWN", explanation=f"{TRUSTED_CHECKOUT_REFUSAL}: {reason}.", evidence=[])
+    report.update(passed=0 if report.get("attested") is True else "UNATTESTED",
+                  percent=0 if report.get("attested") is True else "UNATTESTED", all_checks_verified=False)
+    return report
+
+
+def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) -> str:
     def escape(value: Any) -> str:
         return str(value).replace("|", "\\|").replace("\n", " ").replace("<", "&lt;").replace(">", "&gt;")
-    lines = ["# Director completion scorecard", "", f"**{report['passed']}/20 verified ({report['percent']}%)**",
+    launcher = _launcher()
+    pending = launcher.run_attestation(_REPO_ROOT) if _pending_launch else None
+    attested = report_is_attested(report) or (pending is not None and report.get("attested") is True and
+                                            pending == report.get("attestation"))
+    lines = ["# Director completion scorecard" if attested else launcher.UNATTESTED, "",
+             f"**{report['passed']}/20 verified ({report['percent']}%)**" if attested else "**Counts: UNATTESTED**",
              "", f"Observed: {report['generated_at']}", f"Candidate: `{report['candidate_sha']}`", "",
              "This is a progress display. It grants no activation, spending or merge authority.", "",
              "| # | Required outcome | State | Evidence or next action |", "|---|---|---|---|"]
+    if attested:
+        lines[4:4] = ["Attested: true; verify the completed JSON receipt with the owner-installed launcher.",
+                      "Attestation: `" + escape(json.dumps(report["attestation"], sort_keys=True)) + "`", ""]
     for row in report["checks"]:
         detail = row["explanation"] + (" Next: " + row["action"] if row["status"] != "PASS" else "")
         lines.append(f"| {row['id']} | {escape(row['title'])} | **{row['status']}** | {escape(detail)} |")
@@ -779,3 +3687,67 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]

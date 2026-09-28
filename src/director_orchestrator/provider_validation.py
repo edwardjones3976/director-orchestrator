@@ -1,4 +1,5 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -499,10 +500,16 @@ class CaptureVerifier:
         self.openai_responses_route=openai_responses_route
 
     def verify(self, binding: ProviderActivationBinding, evidence_digest: str, *, expires_at=None) -> bool:
+        return self.verified_output(binding, evidence_digest, expires_at=expires_at) is not None
+
+    def verified_output(self, binding: ProviderActivationBinding, evidence_digest: str, *,
+                        expires_at=None) -> bytes | None:
+        """The exact provider output bytes this verification read and checked (one load_capture), or None when the
+        capture does not verify: a reader classifies what was verified, never a second read of the store."""
         try:
             row = self.store.load_capture(evidence_digest)
             if row is None or row[3] or row[4] <= int(time.time()) or row[5] != "succeeded":
-                return False
+                return None
             capture = ValidationCapture(**row[0])
             # The expected tree is compared, not just carried: a valid signed
             # capture minted for another runtime tree under the same candidate
@@ -515,9 +522,9 @@ class CaptureVerifier:
                     or digest(bytes(row[1])) != capture.input_digest or digest(bytes(row[2])) != capture.output_digest
                     or digest(canonical_json_bytes(asdict(capture))) != evidence_digest
                     or (expires_at is not None and expires_at.timestamp() > capture.expires_at)):
-                return False
+                return None
             if capture.provider == "antigravity" and json.loads(bytes(row[2])).get("attempt_digest") != "sha256:"+capture.reservation:
-                return False
+                return None
             # A signed capture pins the lane configuration it was minted under.
             # Re-normalising the response cannot detect a rotated credential,
             # endpoint, meter enrollment, timeout ceiling or worker fingerprint,
@@ -532,18 +539,18 @@ class CaptureVerifier:
             # only through re-execution, never through this read path.
             if capture.provider == "openai" and self.openai_responses_route is not None:
                 if capture.configuration_digest != self.openai_responses_route.configuration_digest:
-                    return False
+                    return None
             if capture.provider == "antigravity" and self.team_route is not None:
                 if capture.configuration_digest != self.team_route.configuration_digest():
-                    return False
+                    return None
             result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),
                                        team_route=self.team_route, openai_responses_route=self.openai_responses_route)
             if digest(canonical_json_bytes(result)) != capture.result_digest or result["run_reference"] != capture.native_session:
-                return False
+                return None
             expected = hmac.new(self.key.encode(),canonical_json_bytes(capture.payload()),hashlib.sha256).hexdigest()
-            return hmac.compare_digest(expected,capture.signature)
+            return bytes(row[2]) if hmac.compare_digest(expected,capture.signature) else None
         except (ValueError,TypeError,KeyError,ValidationError):
-            return False
+            return None
 
 
 _GENERATION_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -1153,4 +1160,5 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
