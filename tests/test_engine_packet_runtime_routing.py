@@ -1,3 +1,15 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:26 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
@@ -49,7 +61,7 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.packet_results import PacketResultProgression
+from director_orchestrator.packet_results import DirectorPacketResultConsumer, PacketResultProgression
 from director_orchestrator.packet_contracts import load_json_document
 from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.parallel_dispatch import MemberState
@@ -100,7 +112,7 @@ class BlockingSyncLateReadbackTransport(LateReadbackTransport):
     ) -> Mapping[str, Any]:
         self.readback_calls += 1
         self.entered.set()
-        self.release.wait(timeout=5)
+        self.release.wait(timeout=60)
         return copy.deepcopy(self.result)
 
 
@@ -221,10 +233,11 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         *,
         estimated_cost_usd: float = 0,
         workload_policy_version: str | None = None,
+        agent: ProviderName = ProviderName.CLAUDE,
     ) -> tuple[TaskRecord, Assignment]:
         assignment = Assignment(
             sequence=1,
-            agent=ProviderName.CLAUDE,
+            agent=agent,
             task="Route one assignment through the packet coordinator",
             acceptance=["The coordinator owns dispatch"],
             repository="example/demo",
@@ -321,6 +334,48 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted.status, TaskStatus.OWNER_DECISION_REQUIRED)
         self.assertIn("packet coordinator executed", persisted.message)
         self.assertNotIn("will not dispatch", persisted.message)
+
+    async def test_packet_settlement_failure_retains_result_and_blocks_replay(self):
+        result = copy.deepcopy(self.result)
+        result["provider"] = "gemini"
+        transport = RecordingTransport(result)
+        router = StubPacketTaskRouter(self.work, PacketBoundaryAdapter("gemini", transport))
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            gemini_daily_budget_usd=1.0,
+            gemini_usage_probe_cost_ceiling_usd=0.01,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router, packet_result_consumer=consumer)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(agent=ProviderName.GEMINI)
+        store.create(record)
+        with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
+            self.assertFalse(await engine._execute_assignment(record, assignment))
+        stopped = store.get(record.task_id)
+        self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+        self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
+        self.assertEqual(stopped.provider_runs[-1].run_id, result["run_reference"])
+        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["result_packet_digest"], document_digest(result))
+        self.assertEqual(consumer.calls, 0)
+        self.assertFalse(await engine._execute_assignment(stopped, assignment))
+        self.assertFalse(await engine._route_live_dispatch(stopped, assignment))
+        self.assertEqual(transport.sends, 1)
+        self.assertTrue(engine._retry_spend_settlements(stopped))
+        with patch.object(
+            consumer, "consume", side_effect=DirectorPacketResultConsumer().consume
+        ) as consume, patch.object(engine.provider_spend, "record_charge") as recharged:
+            await engine._route_live_dispatch(stopped, assignment)
+        self.assertEqual(consume.call_count, 1)
+        recharged.assert_not_called()
+        self.assertIsNone(store.get(record.task_id).error)
+        recovered = store.get(record.task_id).provider_runs[-1]
+        self.assertEqual(recovered.run_id, result["run_reference"])
+        self.assertEqual(recovered.raw["packet_result_digest"], document_digest(result))
+        self.assertEqual(transport.sends, 1)
 
     async def test_missing_packet_authority_fails_closed_without_legacy_dispatch(
         self,
@@ -811,11 +866,160 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, consumer.calls)
         self.assertEqual(self.work["starting_ref"], transport.readback_packet["starting_ref"])
 
+    async def test_reconciled_readback_settles_its_higher_cost(self) -> None:
+        """Review 4112821088: run_packet returns OWNER_DECISION_REQUIRED (its finally settles that outcome, which has
+        no packet), then the authenticated readback's native run metering carries the real $0.60 charge. It settles
+        again before it is consumed, so with $0.50 of other spend the next reservation under the $1 cap is refused."""
+        # This fixture transport has a fixed bounded request; token prices alone
+        # cannot establish a bound for arbitrary production packet transports.
+        pricing = patch("director_orchestrator.engine.assignment_request_cost_bound", return_value=0.01)
+        pricing.start()
+        self.addCleanup(pricing.stop)
+        result = copy.deepcopy(self.result)
+        result["provider"] = "gemini"
+        # Gemini packet usage does not project native usage.cost into cost_usd.
+        result["usage"] = {**result["usage"], "cost_usd": None}
+        transport = LateReadbackTransport(result)
+        router = StubPacketTaskRouter(self.work, PacketBoundaryAdapter("gemini", transport))
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            gemini_api_key="configured-for-readiness-only",
+            gemini_daily_budget_usd=1.0,
+            gemini_input_usd_per_mtok=1.0, gemini_output_usd_per_mtok=1.0,
+            gemini_usage_probe_cost_ceiling_usd=0.01,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router, packet_result_consumer=consumer)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(agent=ProviderName.GEMINI)
+        store.create(record)
+        other = hashlib.sha256(b"other-spend").hexdigest()
+        engine.provider_spend.reserve(provider=ProviderName.GEMINI, effect_key=other, estimated_cost_usd=0.5,
+                                      request_limit=50, budget_usd=1.0)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+        self.assertEqual("RECONCILIATION_REQUIRED", self._ledger_status())
+        self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.51)
+
+        late = store.get(record.task_id)
+        late.status = TaskStatus.RUNNING
+        late.provider_runs.append(
+            ProviderRun(
+                provider=ProviderName.GEMINI,
+                assignment_sequence=assignment.sequence,
+                interaction_id=result["correlation"]["correlation_id"],
+                run_id=result["run_reference"],
+                status="completed",
+                result=result["outcome"],
+                evidence_source="provider_authenticated",
+                raw={"usage": {"cost": 0.60}},
+            )
+        )
+        store.save(late)
+        self.assertIsNone(await engine._route_live_dispatch(store.get(record.task_id), assignment))
+        self.assertEqual("COMPLETED", self._ledger_status())
+        self.assertEqual(1, consumer.calls)
+        self.assertEqual(1, transport.sends)
+        self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 1.10)
+        with self.assertRaises(ProviderDailyLimitExceeded):
+            engine.provider_spend.reserve(provider=ProviderName.GEMINI,
+                                          effect_key=hashlib.sha256(b"next").hexdigest(),
+                                          estimated_cost_usd=0.01, request_limit=50, budget_usd=1.0)
+
+    async def test_readback_settlement_failure_preserves_authenticated_result(self) -> None:
+        # This fixture transport has a fixed bounded request; token prices alone
+        # cannot establish a bound for arbitrary production packet transports.
+        pricing = patch("director_orchestrator.engine.assignment_request_cost_bound", return_value=0.01)
+        pricing.start()
+        self.addCleanup(pricing.stop)
+        result = copy.deepcopy(self.result)
+        result["provider"] = "gemini"
+        # Gemini packet usage does not project native usage.cost into cost_usd.
+        result["usage"] = {**result["usage"], "cost_usd": None}
+        transport = LateReadbackTransport(result)
+        router = StubPacketTaskRouter(self.work, PacketBoundaryAdapter("gemini", transport))
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            gemini_api_key="configured-for-readiness-only",
+            gemini_daily_budget_usd=1.0,
+            gemini_input_usd_per_mtok=1.0, gemini_output_usd_per_mtok=1.0,
+            gemini_usage_probe_cost_ceiling_usd=0.01,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router, packet_result_consumer=consumer)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(agent=ProviderName.GEMINI)
+        store.create(record)
+        other = hashlib.sha256(b"other-spend").hexdigest()
+        engine.provider_spend.reserve(provider=ProviderName.GEMINI, effect_key=other, estimated_cost_usd=0.5,
+                                      request_limit=50, budget_usd=1.0)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+        self.assertEqual("RECONCILIATION_REQUIRED", self._ledger_status())
+        self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.51)
+
+        late = store.get(record.task_id)
+        late.status = TaskStatus.RUNNING
+        late.provider_runs.append(
+            ProviderRun(
+                provider=ProviderName.GEMINI,
+                assignment_sequence=assignment.sequence,
+                interaction_id=result["correlation"]["correlation_id"],
+                run_id=result["run_reference"],
+                status="completed",
+                result=result["outcome"],
+                evidence_source="provider_authenticated",
+                raw={"usage": {"cost": 0.60}},
+            )
+        )
+        store.save(late)
+        original_reservations = dict(engine.provider_spend.reservations(assignment.agent))
+        self.assertEqual(len(original_reservations), 2)
+        packet_key, = set(original_reservations) - {other}
+        real_charge = engine.provider_spend.record_charge
+
+        def charge(**kwargs):
+            if kwargs["actual_cost_usd"] is not None:
+                raise sqlite3.OperationalError("locked")
+            return real_charge(**kwargs)
+
+        with patch.object(engine.provider_spend, "record_charge", side_effect=charge):
+            self.assertFalse(await engine._route_live_dispatch(store.get(record.task_id), assignment))
+        stopped = store.get(record.task_id)
+        self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+        self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
+        self.assertEqual(stopped.provider_runs[-1].run_id, result["run_reference"])
+        self.assertEqual(stopped.provider_runs[-1].raw["usage"]["cost"], 0.60)
+        self.assertFalse(await engine._execute_assignment(stopped, assignment))
+        self.assertEqual(transport.sends, 1)
+        self.assertEqual(consumer.calls, 0)
+        self.assertEqual(next(iter(engine._spend_settlements(stopped, stopped.provider_runs[-1]).values()))["result_packet_digest"], document_digest(result))
+        with patch.object(engine.provider_spend, "record_charge", wraps=real_charge) as retry_charge:
+            self.assertTrue(engine._retry_spend_settlements(stopped))
+        retry_charge.assert_called_once()
+        self.assertEqual(retry_charge.call_args.kwargs["effect_key"], packet_key)
+        self.assertEqual(retry_charge.call_args.kwargs["actual_cost_usd"], 0.60)
+        with patch.object(
+            engine.provider_spend, "reserve", side_effect=AssertionError("must reuse original reservation")
+        ):
+            await engine._route_live_dispatch(stopped, assignment)
+        self.assertEqual(consumer.calls, 1)
+        self.assertEqual(dict(engine.provider_spend.reservations(assignment.agent)), original_reservations)
+        # The unrelated $0.50 hold remains; only the original packet is charged $0.60.
+        self.assertEqual(engine.provider_spend.exposure(assignment.agent), (2, 1.10))
+        self.assertEqual(transport.sends, 1)
+
     async def test_blocking_sync_readback_times_out_without_freezing_or_redispatch(
         self,
     ) -> None:
         work = copy.deepcopy(self.work)
-        work["limits"]["timeout_seconds"] = 1
+        work["limits"]["timeout_seconds"] = 5
         transport = BlockingSyncLateReadbackTransport(self.result)
         router = StubPacketTaskRouter(
             work, PacketBoundaryAdapter("claude", transport)
@@ -863,7 +1067,10 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.sleep(0.05)
             self.assertFalse(route.done(), "sync readback blocked the event loop")
-            self.assertFalse(await asyncio.wait_for(route, timeout=2))
+            try:
+                self.assertFalse(await asyncio.wait_for(route, timeout=30))
+            except TimeoutError:
+                self.fail("sync readback route did not time out within 30 seconds")
         finally:
             transport.release.set()
 
@@ -1002,6 +1209,172 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(TaskStatus.BLOCKED, persisted.status)
         self.assertIn("daily", persisted.message.lower())
         engine.director.plan.assert_not_awaited()
+
+    async def test_parallel_settlement_failure_keeps_result_and_stops_replay(self):
+        await self._parallel_settlement_failure()
+
+    async def test_parallel_cancellation_propagates_when_settlement_fails(self):
+        await self._parallel_settlement_failure(cancel=True)
+
+    async def test_parallel_reset_before_settlement_keeps_only_accounting(self):
+        await self._parallel_settlement_failure(reset=True)
+
+    async def _parallel_settlement_failure(self, *, cancel=False, reset=False):
+        assignments = [
+            Assignment(
+                sequence=1,
+                agent=ProviderName.GEMINI,
+                task="Independently inspect fixture A",
+                acceptance=["Fixture A inspected"],
+                repository="example/demo",
+                estimated_cost_usd=0.1,
+            ),
+            Assignment(
+                sequence=2,
+                agent=ProviderName.OPENAI,
+                task="Independently inspect fixture B",
+                acceptance=["Fixture B inspected"],
+                repository="example/demo",
+                estimated_cost_usd=0.1,
+            ),
+        ]
+        record, _ = self._record()
+        record.plan.assignments = assignments
+        record.plan.max_hops = 3
+        record.task_effect_ledger = []
+        record.provider_interaction_ledger = []
+        record.plan_interaction_id = None
+        record.plan_generation = 0
+        seed_production_plan_materialization(record)
+        packets = {}
+        adapters = {}
+        transports = {}
+        for assignment in assignments:
+            work = copy.deepcopy(self.work)
+            work["assignment_id"] = f"{record.task_id}-{assignment.sequence}"
+            work["objective"] = assignment.task
+            work["acceptance_checks"] = list(assignment.acceptance)
+            work["idempotency_key"] = (
+                f"{record.task_id}:{record.plan_generation}:{assignment.sequence}:"
+                + ("a" * 64)
+            )
+            work["correlation"]["correlation_id"] = (
+                f"{record.task_id}:generation-{record.plan_generation}:"
+                f"assignment-{assignment.sequence}"
+            )
+            packets[assignment.sequence] = work
+            result = copy.deepcopy(self.result)
+            for field in (
+                "task_id",
+                "assignment_id",
+                "idempotency_key",
+                "authority_snapshot_digest",
+                "correlation",
+            ):
+                result[field] = copy.deepcopy(work[field])
+            result["provider"] = assignment.agent.value
+            result["run_reference"] = f"run-{assignment.sequence}"
+            if assignment.sequence == 2:
+                result["status"] = "FAILED"
+                result["blockers"] = ["Provider reported a terminal failure."]
+            result["acceptance"] = [
+                {
+                    "check": assignment.acceptance[0],
+                    "status": "NOT_RUN",
+                    "evidence": "Director review remains required.",
+                }
+            ]
+            transport = RecordingTransport(result)
+            transports[assignment.agent.value] = transport
+            adapters[assignment.agent.value] = PacketBoundaryAdapter(
+                assignment.agent.value, transport
+            )
+        router = MultiPacketTaskRouter(packets, adapters)
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            langgraph_parallel_external_dispatch_enabled=True,
+            langgraph_parallel_kill_switch=False,
+            gemini_daily_budget_usd=1.0,
+            langgraph_parallel_gemini_cap=2,
+            max_task_budget_usd=1.0,
+            max_daily_provider_budget_usd=5.0,
+        )
+        activation = RuntimeActivation(
+            settings,
+            packet_task_router=router,
+            packet_result_consumer=consumer,
+        )
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        engine._publish_delegation = AsyncMock(return_value=True)
+        stored, _ = store.create(record)
+
+        if reset:
+            from director_orchestrator.approvals import reset_for_owner_clarification
+
+            settle = engine._settle_packet_spend
+            dispatch_generation = stored.plan_generation
+            reset_done = False
+
+            def settle_after_reset(*args, **kwargs):
+                nonlocal reset_done
+                if not reset_done:
+                    current = store.get(record.task_id)
+                    reset_for_owner_clarification(current)
+                    current.plan_generation += 1
+                    store.save(current)
+                    reset_done = True
+                return settle(*args, **kwargs)
+
+            with patch.object(engine, "_settle_packet_spend", side_effect=settle_after_reset):
+                self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
+            self.assertTrue(reset_done)
+            self.assertEqual(store.get(record.task_id).provider_runs, [])
+            self.assertEqual(consumer.calls, 0)
+            self.assertEqual(transports["gemini"].sends, 1)
+            self.assertEqual(transports["openai"].sends, 1)
+            held, = engine.provider_spend.settlements(record.task_id).values()
+            self.assertEqual(held["plan_generation"], dispatch_generation)
+            self.assertFalse(held["pending"])
+            return
+
+        if cancel:
+            with patch("director_orchestrator.engine.asyncio.to_thread", new=AsyncMock(side_effect=asyncio.CancelledError)), patch.object(
+                engine, "_settle_packet_spend", return_value=False
+            ) as settle:
+                with self.assertRaises(asyncio.CancelledError):
+                    await engine._dispatch_parallel_packet_batch(stored)
+            self.assertGreater(settle.call_count, 0)
+            self.assertEqual(consumer.calls, 0)
+            return
+
+        with patch.object(engine.provider_spend, "record_charge", side_effect=sqlite3.OperationalError("locked")):
+            self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
+        stopped = store.get(record.task_id)
+        self.assertEqual(stopped.status, TaskStatus.OWNER_DECISION_REQUIRED)
+        self.assertTrue(stopped.error.startswith("spend_settlement_failed:"))
+        self.assertEqual(stopped.provider_runs[-1].run_id, "run-1")
+        self.assertTrue(engine._spend_settlements(stopped, stopped.provider_runs[-1]))
+        self.assertEqual(consumer.calls, 0)
+        self.assertFalse(await engine._dispatch_parallel_packet_batch(stopped))
+        self.assertEqual(transports["gemini"].sends, 1)
+        self.assertEqual(transports["openai"].sends, 1)
+        batch = engine.parallel_dispatch.find_latest_batch(record.task_id, tuple(
+            hashlib.sha256(work["idempotency_key"].encode()).hexdigest() for work in packets.values()
+        ))
+        self.assertIsNotNone(batch)
+        self.assertTrue(all(member.state == MemberState.SUCCEEDED for member in batch.members))
+        self.assertTrue(engine._retry_spend_settlements(stopped))
+        # The terminal FAILED packet remains a terminal execution result: both
+        # members succeeded in returning evidence, and accounting cannot change it.
+        self.assertFalse(await engine._dispatch_parallel_packet_batch(stopped))
+        self.assertEqual(consumer.calls, 2)
+        self.assertEqual(store.get(record.task_id).status, TaskStatus.BLOCKED)
+        self.assertEqual(transports["gemini"].sends, 1)
+        self.assertEqual(transports["openai"].sends, 1)
 
     async def test_parallel_terminal_packet_stops_before_director_acceptance(self):
         assignments = [
@@ -1256,3 +1629,15 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:59 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]

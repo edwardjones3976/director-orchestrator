@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
@@ -232,6 +233,78 @@ class ProviderDailySpendLedgerTests(unittest.TestCase):
                     now=now,
                 )
 
+    def test_admission_counts_each_reservation_at_its_actual_charge(self):
+        """Review 4111357778: a $0.50 charge on a $0.01 probe reservation plus $0.75 of work is $1.25 of exposure; the
+        same reconciliation gates reserve(), inside its BEGIN IMMEDIATE write lock."""
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+            probe, work = "a" * 64, "b" * 64
+            self.assertEqual(ledger.reserve(provider=ProviderName.GROK, effect_key=probe, estimated_cost_usd=0.01,
+                                            request_limit=10, budget_usd=1.0), (1, 0.01))
+            ledger.record_charge(provider=ProviderName.GROK, effect_key=probe, actual_cost_usd=0.50)
+            ledger.record_charge(provider=ProviderName.GROK, effect_key=probe, actual_cost_usd=0.10)  # never lowered
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 0.5))
+            # $0.50 + $0.75 exceeds the $1 cap: refused, where the estimates alone ($0.76) would have admitted it.
+            with self.assertRaises(ProviderDailyLimitExceeded):
+                ledger.reserve(provider=ProviderName.GROK, effect_key=work, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0)
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 0.5))
+            ledger.reserve(provider=ProviderName.GROK, effect_key=work, estimated_cost_usd=0.45,
+                           request_limit=10, budget_usd=1.0)
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (2, 0.95))
+            # A charge the ledger never reserved (a gemini probe) is its own row at a zero reservation.
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key="c" * 64, actual_cost_usd=0.3)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI), (1, 0.3))
+            for bad in (-0.1, float("nan"), float("inf"), True):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    ledger.record_charge(provider=ProviderName.GROK, effect_key=probe, actual_cost_usd=bad)
+
+    def test_concurrent_reservations_cannot_both_pass_the_reconciled_cap(self):
+        """Two admissions racing for the last $0.40 under a $1 cap (exposure $0.60): exactly one is admitted."""
+        import threading
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "tasks.sqlite3")
+            ledger = ProviderDailySpendLedger(path)
+            ledger.reserve(provider=ProviderName.GROK, effect_key="a" * 64, estimated_cost_usd=0.01,
+                           request_limit=100, budget_usd=1.0)
+            ledger.record_charge(provider=ProviderName.GROK, effect_key="a" * 64, actual_cost_usd=0.60)
+            barrier, outcomes = threading.Barrier(8), []
+
+            def admit(index):
+                barrier.wait()
+                try:
+                    ProviderDailySpendLedger(path).reserve(
+                        provider=ProviderName.GROK, effect_key=format(index + 1, "x") * 64,
+                        estimated_cost_usd=0.40, request_limit=100, budget_usd=1.0)
+                    outcomes.append("admitted")
+                except ProviderDailyLimitExceeded:
+                    outcomes.append("refused")
+
+            threads = [threading.Thread(target=admit, args=(index,)) for index in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=60)
+            self.assertEqual(sorted(outcomes), ["admitted"] + ["refused"] * 7)
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (2, 1.0))
+
+    def test_an_existing_ledger_gains_the_charge_column_in_place(self):
+        import sqlite3
+        from contextlib import closing
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "tasks.sqlite3")
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute(
+                    """CREATE TABLE provider_daily_spend_reservations (
+                        provider TEXT NOT NULL, effect_key TEXT NOT NULL, utc_day TEXT NOT NULL,
+                        estimated_cost_usd REAL NOT NULL CHECK(estimated_cost_usd >= 0),
+                        recorded_at TEXT NOT NULL, PRIMARY KEY(provider, effect_key))""")
+                connection.execute(
+                    "INSERT INTO provider_daily_spend_reservations VALUES ('grok', ?, ?, 0.2, 'x')",
+                    ("a" * 64, datetime.now(timezone.utc).date().isoformat()))
+            ledger = ProviderDailySpendLedger(path)
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 0.2))  # a NULL charge counts at its reservation
+
     def test_effect_key_accounting_mismatch_is_an_integrity_conflict(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
@@ -269,3 +342,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
