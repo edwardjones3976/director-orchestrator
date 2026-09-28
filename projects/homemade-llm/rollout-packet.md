@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | BEGIN]] -->
 <!-- MX-054 -->
@@ -45,6 +46,9 @@ are borrowed from another deployment. No secret values appear here.
 - **External effects:** explicitly_scoped
   - **Allowed:** Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)
   - **Allowed:** Independent reviews through owner-approved provider routes, including the redacted Set B v2 review and authenticated batch-1 ACCEPT on the frozen packet (`xai/20260926T225645Z-268799-d4c6.json`, response ID `473bbadc-7d1a-93af-9b73-6299017e9b97`). The prior incomplete rerun receipt remains historical evidence. pr-45 is a known MINOR reference imperfection to disclose with Set B results; M1 scoring gates remain separate [verified, receipts; joint disposition in PR #294 comment 5850665622].
+  - **Allowed (2026-09-28, O-050/O-051):** M2 paid provider calls under PR #340: exemplar generation by the Anthropic API, OpenAI/Codex and Cursor lanes and grading by non-author graders, purpose prefix `homemade-llm M2`, within the M2 caps (USD 10 generation, USD 6 grading, USD 8 evaluation, USD 25 total), only after the spend meter carries the M2 window (#341, D-M2-8). Perplexity: research only.
+  - **Allowed (2026-09-28, O-051):** M2 GPU work on the host: the D-M1-F feasibility probe and QLoRA adapter training v0.1 to v0.3 on the O-045 winner inside the pinned Unsloth image, under the GPU lock and storage guards; pilot expansion and v0.1 training also wait on gate G-M2-5 in PR #340.
+  - **Allowed (2026-09-28, O-053):** archive of the two non-winning M1 bases to `E:\llm-archive` with hash verification; removal from `C:\llm` only after the Qwen3-14B probe passes and on a recorded owner Go.
   - Any new external effect requires a profile revision first (`fallbacks.changed_scope: reshape_profile_before_dependent_work`).
   - **Prohibited:** Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)
 - **Paid execution:** owner-authorized and gated — USD 25 per milestone ledger; a call that would breach it stops
@@ -135,3 +139,4 @@ used as a fallback.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:15 UTC | END]] -->
