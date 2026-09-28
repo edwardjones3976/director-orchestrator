@@ -202,17 +202,17 @@ function Get-LaneStateDirectory {
 
 function Get-SlotInventory {
     # One daemon snapshot includes reservations and their pre-created owners.
-    $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.Labels}}')
+    $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}')
     if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
     foreach ($row in $rows) {
         $parts = [string]$row -split '\|', 3
-        if ($parts.Count -ne 3) { throw "Invalid Docker slot inventory." }
+        if ($parts.Count -ne 4) { throw "Invalid Docker slot inventory." }
         $labels = @{}
-        foreach ($label in ($parts[2] -split ',')) {
+        foreach ($label in ($parts[3] -split ',')) {
             $pair = $label -split '=', 2
             if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
         }
-        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
+        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; State = $parts[2]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
     }
 }
 
@@ -243,7 +243,19 @@ function Enter-LaneSlot {
     do {
         $inventory = @(Get-SlotInventory)
         foreach ($slot in $inventory | Where-Object { $_.Owner -and $_.Name -match '^director-test-lane-slot-[1-9][0-9]*$' }) {
-            if (@($inventory | ForEach-Object { $_.Name }) -cnotcontains $slot.Owner) { Remove-SlotContainer $slot.Id }
+            $owner = @($inventory | Where-Object { $_.Name -ceq $slot.Owner })
+            if ($owner.Count -eq 0) { Remove-SlotContainer $slot.Id; continue }
+            # A managed lane runs for the whole of its job. One that has exited
+            # or died belongs to a job the daemon or runner already lost (for
+            # example a Docker Desktop outage, which skips the Stop step), so it
+            # can never release its slot: reclaim the slot and the dead lane.
+            # A lane still in the created state may be a neighbour between its
+            # create and start, and a lane this script did not create is never
+            # touched.
+            if ($owner[0].Lane -eq 'true' -and $owner[0].Managed -eq 'true' -and $owner[0].State -in @('exited', 'dead')) {
+                Remove-SlotContainer $slot.Id
+                Remove-SlotContainer $owner[0].Id
+            }
         }
         for ($number = 1; $number -le $limit; $number++) {
             # Daemon name uniqueness is atomic across Windows and WSL.
