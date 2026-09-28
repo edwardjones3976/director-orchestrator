@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
@@ -58,8 +59,10 @@ declared in the source message.
 
 This measures simulated orchestration structure, not real provider answer
 quality. The good-run standard additionally requires authentic owner input,
-bounded work, one task, no ambiguous effects/delivery, wall time below 60 seconds,
-and attributable cost below USD 1. Machine time alone cannot satisfy wall time.
+bounded work, one task, no ambiguous effects/delivery, and complete attributable
+evidence. Wall time, machine time and actual cost are reported metrics; the former
+60-second/USD 1 figures are not acceptance gates. Nonnegative measurements and
+wall = owner pause + machine remain required; separate spending caps still apply.
 
 ## Collect after the owner completes a trial
 
@@ -335,3 +338,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->

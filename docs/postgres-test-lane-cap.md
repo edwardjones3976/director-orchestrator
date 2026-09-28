@@ -1,9 +1,49 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]] -->
 # Local PostgreSQL test-lane concurrency
+
+## Opt-in verified TLS
+
+Use `-Tls` with `Start` or `Test` to generate a one-day throwaway CA and a
+server certificate covering `localhost` and `127.0.0.1`, using the selected
+venv Python's `cryptography` package. The CA signing key stays in memory.
+The certificate files and server key are created in a unique temporary
+directory and mounted read-only; the container copies its server files to
+a private directory, owned by postgres, with the key set to mode 0600.
+`LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` uses `sslmode=verify-full` and the CA;
+`LANGGRAPH_RUNTIME_POSTGRES_TEST_CA` names that CA file. Connection values
+are not printed. `Dsn` recovers the TLS configuration from the owned lane.
+
+```powershell
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -ContainerName director-trusted-collect-test -HostPort 55434 -Python C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -TestNames tests.test_completion_scorecard.TrustedCollectionLaneTests
+```
+
+The existing ownership, port and slot refusals still apply. Stop, Test's
+finally block and failed startup remove the owned container and its temporary
+TLS files. Test restores the caller's connection and CA environment. If
+container removal fails, files remain for the retained container; rerun Stop.
+Without `-Tls`, the lane keeps its existing non-TLS transport. The non-TLS
+refusal regression and the TLS collection regression each skip clearly when
+run in the other mode. CI adoption of `-Tls` is a follow-up; this change does
+not modify `.github/workflows/ci.yml`.
+
+The TLS collection test currently asserts PASS for 07, 12 and 17 using real
+store reads and signed capture/adoption producers. It asserts UNKNOWN for
+08, 11, 15 and 20 because that combined fixture does not yet produce a signed
+approval/delivery lifecycle, paid attempts and correlated monetary settlement.
+It is not the completed seven-check production-shaped happy path.
+
+CLI captures with an executable attestation use `director-validation-capture/v2`.
+The digest and version are signed; legacy captures retain their original
+unversioned V1 bytes and remain verifiable. Missing executable evidence remains
+UNKNOWN for product attestation, while a verified digest conflicting with a
+valid pinned CLI release is a mismatch (FAIL). An absent or invalid descriptor
+does not grant attestation.
 
 `scripts/windows-postgres-test-lane.ps1 -Action Start` and `-Action Test`
 default to a cap of two for local callers and four when
@@ -92,5 +132,7 @@ appended. These local files are not admission authority.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]] -->

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -91,6 +93,95 @@ def advance(store, provider_binding, surface, through=ProviderActivationStage.LI
 
 
 class ScorecardEvidenceUnitTests(unittest.TestCase):
+    def test_v2_digest_is_signed_and_v1_keeps_its_original_bytes(self):
+        from dataclasses import asdict
+        import time
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+        from director_orchestrator.provider_validation import CaptureVerifier, make_capture, digest
+        fixture = _load("test_provider_validation")
+        expires = int(time.time()) + 3600
+        admission = dict(reservation="e" * 64, nonce="n" * 64, fence=1,
+            generation=PIN, provider="claude", candidate=fixture.CANDIDATE, tree=fixture.TREE,
+            expires_at=expires, binding=asdict(fixture.binding()), configuration_digest="d" * 64,
+            packet=canonical_json_bytes(fixture.work_packet()))
+        output = fixture.raw_native()
+        for executable in (None, "e" * 64):
+            capture = make_capture(admission, output, capture_key=fixture.KEY, executable_sha256=executable)
+            document = asdict(capture)
+            self.assertEqual("version" in document, executable is not None)
+            self.assertEqual("executable_sha256" in document, executable is not None)
+            reader = SimpleNamespace(load_capture=lambda _: (document, admission["packet"], output,
+                                                             False, expires, "succeeded"))
+            verifier = CaptureVerifier(reader, capture_key=fixture.KEY, candidate=fixture.CANDIDATE,
+                                       tree=fixture.TREE, generation=PIN)
+            evidence_digest = digest(canonical_json_bytes(document))
+            self.assertEqual(verifier.verified_output(fixture.binding(), evidence_digest), output)
+            self.assertEqual(getattr(verifier.verified_capture(fixture.binding(), evidence_digest)[1],
+                                     "executable_sha256", None), executable)
+            if executable:
+                for mutation in ({"executable_sha256": "f" * 64}, {"version": "director-validation-capture/v3"}):
+                    original = dict(document)
+                    document.update(mutation)
+                    self.assertFalse(verifier.verify(fixture.binding(), digest(canonical_json_bytes(document))))
+                    document.clear()
+                    document.update(original)
+
+    def test_explicit_capture_verifier_rejects_a_real_capture_with_invalid_signature(self):
+        from dataclasses import asdict
+        import time
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+        from director_orchestrator.provider_validation import CaptureVerifier, make_capture, digest
+        fixture = _load("test_provider_validation")
+        expires = int(time.time()) + 3600
+        admission = dict(reservation="e" * 64, nonce="n" * 64, fence=1,
+                         generation=PIN, provider="claude", candidate=fixture.CANDIDATE, tree=fixture.TREE,
+                         expires_at=expires, binding=asdict(fixture.binding()),
+                         configuration_digest="d" * 64, packet=canonical_json_bytes(fixture.work_packet()))
+        output = fixture.raw_native()
+        capture = make_capture(admission, output, capture_key=fixture.KEY)
+        document = asdict(capture)
+        capture_digest = digest(canonical_json_bytes(document))
+        reader = SimpleNamespace(dsn="fixture", load_capture=lambda _: (document, admission["packet"], output,
+                                                          False, expires, "succeeded"))
+        verifier = CaptureVerifier(reader, capture_key=fixture.KEY, candidate=fixture.CANDIDATE,
+                                   tree=fixture.TREE, generation=PIN)
+        self.assertTrue(verifier.verify(fixture.binding(), capture_digest))
+        store = MemoryStore()
+        observed = datetime.now(timezone.utc) - timedelta(minutes=1)
+        registry = ProviderActivationRegistry(store, fixture.binding())
+        for surface in ProviderActivationSurface:
+            for index, stage in enumerate(ProviderActivationStage):
+                registry.record(surface=surface, stage=stage, evidence_id=f"{surface.value}-{index}",
+                    evidence_digest=capture_digest, observed_at=observed + timedelta(seconds=index),
+                    expires_at=datetime.fromtimestamp(expires, timezone.utc),
+                    now=observed + timedelta(seconds=index))
+        settings = SimpleNamespace(langgraph_primary_postgres_dsn="fixture",
+            langgraph_primary_allow_insecure_local_postgres=False,
+            primary_provider_activation_bindings=lambda: {"claude": fixture.binding()},
+            langgraph_primary_required_providers=("claude",))
+        identity = SimpleNamespace(candidate_commit=fixture.CANDIDATE, candidate_tree=fixture.TREE,
+            postgres_schema="director_primary_v1", database_identity="fixture", database_instance_id="fixture")
+
+        @contextmanager
+        def open_store(*args, **kwargs):
+            yield SimpleNamespace(load=store.load)
+
+        with patch("director_orchestrator.langgraph_postgres.open_provider_activation_store", open_store), \
+                patch("director_orchestrator.primary_provider_evidence._BoundedCaptureReader", return_value=reader), \
+                patch.object(evidence, "_activation_recorded_at", return_value=observed.isoformat()), \
+                patch("director_orchestrator.provider_validation.capture_verifier_from_environment",
+                      side_effect=AssertionError("ambient verifier reached")):
+            report = evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64},
+                verifier=verifier, environment={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN})
+        self.assertTrue(all(s["capture_verified"] for s in report["lanes"]["claude"]["surfaces"].values()))
+        document["signature"] = "0" * 64
+        forged_digest = digest(canonical_json_bytes(document))
+        self.assertFalse(verifier.verify(fixture.binding(), forged_digest))
+        # Explicit collection cannot silently fall back to a candidate/environment verifier.
+        with patch("director_orchestrator.provider_validation.capture_verifier_from_environment",
+                   side_effect=AssertionError("ambient verifier reached")), self.assertRaises(ActivationEvidenceError):
+            evidence.activation_capture_report(SimpleNamespace(), SimpleNamespace(), {}, environment={})
+
     def test_capture_product_names_only_real_products(self):
         codex = (b'{"type":"thread.started","thread_id":"t-1"}\n{"type":"turn.started"}\n'
                  b'{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}\n{"type":"turn.completed"}')
@@ -164,8 +255,9 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                         ("an extra key", (digest, {**descriptor, "releases": [{**entry, "note": "x"}]})),
                         ("releases not a list", (digest, {**descriptor, "releases": entry}))):
                     self.assertIsNone(evidence.cli_release_product(provider, *args), label)
+                    suffix = "-digest-mismatch" if label in {"another executable", "uppercase digest"} else "-unattested"
                     self.assertEqual(evidence._capture_product(provider, outputs[provider], executable_sha256=args[0],
-                                                               descriptor=args[1]), product + "-unattested", label)
+                                                               descriptor=args[1]), product + suffix, label)
         # The attested product never rescues a capture whose dialect or model is another vendor's.
         entry = {"provider": "grok", "product": "xai-grok-cli", "executable_sha256": digest}
         self.assertIsNone(evidence._capture_product(
@@ -410,9 +502,27 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             self.handle.close()
 
     def report(self, tasks=()):
-        with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN,
-                                     "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "c" * 64}):
-            return evidence.consistency_report(self.settings, self.identity, tasks=tasks)
+        return evidence.consistency_report(self.settings, self.identity, tasks=tasks,
+            environment={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN,
+                         "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "c" * 64})
+
+    def test_explicit_connection_checks_instance_and_stays_open(self):
+        import psycopg
+        from psycopg.rows import dict_row
+        from director_orchestrator.langgraph_postgres import PostgresCheckpointConfigurationError
+        self.intake()
+        with psycopg.connect(TEST_DSN, row_factory=dict_row) as connection:
+            environment = {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN,
+                           "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "c" * 64}
+            report = evidence.consistency_report(self.settings, self.identity, connection=connection,
+                                                   environment=environment)
+            self.assertEqual(report["counts"]["graph_task_count"], 1)
+            self.assertFalse(connection.closed)
+            self.assertTrue(connection.read_only)
+            wrong = SimpleNamespace(**vars(self.identity))
+            wrong.database_instance_id = str(uuid.uuid4())
+            with self.assertRaises(PostgresCheckpointConfigurationError):
+                evidence.consistency_report(self.settings, wrong, connection=connection, environment=environment)
 
     def intake(self):
         self.coordinator.activate_new_intake(expected_generation=0)
@@ -577,6 +687,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
                 " projection = projection - 'pending_approval' WHERE task_id = %s", (task_id,))
         self.assertEqual(self.report()["counts"]["pending_owner_decisions"], 0)
+        self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 1)
 
     def test_every_residue_count_is_driven_by_real_rows(self):
         task_id = self.intake()
@@ -1183,3 +1294,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
