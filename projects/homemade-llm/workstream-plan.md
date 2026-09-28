@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:39 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | BEGIN]] -->
@@ -8,7 +9,7 @@
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Workstream plan — homemade-llm, phase M0 "Foundation" (closed)
 
-> **M0 is closed** (decision O-031, 2026-09-26). This file is the record of the M0 phase, not the current plan. The M1 workstream plan is approved under O-038 but remains unmerged in PR #294; this closed M0 record grants no M1 dispatch authority. Current record-reconciliation steps are in `project-profile.yaml` `next` and `project-state-report.md` "Next bounded action". Do not resume M0 tasks from this file.
+> **M0 is closed** (decision O-031, 2026-09-26). This file is the record of the M0 phase, not the current plan. The M1 workstream plan is `workstream-plan-m1.md` (approved O-038/O-039; M1 gate closed 2026-09-28, D-M1-G); this closed M0 record grants no dispatch authority. Current record-reconciliation steps are in `project-profile.yaml` `next` and `project-state-report.md` "Next bounded action". Do not resume M0 tasks from this file.
 
 Do not place secrets, credentials, tokens, or raw private source in this plan.
 Workflow skills are procedure overlays, not permission grants. Canonical provider
@@ -112,3 +113,4 @@ the provider identity or satisfy any gate above.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:39 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:10 UTC | END]] -->

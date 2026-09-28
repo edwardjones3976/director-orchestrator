@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:29 UTC | BEGIN]] -->
 <!-- MX-080 -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]] -->
@@ -159,7 +160,8 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`project-profile.yaml`](project-profile.yaml) | Living project profile (`director-project-profile/v1`) |
 | [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Project-local provider boundaries (`director-provider-roles/v1`), with the Director deviation recorded |
 | [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; `analysis_only` deployment intent, `explicitly_scoped` external effects, all Slack identities pending |
-| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); PR #294 contains the approved but unmerged M1 plan (O-038) |
+| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031) |
+| [`workstream-plan-m1.md`](workstream-plan-m1.md) | M1 phase plan (approved O-038/O-039) with the M1 gate record (closed 2026-09-28, D-M1-G; winner Qwen3-14B) |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
@@ -194,3 +196,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:10 UTC | END]] -->
