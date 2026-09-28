@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
@@ -141,6 +142,7 @@ from .models import (
     ReviewDecision,
     ReviewVerdict,
     TaskRecord,
+    TaskEffectEvidence,
     TaskStatus,
 )
 from .interactions import (
@@ -5562,6 +5564,22 @@ class OrchestrationEngine:
             serialize=bound is None,
         )
 
+    def _spend_assignment_for_intent(
+        self, record: TaskRecord, intent: TaskEffectEvidence | None,
+    ) -> Assignment | None:
+        """Resolve the same authenticated assignment overlay used to claim the effect."""
+        if intent is None or record.plan is None:
+            return None
+        planned = [item for item in record.plan.assignments
+                   if item.sequence == intent.assignment_sequence and item.agent == intent.provider]
+        if len(planned) != 1:
+            return None
+        try:
+            assignment = self._effective_assignment(record, planned[0])
+        except CommunicationEvidenceFailure:
+            return None
+        return assignment if assignment_approval_digest(assignment) == intent.assignment_digest else None
+
     def apply_dispatch_reconciliation(
         self, record: TaskRecord, resolution: AmbiguousDispatchResolution,
     ) -> None:
@@ -5593,6 +5611,10 @@ class OrchestrationEngine:
         if (pending is not None and pending.sequence == resolution.assignment_sequence
                 and unresolved_ambiguous_dispatch(record, pending) is None
                 and record.status in {TaskStatus.RUNNING, TaskStatus.OWNER_DECISION_REQUIRED}):
+            try:
+                pending = self._effective_assignment(record, pending)
+            except CommunicationEvidenceFailure as exc:
+                raise StaleApproval("The review handoff cannot be authenticated for reconciliation") from exc
             intent = orphaned_provider_intent(record, pending)
             if intent is not None:
                 if (self._task_locks[record.task_id].locked()
@@ -5655,9 +5677,7 @@ class OrchestrationEngine:
                 record.error = "not_created_conflicts_with_provider_acknowledgement"
                 self.store.save(record)
                 return False
-            assignment = next((item for item in record.plan.assignments
-                               if item.sequence == intent.assignment_sequence
-                               and assignment_approval_digest(item) == intent.assignment_digest), None) if record.plan else None
+            assignment = self._spend_assignment_for_intent(record, intent)
             if assignment is None:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
                 record.error = "not_created_assignment_identity_changed"
@@ -5795,9 +5815,7 @@ class OrchestrationEngine:
         if (not isinstance(self.store, TaskStore)
                 or self.store.path != self.provider_spend.path):
             raise AcknowledgementPersistencePending("Atomic acknowledgement requires the same SQLite task store")
-        assignment = next((item for item in record.plan.assignments
-                           if intent is not None and item.sequence == intent.assignment_sequence
-                           and assignment_approval_digest(item) == intent.assignment_digest), None) if record.plan else None
+        assignment = self._spend_assignment_for_intent(record, intent)
         if assignment is not None and not any(item.kind == "provider_observation" and item.effect_key == effect_key
                                               for item in record.task_effect_ledger):
             record_provider_effect_observation(record, assignment, effect_key=effect_key,
@@ -5937,9 +5955,7 @@ class OrchestrationEngine:
                 if any(held.get(name, getattr(intent, name)) != getattr(intent, name)
                        for name in ("phase", "assignment_sequence", "assignment_digest", "plan_generation")):
                     return False
-                assignment = next((item for item in record.plan.assignments
-                                   if item.sequence == intent.assignment_sequence
-                                   and assignment_approval_digest(item) == intent.assignment_digest), None) if record.plan else None
+                assignment = self._spend_assignment_for_intent(record, intent)
                 if assignment is None or intent.plan_generation != record.plan_generation:
                     # Privacy reset: settle the old charge, never restore its run.
                     try:
@@ -7802,3 +7818,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]]

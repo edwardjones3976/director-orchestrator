@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
@@ -948,6 +949,87 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(restarted._settle_reconciled_spend(recovered))
                 adapter.dispatch.assert_awaited_once()
 
+    def test_exact_review_orphan_uses_the_dispatched_assignment(self):
+        from director_orchestrator.approvals import assignment_approval_digest, reserve_provider_effect, StaleApproval
+        from director_orchestrator.models import AmbiguousDispatchResolution
+        from tests.test_review_handoff_effect_accounting import ReviewHandoffEffectAccountingTests
+
+        for provider, outcome in ((ProviderName.CLAUDE, "created"),
+                                  (ProviderName.CLAUDE, "not_created"),
+                                  (ProviderName.GROK, "not_created")):
+            with self.subTest(provider=provider, outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                settings, store, _, _ = self._world(directory)
+                settings = replace(settings, oracle_automerge_cursor_actors=("cursor-agent",),
+                                   oracle_automerge_claude_actors=("claude-agent",),
+                                   oracle_automerge_grok_actors=("grok-agent",))
+                record, planned = ReviewHandoffEffectAccountingTests().fixture()
+                planned.agent = provider
+                record.next_assignment_index = 1
+                record.owner_approved = True
+                store.create(record)
+                engine = OrchestrationEngine(settings, store)
+                effective = engine._effective_assignment(record, planned)
+                self.assertNotEqual(assignment_approval_digest(planned), assignment_approval_digest(effective))
+                key = reserve_provider_effect(record, effective, phase="dispatch", max_task_budget_usd=10)
+                store.save(record)
+                if provider == ProviderName.GROK:
+                    engine.provider_spend.reserve(provider=provider, effect_key=key, estimated_cost_usd=0.25,
+                                                  request_limit=50, budget_usd=1)
+                restarted = OrchestrationEngine(settings, TaskStore(store.path))
+                record = restarted.store.get(record.task_id)
+                dispatched_snapshot = record.model_copy(deep=True)
+                resolution = AmbiguousDispatchResolution(
+                    owner_user_id=record.intake.user_id, assignment_sequence=planned.sequence,
+                    resolution=outcome, run_id="owner-confirmed-run" if outcome == "created" else None,
+                    note="Owner checked the provider request history")
+                # Changed producer evidence must still refuse before adding a recovery contact.
+                altered = record.model_copy(deep=True)
+                altered.provider_runs[0].result = "changed candidate"
+                before = altered.model_dump_json()
+                with patch.object(restarted, "_effect_owner_is_live", return_value=False):
+                    with self.assertRaises(StaleApproval):
+                        restarted.apply_dispatch_reconciliation(altered, resolution)
+                    self.assertEqual(altered.model_dump_json(), before)
+                    restarted.apply_dispatch_reconciliation(record, resolution)
+                restarted.store.save(record)
+                observation = next(item for item in record.task_effect_ledger
+                                   if item.kind == "provider_observation" and item.effect_key == key)
+                self.assertEqual(observation.assignment_digest, assignment_approval_digest(effective))
+                self.assertEqual(record.provider_contact_attempts[-1].outcome, "reconciled_" + outcome)
+                if outcome == "not_created":
+                    self.assertTrue(restarted._settle_reconciled_spend(record))
+                    self.assertTrue(any(item.effect_key == key and item.outcome == "failed_pre_submit"
+                                        for item in record.task_effect_ledger))
+                    if provider == ProviderName.GROK:
+                        self.assertEqual(restarted.provider_spend.exposure(provider), (0, 0))
+                else:
+                    self.assertEqual(record.provider_runs[-1].evidence_source, "unverified")
+                self.assertEqual(record.plan.assignments[1], planned)
+
+                if provider == ProviderName.GROK:
+                    # The same overlay must bind atomic acknowledgement and legacy journal recovery.
+                    ack_settings = replace(settings, sqlite_path=str(Path(directory) / "ack.sqlite3"))
+                    ack_store = TaskStore(ack_settings.sqlite_path)
+                    ack_record = dispatched_snapshot
+                    ack_store.create(ack_record)
+                    ack_engine = OrchestrationEngine(ack_settings, ack_store)
+                    ack_engine.provider_spend.reserve(provider=provider, effect_key=key, estimated_cost_usd=0.25,
+                                                      request_limit=50, budget_usd=1)
+                    run = ProviderRun(provider=provider, assignment_sequence=planned.sequence,
+                                      run_id="acknowledged-review", status="completed", result="review evidence")
+                    self.assertTrue(ack_engine._journal_spend_acknowledgement(ack_record, key, run, 0.25))
+                    submitted = [item for item in ack_record.task_effect_ledger
+                                 if item.kind == "provider_observation" and item.effect_key == key]
+                    self.assertEqual(len(submitted), 1)
+                    self.assertEqual(submitted[0].assignment_digest, assignment_approval_digest(effective))
+                    # A journal-only synchronous result requires owner reconciliation, not privacy-reset cleanup.
+                    ack_record.provider_runs = [item for item in ack_record.provider_runs if item.run_id != run.run_id]
+                    ack_store.save(ack_record)
+                    self.assertFalse(ack_engine._retry_spend_settlements(ack_record))
+                    self.assertEqual(ack_record.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                    self.assertEqual(ack_record.error, "legacy_acknowledgement_requires_readback")
+                    self.assertEqual(ack_engine.provider_spend.exposure(provider), (1, 0.25))
+
     def test_orphan_reconciliation_preserves_the_attempt_ordinal(self):
         from director_orchestrator.approvals import reserve_provider_effect, record_provider_effect_observation
         from director_orchestrator.models import AmbiguousDispatchResolution
@@ -1587,3 +1669,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]]
