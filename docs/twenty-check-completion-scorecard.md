@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
@@ -237,7 +238,7 @@ retained for the stacked PR.
 | 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
 | 14 | Bounded execution | Workload-ledger window: bounds set and a hard USD cap the operator attests (operator-attested, not cryptographically verified; owner ruling 2026-09-25) |
 | 15 | Monetary control and usage | Enrolled signed daily cap and holds, usage-monitor accounting, settled request-correlated meter rows |
-| 16 | Executed exact-head CI | The six `ci.yml` jobs executed at the exact head on hosted or registered self-hosted runners; only when none executed, a signed local-replica receipt against a main ancestor (amended by owner decision 2026-09-23) |
+| 16 | Executed exact-head CI | The six `ci.yml` jobs executed at the exact head on hosted or registered self-hosted runners; only when none executed, a signed local-replica receipt against a main ancestor (amended by owner decision 2026-09-23). A focused PR base-merge rerun also requires the CI scope job to verify a green full run on the previous head and run the mapped tests; the unchanged container and recovery areas are recorded as carried forward. Push runs use the full suite. |
 | 17 | Independent ACCEPT | Adopted owner-local acceptance for the candidate with reviewer ≠ author |
 | 18 | Complete Security scan | Sealed complete coverage and disposition bound to exact candidate |
 | 19 | Paid primary active | Paid enabled, primary runtime, effect executor and reconciliation worker active |
@@ -1632,3 +1633,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | END]] -->
