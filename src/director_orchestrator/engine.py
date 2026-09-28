@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
@@ -112,6 +114,7 @@ from .approvals import (
     assignment_approval_digest,
     assignment_is_approved,
     oracle_recovery_matches,
+    orphaned_provider_intent,
     pending_assignment,
     record_oracle_merge_success,
     record_oracle_recovery,
@@ -3239,7 +3242,7 @@ class OrchestrationEngine:
             self.store.save(record)
             await self._status_post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
         except AcknowledgementPersistencePending:
-            # No response persistence means the durable intent remains AMBIGUOUS.
+            # No response persistence means only the durable intent remains.
             # Reconciliation owns it; never reload it and mark the paid task FAILED.
             return
         except (PrivacyCleanupPending, StaleTaskWrite):
@@ -5586,6 +5589,27 @@ class OrchestrationEngine:
             # Keep the authenticated outcome; never replace it with an unverified
             # identifier-only run. Resume performs the accounting retry.
             return
+        pending = pending_assignment(record)
+        if (pending is not None and pending.sequence == resolution.assignment_sequence
+                and unresolved_ambiguous_dispatch(record, pending) is None
+                and record.status in {TaskStatus.RUNNING, TaskStatus.OWNER_DECISION_REQUIRED}):
+            intent = orphaned_provider_intent(record, pending)
+            if intent is not None:
+                if (self._task_locks[record.task_id].locked()
+                        or self._effect_owner_is_live(intent.recorded_at)):
+                    raise StaleApproval("The provider intent still has an active writer")
+                # The API's CAS commits this content-free evidence with the owner
+                # resolution. Nothing was persisted while acknowledgement storage
+                # was unavailable, and no lost response content can be recovered here.
+                record_provider_effect_observation(
+                    record, pending, effect_key=intent.effect_key, phase=intent.phase, outcome="ambiguous",
+                    run_id=resolution.run_id if resolution.resolution == "created" else None)
+                record.provider_contact_attempts.append(ProviderContactAttempt(
+                    assignment_sequence=pending.sequence, provider=pending.agent,
+                    ordinal=min(3, intent.attempt), phase=intent.phase, outcome="ambiguous_dispatch",
+                    error="spend_settlement_failed:" + intent.effect_key,
+                ))
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
         apply_ambiguous_dispatch_resolution(record, resolution)
 
     def _settle_reconciled_spend(self, record: TaskRecord) -> bool:
@@ -5766,7 +5790,7 @@ class OrchestrationEngine:
             "result_packet_digest": document_digest(result_packet) if result_packet is not None else None,
         }
         # One primary persistence attempt and one recovery, never provider I/O.
-        # Exhaustion leaves the durable pre-response intent AMBIGUOUS. Do not
+        # Exhaustion leaves only the durable pre-response intent. Do not
         # let the outer handler turn that paid request into a FAILED task.
         if (not isinstance(self.store, TaskStore)
                 or self.store.path != self.provider_spend.path):
@@ -7776,3 +7800,5 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | END]]
