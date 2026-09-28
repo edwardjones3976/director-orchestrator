@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 05:29 UTC | BEGIN]]
@@ -279,7 +280,9 @@ controls:
 
 review_chain:
   producer: "claude"
-  material_authors: ["claude"]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | BEGIN]]
+  material_authors: ["claude", "codex"] # claude is the sole author (52 %+ rule); codex assisted with maintenance edits on #293/#294 and is excluded from independent review of #294 by this chain, so the structured list names both.
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]]
   eligible_reviewer: "PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #294. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): use the catalog name in the assignment rather than a machine-specific absolute path; select none for #294; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble, and record that baseline verification before contact; otherwise stop. Then Cursor is the single non-author review-and-merge provider for #294 (O-049: the owner named Cursor as reviewer of #293 and #294). #294 is reviewed after #293 merges and its base is re-verified as the current github/main tip. Its thorough exact-head, current-base full-diff ACCEPT is the one required review and carries the merge, subject to B2: the owner's specific direction for #294, or #305 plus phase-3 wiring. Until that wiring lands, an owner-directed agent merge is disclosed as a crossing like D-023. Grok is API-only and cannot merge. Claude is sole author; Codex assisted (review-finding fixes routed as maintenance) and is not independent for #294. Neither may review or merge it."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
@@ -380,3 +383,4 @@ next:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | END]]

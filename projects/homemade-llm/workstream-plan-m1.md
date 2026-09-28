@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:50 UTC | BEGIN]] -->
@@ -8,7 +9,7 @@
 
 Do not place secrets, credentials, tokens, or raw private source in this plan. Workflow skills are procedure overlays, not permission grants. Canonical provider roles are in [`docs/team-operating-charter.md`](../../docs/team-operating-charter.md), and project-local boundaries in [`provider-roles-contract.yaml`](provider-roles-contract.yaml).
 
-**Status:** APPROVED by the owner on 2026-09-26 (O-038 plan, O-039 method, O-037 for G1; see `decision-log.md`), at head `9875dca`. The gate table below records each decision. Execution ran 2026-09-26 to 2026-09-27 and the **M1 gate closed on 2026-09-28** with the owner's signature (O-052); the outcome is in "Status at the M1 gate" at the end of this file and in `project-state-report.md`. Each packet was immutable once approved; no bound was changed.
+**Status:** APPROVED by the owner on 2026-09-26 (O-038 plan, O-039 method, O-037 for G1; see `decision-log.md`), at head `9875dca`. The gate table below records each decision. Execution ran 2026-09-26 to 2026-09-27 and the **M1 gate closed on 2026-09-28** with the owner's signature (O-052); the outcome is in "Status at the M1 gate" at the end of this file and in `project-state-report.md`. Each packet was immutable once approved; the one owner-authorized change to a bound is O-040 (MX-006), which permitted a single targeted fourth M1-C1 fix round beyond the packet table's two-round cap, and it is recorded in `decision-log.md`.
 
 ## Phase frame
 
@@ -86,7 +87,7 @@ DIRECTOR data generation and adapter training (M2), the local provider lane (M3)
 
 ## Status at the M1 gate (2026-09-28)
 
-Every number is `[verified]` by the project Director from files under `C:\llm\reports\m1-s1\`, `C:\llm\runs\m1\`, `C:\llm\reports\m1-license\` and the provider-dispatch receipts, as recorded in PR #294 comments 5859345713, 5859906898 and 5860810226; the gate record in `project-state-report.md` carries the same figures.
+Every number except the paid-spend total is `[verified]` by the project Director from files under `C:\llm\reports\m1-s1\`, `C:\llm\runs\m1\`, `C:\llm\reports\m1-license\` and the provider-dispatch receipts, as recorded in PR #294 comments 5859345713, 5859906898 and 5860810226; the gate record in `project-state-report.md` carries the same figures. The paid-spend total is a receipt-audited lower bound, `[unverified here]` until the #341 meter run, as its own row states.
 
 | Packet | State | Evidence |
 |---|---|---|
@@ -123,3 +124,4 @@ Contribution tags record the author of the plan or artifact. They do not prove t
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:05 UTC | END]] -->
