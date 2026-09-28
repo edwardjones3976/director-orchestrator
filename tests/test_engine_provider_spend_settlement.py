@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:24 UTC | BEGIN]]
@@ -1402,18 +1403,43 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self._check_15_state(0), "PASS")
 
     def test_a_reservation_never_settled_within_the_bound_is_unreconciled(self) -> None:
-        """A crash between dispatch and settlement cannot hide a request: unsettled past the bound counts."""
-        with tempfile.TemporaryDirectory() as directory:
-            settings, store, _, _ = self._world(directory)
-            engine = OrchestrationEngine(settings, store)
-            # Keep both observations in one UTC day: this reader reports daily reservations.
-            now = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
-            engine.provider_spend.reserve(provider=ProviderName.GEMINI, effect_key=_key("crashed"),
-                                          estimated_cost_usd=0.01, request_limit=50, budget_usd=1.0,
-                                          now=now - timedelta(minutes=30))
-            self.assertEqual(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR, now=now), [])
-            self.assertEqual(engine.provider_spend.unreconciled(
-                ProviderName.GEMINI, stale_after=timedelta(minutes=10), now=now), [_key("crashed")])
+        """Unresolved requests survive UTC midnight; daily exposure stays on the reservation day."""
+        for hour in (12, 0):
+            now = datetime(2026, 9, 28, hour, 5, tzinfo=timezone.utc)
+            before = now - timedelta(minutes=30)
+            for provider in (ProviderName.GEMINI, ProviderName.GROK, ProviderName.PERPLEXITY):
+                with self.subTest(hour=hour, provider=provider), tempfile.TemporaryDirectory() as directory:
+                    settings, store, _, _ = self._world(directory)
+                    settings = replace(settings, provider_timeout_seconds=600)
+                    engine = OrchestrationEngine(settings, store)
+                    ledger = engine.provider_spend
+                    ledger.reserve(provider=provider, effect_key=_key("crashed"),
+                                   estimated_cost_usd=0.01, request_limit=50, budget_usd=1.0, now=before)
+                    self.assertEqual(ledger.unreconciled(provider, stale_after=HOUR, now=now), [])
+                    self.assertEqual(ledger.unreconciled(
+                        provider, stale_after=timedelta(minutes=10), now=now), [_key("crashed")])
+                    # A new monitor opens the persisted ledger, then feeds the actual check-15 rule.
+                    monitor = UsageMonitor(settings, store, adapters={})
+                    accounting = monitor._daily_accounting(provider.value, now)
+                    self.assertEqual(accounting["unreconciled_request_count"], 1)
+                    self.assertEqual(self._check_15_state(accounting["unreconciled_request_count"]), "UNKNOWN")
+                    self.assertEqual(ledger.exposure(provider, now=before), (1, 0.01))
+                    self.assertEqual(ledger.exposure(provider, now=now), (1, 0.01) if hour else (0, 0))
+                    ledger.reserve(provider=provider, effect_key=_key("fresh"),
+                                   estimated_cost_usd=0.01, request_limit=50, budget_usd=1.0, now=now)
+                    for cost in (None, 0.0, 0.2):
+                        ledger.record_charge(provider=provider, effect_key=_key("crashed"),
+                                             actual_cost_usd=cost, now=now)
+                        expected = 1 if cost is None else 0
+                        self.assertEqual(ledger.unreconciled(provider, stale_after=HOUR, now=now),
+                                         [_key("crashed")] if expected else [])
+                        count = monitor._daily_accounting(provider.value, now)["unreconciled_request_count"]
+                        self.assertEqual(count, expected)
+                        self.assertEqual(self._check_15_state(count), "UNKNOWN" if expected else "PASS")
+                    ledger.record_charge(provider=provider, effect_key=_key("fresh"),
+                                         actual_cost_usd=0, request_exists=False, now=now)
+                    ledger.release_not_created(provider=provider, effect_key=_key("fresh"))
+                    self.assertEqual(ledger.unreconciled(provider, stale_after=timedelta(0), now=now), [])
 
     def test_an_owner_reconciled_run_settles_its_ambiguous_dispatch(self) -> None:
         """Review 4112821088: a run the owner reconciled as created carries no observation of its own; its terminal
@@ -1560,3 +1586,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:20 UTC | END]]

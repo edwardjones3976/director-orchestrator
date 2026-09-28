@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
@@ -354,9 +355,8 @@ class ProviderDailySpendLedger:
     def unreconciled(
         self, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
     ) -> list[str]:
-        """Effect keys of the day's reservations with no actual charge that are either settled (no provider-reported
-        cost) or still unsettled after ``stale_after`` (review 4112697677: a crash between dispatch and settlement
-        cannot hide a request)."""
+        """Outstanding effect keys with no actual charge, across all reservation days: settled with unknown
+        cost or still unsettled after ``stale_after``. Neither a crash nor UTC midnight reconciles a request."""
 
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend reconciliation applies only to supplemental providers")
@@ -364,8 +364,8 @@ class ProviderDailySpendLedger:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL AND released_at IS NULL""",
-                (provider.value, observed_at.date().isoformat()),
+                WHERE provider = ? AND actual_cost_usd IS NULL AND released_at IS NULL""",
+                (provider.value,),
             ).fetchall()
         return [str(key) for key, settled_at, recorded_at in rows
                 if settled_at is not None or datetime.fromisoformat(recorded_at) <= observed_at - stale_after]
@@ -1904,3 +1904,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:20 UTC | END]]
