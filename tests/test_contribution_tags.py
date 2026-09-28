@@ -699,6 +699,22 @@ class GitAttributionTests(unittest.TestCase):
         self.git("commit", "--quiet", "--allow-empty", "-m", message)
         return self.git("rev-parse", "HEAD")
 
+    def test_pre_trailer_commits_are_grandfathered_by_their_envelope(self):
+        pair = "[[OpenAI Codex | GPT-6 | 2026-09-27 | 06:56 UTC | {}]]"
+        cases = (
+            (pair.format("BEGIN") + "\nOld change\n" + pair.format("END"), True),
+            (pair.format("BEGIN") + " Merge settled main\n\nBody\n" + pair.format("END"), True),
+            (pair.format("BEGIN") + "\nUnclosed", False),
+            (pair.format("BEGIN") + "\n[[OpenAI Codex | GPT-6 | 2026-09-27 | 06:57 UTC | END]]", False),
+            ("Plain old change", False),
+            (pair.format("BEGIN") + "\nOld change\n" + pair.format("END") + "\n\nContributed-by: broken", False),
+        )
+        for message, valid in cases:
+            with self.subTest(message=message.splitlines()[0]):
+                head = self.commit(message)
+                self.assertEqual(self.checker.validate_commits(self.base, head) == [], valid)
+                self.assertEqual(self.checker.message_attributed(message), valid)
+
     def test_every_commit_needs_trailer_not_only_head(self):
         missing = self.commit("Missing attribution")
         head = self.commit("Good\n\nContributed-by: OpenAI Codex | GPT-6")
