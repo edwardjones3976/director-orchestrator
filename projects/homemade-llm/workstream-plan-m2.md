@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | BEGIN]] -->
 # Workstream plan: homemade-llm, phase M2 "DIRECTOR data v1 and adapter v0.1 to v0.3" (approved by the owner 2026-09-28; execution gated as below)
@@ -83,7 +84,10 @@ Relayed by the Claude Code session (Claude Fable 5.1) from the owner's replies i
 | O-M2-B | "GPU and paid generations are approved for immediate usage." | GPU work (probe, training) and paid generation and grading may start now within the caps (USD 10 generation, USD 6 grading, USD 8 evaluation, USD 25 total) and the storage and concurrency guards. The M1 gate record remains a record dependency, not a dispatch block. |
 | O-M2-C | "Cursor" (in answer to who reviews #293 and #294 so the M1 gate can close) | Cursor is the designated non-author reviewer of #293 and #294. Recorded here because it sequences the M1 record this plan cites. |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:55 UTC | BEGIN]] -->
-| O-M2-D | Relayed by the ChatGPT/Codex Director from the owner's answer in the Codex project chat (#340 comment 5862776617, 2026-09-28 03:28 UTC): "**add cited assignment context at inference**", approving the recommended D-M2-9 path "including regenerating and grading the M1 candidates with the same revised input contract before comparing them to a trained DIRECTOR. Preserve the original three-field M1 runs as historical measurements; do not relabel them as the new baseline." Second-hand relay; the owner's own words in that chat are not in this record, and a direct owner confirmation in any authorized thread would replace this row's "relayed" mark. | G-M2-5 decided: option (a). Effect in D-M2-10 and packet M2-C1. |
+| O-M2-D | Relayed by the ChatGPT/Codex Director from the owner's answer in the Codex project chat (#340 comment 5862776617, 2026-09-28 03:28 UTC): "**add cited assignment context at inference**", approving the recommended D-M2-9 path "including regenerating and grading the M1 candidates with the same revised input contract before comparing them to a trained DIRECTOR. Preserve the original three-field M1 runs as historical measurements; do not relabel them as the new baseline." Relay confirmed by the owner in the Claude Code session at 04:08 UTC (O-M2-E below). | G-M2-5 decided: option (a). Effect in D-M2-10 and packet M2-C1. |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | BEGIN]] -->
+| O-M2-E | "Codex has my authorization to make decisions, especially on these matters." (owner, in the Claude Code session, in reply to the O-M2-D relay) | The ChatGPT/Codex Director holds delegated decision authority for homemade-llm M2 matters of this kind; its relays of owner decisions and its own decisions within that scope are recorded as decisions, not as pending confirmations. Deterministic gates, budget caps, provider terms, independent review, CI and the no-leak rules are unchanged; deployment, publication, deletion, purchases beyond the caps and credential changes stay owner-only under AGENTS.md rule 10. |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:55 UTC | END]] -->
 
 These rows record what the owner said. They do not by themselves satisfy any deterministic gate, CI, exact-SHA review, or merge requirement.
@@ -111,3 +115,4 @@ M1 execution PRs (for example #339, the scorer manifest alignment) keep their au
 Contribution tags record the author of the plan or artifact. They do not prove the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | END]] -->
