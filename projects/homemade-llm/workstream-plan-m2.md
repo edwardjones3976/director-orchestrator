@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | BEGIN]] -->
@@ -87,6 +88,9 @@ Relayed by the Claude Code session (Claude Fable 5.1) from the owner's replies i
 | O-M2-D | Relayed by the ChatGPT/Codex Director from the owner's answer in the Codex project chat (#340 comment 5862776617, 2026-09-28 03:28 UTC): "**add cited assignment context at inference**", approving the recommended D-M2-9 path "including regenerating and grading the M1 candidates with the same revised input contract before comparing them to a trained DIRECTOR. Preserve the original three-field M1 runs as historical measurements; do not relabel them as the new baseline." Relay confirmed by the owner in the Claude Code session at 04:08 UTC (O-M2-E below). | G-M2-5 decided: option (a). Effect in D-M2-10 and packet M2-C1. |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | BEGIN]] -->
 | O-M2-E | "Codex has my authorization to make decisions, especially on these matters." (owner, in the Claude Code session, in reply to the O-M2-D relay) | The ChatGPT/Codex Director holds delegated decision authority for homemade-llm M2 matters of this kind; its relays of owner decisions and its own decisions within that scope are recorded as decisions, not as pending confirmations. Deterministic gates, budget caps, provider terms, independent review, CI and the no-leak rules are unchanged; deployment, publication, deletion, purchases beyond the caps and credential changes stay owner-only under AGENTS.md rule 10. |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:55 UTC | BEGIN]] -->
+| O-M2-F | "Have Grok do all of that; if they can't have xAI, Z.ai, or then Cursor, then complete all of it. Codex is down for a while!" (owner, in the Claude Code session, 04:50 UTC, in reply to the list of open reviews: #341, #293, #294, #340, and the merges) | Reviewer routing while the Codex Director is unavailable: **Grok (xAI Responses, grok-4.6) first** for the exact-head reviews of #293, #294 and #340 (all Claude-authored; Grok is non-author and outside the Claude family), then Z.ai, then Cursor as fallbacks in that order. #341 already carries Grok's ACCEPT (comment 5862353673) and needs no further review. Each dispatch still requires PRESTAGE_REQUIRED (an immutable exact-head, current-base review packet, digest and workload fields on the receipt) and a receipt; Grok is API-only and records verdicts, never merges. Z.ai's enrollment (#317) is unmerged and its recorded role is grading only, so a Z.ai review would be supplementary evidence until enrollment lands. Merges: a protected-main merge stays tier 0 and owner-executed under the current framework; the reviewer records ACCEPT plus the framework blocker, and the owner runs the printed `merge_preflight.py` command. No agent merges its own PR. |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:55 UTC | END]] -->
 
@@ -116,3 +120,4 @@ Contribution tags record the author of the plan or artifact. They do not prove t
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 04:55 UTC | END]] -->
