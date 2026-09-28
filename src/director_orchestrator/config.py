@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
@@ -737,6 +738,40 @@ class Settings:
     )
     oracle_automerge_antigravity_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_ANTIGRAVITY_ACTORS", ""
+    )
+    # Standing merge boundary (merge-law phase 3). The observer is a separate
+    # local process; only it ever loads the Ed25519 private key. This process
+    # needs just the public half, the loopback observer endpoint, a durable
+    # audit path and the assignment/environment scope. Any value missing here
+    # makes both production construction sites fail closed: no merge, and an
+    # explicit error instead of a legacy fallback.
+    oracle_observer_endpoint: str = os.getenv("ORACLE_OBSERVER_ENDPOINT", "").strip()
+    oracle_observer_public_key_path: str = os.getenv(
+        "ORACLE_OBSERVER_PUBLIC_KEY_PATH", ""
+    ).strip()
+    oracle_standing_merge_audit_path: str = os.getenv(
+        "ORACLE_STANDING_MERGE_AUDIT_PATH", ""
+    ).strip()
+    oracle_standing_merge_environment: str = os.getenv(
+        "ORACLE_STANDING_MERGE_ENVIRONMENT", ""
+    ).strip()
+    oracle_standing_merge_assignment_id: str = os.getenv(
+        "ORACLE_STANDING_MERGE_ASSIGNMENT_ID", ""
+    ).strip()
+    oracle_standing_merge_prohibited_paths: tuple[str, ...] = _csv(
+        "ORACLE_STANDING_MERGE_PROHIBITED_PATHS", ""
+    )
+    # Observer-only arming values. The private key path is read by no code in
+    # the merging process: scripts/merge_observer.py is its only consumer, and
+    # the boundary builder deliberately never looks at this field.
+    oracle_observer_private_key_path: str = os.getenv(
+        "ORACLE_OBSERVER_PRIVATE_KEY_PATH", ""
+    ).strip()
+    oracle_standing_merge_producer_principal: str = os.getenv(
+        "ORACLE_STANDING_MERGE_PRODUCER_PRINCIPAL", ""
+    ).strip()
+    oracle_standing_merge_security_actors: tuple[str, ...] = _csv(
+        "ORACLE_STANDING_MERGE_SECURITY_ACTORS", ""
     )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
@@ -2458,6 +2493,28 @@ class Settings:
     def oracle_github_credential_configured(self) -> bool:
         return self.oracle_merge_readiness()["github_credential_configured"]
 
+    def standing_merge_boundary_readiness(self) -> dict[str, bool]:
+        """Every input the merge boundary needs before it may be built.
+
+        Missing any one of these must leave the service unable to merge, never
+        able to merge without the boundary.
+        """
+
+        return {
+            "observer_endpoint_configured": bool(self.oracle_observer_endpoint),
+            "observer_public_key_configured": bool(
+                self.oracle_observer_public_key_path
+            ),
+            "audit_path_configured": bool(self.oracle_standing_merge_audit_path),
+            "environment_configured": bool(self.oracle_standing_merge_environment),
+            "assignment_id_configured": bool(
+                self.oracle_standing_merge_assignment_id
+            ),
+        }
+
+    def standing_merge_boundary_configured(self) -> bool:
+        return all(self.standing_merge_boundary_readiness().values())
+
     def provider_strategy(self) -> dict[str, dict[str, object]]:
         return {
             "claude": {
@@ -2659,3 +2716,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

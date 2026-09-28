@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
@@ -126,6 +127,7 @@ from .oracle_merge import (
     OracleMergeService,
     OracleMergeStore,
 )
+from .merge_observer import build_standing_merge_boundary
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -248,7 +250,15 @@ oracle_github = (
     else None
 )
 oracle_merge_service = OracleMergeService(
-    oracle_merge_policy, oracle_merge_store, oracle_github
+    oracle_merge_policy, oracle_merge_store, oracle_github,
+    # Issue #306: the boundary is mandatory on every Oracle merge path. An
+    # enabled gate that cannot build it from Settings fails startup with an
+    # explicit error instead of ever constructing a legacy no-boundary merge.
+    standing_merge_boundary=(
+        build_standing_merge_boundary(settings, github=oracle_github)
+        if oracle_github is not None
+        else None
+    ),
 )
 engine = OrchestrationEngine(
     settings,
@@ -1939,3 +1949,4 @@ def complete_run(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -46,13 +47,14 @@ from datetime import datetime, timezone
 from enum import StrEnum
 import fnmatch
 import copy
-import hashlib
-import hmac
 import json
 import re
 import secrets
 import sqlite3
 from typing import Callable
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .merge_eligibility import MergeEvidenceBundle, MergeEligibilityPolicy, evaluate_merge_eligibility
 
@@ -414,8 +416,10 @@ class MergeExecutionBoundary:
     """One authenticated observation route, one guarded mutation, no retries.
 
     Dependencies are trusted application wiring, not request parameters. The
-    observer returns (MergeObservation, HMAC-SHA256 hex signature); a digest set
+    observer returns (MergeObservation, hex Ed25519 signature); a digest set
     or a TermEvidence(True) supplied by a caller cannot authorize execution.
+    This process holds only the observer's PUBLIC key and can verify but never
+    produce an observation signature; the private key stays in the observer.
     The transport must bind expected head/base and acting principal and refuse
     all protection/ruleset bypass, including implicit administrator bypass.
     No transport is selected or activated by standing owner authority alone.
@@ -424,33 +428,42 @@ class MergeExecutionBoundary:
     def __init__(
         self, *, repository: str, environment: str, assignment_id: str,
         policy: MergeEligibilityPolicy, prohibited_paths: tuple[str, ...],
-        observer_key: bytes,
+        observer_public_key: bytes,
         observe: Callable[[ProposedAction, int, str], tuple[MergeObservation, str]],
         merge: Callable[..., str], audit_path: str,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ):
-        if (len(observer_key) < 32 or not repository or not environment or not assignment_id
+        if (len(observer_public_key) != 32 or not repository or not environment
+                or not assignment_id
                 or not audit_path or audit_path == ":memory:"):
             raise ValueError("merge boundary requires trusted identity, key and durable audit")
         self.repository, self.environment = repository, environment
         self.assignment_id = assignment_id
         self.policy, self.prohibited_paths = policy, prohibited_paths
-        self._key, self._observe, self._merge = observer_key, observe, merge
+        self._observer_key = Ed25519PublicKey.from_public_bytes(observer_public_key)
+        self._observe, self._merge = observe, merge
         self._audit_path, self._clock = audit_path, clock
 
-    def _read(self, action: ProposedAction, pull_number: int) -> MergeObservation:
+    def _read(
+        self, action: ProposedAction, pull_number: int
+    ) -> tuple[MergeObservation, str]:
         challenge = secrets.token_hex(32)
         observation, signature = self._observe(action, pull_number, challenge)
         observation = copy.deepcopy(observation)
         payload = observation.payload()
         if len(payload) > 1_048_576:
             raise ValueError("merge evidence exceeds its bound")
-        expected = hmac.new(self._key, payload, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
-            raise ValueError("merge observation is not authenticated")
+        try:
+            signature_bytes = bytes.fromhex(signature)
+        except ValueError as exc:
+            raise ValueError("merge observation is not authenticated") from exc
+        try:
+            self._observer_key.verify(signature_bytes, payload)
+        except InvalidSignature as exc:
+            raise ValueError("merge observation is not authenticated") from exc
         if observation.challenge != challenge:
             raise ValueError("merge observation was replayed instead of revalidated")
-        return observation
+        return observation, signature
 
     def _reasons(self, action: ProposedAction, pull: int, obs: MergeObservation) -> list[str]:
         bundle = obs.bundle
@@ -555,16 +568,18 @@ class MergeExecutionBoundary:
         if action.action_class not in MERGE_CLASSES:
             return hold("standing authority covers pull-request merge execution only")
         try:
-            observed = self._read(action, pull_number)
+            observed, observed_signature = self._read(action, pull_number)
             reasons = self._reasons(action, pull_number, observed)
             if reasons:
                 return hold(*reasons)
+            # Only the observer can sign; the audit stores the observer's own
+            # signature over the exact evidence that reserved this attempt.
             audit_payload = json.dumps({
                 "action": asdict(action), "observation": json.loads(observed.payload()),
-                "signature": hmac.new(self._key, observed.payload(), hashlib.sha256).hexdigest(),
+                "signature": observed_signature,
             }, sort_keys=True, separators=(",", ":")).encode("utf-8")
             self._audit(action, pull_number, audit_payload)
-            final = self._read(action, pull_number)
+            final, _ = self._read(action, pull_number)
             reasons = self._reasons(action, pull_number, final)
             # Only the fresh challenge and timestamp may change after reservation.
             if replace(final, observed_at=observed.observed_at,
@@ -617,3 +632,4 @@ class CompletionRate:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]
