@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 07:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:29 UTC | BEGIN]] -->
 <!-- MX-080 -->
@@ -162,6 +165,9 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; `analysis_only` deployment intent, `explicitly_scoped` external effects, all Slack identities pending |
 | [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031) |
 | [`workstream-plan-m1.md`](workstream-plan-m1.md) | M1 phase plan (approved O-038/O-039) with the M1 gate record (closed 2026-09-28, D-M1-G; winner Qwen3-14B) |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | BEGIN]] -->
+| [`workstream-plan-m2.md`](workstream-plan-m2.md) | M2 plan, owner-approved 2026-09-28 (O-M2-A): DIRECTOR data v1 packets, adapter v0.1 to v0.3, gates and stops; packets dispatch only under their own gates, caps and the D-M2-8 meter rule; row contract in `schemas/director-data-v1-row.schema.json` |
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
@@ -197,3 +203,6 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 07:45 UTC | END]] -->
