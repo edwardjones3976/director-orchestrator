@@ -205,7 +205,7 @@ function Get-SlotInventory {
     $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}')
     if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
     foreach ($row in $rows) {
-        $parts = [string]$row -split '\|', 3
+        $parts = [string]$row -split '\|', 4
         if ($parts.Count -ne 4) { throw "Invalid Docker slot inventory." }
         $labels = @{}
         foreach ($label in ($parts[3] -split ',')) {
