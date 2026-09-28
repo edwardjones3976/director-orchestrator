@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 02:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
@@ -526,42 +527,36 @@ class HostProviderBridgeTests(unittest.TestCase):
         self.assertEqual([True], closed)
 
     def test_timed_out_lookups_are_capped_and_fail_closed(self) -> None:
-        import threading as threading_module
-        import time as time_module
         from director_orchestrator import host_provider_bridge as bridge
 
-        release = threading_module.Event()
-        calls = []
-
-        def stalled(*args, **kwargs):
-            calls.append(args)
-            release.wait(5)
-            return []
-
-        with patch.object(bridge, "_RESOLVER_SLOTS", threading_module.BoundedSemaphore(1)):
+        # Control worker completion: a wall-clock timeout before resolver.start()
+        # must not be mistaken for an outstanding lookup. Other tests exercise
+        # real DNS deadlines; this test owns the capacity and release ordering.
+        resolver = MagicMock()
+        resolver.is_alive.return_value = True
+        slots = threading.BoundedSemaphore(1)
+        with patch.object(bridge, "_RESOLVER_SLOTS", slots), \
+             patch.object(bridge, "_time_left", return_value=1.0), \
+             patch.object(bridge.threading, "Thread", return_value=resolver) as factory:
             try:
-                with self.assertRaises(TimeoutError):
+                with self.assertRaisesRegex(TimeoutError, "resolution reached its deadline"):
                     bridge.connect_until_deadline(("bridge", 443), 30,
-                                                  deadline=time_module.monotonic() + 0.1,
-                                                  resolve=stalled)
-                started = time_module.monotonic()
+                                                  deadline=1.0, resolve=lambda *a, **k: [])
+                factory.assert_called_once()
                 with self.assertRaisesRegex(TimeoutError, "capacity"):
                     bridge.connect_until_deadline(("bridge", 443), 30,
-                                                  deadline=time_module.monotonic() + 5,
-                                                  resolve=stalled)
-                self.assertLess(time_module.monotonic() - started, 0.5)
-                self.assertEqual(1, len(calls))
+                                                  deadline=1.0, resolve=lambda *a, **k: [])
+                factory.assert_called_once()  # Refusal starts no second worker.
             finally:
-                release.set()
-            deadline = time_module.monotonic() + 5
-            while not bridge._RESOLVER_SLOTS.acquire(blocking=False):
-                self.assertLess(time_module.monotonic(), deadline)
-                time_module.sleep(0.01)
-            bridge._RESOLVER_SLOTS.release()
+                if factory.called:
+                    factory.call_args.kwargs["target"]()  # Drain before restoring slots.
+
+            resolver.is_alive.return_value = False
+            resolver.start.side_effect = lambda: factory.call_args.kwargs["target"]()
             with self.assertRaisesRegex(OSError, "no address"):
                 bridge.connect_until_deadline(("bridge", 443), 30,
-                                              deadline=time_module.monotonic() + 1,
-                                              resolve=lambda *a, **k: [])
+                                              deadline=1.0, resolve=lambda *a, **k: [])
+            self.assertEqual(2, factory.call_count)  # Completed lookup released its slot.
 
     def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
         import time as time_module
@@ -1788,3 +1783,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:53 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 02:15 UTC | END]]

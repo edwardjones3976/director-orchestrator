@@ -1,9 +1,11 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:39 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — Plan v1.3
 
-**Owner:** Ed · **Project Director:** Claude (decision-log O-001) · **State:** building (M0 gate report filed 2026-09-25) · **Base:** `1892b84` at PR-0; `f0a7752e` at the M0 gate
+**Owner:** Ed · **Project Director:** Claude (decision-log O-001) · **State:** building; M0 closed 2026-09-26 (O-031), M1 entered; M0 record reconciliation pending until PR #293 review, CI and merge gates pass · **Base:** `1892b84` at PR-0; `58fb485` at the M0 gate (main when O-031 was given; `f0a7752e` when the gate report was first filed)
 
 Grades: **[verified]** read or measured by this project · **[relayed]** the owner's words or a document · **[research]** web research on 2026-09-24 with a source.
 
@@ -196,3 +198,5 @@ Base licenses:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:39 UTC | END]] -->

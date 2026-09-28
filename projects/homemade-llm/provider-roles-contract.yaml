@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:29 UTC | BEGIN]]
+# MX-080
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | BEGIN]]
+# MX-049
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]]
@@ -348,7 +352,7 @@ this_template_does_not_change:
 project_local_bindings:
   project_id: "homemade-llm"
   recorded_at: "2026-09-24T07:55:00Z"
-  lanes_in_use: ["claude", "grok", "openai", "perplexity"]
+  lanes_in_use: ["claude", "cursor", "grok", "openai", "perplexity"]
   deviations:
     - area: "project_leadership"
       provider: "claude"
@@ -364,3 +368,5 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:29 UTC | END]]

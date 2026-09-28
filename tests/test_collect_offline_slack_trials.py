@@ -1,3 +1,23 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -17,13 +37,17 @@ import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import uuid
 
 import httpx
 import jsonschema
+
+from director_orchestrator.models import SlackIntake, canonical_slack_source_event_id
 
 
 COLLECTOR_PATH = Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py"
@@ -31,13 +55,19 @@ SPEC = importlib.util.spec_from_file_location("offline_slack_trial_collector", C
 collector_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(collector_module)
 
-THREAD = "1789210000.100000"
-FINAL_TS = "1789210030.100000"
+# The owner's post just before the readback's 10:00:00 task creation, and the final reply 30s later, inside
+# its delivery's claim (10:00:20) and acknowledgement (10:00:30.5): the gateway claims the intake in between.
+THREAD = "1789207199.500000"
+FINAL_TS = "1789207229.500000"
 TASK_ID = "DIR-LG-AB12"
 OWNER = "UOWNER123"
 BOT = "UBOT123"
-SOURCE_EVENT = "fixture-owner-source-event"
-FINAL_ID = "fixture-terminal-client-id"
+# Slack client_msg_id values are UUIDs.
+OWNER_CLIENT_MSG_ID = "4f1d6a2e-8b3c-4e5f-9a0b-1c2d3e4f5a6b"
+# The delivery's client_msg_id: uuid5 of schema, task and notification key (primary_slack_delivery.py scan).
+FINAL_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "director_primary_v1:" + TASK_ID + ":terminal"))
+# projection_digest is a sha256: digest; status receipt ids are "status-" + a sha256: digest (primary_default).
+PROJECTION = "sha256:" + hashlib.sha256(b"fixture-projection").hexdigest()
 EMPTY_ATTEMPT_FIELDS = (
     "provider_runs", "provider_run_history", "provider_contact_attempts",
     "provider_contact_attempt_history", "provider_interaction_ledger",
@@ -48,42 +78,105 @@ ENV = {
     "ORCHESTRATOR_SHARED_SECRET": "fixture-director-secret",
     "SLACK_OWNER_USER_ID": OWNER,
 }
+# The gateway's own source_event_id for the owner's message (slack_bot._forward via
+# models.canonical_slack_source_event_id): `<channel>:<ts>`, never the raw client_msg_id.
+SOURCE_EVENT = canonical_slack_source_event_id({"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": THREAD})
+
+
+def receipt_id(source_event_id, task_id):
+    """The status receipt id DefaultPrimaryApplication.create_status_receipt derives, from its own digest."""
+    from director_orchestrator.primary_default import _digest
+    return "status-" + _digest({"source_event_id": source_event_id, "task_id": task_id}).removeprefix("sha256:")[:24]
+
+
+# A status reply in the task's thread (its source_event_id is the gateway's canonical `<channel>:<ts>` as well).
+RECEIPT_SOURCE = canonical_slack_source_event_id({"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": "1789210040.100000"})
+RECEIPT_ID = receipt_id(RECEIPT_SOURCE, TASK_ID)
+
+
+def intake_claim(intake, created_at="2026-09-12T10:00:00+00:00"):
+    """The director_primary_intake_auth_claim row claim_authenticated_primary_intake writes for this intake, with
+    its digests produced by the producers themselves: main.py's verify_slack_intake_attestation over a
+    gateway-signed intake (payload) and the digest primary_default._request computes (idempotency key)."""
+    import secrets
+    from director_orchestrator import primary_default
+    from director_orchestrator.approvals import (
+        SLACK_INTAKE_ISSUED_AT_HEADER, SLACK_INTAKE_NONCE_HEADER, SLACK_INTAKE_SIGNATURE_HEADER,
+        build_slack_intake_attestation, verify_slack_intake_attestation)
+    model = SlackIntake.model_validate(intake)
+    assert model.model_dump(mode="json") == intake, "a served intake is the model's JSON form"
+    key = secrets.token_urlsafe(32)  # a runtime-only gateway key; never a literal
+    signed = build_slack_intake_attestation(key, "", model)
+    _, payload = verify_slack_intake_attestation(
+        key, "", model, expected_owner_user_id=model.user_id, expected_channel_id=model.channel_id,
+        issued_at=signed[SLACK_INTAKE_ISSUED_AT_HEADER], nonce=signed[SLACK_INTAKE_NONCE_HEADER],
+        signature=signed[SLACK_INTAKE_SIGNATURE_HEADER])
+    return {"payload_digest": "sha256:" + payload,
+            "idempotency_key_digest": primary_default._digest({"source_event_id": model.source_event_id,
+                                                               "channel_id": model.channel_id,
+                                                               "thread_ts": model.thread_ts}),
+            "authentication_class": "slack_gateway_attested", "created_at": created_at}
 
 
 def sample():
+    # The /v1/tasks/{id} TaskRecord (models.TaskRecord), /v1/primary/tasks/{id}/deliveries rows
+    # (primary_slack_delivery) and conversations.replies messages, with main.py's x-task-engine-owner headers.
     task = {
         "task_id": TASK_ID,
-        "intake": {
-            "channel_id": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "thread_ts": THREAD,
-            "user_id": OWNER, "source_event_id": SOURCE_EVENT, "text": "audit trial",
-        },
+        # The served intake is SlackIntake's JSON form, defaults included, as the gateway attested it.
+        "intake": SlackIntake(
+            channel_id=ENV["SLACK_DIRECTOR_CHANNEL_ID"], thread_ts=THREAD, user_id=OWNER,
+            source_event_id=SOURCE_EVENT, text="DIRECTOR audit trial",
+            received_at=datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)).model_dump(mode="json"),
         "intake_authentication": "slack_gateway_attested",
         "assignment_outcomes": [{
-            "run_id": "offline-double:fixture", "result": collector_module.LABEL,
+            # primary_default dispatch_offline_assignment: run_id is offline-double:<the reservation digest>.
+            "run_id": "offline-double:sha256:" + "a" * 64, "result": collector_module.LABEL,
         }],
         **{field: [] for field in EMPTY_ATTEMPT_FIELDS},
     }
     deliveries = [{
-        "task_id": TASK_ID, "notification_key": "terminal", "projection_digest": "fixture-digest",
+        # PrimarySlackDelivery.receipts row (primary_slack_delivery.py): every column the endpoint returns.
+        "task_id": TASK_ID, "notification_key": "terminal", "projection_digest": PROJECTION,
+        "created_at": "2026-09-12T10:00:19+00:00", "last_error": None,
+        "owner_decision": None, "owner_decision_at": None, "owner_command_id": None,
         "client_msg_id": FINAL_ID, "state": "DELIVERED", "slack_ts": FINAL_TS,
         "claimed_at": "2026-09-12T10:00:20+00:00",
-        "acknowledged_at": "2026-09-12T10:00:30+00:00",
+        "acknowledged_at": "2026-09-12T10:00:30.500000+00:00",  # after chat.postMessage returned ts ...30.1
         "delivered_at": "2026-09-12T10:00:31+00:00", "readback_attempts": 1,
     }]
     messages = [{
-        "ts": THREAD, "user": OWNER, "client_msg_id": SOURCE_EVENT,
-        "text": "<@UBOT123> audit trial",
+        "ts": THREAD, "user": OWNER, "client_msg_id": OWNER_CLIENT_MSG_ID,
+        "text": "<@UBOT123> DIRECTOR audit trial",
     }, {
         "ts": FINAL_TS, "thread_ts": THREAD, "user": BOT,
         "client_msg_id": FINAL_ID,
         "text": TASK_ID + " — SUCCEEDED\n" + collector_module.LABEL,
     }]
-    headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest"}
+    headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": PROJECTION}
     return task, deliveries, messages, headers
 
 
+def unsettled(readback):
+    """The fixture's assignment still reserved (ACTIVE): not yet settled, so no completion or result digest."""
+    # primary_parallel's reserve clears reason_code (4110553571's assignment contract).
+    readback["assignments"][0].update(status="ACTIVE", completed_at=None, result_digest=None, reason_code=None)
+    return readback
+
+
+def seal(readback):
+    """Each settling event's outcome_evidence_digest, recomputed from the event as the producer digests it
+    (primary_scorecard_evidence.outcome_evidence_digest mirrors primary_parallel's two settle paths)."""
+    from director_orchestrator.primary_scorecard_evidence import outcome_evidence_digest
+    for event in readback["provider_attempts"]:
+        if event.get("outcome_evidence_digest") is not None:
+            event["outcome_evidence_digest"] = outcome_evidence_digest(readback["task_id"], event)
+    return readback
+
+
 def recount(readback):
-    """Keep a mutated fixture's task-scope counters consistent with its rows."""
+    """Keep a mutated fixture's task-scope counters (and its events' outcome digests) consistent with its rows."""
+    seal(readback)
     events = readback["provider_attempts"]
     readback["task_scope_counters"].update(
         assignments=len(readback["assignments"]), provider_attempts=len(events),
@@ -96,9 +189,9 @@ def recount(readback):
 def readback_fixture():
     """A serialized opt-in qualification_evidence in the typed API shape."""
     assignment = TASK_ID + "-A1"
-    return {
+    return seal({
         "schema_version": "director-qualification-readback/v1", "task_id": TASK_ID, "engine_owner": "langgraph",
-        "projection_version": 3, "projection_digest": "fixture-digest", "source_event_id": SOURCE_EVENT,
+        "projection_version": 3, "projection_digest": PROJECTION, "source_event_id": SOURCE_EVENT,
         "execution_mode": "offline_simulation", "terminal_classification": "SUCCEEDED",
         "terminal_reason_code": "effect_readback_verified", "task_created_at": "2026-09-12T10:00:00+00:00",
         "task_updated_at": "2026-09-12T10:00:31+00:00",
@@ -115,15 +208,15 @@ def readback_fixture():
                          "reserved_at": "2026-09-12T10:00:05+00:00", "completed_at": "2026-09-12T10:00:25+00:00"}],
         "provider_attempts": [
             {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 1,
-             "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+             "provider_id": "claude", "format_id": "v1", "transport_id": "native-cli",
              "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
              "provider_run_id_digest": None, "status": "STARTED", "result_digest": None,
              "outcome_evidence_digest": None, "reason_code": "attempt_started",
              "budget_evidence_digest": "sha256:" + "9" * 64, "recorded_at": "2026-09-12T10:00:06+00:00"},
             {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 2,
-             "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+             "provider_id": "claude", "format_id": "v1", "transport_id": "native-cli",
              "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
-             "provider_run_id_digest": "sha256:" + "8" * 64, "status": "SUCCEEDED",
+             "provider_run_id_digest": None, "status": "SUCCEEDED",  # event 2 never carries a run id
              "result_digest": "sha256:" + "2" * 64, "outcome_evidence_digest": "sha256:" + "7" * 64,
              "reason_code": "attempt_succeeded", "budget_evidence_digest": "sha256:" + "9" * 64,
              "recorded_at": "2026-09-12T10:00:25+00:00"}],
@@ -131,22 +224,35 @@ def readback_fixture():
                      "effect_key_digest": "sha256:" + "3" * 64, "effect_attempt_digest": "sha256:" + "6" * 64,
                      "writer_owner_id": "langgraph-primary", "fencing_generation": 1, "reserved_units": 1,
                      "reserved_at": "2026-09-12T10:00:26+00:00", "execution_started_at": "2026-09-12T10:00:27+00:00",
+                     # claim_effect_execution copies its claim's owner and fence (compared in SQL, booleans only)
+                     "execution_owner_matches": True, "execution_fencing_matches": True,
+                     # the reservation's task, owner and fence are its claim's (compared in SQL, booleans only)
+                     "reservation_task_matches": True, "reservation_owner_matches": True,
+                     "reservation_fencing_matches": True,
+                     # the binding carries its claim's owner; the terminal row its claim's authority
+                     "binding_owner_matches": True, "terminal_authority_matches": True,
                      "remote_system": "slack", "remote_identifier": FINAL_TS, "bound_at": "2026-09-12T10:00:28+00:00",
                      "terminal_disposition": "COMPLETED", "terminal_evidence_digest": "sha256:" + "c" * 64,
                      "terminal_recorded_at": "2026-09-12T10:00:29+00:00"}],
         "reconciliation_events": [],
-        "slack_deliveries": [{"notification_key": "terminal", "projection_digest": "fixture-digest",
+        "slack_deliveries": [{"notification_key": "terminal", "projection_digest": PROJECTION,
                               "client_msg_id": FINAL_ID, "state": "DELIVERED", "created_at": "2026-09-12T10:00:19+00:00",
-                              "claimed_at": "2026-09-12T10:00:20+00:00", "acknowledged_at": "2026-09-12T10:00:30+00:00",
+                              "claimed_at": "2026-09-12T10:00:20+00:00",
+                              "acknowledged_at": "2026-09-12T10:00:30.500000+00:00",
                               "delivered_at": "2026-09-12T10:00:31+00:00", "slack_ts": FINAL_TS, "readback_attempts": 1,
                               "last_error": None, "owner_decision": None, "owner_decision_at": None,
                               "owner_command_id": None}],
-        "status_receipts": [{"receipt_id": "receipt-1", "source_event_id": "status-event-1",
-                             "created_at": "2026-09-12T10:00:40+00:00"}],
+        # A status reply's source_event_id is the gateway's canonical `<channel>:<ts>` as well.
+        "status_receipts": [{"receipt_id": RECEIPT_ID, "source_event_id": RECEIPT_SOURCE,
+                             "created_at": "2026-09-12T10:00:40+00:00",
+                             # the task's own thread and the owner, digest-only text (record_primary_slack_status_receipt)
+                             "channel_id": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "thread_ts": THREAD, "user_id": OWNER,
+                             "text_digest": "sha256:" + hashlib.sha256(b"status?").hexdigest()}],
+        "intake_auth_claims": [intake_claim(sample()[0]["intake"], "2026-09-12T09:59:59.750000+00:00")],
         "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
                             "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
                             "observed_tokens": 900}],
-    }
+    })
 
 
 class ParseTrialsTests(unittest.TestCase):
@@ -179,22 +285,127 @@ class SummaryTests(unittest.TestCase):
     def setUp(self):
         self.task, self.deliveries, self.messages, self.headers = sample()
 
+    def test_a_hold_or_approval_notification_is_never_a_final_reply(self):
+        """4100880218: PrimarySlackDelivery keys OWNER_DECISION_REQUIRED and RECONCILIATION_REQUIRED as 'hold:' and a
+        pending prompt as 'approval:', and render_notification heads them `<task> — <classification>` (or OWNER
+        DECISION REQUIRED); only a 'terminal' notification is a final reply. The messages are rendered by the
+        producer itself, so a task that paused and then finished still has one final."""
+        from types import SimpleNamespace
+        from director_orchestrator.primary_slack_delivery import render_notification
+        settings = SimpleNamespace(slack_channel_id=ENV["SLACK_DIRECTOR_CHANNEL_ID"], slack_owner_user_id=OWNER)
+        record = {**self.task, "status": "DONE"}
+        record["assignment_outcomes"] = [{**record["assignment_outcomes"][0], "assignment_sequence": 1,
+                                          "provider": "claude", "review_summary": "fixture review"}]
+        self.task["qualification_evidence"] = readback_fixture()
+        self.assertEqual(1, self.summarize()["terminal_reply_count"])
+        for classification in ("OWNER_DECISION_REQUIRED", "RECONCILIATION_REQUIRED"):
+            for with_row in (True, False):
+                key = "hold:sha256:" + hashlib.sha256(classification.encode()).hexdigest()
+                client = str(uuid.uuid5(uuid.NAMESPACE_URL, "director_primary_v1:" + TASK_ID + ":" + key))
+                rendered = render_notification({"projection": {
+                    "terminal_classification": classification, "reason_code": "held",
+                    "application": {"task_record": record, "execution_mode": "offline_simulation"}},
+                    "projection_digest": PROJECTION, "created_at": datetime(2026, 9, 12, 10, 0, 5, tzinfo=timezone.utc)},
+                    settings)
+                held_ts = "%.6f" % (float(THREAD) + 5)
+                self.messages = sample()[2]
+                self.messages.insert(1, {"ts": held_ts, "thread_ts": THREAD, "user": BOT, "client_msg_id": client,
+                                         "text": rendered["text"], "blocks": rendered["blocks"]})
+                self.deliveries = sample()[1] + ([{**sample()[1][0], "notification_key": key, "client_msg_id": client,
+                                                   "slack_ts": held_ts}] if with_row else [])
+                with self.subTest(classification=classification, delivery_row=with_row):
+                    report = self.summarize()
+                    self.assertEqual(1, report["terminal_reply_count"])
+                    self.assertTrue(report["final_receipt_matches_native_message"])
+
+    def test_readback_snapshot_must_cover_the_served_task_record(self):
+        """Review summary (collector :390): the snapshot's covers_task_record must be exactly true, and the readback the
+        LangGraph engine's; anything else is refused, never collected."""
+        for change in ({"snapshot": {**readback_fixture()["snapshot"], "covers_task_record": False}},
+                       {"engine_owner": "legacy"}):
+            readback = {**readback_fixture(), **change}
+            self.task["qualification_evidence"] = readback
+            with self.subTest(change=sorted(change)):
+                evidence = self.summarize()["qualification_evidence"]
+                self.assertEqual("rejected", evidence["readback"]["state"])
+                self.assertIn("does not cover the served task record", evidence["readback"]["reason"])
+
+    def test_gateway_attestation_needs_the_append_only_intake_claim(self):
+        """The projection's intake_authentication label alone never attests the gateway (checks 03, 08, 09, 10,
+        20): the complete readback must carry this task's one claim, whose digests are this intake's."""
+        self.task["qualification_evidence"] = readback_fixture()
+        self.assertTrue(self.summarize()["task_api_gateway_attested"])
+        for name, change in (
+                ("no readback", lambda task: task.pop("qualification_evidence")),
+                ("no claim row", lambda task: task["qualification_evidence"].update(intake_auth_claims=[])),
+                ("two claim rows", lambda task: task["qualification_evidence"]["intake_auth_claims"].append(
+                    dict(task["qualification_evidence"]["intake_auth_claims"][0]))),
+                ("another intake's payload", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(payload_digest=intake_claim({**task["intake"], "text": "another"})["payload_digest"])),
+                ("another source identity", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(idempotency_key_digest=intake_claim(
+                     {**task["intake"], "source_event_id": "CFIXTURE:1789219999.100000"})["idempotency_key_digest"])),
+                ("projection text edited after the claim", lambda task: task["intake"].update(text="edited")),
+                ("label says bearer", lambda task: task.update(intake_authentication="bearer_dry_run")),
+                ("incomplete readback", lambda task: task["qualification_evidence"].update(
+                    complete=False, truncated=["provider_attempts"])),
+                # Review 4100588377: the claim's own time lies between the owner's post and the task's creation.
+                ("claimed before the owner posted", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(created_at="2026-09-12T09:59:59+00:00")),
+                ("claimed after the task was created", lambda task: task["qualification_evidence"]
+                 ["intake_auth_claims"][0].update(created_at="2026-09-12T10:00:01+00:00")),
+                ("naive claim time", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(created_at="2026-09-12T09:59:59.750000"))):
+            with self.subTest(name):
+                self.task = deepcopy(sample()[0])
+                self.task["qualification_evidence"] = readback_fixture()
+                change(self.task)
+                self.assertFalse(self.summarize()["task_api_gateway_attested"])
+
     def summarize(self, *, complete=True, **options):
         return collector_module.summarize(THREAD, TASK_ID, self.task, self.deliveries,
             self.messages, complete, OWNER, BOT, self.headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"], **options)
 
     def test_binds_actual_owner_source_message_and_observed_final(self):
+        self.task["qualification_evidence"] = readback_fixture()
         report = self.summarize()
         self.assertTrue(report["task_record_bound"])
         self.assertTrue(report["owner_account_input_matched"])
         self.assertEqual(report["input_message_ts"], THREAD)
-        self.assertEqual(report["input_client_msg_id"], SOURCE_EVENT)
+        self.assertEqual(report["input_client_msg_id"], OWNER_CLIENT_MSG_ID)
         self.assertTrue(report["task_api_gateway_attested"])
         self.assertEqual(report["terminal_reply_count"], 1)
         self.assertTrue(report["final_receipt_matches_native_message"])
         self.assertEqual(report["wall_seconds"], 30.0)
         self.assertTrue(report["wall_under_60_seconds"])
         self.assertIsNone(report["human_typing_attested"])
+
+    def test_input_binds_by_the_gateway_canonical_source_event_id(self):
+        import ast
+        # The gateway and the summarizer share one canonicalizer, so they cannot drift (read from source:
+        # importing slack_bot needs live gateway credentials).
+        gateway = ast.parse((Path(__file__).resolve().parents[1] / "src/director_orchestrator/slack_bot.py")
+                            .read_text(encoding="utf-8"))
+        self.assertIn("_canonical_slack_source_event_id = canonical_slack_source_event_id",
+                      [ast.unparse(node) for node in gateway.body if isinstance(node, ast.Assign)])
+        self.assertNotIn("_canonical_slack_source_event_id",
+                         [node.name for node in gateway.body if isinstance(node, ast.FunctionDef)])
+        self.assertEqual(SOURCE_EVENT, ENV["SLACK_DIRECTOR_CHANNEL_ID"] + ":" + THREAD)
+        self.assertTrue(self.summarize()["task_record_bound"])
+        # The gateway never stores the raw client_msg_id while it has the channel and ts.
+        self.task["intake"]["source_event_id"] = OWNER_CLIENT_MSG_ID
+        self.assertFalse(self.summarize()["task_record_bound"])
+        # Another channel's identity for the same ts is another message.
+        self.task["intake"]["source_event_id"] = "COTHER:" + THREAD
+        self.assertFalse(self.summarize()["task_record_bound"])
+
+    def test_every_director_terminal_classification_counts_as_a_final_reply(self):
+        # A second final with a real classification the old pattern missed (TIMED_OUT, POLICY_BLOCKED, ...).
+        for classification in ("TIMED_OUT", "POLICY_BLOCKED", "BUDGET_EXHAUSTED", "EXACT_SHA_INVALID"):
+            self.messages = sample()[2] + [{"ts": "1789210050.100000", "thread_ts": THREAD, "user": BOT,
+                                            "client_msg_id": "another-final", "text": TASK_ID + " — " + classification}]
+            with self.subTest(classification=classification):
+                self.assertEqual(self.summarize()["terminal_reply_count"], 2)
 
     def test_two_distinct_terminal_timestamps_count_twice_even_with_same_client_id(self):
         duplicate = deepcopy(self.messages[-1])
@@ -319,7 +530,7 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(report["machine_seconds"])
 
     def test_negative_timestamp_duration_remains_unknown(self):
-        self.messages[-1]["ts"] = "1789209999.100000"
+        self.messages[-1]["ts"] = "%.6f" % (float(THREAD) - 1)  # a final reply before the owner's post
         self.deliveries[0]["slack_ts"] = self.messages[-1]["ts"]
         report = self.summarize()
         self.assertIsNone(report["wall_seconds"])
@@ -376,13 +587,13 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(chain["attempt_ids"], ["sha256:" + "1" * 64])
         self.assertEqual(chain["effect_ids"], ["sha256:" + "3" * 64])
         self.assertEqual(chain["delivery_ids"], [FINAL_ID])
-        self.assertEqual(chain["status_receipt_ids"], ["receipt-1"])
+        self.assertEqual(chain["status_receipt_ids"], [RECEIPT_ID])
         self.assertEqual(chain["provider_result_digests"], ["sha256:" + "2" * 64])
         self.assertEqual(evidence["effect_state"], "PROVIDER_EFFECT_RECORDED")
         self.assertEqual(evidence["provider_effect_state"], "PROVIDER_RESULT_RECORDED")
         self.assertEqual(evidence["external_effect_state"], "EXTERNAL_EFFECT_TERMINAL:COMPLETED")
         self.assertEqual(evidence["lineage"]["provider_routes"], ["claude"])
-        self.assertEqual(evidence["lineage"]["transport"], "native-command")
+        self.assertEqual(evidence["lineage"]["transport"], "native-cli")
         self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 1)
         self.assertIsNone(evidence["lineage"]["fallback_observed"])  # no producer records fallback linkage
         self.assertEqual(evidence["timestamps"]["completion_at"], "2026-09-12T10:00:25+00:00")
@@ -418,6 +629,7 @@ class SummaryTests(unittest.TestCase):
     def test_readback_distinguishes_pre_effect_ambiguous_and_zero_effect_outcomes(self):
         started_only = readback_fixture()
         started_only["provider_attempts"] = [started_only["provider_attempts"][0]]
+        unsettled(started_only)  # an attempt still running belongs to an assignment still reserved (settlement rule)
         started_only["effects"] = [dict(started_only["effects"][0], execution_started_at=None,
                                         remote_identifier=None, remote_system=None, terminal_disposition=None,
                                         terminal_evidence_digest=None)]
@@ -445,7 +657,9 @@ class SummaryTests(unittest.TestCase):
         # A top-level task cost is an unbound provider-reported figure: it is
         # recorded only alongside a complete validated readback without usage rows.
         collected = readback_fixture()
+        # No spend or usage tables in this schema (the readback reports them absent): no authenticated usage.
         collected["provider_usage"] = []
+        collected["absent"] = ["provider_usage"]
         self.task["qualification_evidence"] = collected
         for value, expected in ((0.25, 0.25), (0, 0), ("0.25", None), (-1, None), (None, None),
                                 (float("inf"), None), (float("nan"), None), (True, None)):
@@ -525,19 +739,20 @@ class SummaryTests(unittest.TestCase):
         rejected(lambda r: r["provider_attempts"][1].update(provider_id="openai"), "disagrees with its assignment")
         # 2. digest changes between STARTED and terminal events of one attempt
         rejected(lambda r: r["provider_attempts"][1].update(attempt_digest="sha256:" + "f" * 64), "identity changed")
-        # 3a. usage naming an unjoined digest / another provider
-        rejected(lambda r: r["provider_usage"][0].update(attempt_digest="sha256:" + "e" * 64), "usage is orphaned")
-        rejected(lambda r: r["provider_usage"][0].update(provider_id="openai"), "usage is orphaned")
+        # 3a. the attempt's spend reservation missing (renamed away), or naming another provider
+        rejected(lambda r: r["provider_usage"][0].update(attempt_digest="sha256:" + "e" * 64), "no spend reservation")
+        rejected(lambda r: r["provider_usage"][0].update(provider_id="openai"), "provider-mismatched")
         # 3b. duplicate usage rows must not double the cost
-        rejected(lambda r: r["provider_usage"].append(dict(r["provider_usage"][0])), "usage is orphaned")
+        rejected(lambda r: r["provider_usage"].append(dict(r["provider_usage"][0])), "duplicated")
         # bool-as-number and negative amounts: the strict typed model refuses them
         # first (locations only); the collector's own integer check stays behind it.
         rejected(lambda r: r["provider_usage"][0].update(actual_microusd=True),
                  "typed model at provider_usage.0.actual_microusd")
         rejected(lambda r: r["provider_usage"][0].update(observed_tokens=-1),
                  "typed model at provider_usage.0.observed_tokens")
-        self.assertEqual("usage is orphaned, duplicated, provider-mismatched or non-integer",
-                         collector_module._validate_usage([{**readback_fixture()["provider_usage"][0], "observed_tokens": True}],
+        from director_orchestrator.primary_scorecard_evidence import validate_usage
+        self.assertEqual(("a spend or usage row is duplicated, malformed or provider-mismatched", None),
+                         validate_usage([{**readback_fixture()["provider_usage"][0], "observed_tokens": True}],
                                                           {("a", 1): readback_fixture()["provider_attempts"][1]}))
         # malformed identities, sequences and statuses
         rejected(lambda r: r["provider_attempts"][1].update(event_sequence=7),
@@ -564,16 +779,22 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
         # 5. an AMBIGUOUS event 2 is superseded by an authenticated SUCCEEDED event 3
         readback = readback_fixture()
-        readback["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None, outcome_evidence_digest=None,
+        # record_provider_attempt digests every event 2 it writes, AMBIGUOUS included (sealed below).
+        readback["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None,
                                                 provider_run_id_digest=None, reason_code="callback_timeout",
                                                 recorded_at="2026-09-12T10:00:20+00:00")
-        self.task["qualification_evidence"] = readback
+        settled = dict(readback["assignments"][0])
+        unsettled(readback)  # the assignment settles only once event 3 lands
+        self.task["qualification_evidence"] = seal(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("PROVIDER_ATTEMPT_AMBIGUOUS", evidence["provider_effect_state"])
         self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
         readback["provider_attempts"].append({**readback_fixture()["provider_attempts"][1], "event_sequence": 3,
+                                              # record_callback_result always carries the provider run id
+                                              "provider_run_id_digest": "sha256:" + "8" * 64,
                                               "reason_code": "authenticated_callback_settled",
                                               "recorded_at": "2026-09-12T10:00:26+00:00"})
+        readback["assignments"][0] = {**settled, "completed_at": "2026-09-12T10:00:27+00:00"}
         self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -593,10 +814,18 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:COMPLETED", evidence["external_effect_state"])
         # retry (second ordinal, same provider) is not reported as a fallback
         readback = readback_fixture()
+        # Attempt 1 failed transiently (the only failure primary_parallel authorizes a retry after, 4110399582);
+        # attempt 2 ran after it and succeeded, then the assignment settled (the product's order).
+        readback["provider_attempts"][1].update(status="FAILED", result_digest=None,
+                                                reason_code="provider_transient_transport_failure")
         second = [{**e, "attempt_ordinal": 2, "attempt_digest": "sha256:" + "a" * 64,
-                   "idempotency_key_digest": "sha256:" + "c" * 64} for e in readback["provider_attempts"]]
+                   "idempotency_key_digest": "sha256:" + "c" * 64,
+                   "recorded_at": "2026-09-12T10:00:2%d+00:00" % (6 + index)}
+                  for index, e in enumerate(readback_fixture()["provider_attempts"])]
         readback["provider_attempts"].extend(second)
-        readback["provider_usage"] = []
+        readback["assignments"][0]["completed_at"] = "2026-09-12T10:00:28+00:00"
+        # Each attempt holds its own spend reservation (PrimaryProviderBudgetAuthority.reserve), usage recorded.
+        readback["provider_usage"].append({**readback["provider_usage"][0], "attempt_digest": "sha256:" + "a" * 64})
         self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -653,8 +882,8 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual({"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"}, evidence["usage"])
         # an authenticated callback event 3 directly after event 1 is legitimate
         readback = readback_fixture()
-        readback["provider_attempts"][1]["event_sequence"] = 3
-        self.task["qualification_evidence"] = readback
+        readback["provider_attempts"][1].update(event_sequence=3, provider_run_id_digest="sha256:" + "8" * 64)
+        self.task["qualification_evidence"] = seal(readback)  # the callback settle's own outcome digest
         self.task.pop("actual_cost_usd", None)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -668,7 +897,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("incomplete", evidence["readback"]["state"])
         self.assertEqual({"row_counts": {"assignments": 1, "provider_attempts": 2, "effects": 1,
                                          "reconciliation_events": 0, "slack_deliveries": 1, "status_receipts": 1,
-                                         "provider_usage": 1}, "not_proof": True},
+                                         "intake_auth_claims": 1, "provider_usage": 1}, "not_proof": True},
                          evidence["readback"]["partial_diagnostics"])
         self.assertEqual(([], [], [], []), (evidence["chain"]["attempt_ids"], evidence["chain"]["effect_ids"],
                                             evidence["chain"]["delivery_ids"], evidence["chain"]["status_receipt_ids"]))
@@ -693,11 +922,17 @@ class SummaryTests(unittest.TestCase):
                 self.assertIsNone(collector_module.notification_key_family(bad))
         readback = readback_fixture()
         readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": approval_key,
+                                             # enqueue stores the projection digest its approval key names
+                                             "projection_digest": projection_digest,
                                              "client_msg_id": "approval-message", "owner_decision": "approve",
-                                             "owner_decision_at": "2026-09-12T10:00:22+00:00",
+                                             # after the prompt's Slack ts (decision_follows_prompt, 4110553569)
+                                             "owner_decision_at": "2026-09-12T10:00:45+00:00",
                                              "owner_command_id": "command-1"})
         readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": "hold:sha256:" + "7" * 64,
-                                             "client_msg_id": "hold-message", "state": "SUPPRESSED"})
+                                             "client_msg_id": "hold-message", "state": "SUPPRESSED",
+                                             # Suppressed before any claim (4110241987): never posted or read back.
+                                             "claimed_at": None, "acknowledged_at": None, "delivered_at": None,
+                                             "slack_ts": None, "readback_attempts": 0})
         self.task["qualification_evidence"] = readback
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -792,9 +1027,11 @@ class SummaryTests(unittest.TestCase):
                                "Env": [f"{k}={v}" for k, v in {**ENV, **env_pairs}.items()]},
                     "State": {"Running": True, "StartedAt": "2026-09-12T09:00:00Z"},
                     "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]}}}
-            completed = SimpleNamespace(returncode=0, stdout=json.dumps([item]).encode())
-            with patch.object(collector_module.subprocess, "run", return_value=completed):
-                return collector_module.inspect_runtime("e" * 40)
+            with patch.object(collector_module, "_run", return_value=json.dumps([item]).encode()) as run:
+                inspected_runtime = collector_module.inspect_runtime("e" * 40)
+            # 4109777106 sweep: the collector's commands go through the scorecard's contained, wall-clock runner.
+            run.assert_called_once_with(["docker", "inspect", collector_module.SERVICE], 15)
+            return inspected_runtime
         baseline_public, baseline_env = inspected({"LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "true",
                                                    "ALLOW_PAID_RUNS": "false"})
         self.assertEqual((True, False), (baseline_public["offline_configured"], baseline_public["paid_configured"]))
@@ -825,14 +1062,14 @@ class SummaryTests(unittest.TestCase):
         after = readback_fixture()
         before = {**readback_fixture(), "captured_at": "2026-09-12T10:00:35+00:00", "status_receipts": [],
                   "task_scope_counters": {**readback_fixture()["task_scope_counters"], "status_receipts": 0}}
-        proof = collector_module.status_receipt_delta(before, after, "receipt-1", baseline_authority=same,
+        proof = collector_module.status_receipt_delta(before, after, RECEIPT_ID, baseline_authority=same,
                                                       before_binding=binding, after_binding=binding)
         self.assertTrue(proof["proof"])
         self.assertEqual((0, 0, 0, 1), (proof["tasks_created"], proof["assignments_created"],
                                         proof["provider_attempts_created"], proof["deduplicated_receipts"]))
         self.assertEqual(0, proof["observed_delta"]["provider_attempt_events_added"])
         # A consistent caller-supplied file yields only an observed delta, never proof.
-        filed = collector_module.status_receipt_delta(before, after, "receipt-1", baseline_authority="caller-supplied-file",
+        filed = collector_module.status_receipt_delta(before, after, RECEIPT_ID, baseline_authority="caller-supplied-file",
                                                       before_binding=binding, after_binding=binding)
         self.assertIsNone(filed["proof"])
         self.assertEqual(proof["observed_delta"], filed["observed_delta"])
@@ -864,12 +1101,12 @@ class SummaryTests(unittest.TestCase):
                         "status_receipts": [dict(r) for r in after["status_receipts"]]}
                 mutate(b, a)
                 options = {"baseline_authority": same, "before_binding": binding, "after_binding": binding, **kwargs}
-                verdict = collector_module.status_receipt_delta(b, a, "receipt-1", **options)
+                verdict = collector_module.status_receipt_delta(b, a, RECEIPT_ID, **options)
                 self.assertIsNone(verdict["proof"], label)
                 self.assertIsNone(verdict["observed_delta"], label)
         # Through the collector entry path, with the observation schema.
         self.task["qualification_evidence"] = after
-        collected = self.summarize(baseline=before, receipt_id="receipt-1", baseline_authority=same,
+        collected = self.summarize(baseline=before, receipt_id=RECEIPT_ID, baseline_authority=same,
                                    before_binding=binding, after_binding=binding)["qualification_evidence"]
         evidence = collected["status_receipts"]
         self.assertEqual((0, 0, 0, 1), (evidence["tasks_created"], evidence["assignments_created"],
@@ -877,7 +1114,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("task-and-thread-local/v1", evidence["baseline"]["counter_scope"])
         collector_module.validate_observations({**receipt_fixture(), "trials": [
             {**structural_trial(), "qualification_evidence": collected}]})
-        filed_evidence = self.summarize(baseline=before, receipt_id="receipt-1",
+        filed_evidence = self.summarize(baseline=before, receipt_id=RECEIPT_ID,
                                         before_binding=binding, after_binding=binding)["qualification_evidence"]
         self.assertIsNone(filed_evidence["status_receipts"]["tasks_created"])
         self.assertIsNone(filed_evidence["status_receipts"]["deduplicated_receipts"])
@@ -889,6 +1126,8 @@ class SummaryTests(unittest.TestCase):
 
     def test_baseline_from_receipt_requires_a_schema_valid_collected_prior_observation(self):
         prior = receipt_fixture()
+        # A trial observed without the opt-in readback (absent state) is no baseline.
+        prior["trials"] = [{**structural_trial(), "qualification_evidence": self.summarize()["qualification_evidence"]}]
         self.assertIsNone(collector_module.baseline_from_receipt(prior, TASK_ID))  # absent readback state
         self.assertIsNone(collector_module.baseline_from_receipt({"schema": "x"}, TASK_ID))
         self.task["qualification_evidence"] = readback_fixture()
@@ -1043,7 +1282,7 @@ class CollectorTransportTests(unittest.TestCase):
         raw_body = b'{ "ok": true, "fixture": "preserve exact bytes" }\n'
         collector = self.build_collector(lambda request: httpx.Response(200, content=raw_body, headers={
             "Authorization": "Bearer " + ENV["SLACK_BOT_TOKEN"],
-            "x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest",
+            "x-task-engine-owner": "langgraph", "x-primary-projection-digest": PROJECTION,
         }))
         payload, headers = collector.get(collector_module.SLACK + "auth.test")
         self.assertTrue(payload["ok"])
@@ -1135,7 +1374,7 @@ def rubric_fixture():
     return rubric, collector_module.digest(collector_module.encode(rubric))
 
 
-def structural_trial():
+def structural_trial(**final):
     rubric, sha = rubric_fixture()
     task, deliveries, messages, headers = sample()
     task["status"] = "DONE"
@@ -1143,6 +1382,12 @@ def structural_trial():
     text = "audit trial rubric-sha256:" + sha
     task["intake"]["text"] = messages[0]["text"] = text
     messages[-1]["text"] += "\nActual USD cost: not recorded"
+    messages[-1].update(final)
+    # The served readback, with the gateway's append-only claim for this very (edited) intake: gateway
+    # attestation comes only from that claim (PR #264 review 4100381682), never from the projection label.
+    readback = readback_fixture()
+    readback["intake_auth_claims"] = [intake_claim(task["intake"], readback["intake_auth_claims"][0]["created_at"])]
+    task["qualification_evidence"] = readback
     row = collector_module.summarize(THREAD, TASK_ID, task, deliveries, messages, True,
         OWNER, BOT, headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"])
     row.update(input_rubric_sha256=sha, source_errors=[], runtime_collection_binding_stable=True)
@@ -1320,6 +1565,27 @@ class TaskLookupAndRubricTests(unittest.TestCase):
             row["terminal_messages"][0][field] = False
             self.assertFalse(collector_module.evaluate_rubric(row, rubric, sha)["passed"])
 
+    def test_edited_or_subtyped_terminal_reply_fails_the_rubric(self):
+        # Slack keeps the ts of an edited reply but returns its new text: the label may have been added later.
+        rubric, sha = rubric_fixture()
+        for change in ({"edited": {"user": BOT, "ts": "1789999999.000100"}}, {"subtype": "message_changed"}):
+            with self.subTest(change=change):
+                row = structural_trial(**change)
+                self.assertEqual([(m["simulation_label_present"], m["actual_cost_not_recorded_present"])
+                                  for m in row["terminal_messages"]], [(False, False)])
+                self.assertFalse(collector_module.evaluate_rubric(row, rubric, sha)["passed"])
+
+    def test_a_trial_task_must_come_from_its_thread_root(self):
+        """4110671087: an owner reply inside the thread that triggered a task is not the trial's source event."""
+        rubric, sha = rubric_fixture()
+        row = structural_trial()
+        self.assertEqual(row["input_message_ts"], row["thread_ts"])
+        self.assertTrue(collector_module.evaluate_rubric(row, rubric, sha)["checks"]["task_bound"])
+        for ts in ("1789999999.000200", None):
+            with self.subTest(input_message_ts=ts):
+                self.assertFalse(collector_module.evaluate_rubric({**row, "input_message_ts": ts}, rubric, sha)
+                                 ["checks"]["task_bound"])
+
     def test_late_rubric_and_missing_original_digest_fail_predeclaration(self):
         rubric, sha = rubric_fixture()
         rubric["declared_at"] = "2099-01-01T00:00:00+00:00"
@@ -1421,3 +1687,23 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
