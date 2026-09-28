@@ -100,9 +100,10 @@
       "required": [
         "objective",
         "repository",
-        "title"
+        "title",
+        "context"
       ],
-      "description": "Mirror of the M1 D-M1-1 task input: the model is given objective, repository and a title and nothing else.",
+      "description": "Revised M2 input contract (O-M2-D, D-M2-10): the M1 D-M1-1 fields objective, repository and title, plus at least one provenance-bound context item cited at inference time. Scored target text and held-out source lineage are never context.",
       "properties": {
         "objective": {
           "type": "string",
@@ -118,6 +119,45 @@
         },
         "project": {
           "type": "string"
+        },
+        "context": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Cited assignment context available at inference for historical held-out tasks and real dispatches alike. Each item is bound to its source by pointer and hash so a row can be audited for leaks and provenance.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "text",
+              "source_ref",
+              "source_sha256"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "assignment_packet",
+                  "project_policy"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The context excerpt as given to the model. Must not contain any scored target field text of any row or held-out item."
+              },
+              "source_ref": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Pointer to the source artifact (repository path at a commit, packet id, or work-order id). Never a held-out item or anything derived from one."
+              },
+              "source_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "SHA-256 of the source artifact the excerpt was taken from."
+              }
+            }
+          }
         }
       }
     },
