@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
@@ -64,9 +65,25 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
             "Read the merge base before running git diff.",
             "Retry twice, then report the blocker.",
             "Point 3 of the plan covers the migration.",
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+            # Two providers with numbers, but no allocation or dispatch language.
+            "In benchmarks, Claude passes 80% of cases and OpenAI passes 90%.",
+            "Install one Claude CLI and two Codex plugins.",
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
         ):
             with self.subTest(text=text):
                 self.assertEqual([], guard.check_instruction_text(text))
+
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+    def test_shares_and_counts_are_drift_only_with_routing_language(self):
+        for text, rule in (
+            ("Allocate work as Claude 25% and OpenAI 40%.", "copied-allocation-shares"),
+            ("Dispatch two Claude and three Codex assignments per week.", "copied-dispatch-counts"),
+            ("Lane targets: OpenAI 40%, Cursor 15%.", "copied-allocation-shares"),
+        ):
+            with self.subTest(text=text):
+                self.assertIn(rule, rules(guard.check_instruction_text(text)))
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
 
     def test_pointer_surface_requires_a_canonical_pointer(self):
         self.assertIn("missing-canonical-pointer", rules(guard.check_instruction_text("Be concise.", pointer="always")))
@@ -108,9 +125,13 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
                 "GEMINI.md": "@AGENTS.md",
                 ".cursor/rules/merge.mdc": "Merging requires two reviewers.",
                 ".agents/skills/tool/SKILL.md": "Run git merge-base first.",
-                "projects/demo/CLAUDE.md": "eight OpenAI, five Claude",
+                "projects/demo/CLAUDE.md": "Dispatch eight OpenAI, five Claude assignments.",
                 "docs/notes.md": "Merging requires two reviewers.",
                 "AGENTS.md": "Merging requires two reviewers.",
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+                "src/AGENTS.md": "Merging requires two reviewers.",
+                "src/nested/AGENTS.md": "Run git merge-base first.",
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
             }
             for relative, text in files.items():
                 path = root / relative
@@ -118,7 +139,14 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
                 path.write_text(text, encoding="utf-8")
             errors = guard.check_instruction_surfaces(root)
             flagged = {error.split(": ", 1)[0] for error in errors}
-            self.assertEqual({"CLAUDE.md", ".cursor/rules/merge.mdc", "projects/demo/CLAUDE.md"}, flagged)
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+            # Scoped AGENTS.md files are scanned; the root AGENTS.md is the
+            # canonical home and belongs to check_tree, not this scan.
+            self.assertEqual(
+                {"CLAUDE.md", ".cursor/rules/merge.mdc", "projects/demo/CLAUDE.md", "src/AGENTS.md"},
+                flagged,
+            )
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
 
     def test_named_surfaces_also_apply_the_legacy_authority_rules(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,3 +242,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]

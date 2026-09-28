@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | BEGIN]]
@@ -33,6 +34,16 @@ COUNT = r"(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twe
 # number, or one lane named in a technical instruction, is not a copy.
 LANE_SHARE = re.compile(rf"\b({LANE})\b[^%\n.;]{{0,40}}?\b\d{{1,3}}(?:\.\d+)?\s*%|\b\d{{1,3}}(?:\.\d+)?\s*%\s+(?:to\s+|for\s+)?({LANE})\b", re.I)
 LANE_COUNT = re.compile(rf"\b{COUNT}\s+({LANE})\b", re.I)
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+# Shares and counts are copied governance only when the paragraph speaks about
+# routing work: allocation, assignment, dispatch, targets, bands or lanes. A
+# benchmark percentage or an install count that names two providers is not.
+ALLOCATION_CONTEXT = re.compile(
+    r"\b(?:allocat\w*|assign\w*|dispatch\w*|rout\w*|targets?|bands?|lanes?|share|shares|quota|workload"
+    r"|engineering|coding|maintenance|review\w*|set|split|distribut\w*)\b",
+    re.I,
+)
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
 DRIFT_RULES = {
     "copied-allocation-window": re.compile(
         r"\b(?:rolling|last|prospective)\s+(?:twenty|nineteen|20|19)(?:-|\s)+assignments?\b"
@@ -126,10 +137,13 @@ def check_instruction_text(text: str, *, pointer: str = "never") -> list[str]:
 
     errors, paragraphs = _active_paragraphs(text)
     for normalized in paragraphs:
-        if len(_distinct_lanes(LANE_SHARE, normalized)) >= 2:
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+        routing = ALLOCATION_CONTEXT.search(normalized) is not None
+        if routing and len(_distinct_lanes(LANE_SHARE, normalized)) >= 2:
             errors.append(f"copied-allocation-shares: {normalized[:160]}")
-        if len(_distinct_lanes(LANE_COUNT, normalized)) >= 2:
+        if routing and len(_distinct_lanes(LANE_COUNT, normalized)) >= 2:
             errors.append(f"copied-dispatch-counts: {normalized[:160]}")
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
         for rule, pattern in DRIFT_RULES.items():
             if pattern.search(normalized):
                 errors.append(f"{rule}: {normalized[:160]}")
@@ -186,6 +200,14 @@ def check_instruction_surfaces(root: Path) -> list[str]:
             errors.append(f"{directory}: symlink or path outside repository")
             continue
         surfaces.update((path, "never") for path in base.glob(pattern) if path not in surfaces)
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+    # Scoped AGENTS.md files below the root instruct agents working in that
+    # subtree and may not copy the canonical rules either; the root file is
+    # the canonical home and is checked by check_tree.
+    for path in root.glob("*/**/AGENTS.md"):
+        if path not in surfaces and path != root / "AGENTS.md":
+            surfaces[path] = "never"
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
     projects = root / "projects"
     if not _inside_repo(projects, root):
         errors.append("projects: symlink or path outside repository")
@@ -250,3 +272,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 11:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:58 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]

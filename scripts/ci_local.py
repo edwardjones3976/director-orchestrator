@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
 """One attribution preflight for local candidates and the CI pull_request event.
 
@@ -124,11 +125,18 @@ def require_commit(sha: object, role: str) -> str:
     return str(sha)
 
 
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 def merge_base(base: str, head: str) -> str:
-    value = _git("merge-base", base, head).strip()
-    if not _is_sha(value):
-        raise PreflightError(f"no single merge base for {base} and {head}")
-    return value
+    # ``--all`` lists every best common ancestor; a criss-cross history has
+    # more than one, and attribution against an arbitrary one is unsound.
+    values = _git("merge-base", "--all", base, head).split()
+    if len(values) != 1 or not _is_sha(values[0]):
+        raise PreflightError(
+            f"no single merge base for {base} and {head} (found {len(values)}); "
+            "resolve the criss-cross history before the preflight"
+        )
+    return values[0]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
 
 
 def _is_ancestor(ancestor: str, descendant: str) -> bool:
@@ -367,7 +375,13 @@ def check_pull_request_event(event: dict, event_path: Path, *, mode: str) -> int
         event_base=base.get("sha", "<missing>"),
         before=before,
         head=head.get("sha", "<missing>"),
-        head_change="changed" if event.get("action") == "synchronize" and before != head.get("sha") else "none",
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
+        head_change=(
+            "not-validated (pushed head; previous head unknown)" if mode == "pushed-pr"
+            else "changed" if event.get("action") == "synchronize" and before != head.get("sha")
+            else "none"
+        ),
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
         labels=",".join(labels) or "<none>",
     )
     errors = transition_errors(event)
@@ -460,3 +474,4 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]

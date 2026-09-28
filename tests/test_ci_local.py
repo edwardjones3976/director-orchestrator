@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
 """scripts/ci_local.py: review-lock/frozen transitions and the merge-base preflight."""
 import contextlib
@@ -241,9 +242,28 @@ class LocalPreflightTests(FixtureRepository):
     def test_pushed_pr_mode_reports_the_exact_range(self):
         code, output = self.local(self.pull(self.h1, ["review-lock"]))
         self.assertEqual(0, code, output)
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
         for line in ("mode: pushed-pr", "remote: github", f"event-base: {self.m1}",
-                     f"merge-base: {self.m0}", f"head: {self.h1}", "head-change: none"):
+                     f"merge-base: {self.m0}", f"head: {self.h1}",
+                     "head-change: not-validated (pushed head; previous head unknown)"):
             self.assertIn(line, output)
+        self.assertNotIn("head-change: none", output)
+
+    def test_multiple_merge_bases_are_refused(self):
+        # Build a criss-cross history: two branches each merge the other's
+        # earlier tip, so they have two best common ancestors.
+        a1 = self.commit(self.m0, "a1", {"a.fixture": "a\n"})
+        b1 = self.commit(self.m0, "b1", {"b.fixture": "b\n"})
+        self.git("checkout", "--quiet", "--detach", a1)
+        self.git("merge", "--quiet", "--no-ff", "-m", "a merges b1", b1)
+        a2 = self.git("rev-parse", "HEAD").strip()
+        self.git("checkout", "--quiet", "--detach", b1)
+        self.git("merge", "--quiet", "--no-ff", "-m", "b merges a1", a1)
+        b2 = self.git("rev-parse", "HEAD").strip()
+        with self.assertRaises(ci_local.PreflightError) as caught:
+            ci_local.merge_base(a2, b2)
+        self.assertIn("found 2", str(caught.exception))
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
 
     def test_candidate_mode_compares_the_local_sha_with_the_remote_head(self):
         self.git("checkout", "--quiet", "--detach", self.h1)
@@ -314,3 +334,4 @@ class LocalPreflightTests(FixtureRepository):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | END]]
