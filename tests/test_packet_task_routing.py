@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | BEGIN]]
@@ -28,6 +29,12 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 from __future__ import annotations
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+import contextlib
+import shutil
+import tempfile
+import time
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
 
 import copy
 import json
@@ -772,6 +779,35 @@ class RepositoryInventorySnapshots:
         ]
 
 
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+@contextlib.contextmanager
+def _snapshot_repository():
+    """A temporary snapshot repository whose removal tolerates Windows handle lag.
+
+    ``TemporaryDirectory`` raises ``PermissionError`` when a just-terminated git
+    child still holds a handle inside ``.git``; retry the removal briefly
+    instead of failing a test whose assertions all passed. The last failure is
+    raised, so a real leak still surfaces.
+    """
+
+    root = tempfile.mkdtemp(prefix="director-blob-test-")
+    try:
+        yield root
+    finally:
+        last_error: PermissionError | None = None
+        for _attempt in range(5):
+            try:
+                shutil.rmtree(root)
+                last_error = None
+                break
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.2)
+        if last_error is not None:
+            raise last_error
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
+
+
 class CompactProviderViewTests(unittest.TestCase):
     TEXT = "Project: demo\nSummarize README.md for the owner."
 
@@ -882,10 +918,9 @@ class CompactProviderViewTests(unittest.TestCase):
         """A large blob is refused on its size, never read into memory."""
 
         import subprocess as subprocess_module
-        import tempfile as tempfile_module
         from director_orchestrator.packet_routing import git_blob_reader
 
-        with tempfile_module.TemporaryDirectory() as root:
+        with _snapshot_repository() as root:
             def git(*args, data=None):
                 return subprocess_module.run(
                     ("git", "-c", f"safe.directory={root}", *args), cwd=root, check=True,
@@ -943,6 +978,15 @@ class CompactProviderViewTests(unittest.TestCase):
             self.assertEqual(1, len(processes))
             self.assertIsNotNone(processes[0].returncode)
             self.assertTrue(processes[0].stdout.closed)
+            # Reap the recorded child synchronously and close its pipes before
+            # the snapshot repository is removed: on Windows a terminated
+            # process releases its handles asynchronously, and rmtree on a
+            # still-open .git object raises PermissionError.
+            for recorded in processes:
+                recorded._process.wait(timeout=5.0)
+                for pipe in (recorded._process.stdout, recorded._process.stderr):
+                    if pipe is not None and not pipe.closed:
+                        pipe.close()
 
     def test_screens_ignore_case_where_the_format_does(self) -> None:
         """Lower, upper and mixed case of the same identifier or credential."""
@@ -1746,3 +1790,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:47 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
