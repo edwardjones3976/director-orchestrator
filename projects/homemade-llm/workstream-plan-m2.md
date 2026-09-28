@@ -78,7 +78,7 @@ Planned paid caps: USD 10 + 6 + 8 = **USD 24, within USD 25**. Anything above th
 
 ## Owner decisions recorded 2026-09-28
 
-Relayed by the Claude Code session (Claude Fable 5.1) from the owner's replies in that session, ~02:00 UTC. `[relayed]` throughout. Decision-log rows are to be added in the next record update after #293 and #294 merge; provisional labels are used here so the log keeps one writer.
+Relayed by the Claude Code session (Claude Fable 5.1) from the owner's replies in that session, ~02:00 UTC. `[relayed]` throughout. Decision-log rows were added after #340 merged (2026-09-28): O-M2-A is O-050, O-M2-B is O-051, O-M2-C is O-049, O-M2-D is O-054, O-M2-E is O-055, O-M2-F is O-056, and D-M2-1 to D-M2-10 keep their IDs in `decision-log.md`. The provisional labels below remain as written.
 
 | Provisional ID | Owner's words (verbatim) | Effect in this plan |
 |---|---|---|
