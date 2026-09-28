@@ -1,9 +1,9 @@
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 00:15 UTC | BEGIN]] -->
-# Workstream plan: homemade-llm, phase M2 "DIRECTOR data v1 and adapter v0.1 to v0.3" (DRAFT, planning only)
+# Workstream plan: homemade-llm, phase M2 "DIRECTOR data v1 and adapter v0.1 to v0.3" (approved by the owner 2026-09-28; execution gated as below)
 
 Do not place secrets, credentials, tokens, or raw private source in this plan. Workflow skills are procedure overlays, not permission grants. Canonical provider roles are in [`docs/team-operating-charter.md`](../../docs/team-operating-charter.md), and project-local boundaries in [`provider-roles-contract.yaml`](provider-roles-contract.yaml).
 
-**Status:** DRAFT, written before the M1 gate. Nothing in it is dispatchable. It exists so that the M1 gate decision can open M2 without a planning gap, and so Codex and Cursor can see the packets they would own. It becomes a candidate for owner approval only after (1) PR #293 and PR #294 merge, (2) the M1 gate report names a winning base with a checked license, and (3) the owner records the M1 gate as closed in `decision-log.md`. Each packet is immutable once approved; changing any bound needs a new owner approval.
+**Status:** APPROVED by the owner on 2026-09-28 (~02:00 UTC), relayed from the Claude Code session that authored this plan; the verbatim decisions are in "Owner decisions recorded 2026-09-28" below. Approval authorizes the bounded packets in this plan under their caps and stops. It does not merge this PR, and each script still needs its specified independent review and CI before use. Each packet is immutable once approved: changing any bound needs a new owner decision. The M1 gate record (#293, #294) is a record dependency: the base and the feasibility probe come from the M1 outcome (O-045, D-M1-F), and the decision-log rows for the decisions below are added when those PRs land, so that the log stays single-writer.
 
 ## Phase frame
 
@@ -22,9 +22,9 @@ Do not place secrets, credentials, tokens, or raw private source in this plan. W
 
 | Gate | Decision needed | Why it blocks |
 |---|---|---|
-| G-M2-0 | M1 gate closed: winning base named, license stored with its hash, decision-log row written | Every training packet binds to that base and revision |
-| G-M2-1 | Approve this plan, including every packet's bounds and the row schema `schemas/director-data-v1-row.schema.json` | No dispatch under the plan before approval |
-| G-M2-2 | Re-verification of provider training-data clauses (O-026: "blocked-page clauses re-verified before the first M2 run"). The OpenAI, xAI and Perplexity pages returned 403 on 2026-09-24. The 2026-09-28 official-source recheck (Director research, PR #294 comment 5861548635) confirmed OpenAI as competing-only and xAI as grade-only, but could not confirm a customer training grant in Perplexity's API terms. Until the owner records a clearer grant, Perplexity output is research-only in M2 and is absent from the row schema's `source_provider` values | A tier change moves a provider between generator and grader, or out entirely |
+| G-M2-0 | M1 gate closed: winning base named, license stored with its hash, decision-log row written | Every training packet binds to that base and revision. Owner direction 2026-09-28 makes GPU time and paid generation available immediately, so M2-S1, M2-G1 and M2-T1 authoring, the M2-G2 pilot and the D-M2-6 probe may start against the O-045 winner (Qwen3-14B at `40c069824f4251a91eefaf281ebe4c544efd3e18`, D-M1-F feasibility probe first, Qwen3-8B fallback) while the M1 gate record is merged; the M2 gate report cites the merged record |
+| G-M2-1 | **APPROVED by the owner, 2026-09-28** ("M2 is approved"), including every packet's bounds and the row schema `schemas/director-data-v1-row.schema.json` | Decided |
+| G-M2-2 | Re-verification of provider training-data clauses (O-026: "blocked-page clauses re-verified before the first M2 run"). The OpenAI, xAI and Perplexity pages returned 403 on 2026-09-24. The 2026-09-28 official-source recheck (Director research, PR #294 comment 5861548635) confirmed OpenAI as competing-only and xAI as grade-only, but could not confirm a customer training grant in Perplexity's API terms. **Owner decision 2026-09-28:** Perplexity stays a research specialist for M2 (development knowledge, method and source checks) and is not a training-data source; it remains absent from the row schema's `source_provider` values. OpenAI competing-only and xAI grade-only stand as rechecked | Decided for Perplexity; OpenAI, Anthropic API and Cursor grants are read at packet dispatch as usual |
 | G-M2-3 | DVC tracking of both held-out sets under `C:\llm\datasets` (O-007; D-M1-0 says "before M2 training starts") | Training must be reproducible against pinned references |
 | G-M2-4 | Owner seeds: which items under `C:\llm\seeds\` may become rows, referenced by SHA-256 only (D-006) | Owner content is the only source without a provider clause |
 
@@ -56,6 +56,18 @@ Every packet has one sole author and a reviewer that is neither the author nor f
 | M2-R1 | M2 gate report: `project-state-report.md` update with every number `[verified]`, ledger total, and the owner sign-off row | Claude (scaffold, O-003) | non-author reviewer | this folder's record files | none | 60 min | Merged after one exact-head non-author ACCEPT |
 
 Planned paid caps: USD 10 + 6 + 8 = **USD 24, within USD 25**. Anything above the caps is a hard stop, not a rounding.
+
+## Owner decisions recorded 2026-09-28
+
+Relayed by the Claude Code session (Claude Fable 5.1) from the owner's replies in that session, ~02:00 UTC. `[relayed]` throughout. Decision-log rows are to be added in the next record update after #293 and #294 merge; provisional labels are used here so the log keeps one writer.
+
+| Provisional ID | Owner's words (verbatim) | Effect in this plan |
+|---|---|---|
+| O-M2-A | "M2 is approved but Perplexity stays as a research specialist to use dev knowledge on how to best complete this." | G-M2-1 decided. Perplexity: research lane only, never a `source_provider`; G-M2-2 updated accordingly. |
+| O-M2-B | "GPU and paid generations are approved for immediate usage." | GPU work (probe, training) and paid generation and grading may start now within the caps (USD 10 generation, USD 6 grading, USD 8 evaluation, USD 25 total) and the storage and concurrency guards. The M1 gate record remains a record dependency, not a dispatch block. |
+| O-M2-C | "Cursor" (in answer to who reviews #293 and #294 so the M1 gate can close) | Cursor is the designated non-author reviewer of #293 and #294. Recorded here because it sequences the M1 record this plan cites. |
+
+These rows record what the owner said. They do not by themselves satisfy any deterministic gate, CI, exact-SHA review, or merge requirement.
 
 ## Hard stops (in addition to the owner gates)
 
