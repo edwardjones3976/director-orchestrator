@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
@@ -60,6 +61,7 @@ from .models import (
     SlackStatusReceipt,
     TaskRecord,
     TaskStatus,
+    canonical_slack_source_event_id,
     slack_status_text_digest,
 )
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
@@ -192,12 +194,8 @@ def _clean_chatgpt_alias_text(text: str) -> str:
     return text.replace(f"<@{settings.chatgpt_bridge_slack_user_id}>", "").strip()
 
 
-def _canonical_slack_source_event_id(event: dict) -> str:
-    channel = event.get("channel", "")
-    message_ts = event.get("ts", "")
-    if not channel or not message_ts:
-        return ""
-    return f"{channel}:{message_ts}"
+# Shared with the offline collector's input matching (models.canonical_slack_source_event_id).
+_canonical_slack_source_event_id = canonical_slack_source_event_id
 
 
 def _placeholder_bridge_proof() -> ChatGPTBridgeGatewayProof:
@@ -1086,3 +1084,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

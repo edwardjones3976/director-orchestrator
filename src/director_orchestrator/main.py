@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
@@ -56,7 +62,6 @@ from fastapi.responses import JSONResponse
 from . import __version__
 from .approvals import (
     StaleApproval,
-    apply_ambiguous_dispatch_resolution,
     apply_failed_predispatch_retry,
     apply_oracle_recovery,
     apply_owner_approval,
@@ -417,6 +422,8 @@ async def _primary_reconciliation_loop() -> None:
 
 
 async def _primary_slack_delivery_loop() -> None:
+    if settings.app_env == "edge-engine" and not settings.allow_paid_runs:
+        return
     while True:
         if primary_slack_delivery is not None:
             try:
@@ -539,6 +546,7 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": providers_ready,
+        "provider_prices": settings.provider_price_readiness(),
         # Trial-only contact lane (owner directive #207): individual readiness
         # booleans so an operator can see which gate is closed; never a value.
         "zai_trial": settings.zai_trial_readiness(),
@@ -893,7 +901,7 @@ def get_task(
             # the evidence and the projection the task record is derived from,
             # so the record and the evidence describe the same version. Only
             # the writer-generation header below is read outside that snapshot.
-            from .langgraph_postgres import DeadlineExpired
+            from .langgraph_postgres import DeadlineExpired, PostgresControlPlaneError
 
             try:
                 evidence = primary_default_activation.coordinator.read_qualification_evidence(
@@ -903,6 +911,13 @@ def get_task(
                 raise HTTPException(
                     status_code=503,
                     detail="LangGraph primary qualification readback exceeded its deadline",
+                ) from exc
+            except PostgresControlPlaneError as exc:
+                # A projection whose content does not match its stored digest, or metadata over the byte bound:
+                # the readback is refused rather than served.
+                raise HTTPException(
+                    status_code=503,
+                    detail="LangGraph primary qualification readback was refused",
                 ) from exc
             if evidence is None:
                 primary_record = None
@@ -1765,12 +1780,13 @@ def reconcile_dispatch(
         stored = store.mutate_if_version(
             task_id,
             expected_version,
-            lambda record: apply_ambiguous_dispatch_resolution(record, resolution),
+            lambda record: engine.apply_dispatch_reconciliation(record, resolution),
         )
     except StaleApproval as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if stored is None:
         raise HTTPException(status_code=409, detail="Task changed during reconciliation")
+    engine._settle_reconciled_spend(stored)
     background.add_task(engine.run, task_id)
     return stored
 
@@ -1913,8 +1929,13 @@ def complete_run(
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
-
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]

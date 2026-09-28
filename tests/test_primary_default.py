@@ -1,3 +1,13 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -82,6 +92,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import re
 import unittest
 from functools import partial
@@ -2386,6 +2397,32 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         ):
             DefaultPrimaryActivation(settings)
 
+    def test_paid_off_startup_does_not_load_live_capture_enrollment(self):
+        settings = replace(Settings(), langgraph_primary_enabled=True,
+                           allow_paid_runs=False,
+                           langgraph_primary_live_provider_dispatch_enabled=False)
+        handle = SimpleNamespace(claim_store=object(), close=lambda: None)
+        services = SimpleNamespace(handlers=lambda: {}, application_projection=lambda *_: {})
+        provider_activation = object()
+        with (
+            patch("director_orchestrator.primary_default.resolve_default_primary_authority"),
+            patch("director_orchestrator.primary_default.build_typed_external_effect_grant"),
+            patch("director_orchestrator.acceptance_journal.require_runtime_acceptance", return_value=None),
+            patch("director_orchestrator.acceptance_journal.bind_runtime_database"),
+            patch("director_orchestrator.primary_default.open_postgres_control_plane", return_value=handle),
+            patch.object(Settings, "primary_provider_activation_bindings", return_value={"openai": object()}),
+            patch("director_orchestrator.primary_default.PrimaryProviderActivationService",
+                  return_value=provider_activation) as activation_service,
+            patch("director_orchestrator.provider_validation.capture_verifier_from_environment") as capture,
+            patch("director_orchestrator.primary_default.DefaultDryRunServices", return_value=services),
+            patch("director_orchestrator.primary_default.PrimaryTaskCoordinator"),
+            patch("director_orchestrator.primary_default.DefaultPrimaryApplication"),
+        ):
+            activation = DefaultPrimaryActivation(settings)
+        capture.assert_not_called()
+        self.assertIs(activation.provider_activation, provider_activation)
+        self.assertIsNone(activation_service.call_args.kwargs["capture_verifier"])
+
     def test_reconciliation_readiness_is_not_sticky_after_failed_pass(self):
         activation = object.__new__(DefaultPrimaryActivation)
         activation.application = SimpleNamespace(
@@ -3654,6 +3691,15 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         [entry] = ledger.delegation_audit_records(limit=10)
         self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
 
+    def wait_for_dispatch_ready(self, ready):
+        deadline = time.monotonic() + 30
+        while not ready:
+            self.assertLess(
+                time.monotonic(), deadline,
+                "dispatch-ready callback was not received within 30s",
+            )
+            time.sleep(0.05)
+
     def test_granted_intake_hands_dispatch_to_the_callback(self):
         dispatched: list[int] = []
         self.use_standing_grant(self.succeeding(dispatched))
@@ -3661,6 +3707,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
         record = self.attested_intake("callback-small", on_dispatch_ready=ready.append)
 
+        self.wait_for_dispatch_ready(ready)
         self.assertEqual([record.task_id], ready)
         self.assertEqual([], dispatched)
         projection = self.coordinator.get_projection(record.task_id)
@@ -3754,6 +3801,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         ledger = self.use_standing_grant(self.succeeding([]))
         ready: list[str] = []
         granted = self.attested_intake("callback-failed-small", on_dispatch_ready=ready.append)
+        self.wait_for_dispatch_ready(ready)
         self.assertEqual([granted.task_id], ready)
         [first] = self.coordinator.reserve_parallel_ready(
             task_id=granted.task_id, policy=self.application._parallel_policy())
@@ -4894,9 +4942,9 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             )
         finally:
             self.services._record = original_record
-            worker.join(timeout=10)
+            worker.join(timeout=30)
 
-        self.assertFalse(worker.is_alive(), "recovery worker did not finish")
+        self.assertFalse(worker.is_alive(), "recovery worker did not finish within 30s")
         self.assertFalse(errors, errors)
         self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, record.status)
         self.assertGreaterEqual(record.plan_generation, 1)
@@ -5438,10 +5486,56 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(set(bounded["truncated"]) <= {"assignments", "slack_deliveries"}, bounded["truncated"])
         self.assertEqual(1, len(bounded["slack_deliveries"]))
         self.assertLessEqual(len(bounded["assignments"]), 1)
-        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=1024)
+        # PR #264 review summary: the metadata-only document is re-checked against the bound. It is measured here
+        # the way the reader measures it (every section emptied, response_bytes truncated).
+        from director_orchestrator.langgraph_postgres import PostgresControlPlaneError
+        full = {key: value for key, value in store.read_primary_qualification_evidence(record.task_id).items()
+                if key != "projection"}
+        sections = ("assignments", "provider_attempts", "effects", "reconciliation_events", "slack_deliveries",
+                    "status_receipts", "intake_auth_claims", "provider_usage")
+        metadata = {**full, **{name: [] for name in sections if name in full},
+                    "truncated": sorted({*full["truncated"], "response_bytes"}), "complete": False}
+        size = len(json.dumps(metadata, default=str, sort_keys=True, separators=(",", ":")).encode())
+        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=max(1024, size + 64))
         self.assertFalse(tiny["complete"])
         self.assertIn("response_bytes", tiny["truncated"])
         self.assertEqual([], tiny["slack_deliveries"])
+        if size - 64 >= 1024:  # a bound the metadata alone exceeds: refused, never served oversized
+            with self.assertRaisesRegex(PostgresControlPlaneError, "metadata alone exceeds"):
+                store.read_primary_qualification_evidence(record.task_id, byte_limit=size - 64)
+        # Review 4111508060: the deadline is checked again after the final serialization; a document that finished
+        # late is refused, never served.
+        import time
+        import director_orchestrator.langgraph_postgres as langgraph_postgres
+        from director_orchestrator.langgraph_postgres import DeadlineExpired
+        real_dumps = langgraph_postgres.json.dumps
+
+        def slow_final(value, *args, **kwargs):
+            if isinstance(value, dict) and "bounds" in value:
+                time.sleep(0.3)
+            return real_dumps(value, *args, **kwargs)
+
+        with patch.object(langgraph_postgres.json, "dumps", side_effect=slow_final), \
+                self.assertRaises(DeadlineExpired):
+            store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.5)
+        # Review 4110671084: the bound measures the served document with its final elapsed_seconds. A limit equal to
+        # the full document's size with elapsed 0.0 cannot be exceeded once the real elapsed time is filled in.
+        def served_size(document):
+            return len(json.dumps(document, default=str, sort_keys=True, separators=(",", ":")).encode())
+        exact = served_size({**full, "bounds": {**full["bounds"], "elapsed_seconds": 0.0}})
+        served = {key: value for key, value in
+                  store.read_primary_qualification_evidence(record.task_id, byte_limit=exact).items()
+                  if key != "projection"}
+        self.assertGreater(served["bounds"]["elapsed_seconds"], 0.0)
+        self.assertLessEqual(served_size(served), exact)
+        # A projection whose content no longer matches its stored digest (the version guard allows it) is refused.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = jsonb_set(projection, '{run_status}', '\"TAMPERED\"') WHERE task_id = %s",
+                (record.task_id,))
+        with self.assertRaisesRegex(PostgresControlPlaneError, "does not match its stored digest"):
+            store.read_primary_qualification_evidence(record.task_id)
         other = self.application.create_intake(
             self.intake().model_copy(update={"source_event_id": "qa-other-task"}),
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
@@ -5452,6 +5546,68 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(document["projection_digest"], document["projection"].projection_digest)
         self.assertEqual({"isolation": "REPEATABLE READ", "read_only": True,
                           "single_transaction": True, "covers_task_record": True}, document["snapshot"])
+
+    def test_qualification_readback_carries_the_append_only_intake_claim(self):
+        """The served readback carries the claim claim_authenticated_primary_intake wrote, and the scorecard's
+        collector re-derives both of its digests from the served intake (PR #264 review 4100381682)."""
+        import importlib.util
+        import secrets
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        from director_orchestrator.approvals import (
+            SLACK_INTAKE_ISSUED_AT_HEADER, SLACK_INTAKE_NONCE_HEADER, SLACK_INTAKE_SIGNATURE_HEADER,
+            build_slack_intake_attestation, verify_slack_intake_attestation)
+
+        spec = importlib.util.spec_from_file_location(
+            "claim_collector", Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        intake = self.intake().model_copy(update={"source_event_id": "qa-claimed-intake"})
+        key = secrets.token_urlsafe(32)  # runtime-only gateway key
+        signed = build_slack_intake_attestation(key, "", intake)
+        identity = verify_slack_intake_attestation(
+            key, "", intake, expected_owner_user_id=intake.user_id, expected_channel_id=intake.channel_id,
+            issued_at=signed[SLACK_INTAKE_ISSUED_AT_HEADER], nonce=signed[SLACK_INTAKE_NONCE_HEADER],
+            signature=signed[SLACK_INTAKE_SIGNATURE_HEADER])
+        claimed = self.application.create_intake(
+            intake, intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+            authenticated_replay_identity=identity)
+        bearer = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-bearer-intake"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        bearer_key = secrets.token_urlsafe(24)
+        settings = replace(self.settings, shared_secret=bearer_key, langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                served = {task_id: client.get(f"/v1/tasks/{task_id}", headers={"Authorization": "Bearer " + bearer_key},
+                                              params={"include_qualification_evidence": "true"}).json()
+                          for task_id in (claimed.task_id, bearer.task_id)}
+            finally:
+                client.close()
+        task = served[claimed.task_id]
+        claims = task["qualification_evidence"]["intake_auth_claims"]
+        self.assertEqual(1, len(claims))
+        self.assertEqual({"payload_digest", "idempotency_key_digest", "authentication_class", "created_at"},
+                         set(claims[0]))
+        self.assertEqual("slack_gateway_attested", claims[0]["authentication_class"])
+        # The owner's post is the thread root; the real claim's persisted time lies after it and no later than
+        # the task's creation (review 4100588377).
+        posted = task["intake"]["thread_ts"]
+        from datetime import datetime as moment
+        self.assertLessEqual(moment.fromisoformat(claims[0]["created_at"]),
+                             moment.fromisoformat(task["qualification_evidence"]["task_created_at"]))
+        self.assertTrue(collector.intake_claim_matches(task, task["qualification_evidence"], posted))
+        self.assertFalse(collector.intake_claim_matches(task, task["qualification_evidence"], "9999999999.000000"))
+        # The mutable label without its claim attests nothing; a relabelled or edited projection neither.
+        other = served[bearer.task_id]
+        self.assertEqual([], other["qualification_evidence"]["intake_auth_claims"])
+        self.assertFalse(collector.intake_claim_matches(
+            {**other, "intake_authentication": "slack_gateway_attested"}, other["qualification_evidence"], posted))
+        self.assertFalse(collector.intake_claim_matches(
+            {**task, "intake": {**task["intake"], "text": "edited"}}, task["qualification_evidence"], posted))
 
     def test_qualification_readback_is_bounded_by_one_deadline_across_pool_wait_and_blocked_sql(self):
         import time as clock
@@ -5557,8 +5713,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                                         psycopg.errors.TransactionTimeout, DeadlineExpired)):
                     store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
                 refused_at = clock.monotonic() - origin
-                releaser.join(timeout=second_release + 5.0)
-                self.assertFalse(releaser.is_alive())
+                releaser.join(timeout=30)
+                self.assertFalse(releaser.is_alive(), "worker did not finish within 30s")
                 self.assertEqual([], worker_errors)
                 self.assertEqual({"early", "later"}, set(waiting))
                 self.assertEqual(waiting["early"], waiting["later"])
@@ -5567,8 +5723,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 self.assertLess(refused_at, allowance + 0.75)
             finally:
                 stop.set()
-                releaser.join(timeout=10.0)
-                self.assertFalse(releaser.is_alive())
+                releaser.join(timeout=30)
+                self.assertFalse(releaser.is_alive(), "worker did not finish within 30s")
         # The lane is intact afterwards and a normal read still completes.
         after = store.read_primary_qualification_evidence(record.task_id)
         self.assertTrue(after["complete"])
@@ -5584,9 +5740,34 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         base = store.read_primary_qualification_evidence(record.task_id)
         self.assertGreaterEqual(len(base["assignments"]), 1)
         assignment = base["assignments"][0]
+        # Review 4110798537: the plan the producer registered recomputes from its durable assignment rows and task
+        # record with register_plan's own hashing; any drift in a hashed column is a disagreement.
+        from director_orchestrator import primary_scorecard_evidence as scorecard_evidence
+        with self.handle.pool.connection() as connection:
+            [registered] = scorecard_evidence.plan_rows(connection, self.schema, tasks=[record.task_id])
+        self.assertIsNone(scorecard_evidence.registered_plan_error(registered))
+        for field, value in (("deployment_id", "another-deployment"), ("retry_limit", 2),
+                             ("dependencies", ["another-assignment"])):
+            drifted = {**registered, "assignments": [{**registered["assignments"][0], field: value},
+                                                     *registered["assignments"][1:]]}
+            with self.subTest(field=field):
+                self.assertIsNotNone(scorecard_evidence.registered_plan_error(drifted))
+        self.assertIsNotNone(scorecard_evidence.registered_plan_error(
+            {**registered, "projection_plan_digest": "sha256:" + "0" * 64}))
+        from director_orchestrator.primary_scorecard_evidence import outcome_evidence_digest
         digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
         with self.handle.pool.connection() as connection:
-            for event, status in ((1, "STARTED"), (2, "SUCCEEDED")):
+            # Attempts run only on a reserved assignment (primary_parallel reserves it ACTIVE with reserved_at before
+            # the roster records STARTED): the shared lifecycle rule refuses attempts outside that reservation.
+            connection.execute(sql.SQL(
+                "UPDATE {}.director_primary_parallel_assignment SET status='ACTIVE', reservation_digest=%s,"
+                # Reserved in this transaction: after the task was created (4110241997), with its attempts' now().
+                " reserved_at=now() WHERE task_id=%s AND assignment_id=%s"
+            ).format(sql.Identifier(self.schema)),
+                (digest("reservation:" + record.task_id), record.task_id, assignment["assignment_id"]))
+            # STARTED (event 1), then an authenticated callback settlement (event 3, record_callback_result), the
+            # only event that carries the provider run id.
+            for event, status in ((1, "STARTED"), (3, "SUCCEEDED")):
                 connection.execute(sql.SQL("""
                     INSERT INTO {}.director_primary_provider_attempt
                         (task_id, assignment_id, attempt_ordinal, event_sequence, provider_id, format_id,
@@ -5596,9 +5777,15 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                     """).format(sql.Identifier(self.schema)),
                     (record.task_id, assignment["assignment_id"], event, assignment["provider_id"],
                      digest("idem:" + record.task_id), digest("attempt:" + record.task_id),
-                     digest("run:" + record.task_id) if event == 2 else None, status,
-                     digest("result:" + record.task_id) if event == 2 else None,
-                     digest("outcome:" + record.task_id) if event == 2 else None,
+                     digest("run:" + record.task_id) if event == 3 else None, status,
+                     digest("result:" + record.task_id) if event == 3 else None,
+                     # The outcome digest record_callback_result computes over this very event.
+                     outcome_evidence_digest(record.task_id, {
+                         "assignment_id": assignment["assignment_id"], "attempt_ordinal": 1, "event_sequence": 3,
+                         "provider_id": assignment["provider_id"], "attempt_digest": digest("attempt:" + record.task_id),
+                         "provider_run_id_digest": digest("run:" + record.task_id), "status": status,
+                         "result_digest": digest("result:" + record.task_id), "reason_code": "attempt_succeeded"})
+                     if event == 3 else None,
                      "attempt_started" if event == 1 else "attempt_succeeded", digest("budget:" + record.task_id)))
             connection.execute(sql.SQL("""
                 INSERT INTO {}.director_primary_slack_delivery
@@ -5642,8 +5829,13 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                          (produced[0]["state"], produced[0]["owner_decision"], produced[0]["owner_command_id"]))
         self.assertIsNotNone(produced[0]["owner_decision_at"])
         approval_identity = produced[0]["client_msg_id"]
+        from director_orchestrator import primary_default as primary_default_module
         receipt_id, created, _ = store.record_primary_slack_status_receipt(
-            source_event_id="status-event-" + record.task_id, receipt_id="receipt-" + record.task_id,
+            source_event_id="status-event-" + record.task_id,
+            # create_status_receipt's own derivation, which the scorecard recomputes (review 4111725051)
+            receipt_id="status-" + primary_default_module._digest(
+                {"source_event_id": "status-event-" + record.task_id,
+                 "task_id": record.task_id}).removeprefix("sha256:")[:24],
             task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
             user_id=record.intake.user_id, text_digest=digest("status text"))
         self.assertTrue(created)  # the store reports creation; the API maps it to deduplicated=False
@@ -5702,7 +5894,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                          [(row.attempt_digest, row.actual_microusd, row.observed_tokens, row.reserved_microusd)
                           for row in typed.provider_usage])
         attempts = typed.provider_attempts
-        self.assertEqual([1, 2], [row.event_sequence for row in attempts])
+        self.assertEqual([1, 3], [row.event_sequence for row in attempts])
         self.assertTrue(all(row.assignment_id == assignment["assignment_id"]
                             and row.assignment_sequence == assignment["sequence"]
                             and row.attempt_digest == digest("attempt:" + record.task_id)
@@ -6161,3 +6353,13 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | END]]

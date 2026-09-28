@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 """Local receipt mapping and append safety; no real trial or external service."""
@@ -17,7 +18,7 @@ import jsonschema
 from director_orchestrator.completion_scorecard import (
     OFFLINE_RUN_RECORD_FIELDS, evaluate_run_record, evaluate_run_records,
 )
-from tests.test_collect_offline_slack_trials import receipt_fixture, rubric_fixture
+from tests.test_collect_offline_slack_trials import THREAD, receipt_fixture, rubric_fixture
 
 PATH = Path(__file__).resolve().parents[1] / "scripts/record-offline-trial.py"
 SPEC = importlib.util.spec_from_file_location("record_offline_trial", PATH)
@@ -65,8 +66,9 @@ class RecordOfflineTrialTests(unittest.TestCase):
         rubric, sha = rubric_fixture()
         receipt = verified_fixture()
         trial = receipt["trials"][0]
-        trial["terminal_messages"][0]["ts"] = "1789210065.281600"
-        trial["delivery_receipts"][0]["slack_ts"] = "1789210065.281600"
+        slow = "%.6f" % (float(THREAD) + 65.1816)  # the owner's post plus 65.1816 seconds
+        trial["terminal_messages"][0]["ts"] = slow
+        trial["delivery_receipts"][0]["slack_ts"] = slow
         # The source interval is 65.1816 seconds, despite the 30-second summary.
         with self.assertRaisesRegex(ValueError, "timing"):
             recorder.row_from_receipt(receipt, rubric, sha)
@@ -115,9 +117,9 @@ class RecordOfflineTrialTests(unittest.TestCase):
         receipt = verified_fixture()
         trial = receipt["trials"][0]
         approval = {**trial["delivery_receipts"][0], "notification_key": "approval:fixture",
-            "client_msg_id": "fixture-approval", "slack_ts": "1789210005.100000",
+            "client_msg_id": "fixture-approval", "slack_ts": "%.6f" % (float(THREAD) + 5),
             "owner_decision": "approve", "owner_command_id": "fixture-command",
-            "owner_decision_at": datetime.fromtimestamp(1789210015.1, timezone.utc).isoformat()}
+            "owner_decision_at": datetime.fromtimestamp(float(THREAD) + 15, timezone.utc).isoformat()}
         trial["delivery_receipts"].append(approval)
         trial.update(owner_decision_record_count=1, owner_pause_seconds=10, machine_seconds=20)
         row = recorder.row_from_receipt(receipt, rubric, sha)
@@ -250,3 +252,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:19 UTC | END]]
