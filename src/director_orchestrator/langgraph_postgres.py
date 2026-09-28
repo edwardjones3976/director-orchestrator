@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -6008,6 +6009,59 @@ def open_provider_activation_store(dsn: str, *, schema: str,
         pool.close()
 
 
+
+def read_postgres_qualification_evidence(dsn: str, task_id: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str,
+        wall_seconds: float = 5.0) -> dict[str, Any] | None:
+    """Read an existing task through the guarded factory, without runtime authority.
+
+    No schema setup, checkpoint saver, graph or writer is constructed. Only the
+    bounded snapshot escapes this function; the factory-bound store stays local.
+    The deadline includes connection acquisition and accepted-instance checks.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    _require_id(task_id, "task_id")
+    if type(wall_seconds) not in {int, float} or not 0.1 <= wall_seconds <= 30:
+        raise ValueError("wall_seconds must be between 0.1 and 30 seconds")
+    deadline = monotonic() + float(wall_seconds)
+    schema = _require_schema(schema)
+    parsed = _parse_connection_target(dsn, conninfo_to_dict=conninfo_to_dict,
+                                     allow_insecure_local_transport=False)
+    if parsed.get("sslmode") != "verify-full":
+        raise PostgresCheckpointConfigurationError("qualification collection requires verified TLS")
+    if _storage_identity(parsed, schema=schema) != accepted_storage_identity:
+        raise PostgresCheckpointConfigurationError("qualification database target differs")
+    try:
+        uuid.UUID(accepted_instance_id)
+    except (TypeError, ValueError, AttributeError):
+        raise PostgresCheckpointConfigurationError("qualification database instance is invalid") from None
+    option = _search_path_option(schema)
+    timeout_ms = max(1, int(wall_seconds * 1000))
+    pool = ConnectionPool(conninfo=dsn, min_size=0, max_size=1, open=False,
+        configure=_configure_connection(schema, option,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id),
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row,
+            "connect_timeout": max(1, ceil(wall_seconds)),
+            "options": option + " -c default_transaction_read_only=on"
+                + f" -c statement_timeout={timeout_ms} -c lock_timeout={timeout_ms}"})
+    try:
+        pool.open(wait=False)
+        store = PostgresConditionalClaimStore(_pool=pool, _schema=schema,
+            storage_identity=accepted_storage_identity, database_instance_id=accepted_instance_id,
+            _store_provenance=_FACTORY_PROVENANCE)
+        remaining = require_deadline_remaining(deadline, "qualification factory")
+        if remaining < 0.1:
+            raise DeadlineExpired("qualification factory deadline expired before readback")
+        result = store.read_primary_qualification_evidence(task_id, wall_seconds=remaining)
+    finally:
+        pool.close()
+    require_deadline_remaining(deadline, "qualification factory completion")
+    return result
+
 def open_postgres_control_plane(
     dsn: str,
     *,
@@ -6186,3 +6240,5 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:32 UTC | END]]

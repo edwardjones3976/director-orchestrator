@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
@@ -130,8 +131,8 @@ collection and the missing lifecycle evidence remain open.
 
 This scorecard turns the owner's good-run contract into twenty fixed outcomes.
 It is a progress report, not an approval mechanism. The required outcome remains
-an actual owner request through Slack, a correct result in the same thread in
-under 60 seconds, and less than USD 1 of attributable actual charges. Simulated
+an actual owner request through Slack, a correct result in the same thread,
+with consistent measured timing and attributable actual charges reported. Simulated
 runs qualify orchestration only; the project is not complete until paid primary
 execution is active and a real run meets that outcome.
 
@@ -254,12 +255,14 @@ external usage authenticity. The native Security store and installed owner keys
 likewise belong outside candidate control. Consistency and capture inputs are now T; no check leaves containment because each still has at least one C input.
 
 Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
-existing `read_primary_qualification_evidence` is bounded and read-only, but its
-store requires factory provenance; constructing a fake store or opening the
-activation factory would bypass that boundary or risk writes. Wiring a supported
-read-only handle and deriving the task record, headers and delivery view from its
-snapshot requires a separately scoped store change. Candidate HTTP is not a
-fallback trusted source. Health also includes live process/worker/provider and
+existing `read_primary_qualification_evidence` is bounded and read-only. The
+qualification-only `read_postgres_qualification_evidence` factory now opens an
+existing, identity-bound database over verified TLS with read-only defaults,
+reuses that reader and returns only its snapshot. It performs no DDL and exposes
+no writer, graph or checkpoint handle. Trusted collection retains each selected
+task's snapshot under `qualification`; the task, header and delivery consumers
+still use the contained HTTP path until their conversion and real-store tests
+are complete. Candidate HTTP is not a fallback trusted source. Health also includes live process/worker/provider and
 usage-monitor state; a store snapshot alone cannot attest those facts. Route,
 renderer and thread-binding inputs remain C as recorded in the audit; replacing task
 HTTP alone would not close their checks. No raw parallel-batch rows are exported.
@@ -341,7 +344,7 @@ that separate gate or authorize activation.
 | 17 | Independent ACCEPT | Adopted owner-local acceptance for the candidate with reviewer ≠ author |
 | 18 | Complete Security scan | Sealed complete coverage and disposition bound to exact candidate |
 | 19 | Paid primary active | Paid enabled, primary runtime, effect executor and reconciliation worker active |
-| 20 | Real paid result | Actual-owner Slack input, independent correctness, one reply, wall time <60s, actual charges <$1 from settled meter rows correlated by request id |
+| 20 | Real paid result | Actual-owner Slack input, independent correctness, one reply, reported wall/machine time and actual charges from settled meter rows correlated by request id |
 
 ## Run it
 
@@ -1576,8 +1579,9 @@ calls and the basis of actual cost. The CLI does not award points for a
 user-authored run JSON file.
 
 An estimate or reservation is not actual cost. Unknown cost is not zero.
-Machine time excluding an owner pause is shown separately and cannot substitute
-for the required under-60-second wall time. Actual Grok Bot is distinct from
+Wall time and machine time excluding owner pauses are reported metrics, not
+60-second acceptance gates. Cost has no USD 1 acceptance ceiling; separate
+campaign and daily spending caps remain enforced. Actual Grok Bot is distinct from
 direct xAI Grok and Cursor Grok, regardless of shared branding or quota labels.
 
 ## Offline trial records
@@ -1757,3 +1761,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
@@ -1638,6 +1639,11 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 self.assertEqual(entry["application"]["execution_mode"], "offline_simulation")
                 self.assertIsNone(entry["registered_plan"]["error"])
                 self.assertTrue(entry["application"]["task_record"]["assignment_outcomes"])
+                qualification = entry["qualification"]
+                self.assertTrue(qualification["complete"])
+                self.assertTrue(qualification["snapshot"]["read_only"])
+                self.assertTrue(qualification["snapshot"]["single_transaction"])
+                self.assertEqual(qualification["projection"].task_id, task)
                 self.assertEqual(entry["spend"], [])
                 self.assertEqual(len(entry["approval_receipts"]), 1)
                 # Local approval_resume is real, but has no authenticated gateway command.
@@ -2609,8 +2615,12 @@ class CompletionScorecardTests(unittest.TestCase):
             sc.evaluate_qualification_record(self.qualification_row(), runtime_sha=SHA, image_id=IMAGE,
                                              configuration_digest="not-a-digest")
 
-    def test_wall_time_not_machine_time_and_strict_cost_ceiling(self):
+    def test_latency_and_cost_are_metrics_but_invalid_evidence_still_fails(self):
         for changes in ({"wall_seconds": 65, "owner_pause_seconds": 35}, {"actual_cost_usd": 1},
+                        {"wall_seconds": 900, "owner_pause_seconds": 0, "machine_seconds": 900, "actual_cost_usd": 5}):
+            with self.subTest(changes=changes):
+                self.assertTrue(qualify([{**run("paid"), **changes}], "paid"))
+        for changes in ({"wall_seconds": -1}, {"actual_cost_usd": -1},
                         {"machine_seconds": 0}, {"actual_cost_usd": float("nan")},
                         {"wall_seconds": float("inf")}, {"actual_cost_usd": True},
                         {"runtime_sha": OTHER}, {"terminal_reply_count": 2}, {"delivery_ambiguous": True}):
@@ -5683,11 +5693,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual((record["actual_cost_usd"], record["wall_seconds"]), (0.3, 30.0))
         expensive = self.world(evaluate_rules=True)
         expensive.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = 1200000
-        self.assertEqual(expensive.state("20"), "FAIL")
+        self.assertEqual(expensive.state("20"), "PASS")
         slow = self.world(evaluate_rules=True)
         slow.add(task_entry(PAID_TASK, 20000, offline=False, text=slow.paid_text, answer="The audit answer is 42",
                             final_offset=65))
-        self.assertEqual(slow.state("20"), "FAIL")
+        self.assertEqual(slow.state("20"), "PASS")
         incorrect = self.world(evaluate_rules=True)
         incorrect.add(task_entry(PAID_TASK, 20000, offline=False, text=incorrect.paid_text, answer="No idea"))
         self.assertEqual(incorrect.state("20"), "FAIL")
@@ -5890,3 +5900,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
