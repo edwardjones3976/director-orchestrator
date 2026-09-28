@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
@@ -686,8 +687,15 @@ class World:
         return httpx.Response(404, json={"detail": "fixture"})
 
     def slack(self, runtime, channel, owner=None):
-        return REAL_SLACK_THREADS(runtime, channel, owner, client=httpx.Client(
+        reader = REAL_SLACK_THREADS(runtime, channel, owner, client=httpx.Client(
             transport=httpx.MockTransport(self.handle), follow_redirects=False, trust_env=False))
+        # Rule fixtures supply synthetic records, including intentionally malformed
+        # ones. They do not exercise or attest the real trusted-store consumer;
+        # TrustedTaskConsumerTests and the sanctioned TLS fixture cover that path.
+        reader.task = lambda task: reader.reads.get(API + "/v1/tasks/" + task,
+                                                   params=dict(reader.m.READBACK_QUERY))
+        reader.deliveries = lambda task: reader.reads.get(API + "/v1/primary/tasks/" + task + "/deliveries")[0]
+        return reader
 
     def observe(self, only_deployment=False, evaluate_rules=False, **options):
         selected = dict(deployment=DEPLOYMENT)
@@ -1631,7 +1639,15 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 self.assertEqual(row(report, check)["status"], "UNKNOWN", check)
 
             offline_tasks = self.produce_offline_trials()
+            from types import SimpleNamespace
+            from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
+            delivery = PrimarySlackDelivery(
+                SimpleNamespace(handle=self.primary.handle, coordinator=self.primary.coordinator),
+                dataclasses.replace(settings, slack_bot_token="offline-fixture-no-network",
+                                    slack_channel_id="CDEFAULT", slack_owner_user_id="UOWNER"))
+            self.assertGreater(delivery.enqueue(), 0)  # Real local ledger producer; no Slack transport.
             offline, _ = sc._trusted_collection(runtime, offline_tasks)
+            snapshots, _ = sc._trusted_collection(runtime, offline_tasks, qualification_only=True)
             self.assertEqual(offline["counts"]["graph_task_count"], 10)
             self.assertEqual(offline["counts"]["provider_usage_invalid"], 0)
             for task in offline_tasks:
@@ -1639,7 +1655,7 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 self.assertEqual(entry["application"]["execution_mode"], "offline_simulation")
                 self.assertIsNone(entry["registered_plan"]["error"])
                 self.assertTrue(entry["application"]["task_record"]["assignment_outcomes"])
-                qualification = entry["qualification"]
+                qualification = snapshots[task]
                 self.assertTrue(qualification["complete"])
                 self.assertTrue(qualification["snapshot"]["read_only"])
                 self.assertTrue(qualification["snapshot"]["single_transaction"])
@@ -1648,6 +1664,23 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 self.assertEqual(len(entry["approval_receipts"]), 1)
                 # Local approval_resume is real, but has no authenticated gateway command.
                 self.assertFalse(entry["approval_receipts"][0]["authorized"])
+
+            # Exercise the actual consumer against those same TLS-backed producers.
+            # Slack authentication is outside this task/readback-focused fixture;
+            # any attempt to use a Director HTTP client here is fatal.
+            reader = object.__new__(sc._SlackThreads)
+            reader.runtime, reader._task_snapshots = runtime, {}
+            reader.reads = Mock()
+            reader.reads.get.side_effect = AssertionError("candidate HTTP forbidden")
+            body, headers = reader.task(offline_tasks[0])
+            self.assertEqual(body["task_id"], offline_tasks[0])
+            self.assertEqual(headers["x-task-engine-owner"], "langgraph")
+            deliveries = reader.deliveries(offline_tasks[0])
+            self.assertTrue(deliveries)
+            self.assertTrue(all(item["task_id"] == offline_tasks[0] for item in deliveries))
+            self.assertEqual([item["client_msg_id"] for item in deliveries],
+                             [item["client_msg_id"] for item in body["qualification_evidence"]["slack_deliveries"]])
+            reader.reads.get.assert_not_called()
 
             paid_task, route_secret, owner_secret = self.produce_metered_attempt()
             inputs.update(route_verifier_secret=route_secret.decode(), owner_authority_secret=owner_secret.decode())
@@ -5901,3 +5934,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]

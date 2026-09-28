@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:34 UTC | BEGIN]]
 import unittest
 from unittest.mock import patch
@@ -61,6 +62,69 @@ class QualificationReadOnlyFactoryTests(unittest.TestCase):
             pool.return_value.close.assert_called_once()
 
 
+class TrustedTaskConsumerTests(unittest.TestCase):
+    def reader(self):
+        import httpx
+        from datetime import datetime, timedelta
+        from tests import test_completion_scorecard as fixture
+        from tests import test_collect_offline_slack_trials as trial
+        from director_orchestrator import completion_scorecard as sc
+
+        task, _, _, _ = trial.sample()
+        task["status"] = "DONE"
+        for outcome in task["assignment_outcomes"]:
+            outcome.update(assignment_sequence=1, provider="claude", review_summary="fixture review")
+        evidence = trial.readback_fixture()
+        evidence["projection"] = pg.PrimaryTaskProjection(task["task_id"], "langgraph", "a" * 64,
+            1, evidence["projection_version"], evidence["projection_digest"],
+            {"terminal_classification": "SUCCEEDED", "application": {"task_record": task}})
+        captured = datetime.fromisoformat(evidence["captured_at"])
+        runtime = fixture.runtime_fixture(collected_at=captured - timedelta(seconds=1),
+                                          collection_end=lambda: captured + timedelta(seconds=1))
+        def transport(request):
+            self.assertEqual(str(request.url), "https://slack.com/api/auth.test")
+            return httpx.Response(200, json={"ok": True, "user_id": fixture.BOT, "bot_id": "BFIXTURE"})
+        client = httpx.Client(transport=httpx.MockTransport(transport))
+        self.addCleanup(client.close)
+        reader = sc._SlackThreads(runtime, fixture.CHANNEL_FIXTURE, fixture.OWNER, client=client)
+        self.addCleanup(reader.close)
+        return reader, task["task_id"], evidence
+
+    def test_task_and_deliveries_share_one_snapshot_without_director_http(self):
+        from director_orchestrator import completion_scorecard as sc
+        reader, task, evidence = self.reader()
+        with patch.object(sc, "_trusted_collection", return_value=({task: evidence}, None)) as collect:
+            body, headers = reader.task(task)
+            deliveries = reader.deliveries(task)
+            self.assertEqual(reader.task(task), (body, headers))
+        collect.assert_called_once_with(reader.runtime, [task], qualification_only=True)
+        self.assertEqual(body["task_id"], task)
+        self.assertEqual(headers["x-primary-projection-digest"], evidence["projection_digest"])
+        self.assertTrue(deliveries)
+        self.assertTrue(all(row["task_id"] == task for row in deliveries))
+        self.assertEqual([row["client_msg_id"] for row in deliveries],
+                         [row["client_msg_id"] for row in body["qualification_evidence"]["slack_deliveries"]])
+
+    def test_failed_incomplete_stale_or_foreign_snapshot_never_falls_back_or_retries(self):
+        import copy
+        from director_orchestrator import completion_scorecard as sc
+        for change in (None, {"complete": False}, {"captured_at": "2020-01-01T00:00:00+00:00"},
+                       {"task_id": "DIR-LG-DEAD"}):
+            reader, task, evidence = self.reader()
+            if change is None:
+                options = {"side_effect": ValueError("store unavailable")}
+            else:
+                evidence = {**copy.deepcopy(evidence), **change}
+                options = {"return_value": ({task: evidence}, None)}
+            with self.subTest(change=change), patch.object(sc, "_trusted_collection", **options) as collect:
+                with self.assertRaises(ValueError):
+                    reader.task(task)
+                with self.assertRaises(ValueError):
+                    reader.deliveries(task)
+            collect.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]

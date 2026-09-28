@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
@@ -1043,7 +1044,7 @@ def _trial_module():
 
 
 class _SlackThreads:
-    """Bounded GET-only Slack and Director reads for the selected deployment.
+    """Bounded Slack reads and owner-bound task snapshots for the deployment.
 
     The collector module is a private instance whose API allowlist names only
     this deployment. Credentials come from the Director container's environment
@@ -1076,15 +1077,48 @@ class _SlackThreads:
             raise
         self.bot, self.owner, self.api, self.channel = auth["user_id"], self.env["SLACK_OWNER_USER_ID"], runtime.api_base, channel
         self.runtime = runtime
+        self._task_snapshots = {}
 
     def replies(self, thread: str):
         return self.reads.replies(thread)
 
     def task(self, task_id: str):
-        return self.reads.get(self.api + "/v1/tasks/" + task_id, params=dict(self.m.READBACK_QUERY))
+        from .models import TaskReadbackRecord
+        from .primary_default import DefaultPrimaryApplication
+
+        if not isinstance(task_id, str) or not _TASK.fullmatch(task_id):
+            raise ValueError("invalid task selection")
+        if task_id not in self._task_snapshots:
+            if len(self._task_snapshots) >= 17:  # Ten trials, five drills, approval and paid task.
+                raise ValueError("task snapshot limit exceeded")
+            # One attempt and one coherent snapshot per task in this collection.
+            # A failed store read is never retried against candidate HTTP.
+            self._task_snapshots[task_id] = None
+            snapshots, _ = _trusted_collection(self.runtime, [task_id], qualification_only=True)
+            evidence = snapshots[task_id]
+            if evidence is None or evidence.get("complete") is not True:
+                raise ValueError("task snapshot absent or incomplete")
+            evidence = dict(evidence)
+            projection = evidence.pop("projection")
+            record = DefaultPrimaryApplication._record_from_projection(projection)
+            body = TaskReadbackRecord.model_validate({**record.model_dump(mode="python"),
+                                                     "qualification_evidence": evidence}).model_dump(mode="json")
+            readback = body["qualification_evidence"]
+            if (body["task_id"] != task_id or readback["task_id"] != task_id
+                    or projection.task_id != task_id or not self.runtime.read_in_window(readback["captured_at"])):
+                raise ValueError("task snapshot binding or collection window differs")
+            headers = {"x-task-engine-owner": projection.engine_owner,
+                       "x-primary-projection-digest": projection.projection_digest}
+            self._task_snapshots[task_id] = body, headers
+        snapshot = self._task_snapshots[task_id]
+        if snapshot is None:
+            raise ValueError("task snapshot unavailable; no retry was made")
+        return snapshot
 
     def deliveries(self, task_id: str):
-        return self.reads.get(self.api + "/v1/primary/tasks/" + task_id + "/deliveries")[0]
+        body, _ = self.task(task_id)
+        return [{"task_id": task_id, **delivery}
+                for delivery in body["qualification_evidence"]["slack_deliveries"]]
 
     def _get(self, url: str, params: dict[str, str], token: str) -> tuple[int, bytes]:
         # The collector's one bounded read: bytes, a per-chunk clock check and an HTTPX timeout clamped to the
@@ -1213,7 +1247,7 @@ def _sqlite_snapshot(path: Path):
         raise ValueError("SQLite snapshot unavailable or inconsistent") from None
 
 
-def _trusted_collection(runtime: _Runtime, tasks):
+def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False):
     """Only evaluator code runs. Owner inputs and inspect values remain in memory."""
     from dataclasses import fields
     from pathlib import PurePosixPath
@@ -1323,20 +1357,19 @@ def _trusted_collection(runtime: _Runtime, tasks):
         selected = sorted(set(tasks))
         if len(selected) > 12 or any(not re.fullmatch(r"DIR-LG-[A-F0-9]{1,32}", task) for task in selected):
             raise ValueError("task selection invalid")
+        if qualification_only:
+            # Same owner/generation/transport binding, without recomputing unrelated
+            # consistency counts or activation captures for each task read.
+            return {task: read_postgres_qualification_evidence(
+                primary_dsn, task, schema=settings.langgraph_primary_postgres_schema,
+                accepted_storage_identity=storage, accepted_instance_id=instance,
+                wall_seconds=min(5.0, _remaining(5))) for task in selected}, None
         with psycopg.connect(primary_dsn, connect_timeout=10, row_factory=dict_row,
                 options="-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=5000") as connection:
             consistency = consistency_report(connected, identity, tasks=selected, connection=connection,
                 environment=environment, local_artifact=artifact,
                 authority_secrets=tuple(inputs[key].encode("utf-8") for key in
                                         ("route_verifier_secret", "owner_authority_secret")))
-        for task in selected:
-            # This factory reads existing tables only and never exposes a writer.
-            # Keep the typed projection with its own coherent bounded snapshot;
-            # HTTP readback consumers remain contained until switched to it.
-            consistency["tasks"][task]["qualification"] = read_postgres_qualification_evidence(
-                primary_dsn, task, schema=settings.langgraph_primary_postgres_schema,
-                accepted_storage_identity=storage, accepted_instance_id=instance,
-                wall_seconds=min(5.0, _remaining(5)))
         if not runtime.read_in_window(consistency["captured_at"]):
             raise ValueError("collection outside time window")
         try:
@@ -1374,7 +1407,10 @@ _ROUTE_INPUTS = (
     ("candidate n8n/workflows/director-intake.json", "C"),
 )
 _SLACK_INPUTS = (("Slack auth.test, conversations.replies and owner configuration", "T"),)
-_TASK_INPUTS = (("Director /v1/tasks readback and /v1/primary/tasks/*/deliveries", "C"),)
+_TASK_INPUTS = (
+    ("owner-bound verified-TLS qualification snapshot and pinned task/delivery projection", "T"),
+    ("candidate-writable task, history and delivery rows require independent authority", "C"),
+)
 _RENDER_INPUTS = (("candidate renderer blobs compared with pinned evaluator renderer", "C"),)
 _CONSISTENCY_INPUTS = (("owner-bound verified-TLS stores and pinned consistency computation", "T"),)
 _CAPTURE_INPUTS = (("owner-bound verified-TLS activation chains and signed capture v2 executable digest", "T"),)
@@ -3958,3 +3994,4 @@ def render_markdown(report: dict[str, Any], *, _pending_launch: bool = False) ->
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]

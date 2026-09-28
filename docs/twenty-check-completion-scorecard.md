@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
@@ -209,12 +210,15 @@ predicate. Shared inputs are expanded here once:
   candidate Python in the Director image.
 - **Slack (T):** owner configuration, `auth.test`, complete `conversations.replies`
   pages and their message identities, timestamps, text, blocks and edit metadata.
-- **Task (C):** Director `/v1/tasks/{id}` body, headers and qualification readback
-  (task/intake, projections, checkpoints, assignments, attempts, effects, usage,
-  results and delivery rows), plus `/v1/primary/tasks/{id}/deliveries`.
+- **Task (T/C):** owner-bound verified-TLS qualification snapshots supply the task,
+  projection digest, history and delivery rows (**T** transport and pinned
+  computation). Task and delivery consumers share one snapshot per task; an
+  unavailable, incomplete, stale or foreign snapshot has no HTTP fallback.
+  Candidate-writable records still require independent authority/correlation
+  (**C**); moving a read to the database alone cannot authenticate a claim.
 - **Renderer (C):** candidate renderer blobs; the evaluator compares their bytes
   to its pinned renderer before local rendering. This equality does not
-  authenticate the candidate-supplied application record being rendered.
+  authenticate the candidate-writable application record being rendered.
 - **Consistency (T):** pinned evaluator computation over owner-bound verified-TLS
   stores, generation and a WAL-aware read-only journal snapshot; signed budget
   and meter verification use owner-injected authority. Missing sources are UNKNOWN.
@@ -259,10 +263,12 @@ existing `read_primary_qualification_evidence` is bounded and read-only. The
 qualification-only `read_postgres_qualification_evidence` factory now opens an
 existing, identity-bound database over verified TLS with read-only defaults,
 reuses that reader and returns only its snapshot. It performs no DDL and exposes
-no writer, graph or checkpoint handle. Trusted collection retains each selected
-task's snapshot under `qualification`; the task, header and delivery consumers
-still use the contained HTTP path until their conversion and real-store tests
-are complete. Candidate HTTP is not a fallback trusted source. Health also includes live process/worker/provider and
+no writer, graph or checkpoint handle. Task/header/delivery consumers now derive
+their views from that same typed snapshot, using the pinned application projection
+code. A collection caches at most seventeen tasks (ten trials, five drills,
+approval and paid task), including failed reads, so it does not retry or fall back
+to HTTP. This source change remains unqualified until real-store testing and the
+remaining candidate-writable authority/correlation gaps are closed. Health also includes live process/worker/provider and
 usage-monitor state; a store snapshot alone cannot attest those facts. Route,
 renderer and thread-binding inputs remain C as recorded in the audit; replacing task
 HTTP alone would not close their checks. No raw parallel-batch rows are exported.
@@ -1643,8 +1649,10 @@ activation chains, coordinator task producers and metered settlement. Direct
 predicate PASS assertions for 07, 12 and 17 do not bypass live containment:
 collection still returns UNKNOWN because shared candidate health remains C.
 The non-TLS case separately proves transport refusal and ignored candidate PASS
-reports. Neither case proves trusted task-history, delivery or process-health
-collection. The all-sixteen trusted live path is **NOT CLOSED**.
+reports. The TLS fixture also exercises the qualification factory and task/delivery
+consumer against real local graph and Slack-ledger producers, with Director
+HTTP forbidden. This does not prove independent authority over candidate-writable
+records or process-health collection. The all-sixteen trusted live path is **NOT CLOSED**.
 
 `-Tls` and `-Parallel N` compose: the lane exports its verified-TLS connection
 and CA before invoking the runner; `shard_dsn` changes only `dbname`, and workers
@@ -1762,3 +1770,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]] -->
