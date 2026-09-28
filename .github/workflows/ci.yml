@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
@@ -30,19 +34,43 @@ on:
   push:
     branches:
       - main
-      - "agent/**"
-      - "codex/**"
 
 permissions:
   contents: read
 
 # The self-hosted pool is one runner per OS, so a superseded pull request run is
-# cancelled instead of queued. Push runs get a unique group and never cancel.
+# cancelled instead of queued. Main pushes get unique groups and queue for
+# runner capacity without cancelling each other (including pending runs).
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Documentation changes
+    runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            python scripts/run-tests-parallel.py --docs-only "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
   contribution-attribution:
     name: Contribution attribution
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
@@ -76,14 +104,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # The self-hosted Linux and Windows runners share one 32-CPU host, so Windows gets fewer shards.
         include:
           - os: ubuntu-latest
+            shards: 8
             self_hosted: '["self-hosted","Linux","director"]'
           - os: windows-latest
+            shards: 4
             self_hosted: '["self-hosted","Windows","director"]'
     env:
       PYTHONPATH: src
       # Windows: per-process long-path support (no global git config change).
+      DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || matrix.shards }}
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: core.longpaths
       GIT_CONFIG_VALUE_0: "true"
@@ -253,7 +285,7 @@ jobs:
           "DIRECTOR_CI_PG_LANE=$name|$port" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -m pip check
-      - run: python -m unittest discover -s tests -v
+      - run: python scripts/run-tests-parallel.py
         if: runner.environment == 'github-hosted' || runner.os == 'Windows'
         env:
           SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
@@ -262,7 +294,7 @@ jobs:
       # the Windows docker.exe, and WSL forwards to Windows processes only the
       # environment variables named in WSLENV (/p translates a path). Forward
       # the ones the compose-rendering test sets, so compose sees them.
-      - name: python -m unittest discover -s tests -v
+      - name: python scripts/run-tests-parallel.py
         if: runner.environment == 'self-hosted' && runner.os == 'Linux'
         shell: bash
         env:
@@ -271,7 +303,7 @@ jobs:
         run: |
           PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
           export PATH
-          python -m unittest discover -s tests -v
+          python scripts/run-tests-parallel.py
       - run: python -m compileall -q src scripts tests
       - run: python -m json.tool n8n/workflows/director-intake.json
       - run: python -m json.tool docs/oracle-review-artifact.example.json
@@ -311,6 +343,8 @@ jobs:
   # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:15 UTC | END]]
 
   containers:
+    needs: changes
+    if: ${{ always() }}
     name: Compose and container build
     # Self-hosted: Docker Compose is reliable on the Windows host, not through
     # the WSL docker.exe shim.
@@ -318,29 +352,38 @@ jobs:
     env:
       DIRECTOR_ENV_FILE: .env.example
     steps:
+      - name: Docs-only no-op
+        if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}
+        run: |
+          echo "docs-only: Compose and container build not applicable; succeeded as a no-op"
       - uses: actions/checkout@v4
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
       # The owner's host runs live Director stacks; a per-run project name keeps
       # the build from retagging any stack's image.
       - name: Use a per-run compose project (self-hosted)
-        if: runner.environment == 'self-hosted'
+        if: runner.environment == 'self-hosted' && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true')
         shell: powershell
         run: |
           "DIRECTOR_COMPOSE_PROJECT_NAME=director-ci-$($env:GITHUB_RUN_ID)" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: docker compose --env-file .env.example config --quiet
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
       - name: Validate isolated Project Uppercut profile
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
         env:
           DIRECTOR_ENV_FILE: .env.uppercut.example
           DIRECTOR_COMPOSE_PROJECT_NAME: project-uppercut-director-ci
         run: docker compose --env-file .env.uppercut.example config --quiet
       - name: Validate isolated Edge Oracle profile
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
         env:
           DIRECTOR_ENV_FILE: .env.edge-oracle.example
           DIRECTOR_COMPOSE_PROJECT_NAME: edge-oracle-director-ci
         run: docker compose --env-file .env.edge-oracle.example config --quiet
       - run: docker compose --env-file .env.example build orchestrator
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
       - name: Remove the per-run image (self-hosted)
-        if: always() && runner.environment == 'self-hosted'
+        if: always() && runner.environment == 'self-hosted' && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true')
         shell: powershell
         run: |
           & docker image rm --force "director-ci-$($env:GITHUB_RUN_ID)-orchestrator" 2>$null | Out-Null
@@ -390,25 +433,35 @@ jobs:
           echo "No credential-shaped content was found."
 
   recovery-probe:
+    needs: changes
+    if: ${{ always() }}
     name: Cross-process recovery probe
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     env:
       PYTHONPATH: src
     steps:
+      - name: Docs-only no-op
+        if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}
+        run: |
+          echo "docs-only: Cross-process recovery probe not applicable; succeeded as a no-op"
       - uses: actions/checkout@v4
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
       - uses: actions/setup-python@v5
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
         with:
           python-version: "3.12"
           cache: pip
       - name: Provide job-local Python 3.12 venv (self-hosted)
-        if: runner.environment == 'self-hosted'
+        if: runner.environment == 'self-hosted' && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true')
         shell: bash
         run: |
           set -euo pipefail
           python -m venv --clear "$RUNNER_TEMP/ci-py312"
           echo "$RUNNER_TEMP/ci-py312/bin" >> "$GITHUB_PATH"
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
       - name: Recover persisted work without redispatch
+        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
         shell: bash
         run: |
           database="${RUNNER_TEMP}/director-recovery-ci.sqlite3"
@@ -423,3 +476,7 @@ jobs:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:49 UTC | END]]

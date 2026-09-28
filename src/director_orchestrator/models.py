@@ -1,3 +1,10 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -253,6 +260,18 @@ class UsageCheckStatus(StrEnum):
 
 
 MAX_SLACK_INTAKE_TEXT = 20_000
+
+
+def canonical_slack_source_event_id(event: dict) -> str:
+    """The gateway's source_event_id for a Slack message event: `<channel>:<ts>`, or "" without both.
+
+    slack_bot uses it for every intake it forwards; the offline collector and the scorecard match owner
+    inputs with it, so the two cannot drift."""
+    channel = event.get("channel", "")
+    message_ts = event.get("ts", "")
+    if not channel or not message_ts:
+        return ""
+    return f"{channel}:{message_ts}"
 
 
 class SlackIntake(BaseModel):
@@ -1176,6 +1195,21 @@ class QualificationEffectRow(BaseModel):
     terminal_disposition: str | None = None
     terminal_evidence_digest: str | None = None
     terminal_recorded_at: datetime | None = None
+    # Each child row's own task (joined by reservation or claim alone): another task's is a conflict.
+    execution_task_id: str | None = None
+    binding_task_id: str | None = None
+    terminal_task_id: str | None = None
+    # The execution marker's owner and fence against its claim, compared in SQL; the token is never served.
+    execution_owner_matches: bool | None = None
+    execution_fencing_matches: bool | None = None
+    # The remote binding's owner against the claim, and the terminal row's authority against the claim or an
+    # authorized successor, compared in SQL.
+    binding_owner_matches: bool | None = None
+    terminal_authority_matches: bool | None = None
+    # The reservation's task, owner and fence against its claim, compared in SQL (NULL: no claim row).
+    reservation_task_matches: bool | None = None
+    reservation_owner_matches: bool | None = None
+    reservation_fencing_matches: bool | None = None
 
 
 class QualificationReconciliationRow(BaseModel):
@@ -1186,6 +1220,8 @@ class QualificationReconciliationRow(BaseModel):
     state: str
     evidence_digest: str
     recorded_at: datetime
+    # The event's owner and fence against its claim or an authorized successor, compared in SQL.
+    authority_matches: bool | None = None
 
 
 class QualificationDeliveryRow(BaseModel):
@@ -1213,6 +1249,22 @@ class QualificationStatusReceiptRow(BaseModel):
     receipt_id: str
     source_event_id: str
     created_at: datetime
+    # The source binding the producer stored (review 4111725051): digest-only text, never the message.
+    channel_id: str | None = None
+    thread_ts: str | None = None
+    user_id: str | None = None
+    text_digest: str | None = None
+
+
+class QualificationIntakeAuthClaimRow(BaseModel):
+    """The append-only director_primary_intake_auth_claim row (digests only, no nonce)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    payload_digest: str
+    idempotency_key_digest: str
+    authentication_class: str
+    created_at: datetime
 
 
 class QualificationUsageRow(BaseModel):
@@ -1222,8 +1274,9 @@ class QualificationUsageRow(BaseModel):
     provider_id: str
     reserved_microusd: int = Field(ge=0)
     token_limit: int = Field(ge=0)
-    actual_microusd: int = Field(ge=0)
-    observed_tokens: int = Field(ge=0)
+    # Null while the reservation's usage is not recorded (the section outer-joins spend to usage).
+    actual_microusd: int | None = Field(default=None, ge=0)
+    observed_tokens: int | None = Field(default=None, ge=0)
 
 
 class QualificationReadbackBounds(BaseModel):
@@ -1289,6 +1342,7 @@ class QualificationEvidenceReadback(BaseModel):
     reconciliation_events: list[QualificationReconciliationRow] = Field(default_factory=list)
     slack_deliveries: list[QualificationDeliveryRow] = Field(default_factory=list)
     status_receipts: list[QualificationStatusReceiptRow] = Field(default_factory=list)
+    intake_auth_claims: list[QualificationIntakeAuthClaimRow] = Field(default_factory=list)
     provider_usage: list[QualificationUsageRow] = Field(default_factory=list)
 
 
@@ -1490,3 +1544,10 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

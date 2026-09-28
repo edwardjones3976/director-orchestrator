@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | BEGIN]]
@@ -384,9 +385,27 @@ def _validate_github_event(path: Path) -> list[str]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload.get("pull_request"), dict):
         body = payload["pull_request"].get("body") or ""
-        return _validate_submission_envelope(
+        errors = _validate_submission_envelope(
             body, require_outer=True, require_markdown_boundary=True
         )
+        head = payload["pull_request"].get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+            return errors + ["pull-request head must identify an exact commit SHA"]
+        try:
+            # Validate the source head, never checkout's synthetic PR merge commit.
+            message = str(_git("show", "-s", "--format=%B", sha, "--"))
+        except (subprocess.CalledProcessError, OSError):
+            return errors + ["could not read pull-request head commit envelope"]
+        errors.extend(
+            f"pull-request head commit: {error}"
+            for error in _validate_submission_envelope(
+                _without_trailing_git_trailers(message),
+                require_outer=True,
+                require_markdown_boundary=False,
+            )
+        )
+        return errors
     if payload.get("ref") == "refs/heads/main":
         # The unchanged PR body was already validated before the protected merge.
         # GitHub synthesizes squash-merge commit text and may omit that envelope.
@@ -484,3 +503,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:46 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
