@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwardjones3976/director-orchestrator/projects/homemade-llm/schemas/director-data-v1-row.schema.json",
+  "title": "homemade-llm DIRECTOR training row v1",
+  "description": "One JSONL row of the M2 DIRECTOR data set. The row carries the task input the model sees, the target packet fields it must produce, and the provenance the L1 checklist requires (source_provider and terms_tier on every row, zero excluded-tier rows). Held-out reference packets are never rows here (O-027). This schema is a contract for the M2-D packets; it grants no authority and is not the training format itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "row_id",
+    "schema_version",
+    "split",
+    "source_kind",
+    "source_provider",
+    "source_model",
+    "terms_tier",
+    "generated_at",
+    "receipt_ref",
+    "input",
+    "target",
+    "scrub",
+    "heldout_check"
+  ],
+  "properties": {
+    "row_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "First 16 hex characters of the SHA-256 of the canonical JSON of input plus target. Duplicate row_id values are rejected."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "homemade-llm-director-row/v1"
+    },
+    "split": {
+      "type": "string",
+      "enum": ["train", "dev"],
+      "description": "Held-out sets A and B are not splits of this file; they live only under C:\\llm\\datasets\\heldout and are pinned by the D-M1-0 manifests."
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": ["real_history", "provider_exemplar", "provider_critique_repair", "owner_seed"],
+      "description": "O-019 sources. real_history rows come only from dispatched assignments that are not in either held-out set."
+    },
+    "source_provider": {
+      "type": "string",
+      "enum": ["anthropic_api", "openai", "gemini_api", "cursor", "perplexity", "owner", "repository_history"],
+      "description": "Only competing-only-clause providers, the owner, or repository history may appear (O-026). Excluded-tier providers (Z.ai, xAI, Google consumer Gemini, Antigravity) are not valid values by construction."
+    },
+    "source_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model label as recorded in the dispatch receipt, or 'n/a' for owner and repository_history rows. Never a guessed name."
+    },
+    "terms_tier": {
+      "type": "string",
+      "enum": ["competing_only_clause", "owner_content", "repository_history"],
+      "description": "PLAN.md section 4.2 tier at generation time. 'excluded' and 'unclear' tiers are intentionally not valid values."
+    },
+    "terms_verified_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC time the provider's training-data clause was last re-read (O-026 requires re-verification before the first M2 training run). Required for provider rows; a validator enforces it."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "receipt_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Relative path of the provider-dispatch receipt, the assignment ledger key, or the owner-seed SHA-256 reference. Never a raw seed and never an absolute host path."
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "repository", "title"],
+      "description": "Mirror of the M1 D-M1-1 task input: the model is given objective, repository and a title and nothing else.",
+      "properties": {
+        "objective": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "project": {"type": "string"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["non_goals", "constraints", "acceptance_checks", "evidence_requirements"],
+      "description": "The four scored fields of model-work-packet-v1 that the model must produce. Field shapes follow docs/schemas/model-work-packet-v1.schema.json.",
+      "properties": {
+        "non_goals": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "constraints": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "acceptance_checks": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "evidence_requirements": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "scrub": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gitleaks_clean", "redact_pass", "scrubbed_at"],
+      "properties": {
+        "gitleaks_clean": {"type": "boolean", "const": true},
+        "redact_pass": {"type": "boolean", "const": true},
+        "scrubbed_at": {"type": "string", "format": "date-time"},
+        "scan_report_ref": {"type": "string"}
+      },
+      "description": "Both flags must be true for a row to ship; the schema makes false unrepresentable so an unscrubbed row fails validation instead of being filtered silently."
+    },
+    "heldout_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["set_a_manifest", "set_b_manifest", "overlap"],
+      "properties": {
+        "set_a_manifest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "set_b_manifest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "overlap": {"type": "string", "const": "none"}
+      },
+      "description": "The D-M1-0 manifests the leak check ran against. A row whose input or target matches any held-out item is not written."
+    },
+    "grades": {
+      "type": "array",
+      "description": "Optional grader rows in the same shape score_packets.py accepts: one entry per non-author grader. Rows without grades are still valid training rows; grades gate promotion from dev to train under M2-Q1.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grader", "accepted", "receipt_ref"],
+        "properties": {
+          "grader": {"type": "string", "minLength": 1},
+          "accepted": {"type": "boolean"},
+          "receipt_ref": {"type": "string", "minLength": 1},
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  }
+}
