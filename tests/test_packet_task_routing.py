@@ -31,7 +31,10 @@
 from __future__ import annotations
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
 import contextlib
+import os
 import shutil
+import stat
+import sys
 import tempfile
 import time
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
@@ -780,14 +783,41 @@ class RepositoryInventorySnapshots:
 
 
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+def _remove_snapshot_tree(root: str) -> None:
+    """Remove a snapshot repository the way TemporaryDirectory does.
+
+    Git writes loose objects read-only, and on Windows ``os.unlink`` of a
+    read-only file raises ``PermissionError``, so a plain ``shutil.rmtree``
+    can never delete ``.git/objects`` there. Clear the read-only bit on the
+    path and its parent, then retry that one operation, as
+    ``tempfile.TemporaryDirectory`` does; anything else is re-raised.
+    """
+
+    def handle(function, path, error):
+        if not isinstance(error, PermissionError):
+            raise error
+        for target in (path, os.path.dirname(path)):
+            try:
+                os.chmod(target, stat.S_IRWXU)
+            except OSError:
+                pass
+        function(path)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(root, onexc=handle)
+    else:  # pragma: no cover - older interpreters pass an exc_info triple
+        shutil.rmtree(root, onerror=lambda function, path, info: handle(function, path, info[1]))
+
+
 @contextlib.contextmanager
 def _snapshot_repository():
     """A temporary snapshot repository whose removal tolerates Windows handle lag.
 
-    ``TemporaryDirectory`` raises ``PermissionError`` when a just-terminated git
-    child still holds a handle inside ``.git``; retry the removal briefly
-    instead of failing a test whose assertions all passed. The last failure is
-    raised, so a real leak still surfaces.
+    A just-terminated git child releases its handles inside ``.git``
+    asynchronously on Windows, so removal can hit ``PermissionError`` for a
+    moment after the test body has passed. Retry the removal for up to about
+    five seconds instead of failing the test; the last error is raised, so a
+    real leak still surfaces.
     """
 
     root = tempfile.mkdtemp(prefix="director-blob-test-")
@@ -795,14 +825,14 @@ def _snapshot_repository():
         yield root
     finally:
         last_error: PermissionError | None = None
-        for _attempt in range(5):
+        for _attempt in range(10):
             try:
-                shutil.rmtree(root)
+                _remove_snapshot_tree(root)
                 last_error = None
                 break
             except PermissionError as exc:
                 last_error = exc
-                time.sleep(0.2)
+                time.sleep(0.5)
         if last_error is not None:
             raise last_error
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
