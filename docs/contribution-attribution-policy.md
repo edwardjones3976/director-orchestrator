@@ -32,6 +32,9 @@ Every PR description carries exactly one header line:
 rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
 this policy does not redefine it.
 Existing in-file tags are historical; a later mechanical PR removes them.
+A commit made before this rule that carries one matching BEGIN/END contribution
+envelope in its message is accepted as attributed, so a base merge into an older
+branch does not fail the check; every new commit carries the trailer.
 Attribution records acknowledge actual contributions only and never imply
 inherited authorship. They never authenticate provider identity, grant authority,
 or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.

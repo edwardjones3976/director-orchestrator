@@ -20,6 +20,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+from director_orchestrator.contribution_tags import TAG_PATTERN  # noqa: E402
+
 
 ZERO_SHA = "0" * 40
 CONTRIBUTOR = re.compile(r"[^|<>\x00-\x1f\x7f]+ \| [^|<>\x00-\x1f\x7f]+")
@@ -27,6 +32,57 @@ SOLE_AUTHOR = re.compile(
     r"Sole author: ([^()<>\r\n]+) \(([^<>\r\n]+)\)"
     r"(?:; assistance: ([^,<>\r\n]+(?:, [^,<>\r\n]+)*))?"
 )
+
+
+def trailer_values(message: str) -> list[str]:
+    """Return every Contributed-by trailer value in a commit message, trailers block only."""
+    lines = message.rstrip("\n").splitlines()
+    block: list[str] = []
+    for line in reversed(lines):
+        if not line.strip():
+            if block:
+                break
+            continue
+        if re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*:[ \t]+\S", line):
+            block.append(line)
+            continue
+        break
+    return [
+        line.partition(":")[2].strip()
+        for line in reversed(block)
+        if line.lower().startswith("contributed-by:")
+    ]
+
+
+def trailers_attribute(values: list[str]) -> bool:
+    return bool(values) and all(
+        CONTRIBUTOR.fullmatch(value) is not None
+        and all(field.strip() for field in value.split("|"))
+        for value in values
+    )
+
+
+def legacy_envelope_attributes(message: str) -> bool:
+    """Grandfather a pre-trailer commit: one matching BEGIN/END contribution pair in its message.
+
+    Branches opened before the trailer rule carry the envelope this repository
+    required until 2026-09-28. They are accepted as attributed so a base merge
+    does not turn them red; new commits still carry the trailer."""
+    identities: dict[tuple[str, str, str, str], set[str]] = {}
+    for match in TAG_PATTERN.finditer(message):
+        key = (match.group("contributor"), match.group("system"), match.group("date"), match.group("time"))
+        identities.setdefault(key, set()).add(match.group("boundary"))
+    return any(bounds == {"BEGIN", "END"} for bounds in identities.values())
+
+
+def message_attributed(message: str) -> bool:
+    """A commit is attributed by valid Contributed-by trailers, or, with none, a legacy envelope.
+
+    A present but malformed trailer decides the result; the envelope never rescues it."""
+    values = trailer_values(message)
+    if values:
+        return trailers_attribute(values)
+    return legacy_envelope_attributes(message)
 
 
 def _git(*args: str) -> str:
@@ -72,12 +128,11 @@ def validate_commits(base: str, head: str, default_branch_ref: str = "origin/mai
             "show", "-s", "--format=%(trailers:key=Contributed-by)", commit
         ).splitlines()
         values = [line.partition(":")[2].strip() for line in trailers if line.strip()]
-        if not values or any(
-            CONTRIBUTOR.fullmatch(value) is None
-            or any(not field.strip() for field in value.split("|"))
-            for value in values
-        ):
-            errors.append(f"{commit}: missing or malformed Contributed-by trailer")
+        if trailers_attribute(values):
+            continue
+        if not values and legacy_envelope_attributes(_git("show", "-s", "--format=%B", commit)):
+            continue  # pre-trailer commit carrying the envelope this repository then required
+        errors.append(f"{commit}: missing or malformed Contributed-by trailer")
     return errors
 
 

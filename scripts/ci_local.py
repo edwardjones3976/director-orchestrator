@@ -255,15 +255,20 @@ def review_exception_errors(message: str, previous_head: str) -> list[str]:
     """Validate the structured Review-exception inside one commit envelope."""
 
     checker = _checker()
-    text = checker._without_trailing_git_trailers(message)
-    envelope_errors = checker._validate_submission_envelope(
-        text, require_outer=True, require_markdown_boundary=False
-    )
-    if envelope_errors:
-        return [f"review exception commit: {error}" for error in envelope_errors]
-    # The checker has established that the first and last nonblank lines are the
-    # outer tags, so everything between them is the envelope body.
-    inner = [line for line in text.splitlines() if line.strip()][1:-1]
+    if not checker.message_attributed(message):
+        return [
+            "review exception commit: missing Contributed-by trailer "
+            "(or, on a pre-trailer branch, a matching contribution envelope)"
+        ]
+    # The fields live in the message body: every nonblank line that is neither a
+    # trailer nor a legacy contribution tag.
+    trailer_keys = {key.lower() for key in ("Contributed-by", "Co-Authored-By", "Signed-off-by", "Claude-Session")}
+    inner = [
+        line for line in message.splitlines()
+        if line.strip()
+        and checker.TAG_PATTERN.search(line) is None
+        and line.split(":", 1)[0].strip().lower() not in trailer_keys
+    ]
     fields: dict[str, str] = {}
     for line in inner:
         match = _EXCEPTION_LINE.match(line.strip())
@@ -338,7 +343,7 @@ def transition_errors(event: dict) -> list[str]:
     return frozen_transition_errors(before, after)
 
 
-def run_checker(base: str, head: str, event_path: Path) -> int:
+def run_checker(base: str, head: str, event_path: Path, *, default_branch_ref: str | None = None) -> int:
     environment = dict(os.environ)
     source = str(ROOT / "src")
     existing = environment.get("PYTHONPATH")
@@ -347,6 +352,10 @@ def run_checker(base: str, head: str, event_path: Path) -> int:
         sys.executable, str(CHECKER),
         "--base", base, "--head", head, "--github-event", str(event_path),
     ]
+    if default_branch_ref is not None:
+        # The event base is the default branch tip the event was raised against;
+        # naming it keeps the checker independent of a fetched origin/main ref.
+        command.extend(["--default-branch-ref", default_branch_ref])
     result = subprocess.run(
         command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
@@ -397,7 +406,7 @@ def check_pull_request_event(event: dict, event_path: Path, *, mode: str) -> int
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     _report(merge_base=attribution_base)
-    return run_checker(attribution_base, head_sha, event_path)
+    return run_checker(attribution_base, head_sha, event_path, default_branch_ref=event_base)
 
 
 def ci_main(event_path: Path) -> int:
@@ -416,7 +425,7 @@ def ci_main(event_path: Path) -> int:
         # squash-merge envelope handling; no merge base is substituted.
         before = event.get("before") if _is_sha(event.get("before")) else _checker().ZERO_SHA
         _report(mode="ci-main-push", before=before, head=event["after"])
-        return run_checker(before, event["after"], event_path)
+        return run_checker(before, event["after"], event_path, default_branch_ref=event["after"])
     print("ERROR: event is neither a pull_request nor a main push", file=sys.stderr)
     return 1
 
