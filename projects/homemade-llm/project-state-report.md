@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]] -->
 <!-- MX-086 -->
@@ -263,7 +264,24 @@ CI is the six required jobs at each PR's merged or pending head, read with `gh p
 - **Separate historical/M1 items:** D-018 is ratified by O-037 in the approved but unmerged M1 plan PR #294 (owner disposition 5850566834); the historical crossing and cost remain recorded. #281 is merged as `e9461c7441c255f83cd8a30a3cd6f4c14d27b9ba`. M1 plan approval is O-038 in unmerged #294; approved packets, leases, allocation and safety/budget gates still govern dispatch.
 - **Separate `WEBUI_URL` gate:** set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` section 2 step 3), or decide to keep `http://127.0.0.1:3000`.
 
-### Next bounded action
+## M1 gate record (2026-09-28)
+
+Evidence-first, same labels as above. Written by the project Director session (Claude Fable 5.1) on the owner's assignment (O-052). Every figure has a file on the host; the PR #294 comments cited hold the full tables.
+
+- **Gate decision:** closed 2026-09-28 with the owner's signature (O-052) and the Director row D-M1-G.
+- **Winner:** Qwen3-14B, Apache-2.0 at `40c069824f4251a91eefaf281ebe4c544efd3e18`, under the frozen rule O-045 (tie-break 1: one jointly accepted field of 256). phi-4 second, Qwen3-8B third. All candidates 0/14 and 0/50 accepted as-is with identical Wilson intervals; the ordering is the rule's, not a quality advantage `[verified: ranking-o045.json, eight summary.json]`.
+- **Runs:** 448/448 items OK, 0 failed (four runs × two sets, harness main `4a4a35a`, O-044); Nemo control 64/64 `[verified]`.
+- **Grading:** Grok `grok-4.6` 1,024 verdicts (USD 0.4726); Cursor lane failed twice (planning narration, zero rows); Z.ai stand-in filled the second seat under O-045; 2,048 rows, 0 missing, 0 malformed; rubric sha `b2125559…` `[verified]`.
+- **License (M1-L1):** Qwen3-8B and Qwen3-14B Apache-2.0 (sha `832dd9e0…`), phi-4 MIT (sha `c4941961…`); `C:\llm\reports\m1-license\FETCH-RECORD.txt` `[verified 2026-09-27 19:59 UTC]`.
+- **Control (D-M1-4 outcome):** Nemo three-shot similarity 0.1838, 95–97 % verbatim example copies; similarity is a diagnostic only and every M2 gate is grader-based `[verified]`.
+- **Feasibility (D-M1-F):** M2 attempts Qwen3-14B first behind the local probe (row p95, VRAM under 11.0 GiB, three epochs under 10 h with 20 % contingency); Qwen3-8B fallback; phi-4 conditional alternate.
+- **Paid spend charged to M1:** at least USD 1.4789 (USD 0.855502 pre-grading, 0.4726 Grok grading, 0.1508 authenticated set B batch-1 re-run); Z.ai used subscription credits. Script-review receipts are summed by `spend_meter.py` on the host; that total was not re-read here `[unverified here]`. Envelope USD 25.
+- **Held-out data caveat carried forward:** set B pr-45 lacks eligibility and evaluation terms (O-042), disclosed with every set B result.
+- **Not done, not blocking:** #339 (scorer `candidate_manifest` excluding `run.json`) awaits review; the two Nemo summaries are regenerated after it merges, old outputs kept. The nine frozen ranked summaries are untouched.
+- **Owner decisions of 2026-09-28:** Cursor reviews #293 and #294 (O-049); M2 approved with Perplexity research-only (O-050); GPU and paid generation cleared for immediate use (O-051); removal of the two non-winning bases routed as a host work order after the 14B probe, because Qwen3-8B is D-M1-F's fallback (O-053).
+- **Next bounded action for the project:** M2 under PR #340 as approved: the Director routes M2-S1 (validator), M2-G1 (generator) and M2-T1 (trainer) authoring and runs the D-M1-F probe on Qwen3-14B; the first paid generation is the ~100-row pilot within the USD 10 cap. Responsible: the project Director for routing, the executing session for host work, Cursor for the #293 and #294 reviews, the owner for the two merges.
+
+### Next bounded action (M0 record reconciliation, unchanged from #293)
 
 1. PRESTAGE_REQUIRED: before any provider contact, the coordinator must stage an immutable exact-head, current-base Cursor review packet outside the PR in the dispatch area, immediately before dispatch, and record its SHA-256 digest and workload fields in the dispatch receipt and on PR #293. A missing or invalid packet stops in PRESTAGE_REQUIRED; no provider is contacted. Skill discovery and readiness gate (after PRESTAGE_REQUIRED, before Cursor contact): Use the catalog name in the assignment rather than a machine-specific absolute path. Skill discovery is required before selection; installation or a reported structural evaluation does not prove that the active provider session has loaded the skill. If a selected skill is unavailable after refresh, continue with the provider's baseline contract when that still satisfies acceptance, or reshape the plan under the assignment-specific retry budget. For #293 select none; verify readiness for the local cursor-agent CLI in review role, plan mode off, with a no-edit, verdict-in-final-message preamble. Record that baseline verification before contact; otherwise stop. The workload_policy_version: v1 plan carries immutable assignment workload_size (simple, short, medium, or long), 1–100 effort_points, fixed execution limits, any workload-variance reason, and one canonically digested pre-stage packet. The pre-stage packet binds packet_id, goal, terminal condition, exact repository, worktree, branch and lowercase 40-character base SHA, nullable candidate SHA, producer, different independent reviewer, nonempty owned paths, prohibited paths, nonempty required tests, nonempty required security evidence, budget, timeout, retry limit no greater than three, nonempty merge-eligibility conditions, and nonempty stopping conditions. For this review, candidate SHA must name the final exact head and base SHA the current base; the packet is not committed into this PR because that would change the head it names. Execution limits must specify effort, a 20-minute time cap, no-edit, and accept-only under B2: review only, do not merge unless the owner has directed this specific merge.
 
@@ -314,3 +332,4 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 13:41 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | END]] -->
