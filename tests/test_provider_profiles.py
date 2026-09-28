@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
@@ -77,7 +79,8 @@ EXAMPLE_PATH = SCHEMA_ROOT / "director-provider-profile-v1.example.json"
 ROLES_CONTRACT = ROOT / "docs" / "templates" / "project-bootstrap" / "provider-roles-contract.yaml"
 SRC = ROOT / "src" / "director_orchestrator"
 LANES = tuple(PRIMARY_PROVIDER_LANES)
-COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai")
+COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai", "zai")
+DEBATE_SEATS = COMMITTEE_LANES
 PROPOSED_ROUTES = {
     "claude-director-injected-native-packet",
     "grok-bot",
@@ -214,7 +217,11 @@ class SchemaTests(unittest.TestCase):
             self.defs["responsibilityArea"]["enum"],
             [area["name"] for area in charter["responsibility_areas"]],
         )
-        self.assertEqual(sorted(self.defs["committeeKey"]["enum"]), sorted(charter["committee"]["members"]))
+        # Committee keys name every debate seat: the weighted members plus any
+        # seat without a configured weight (Z.ai).
+        self.assertEqual(sorted(self.defs["committeeKey"]["enum"]),
+                         sorted(charter["committee"]["debate"]["seatable_members"]))
+        self.assertTrue(set(charter["committee"]["members"]) <= set(self.defs["committeeKey"]["enum"]))
         self.assertEqual(
             [item["const"] for item in self.defs["profileDocument"]["properties"]["authority"]["properties"]["universal_prohibited_actions"]["prefixItems"]],
             list(DirectorPacketTaskRouter._PROHIBITED_ACTIONS),
@@ -365,18 +372,25 @@ class CharterMirrorTests(unittest.TestCase):
             committee = profile["roles"]["committee"]
             key = profile["identifiers"]["committee_member_key"]
             with self.subTest(lane=lane):
-                self.assertEqual(committee["member"], key is not None)
+                # "member" means a configured voting weight; a debate seat is
+                # separate, so a seat without a weight stays representable.
+                self.assertEqual(committee["member"], key is not None and key in members)
                 self.assertEqual(profile["capabilities"]["may_cast_committee_vote"], committee["member"])
                 if key is None:
                     self.assertIsNone(committee["voting_power"])
                     self.assertFalse(committee["seatable_in_debate"])
                     continue
                 self.assertEqual(key, lane)
-                self.assertEqual(committee["voting_power"], members[key]["voting_power"])
                 self.assertEqual(committee["seatable_in_debate"], key in seatable)
+                if key not in members:
+                    self.assertIsNone(committee["voting_power"])
+                    self.assertTrue(committee["seatable_in_debate"])
+                    continue
+                self.assertEqual(committee["voting_power"], members[key]["voting_power"])
                 total += committee["voting_power"]
         self.assertEqual(total, self.charter["committee"]["voting"]["configured_weight_total"])
-        self.assertEqual(total, 8.5)
+        # 8.5 + Z.ai 1.5, owner decision 2026-09-27 "Approve 1.5; total 10.0".
+        self.assertEqual(total, 10.0)
 
     def test_allocation_mirrors_allocation_profiles_and_directive(self):
         for lane, profile in self.profiles.items():
@@ -864,7 +878,7 @@ class RouteCatalogTests(unittest.TestCase):
         for route_id in ("work-packet-dispatch", "result-packet-return", "slack-collaboration-relay", "dependency-outcome-forwarding", "owner-manual-recovery"):
             self.assertEqual(sorted(self.routes[route_id]["providers_involved"]), sorted(LANES), route_id)
         self.assertTrue({"claude", "cursor", "grok"}.issubset(self.routes["review-to-merge-handoff"]["providers_involved"]))
-        self.assertEqual(sorted(self.routes["advisory-debate"]["providers_involved"]), sorted(COMMITTEE_LANES))
+        self.assertEqual(sorted(self.routes["advisory-debate"]["providers_involved"]), sorted(DEBATE_SEATS))
         for route_id in ("antigravity-invited-debate", "antigravity-closed-work-directive"):
             self.assertEqual(self.routes[route_id]["providers_involved"], ["antigravity"])
 
@@ -1060,3 +1074,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

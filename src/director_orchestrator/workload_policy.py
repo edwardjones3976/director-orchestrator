@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -83,6 +86,9 @@ class Provider(str, Enum):
     PERPLEXITY = "perplexity"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
+    # Z.ai (GLM) is its own provider identity, never Claude, even though its
+    # native route runs the Claude Code executable against Z.ai's endpoint.
+    ZAI = "zai"
 
 
 class DirectProductionProvider(str, Enum):
@@ -101,6 +107,7 @@ class DirectProductionProvider(str, Enum):
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
     EXTERNAL_OPENAI = "external_openai"
+    ZAI = "zai"
 
 
 class WorkSize(str, Enum):
@@ -1366,6 +1373,10 @@ class PrestagePacket:
 
 _WINDOWS_DRIVE_PATH = re.compile(r"^[a-zA-Z]:")
 
+# The preview plan's prohibited "path": prose naming external writes, not a
+# repository path. Transports that turn paths into rules skip exactly this.
+PREVIEW_PROHIBITED_SCOPE = "all external writes"
+
 
 def _canonical_repository_relative_path(value: str, *, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
@@ -1429,3 +1440,6 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

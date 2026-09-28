@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
@@ -257,6 +259,7 @@ _STANDING_PROVIDER_LABELS = {
     ProviderName.GROK: None,
     ProviderName.PERPLEXITY: "Research Programmers",
     ProviderName.FIRECRAWL: "Authorized public web retrieval",
+    ProviderName.ZAI: None,
     ProviderName.OWNER: None,
 }
 _PROVIDER_LABELS = {
@@ -267,6 +270,7 @@ _PROVIDER_LABELS = {
     ProviderName.GROK: "Grok",
     ProviderName.PERPLEXITY: "Perplexity",
     ProviderName.FIRECRAWL: "Firecrawl",
+    ProviderName.ZAI: "Z.ai (GLM)",
     ProviderName.OWNER: "Owner",
 }
 _STANDING_PROVIDER_ROLES = _STANDING_PROVIDER_LABELS
@@ -312,6 +316,16 @@ _TRUSTED_ROUTING_CAPABILITIES: dict[
     WorkloadProvider.PERPLEXITY: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.FIRECRAWL: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.GITHUB_COPILOT: frozenset({WorkloadKind.IMPLEMENTATION}),
+    # Enrolled 2026-09-27. The legacy engine registers no Z.ai worker, so it is
+    # not a legacy trusted reviewer; the LangGraph primary roster routes it.
+    WorkloadProvider.ZAI: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.REVIEW,
+            WorkloadKind.RESEARCH,
+            WorkloadKind.VALIDATION,
+        }
+    ),
 }
 _TRUSTED_PRIMARY_REVIEWERS = frozenset(
     {WorkloadProvider.OPENAI, WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
@@ -2375,6 +2389,7 @@ class OrchestrationEngine:
             ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
             ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
             ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
+            ProviderName.ZAI: ProviderTransport.ZAI_CODING_CLI,
         }.get(provider, ProviderTransport.DIRECTOR_BACKEND)
 
     @classmethod
@@ -7819,3 +7834,5 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
@@ -473,12 +477,14 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "grok": {"provider": "xai", "voting_power": 1.5},
             "openai": {"voting_power": 2.5},
             "claude": {"voting_power": 2.0},
+            # Owner decision 2026-09-27 05:23:47 UTC: "Approve 1.5; total 10.0".
+            "zai": {"voting_power": 1.5},
         },
         "debate": {
             # Antigravity is seatable only by Director invitation. It cannot open,
             # self-route, or autonomously continue a conversation, and a seat grants
             # it no review, acceptance, merge, deployment, or methodology authority.
-            "seatable_members": ["antigravity", "claude", "cursor", "grok", "openai"],
+            "seatable_members": ["antigravity", "claude", "cursor", "grok", "openai", "zai"],
             "recommended_for_complexity": ["medium", "high", "critical"],
             "procedure": [
                 "Solicit independent positions before participants see one another's conclusions when practical.",
@@ -489,10 +495,12 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "voting": {
             "mode": "advisory",
             "decision_rule": "prefer the option with the highest declared weighted support",
-            "configured_weight_total": 8.5,
+            # New debates use 10.0; every recorded tally keeps the total it was
+            # tallied under (historical debates 8.5) and is never re-tallied.
+            "configured_weight_total": 10.0,
             "denominator_rule": (
-                "The configured 8.5 total is immutable. Abstentions and unavailability cast zero "
-                "weight and never change weights, thresholds, or the denominator."
+                "A tally keeps its total; abstentions and unavailability weigh zero and change "
+                "no weight or threshold."
             ),
             "rules": [
                 "Voting is encouraged but not mandatory.",
@@ -748,7 +756,7 @@ class AdvisoryVote(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    member: Literal["antigravity", "cursor", "grok", "openai", "claude"]
+    member: Literal["antigravity", "cursor", "grok", "openai", "claude", "zai"]
     disposition: Literal["vote", "abstain", "unavailable"]
     option: str | None = Field(default=None, min_length=1, max_length=255)
     rationale: str = Field(min_length=1, max_length=2_000)
@@ -807,6 +815,10 @@ def tally_advisory_votes(
         if vote.disposition == "unavailable":
             unavailable.append(vote.member)
             continue
+        if vote.member not in members:
+            # A participant without a configured weight: its position stays
+            # in the debate record but moves no option.
+            continue
         weight = float(members[vote.member]["voting_power"])
         option_weights[vote.option or ""] = option_weights.get(vote.option or "", 0.0) + weight
 
@@ -859,3 +871,7 @@ def tally_advisory_votes(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

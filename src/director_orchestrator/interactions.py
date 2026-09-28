@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -66,6 +67,8 @@ class InteractionProvider(StrEnum):
     GROK = "grok"
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
+    # Enrolled 2026-09-27; GLM served through the Claude Code CLI is never CLAUDE.
+    ZAI = "zai"
 
 
 class ProviderInteractionPhase(StrEnum):
@@ -93,6 +96,9 @@ class ProviderTransport(StrEnum):
     XAI_RESPONSES_API = "xai_responses_api"
     GROK_CLI = "grok_cli"
     PERPLEXITY_API = "perplexity_api"
+    # The Claude Code CLI on Z.ai's Coding Plan endpoint, run natively or by the
+    # Windows host bridge; its own transport, never a Claude route.
+    ZAI_CODING_CLI = "zai_coding_cli"
     SLACK = "slack"
     MANUAL_OWNER = "manual_owner"
     SIMULATION = "simulation"
@@ -821,3 +827,4 @@ def director_evidence_matches(
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

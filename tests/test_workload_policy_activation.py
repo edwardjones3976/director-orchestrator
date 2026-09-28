@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 17:58 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
@@ -782,15 +783,27 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             ) as direct_history:
                 selected = engine._apply_trusted_provider_selection(record, plan)
 
+            # Real trusted cost ranks (cursor:1, claude:2, grok:3) select cursor
+            # as producer; the retired allocation cap no longer forces claude by
+            # elimination, and claude stays the distinct capable reviewer.
             self.assertEqual(
                 [item.agent for item in selected.assignments],
-                [ProviderName.CLAUDE, ProviderName.CURSOR],
+                [ProviderName.CURSOR, ProviderName.CLAUDE],
             )
-            self.assertEqual(selected.prestage.producer, ProviderName.CLAUDE)
+            self.assertEqual(selected.prestage.producer, ProviderName.CURSOR)
             self.assertEqual(
-                selected.prestage.independent_reviewer, ProviderName.CURSOR
+                selected.prestage.independent_reviewer, ProviderName.CLAUDE
             )
-            self.assertEqual(selected.prestage.digest, original_digest)
+            # Selection moved the producer, so the pre-stage digest is rebound
+            # to the selected providers and is stable under re-normalization.
+            self.assertNotEqual(selected.prestage.digest, original_digest)
+            renormalized = enforce_plan(
+                selected,
+                "Implement and independently review the bounded change",
+                settings,
+                activate_workload_policy=True,
+            )
+            self.assertEqual(renormalized.prestage.digest, selected.prestage.digest)
             self.assertEqual(selected.assignments[0].model_label, plan.assignments[0].model_label)
             self.assertEqual(execution_policy_errors(selected, settings), [])
             direct_history.assert_called_once_with(limit=19)
@@ -1120,3 +1133,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 17:58 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -97,6 +98,9 @@ Historical approvals never transfer to a new candidate or a different author.
 The prospective OpenAI and Claude duty allocations exchange places in the
 non-engineering profiles. The owner's subsequent explicit engineering decision
 sets OpenAI to 40% and Claude to 25%; the other lanes keep their existing targets.
+On 2026-09-27 the owner enrolled Z.ai (GLM) at 18% in every profile and the other
+nonzero lanes were reduced proportionally (engineering: OpenAI 33%, Claude 21%);
+see `docs/provider-allocation-profiles.md`. Enrollment grants Z.ai no standing role.
 Claude's advisory vote is 2.0 and OpenAI's is 2.5, with total
 committee weight unchanged. The canonical numbers are in
 `src/director_orchestrator/allocation_profiles.py` and `team_charter.py`.
@@ -157,3 +161,4 @@ That status is observational only and does not create standing role authority.
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->

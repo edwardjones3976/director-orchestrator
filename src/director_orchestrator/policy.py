@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
@@ -89,6 +90,7 @@ from .models import (
     WorkloadEnforcementRecord,
 )
 from .workload_policy import (
+    PREVIEW_PROHIBITED_SCOPE,
     AssignmentRequest,
     EnforcementMode,
     PrestagePacket,
@@ -1049,6 +1051,7 @@ def small_read_only_eligible(
         )
         or record.intake.primary_public_research_query is not None
         or record.intake.primary_required_capabilities
+        or record.intake.primary_committee_debate is not None
         or len(plan.assignments) != 2
         or not plan_within_limits(plan, settings)
         or not _read_only_request(record.intake.text)
@@ -2247,7 +2250,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             producer=producer,
             independent_reviewer=reviewer,
             owned_paths=("dry-run/no-files",),
-            prohibited_paths=("all external writes",),
+            prohibited_paths=(PREVIEW_PROHIBITED_SCOPE,),
             required_tests=("Dry-run preview only; no command executed",),
             required_security_evidence=(
                 "Paid provider dispatch and external writes remain disabled",
@@ -2326,3 +2329,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:46 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | BEGIN]]
@@ -73,17 +76,20 @@ allocation_and_selection:
   accepted_output_ledger: "separate_authenticated_accepted_production"
   default_profile: "engineering"
   allocation_profiles:
-    lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
+    # Z.ai enrolled at 18% on 2026-09-27; other nonzero lanes reduced
+    # proportionally to 82% (see docs/provider-allocation-profiles.md).
+    lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     weights:
-      engineering: [40, 25, 15, 10, 10, 0, 0, 0]
-      mixed: [27, 33, 10, 10, 5, 5, 5, 5]
-      public_research: [20, 25, 5, 5, 5, 25, 15, 0]
-      enterprise: [32, 38, 5, 5, 5, 0, 5, 10]
+      engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]
+      mixed: [22, 27, 9, 8, 4, 4, 4, 4, 18]
+      public_research: [16, 21, 4, 4, 4, 21, 12, 0, 18]
+      enterprise: [27, 31, 4, 4, 4, 0, 4, 8, 18]
   profile_binding: "frozen_before_approval_preserve_real_history_no_silent_redistribution"
   zero_target: "ineligible"
   total_effort_status: "separate_telemetry_not_production_credit"
   normal_tolerance_percentage_points: 3
-  hard_ceiling_above_target_percentage_points: 5
+  # Retired by owner direction on 2026-09-27; allocation guidance never blocks dispatch.
+  hard_ceiling_above_target_percentage_points: null
   allocation_unit: "assignment_count"
   prospective_window_assignments: 20
   insufficient_history_action: "fixed_twenty_slots_real_assignments_only"
@@ -91,8 +97,8 @@ allocation_and_selection:
   selection_order:
     - "exact scope, allowlists, transport, and readiness"
     - "task capability, tools, context, risk, and reviewer independence"
-    - "accepted-productive-work allocation compliance and under-target preference"
-    - "total-effort eligibility and corrective under-band preference"
+    - "accepted-productive-work allocation guidance and advisory under-target preference"
+    - "total-effort telemetry and advisory under-band preference"
     - "lowest trusted comparable estimated cost"
     - "deterministic tie-breaker"
   missing_cost_rule: "Unknown cost is never treated as zero or automatically cheapest."
@@ -408,3 +414,6 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:46 UTC | END]]

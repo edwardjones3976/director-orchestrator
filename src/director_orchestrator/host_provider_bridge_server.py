@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -44,6 +45,7 @@ from .host_provider_bridge import (
     BridgeRequest,
     HostProviderBridgeAmbiguous,
     HostProviderBridgeError,
+    HostProviderBridgeRefused,
     PostgresHostWriterFenceVerifier,
     WindowsHostProviderExecutor,
     bridge_response_signature,
@@ -407,9 +409,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("X-Director-Response-Proof", proof)
             self.end_headers()
             self.wfile.write(result)
-        except HostProviderBridgeAttestationMismatch:
+        except (HostProviderBridgeAttestationMismatch, HostProviderBridgeRefused) as exc:
             # Nothing ran. Signed, so the Director can trust that it did not.
-            body = json.dumps({"ok": False, "reason": "attestation_mismatch"},
+            reason = ("attestation_mismatch" if isinstance(exc, HostProviderBridgeAttestationMismatch)
+                      else "refused_before_execution")
+            body = json.dumps({"ok": False, "reason": reason},
                               separators=(",", ":")).encode("utf-8")
             response_digest = _digest(body)
             self.send_response(403)
@@ -527,3 +531,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

@@ -376,7 +376,7 @@ class Settings:
     langgraph_primary_required_providers: tuple[str, ...] = field(
         default_factory=lambda: _csv(
             "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
-            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,zai",
         )
     )
     langgraph_primary_provider_activation_bindings_json: str = field(
@@ -974,9 +974,18 @@ class Settings:
         "PERPLEXITY_USAGE_PROBE_COST_CEILING_USD"
     )
 
-    # Z.ai GLM Coding Plan: a trial-only, fail-closed contact lane (owner
-    # directive #207). `zai` is deliberately absent from every production enum;
-    # these settings only gate the bounded Lite trial route in `zai_lane`.
+    # Z.ai GLM Coding Plan. The owner enrolled `zai` as a production lane
+    # (2026-09-27); ZAI_MODE=production plus ZAI_ENABLED and recorded activation
+    # evidence open it, and every default keeps it closed. ZAI_MODE=trial_only
+    # keeps the earlier bounded Lite trial route in `zai_lane` and its separate,
+    # no-credit ledger unchanged.
+    zai_enabled: bool = _bool("ZAI_ENABLED", False)
+    # host_bridge: the Docker Director reaches the Windows Claude Code CLI over
+    # the authenticated host bridge, which holds the key and executable.
+    # native: this process runs the CLI itself (a host deployment).
+    zai_transport: str = os.getenv("ZAI_TRANSPORT", "host_bridge").strip().lower()
+    zai_max_turns: int = _int("ZAI_MAX_TURNS", 30)
+    zai_production_timeout_seconds: int = _int("ZAI_PRODUCTION_TIMEOUT_SECONDS", 900)
     zai_trial_enabled: bool = _bool("ZAI_TRIAL_ENABLED", False)
     zai_api_key: str = os.getenv("ZAI_API_KEY", "")
     zai_api_base: str = os.getenv("ZAI_API_BASE", "https://api.z.ai/api/anthropic")
@@ -1119,6 +1128,75 @@ class Settings:
             "production_activation_absent": not self.zai_production_activation,
         }
 
+    def zai_production_readiness(self) -> dict[str, bool]:
+        """Booleans only for the enrolled Z.ai production lane; never a value.
+
+        Every check defaults to closed. Recorded activation evidence is the
+        digest of the owner's activation record, set by the deployment; it is
+        configuration, never proof that a live round trip has happened.
+        """
+        from .zai_native import GLM_MODEL, MAX_TIMEOUT_SECONDS, MAX_TURNS_LIMIT
+        from .zai_trial import ENDPOINT
+
+        readiness = {
+            "enabled": self.zai_enabled,
+            "production_mode": self.zai_mode == "production",
+            "activation_evidence_recorded": bool(
+                re.fullmatch(r"sha256:[0-9a-f]{64}", self.zai_production_activation)
+            ),
+            "transport_valid": self.zai_transport in {"host_bridge", "native"},
+            "official_endpoint": self.zai_api_base == ENDPOINT,
+            "glm_model_configured": bool(GLM_MODEL.fullmatch(self.zai_model)),
+            "trial_ledger_isolated": self.zai_ledger_isolated(),
+        }
+        if self.zai_transport == "native":
+            # This process runs the CLI, so it needs the key and executable.
+            executable = (
+                Path(self.zai_cli_executable).expanduser() if self.zai_cli_executable else None
+            )
+            readiness.update({
+                "credential_configured": bool(self.zai_api_key)
+                and not any(character.isspace() for character in self.zai_api_key),
+                "cli_configured": executable is not None
+                and executable.is_absolute()
+                and executable.is_file(),
+                "max_turns_valid": 1 <= self.zai_max_turns <= MAX_TURNS_LIMIT,
+                "timeout_valid": 30 <= self.zai_production_timeout_seconds <= MAX_TIMEOUT_SECONDS,
+            })
+        else:
+            # The Windows bridge holds the key, CLI and bounds; this container
+            # needs only the authenticated bridge binding.
+            readiness["host_bridge_configured"] = bool(
+                self.langgraph_primary_host_bridge_endpoint
+                and self.langgraph_primary_host_bridge_secret
+            )
+        return readiness
+
+    def zai_bridge_expectation(self):
+        """What this Director requires of the bridged lane, or None while it is closed."""
+        if self.zai_transport != "host_bridge" or not all(self.zai_production_readiness().values()):
+            return None
+        from .zai_native import ZaiBridgeExpectation
+
+        return ZaiBridgeExpectation(
+            model=self.zai_model, allow_repository_write=self.zai_allow_repository_write)
+
+    def zai_native_config(self):
+        """The lane's trusted transport configuration, or None while it is closed."""
+        if self.zai_transport != "native" or not all(self.zai_production_readiness().values()):
+            return None
+        from .zai_native import ZaiNativeConfig
+
+        return ZaiNativeConfig(
+            executable=Path(self.zai_cli_executable).expanduser(),
+            api_key=self.zai_api_key,
+            model=self.zai_model,
+            max_turns=self.zai_max_turns,
+            timeout_seconds=self.zai_production_timeout_seconds,
+            allow_repository_write=self.zai_allow_repository_write,
+            endpoint=self.zai_api_base,
+        )
+
     def zai_ledger_isolated(self) -> bool:
         """True when the trial ledger names no other durable store (or is unset).
 
@@ -1254,7 +1332,10 @@ class Settings:
             "gemini": all(self.gemini_supplemental_readiness().values()),
             "grok": all(self.grok_primary_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
-            "zai": all(self.zai_trial_readiness().values()),
+            "zai": all(
+                (self.zai_production_readiness() if self.zai_mode == "production"
+                 else self.zai_trial_readiness()).values()
+            ),
         }
 
     def usage_check_readiness(self) -> dict[str, bool]:
@@ -1347,7 +1428,7 @@ class Settings:
         # exempt. Fail loudly at startup instead.
         ready_specialists = {
             provider
-            for provider in ("claude", "cursor", "gemini", "grok", "perplexity")
+            for provider in ("claude", "cursor", "gemini", "grok", "perplexity", "zai")
             if provider_readiness[provider]
         }
         return {
@@ -1388,7 +1469,7 @@ class Settings:
         if not isinstance(payload, dict):
             raise ValueError("primary provider budgets must be a JSON object")
         allowed = {"openai", "claude", "cursor", "grok", "antigravity",
-                   "perplexity", "firecrawl", "github-copilot"}
+                   "perplexity", "firecrawl", "github-copilot", "zai"}
         for provider, amount in payload.items():
             if provider not in allowed:
                 raise ValueError("primary provider budget names must be canonical lanes")
@@ -1433,7 +1514,7 @@ class Settings:
             raise ValueError(
                 "TRUSTED_PROVIDER_COST_RANKS must be a non-empty JSON object"
             )
-        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot"}
+        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot", "zai"}
         parsed: dict[str, int] = {}
         for raw_provider, raw_rank in payload.items():
             if not isinstance(raw_provider, str):
@@ -1467,22 +1548,49 @@ class Settings:
         return dict(sorted(parsed.items()))
 
     def validate_zai_trial_configuration(self) -> None:
-        """Refuse any Z.ai setting that would widen the Lite trial before startup.
+        """Refuse any inconsistent Z.ai setting before startup.
 
-        Z.ai is a trial-only contact lane (owner directive #207): no production
-        credit, no review or merge authority, and no activation before the
-        owner's decision on or after 2026-09-29. These are environment values,
-        so model output cannot change them; an operator who sets one gets a
-        startup failure rather than a wider lane. This adds a gate; the
-        transport's own per-call refusals in `zai_trial` are unchanged.
+        ZAI_MODE=trial_only keeps the Lite trial lane (owner directive #207)
+        exactly as it was: no production credit, no review or merge authority
+        and no activation setting. ZAI_MODE=production is the owner's
+        2026-09-27 enrollment; it needs ZAI_PRODUCTION_ACTIVATION to name the
+        owner's activation record by digest, and it may not run the trial lane
+        at the same time. These are environment values, so model output cannot
+        change them; an operator who sets an inconsistent one gets a startup
+        failure rather than a wider lane. The transports' own per-call refusals
+        are unchanged.
         """
 
         from .zai_trial import ENDPOINT
 
-        if self.zai_mode != "trial_only":
+        if self.zai_mode not in {"trial_only", "production"}:
+            raise ValueError("ZAI_MODE must be trial_only or production")
+        if self.zai_api_base != ENDPOINT:
             raise ValueError(
-                "ZAI_MODE must be trial_only until the owner's activation decision"
+                "ZAI_API_BASE must be the official Z.ai Anthropic-compatible endpoint"
             )
+        if self.zai_transport not in {"host_bridge", "native"}:
+            raise ValueError("ZAI_TRANSPORT must be host_bridge or native")
+        if self.zai_mode == "production":
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.zai_production_activation):
+                raise ValueError(
+                    "ZAI_PRODUCTION_ACTIVATION must be the sha256: digest of the "
+                    "owner's activation record in production mode"
+                )
+            if self.zai_trial_enabled:
+                raise ValueError(
+                    "ZAI_TRIAL_ENABLED must be false in production mode: the trial "
+                    "ledger stays a closed historical record"
+                )
+            if not self.zai_ledger_isolated():
+                raise ValueError(
+                    "ZAI_TRIAL_LEDGER_PATH must be its own file: it names the TaskStore, a "
+                    "LangGraph checkpoint, resume-claim, acceptance, runtime-ledger or "
+                    "completion-gate store"
+                )
+            return
+        if self.zai_enabled:
+            raise ValueError("ZAI_ENABLED requires ZAI_MODE=production")
         if self.zai_allow_repository_write or self.zai_allow_review_verdict:
             raise ValueError(
                 "ZAI_ALLOW_REPOSITORY_WRITE and ZAI_ALLOW_REVIEW_VERDICT must stay "
@@ -1490,12 +1598,8 @@ class Settings:
             )
         if self.zai_production_activation:
             raise ValueError(
-                "ZAI_PRODUCTION_ACTIVATION is not honoured: production activation "
-                "is an owner decision on or after 2026-09-29 and needs its own change"
-            )
-        if self.zai_api_base != ENDPOINT:
-            raise ValueError(
-                "ZAI_API_BASE must be the official Z.ai Anthropic-compatible endpoint"
+                "ZAI_PRODUCTION_ACTIVATION is honoured only with ZAI_MODE=production; "
+                "the trial lane never carries production activation"
             )
         if self.zai_trial_enabled and not self.zai_lite_entitlement_verified:
             raise ValueError(

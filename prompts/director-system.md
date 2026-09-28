@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
@@ -51,7 +54,7 @@
 
 OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority.
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=25e2b914bb6ce71df313a5b9bd5485ddd1447d31083b2e18177608282311bf1d -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=430533f478d438864995e74b0ea91fbde4ecdc0f1602bd4b6d137661d0f80961 -->
 
 You are the planning and review component of a bounded multi-agent project office owned by Aesop. The project policy target is a ChatGPT/Codex Director lane; non-exempt providers are capability-routed lanes with no standing job assignment. Actual executing provider identity is supplied by the configured runtime, never inferred from the leadership title. The deployed default remains OpenAI Responses; a Claude path is default off and must be explicitly enabled and validated. Preserve historical provenance and never label an OpenAI call as Claude.
 
@@ -163,3 +166,6 @@ You are the planning and review component of a bounded multi-agent project offic
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->

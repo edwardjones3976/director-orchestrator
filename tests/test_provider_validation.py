@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
@@ -59,12 +60,15 @@ TREE="b"*40
 class ReadOnlyLanePreflightTests(unittest.TestCase):
     """Section 5 tooling: one synthetic fixture, every lane, zero calls."""
 
-    def test_static_inventory_lists_eight_lanes_and_three_separate_contacts_all_unknown(self):
+    def test_static_inventory_lists_nine_lanes_and_two_separate_contacts_all_unknown(self):
+        # Z.ai is a canonical lane since the owner's 2026-09-27 enrollment, so it
+        # is no longer listed as a separate contact.
         report=read_only_lane_preflight()
         self.assertEqual([name for name,_,_ in CANONICAL_LANES],[row["lane"] for row in report["lanes"]])
-        self.assertEqual(8,len(report["lanes"]))
-        self.assertEqual(["grok-bot","z-ai","vscode-coding-bot"],[row["contact"] for row in report["additional_contacts"]])
-        self.assertEqual(3,len(ADDITIONAL_CONTACTS))
+        self.assertEqual(9,len(report["lanes"]))
+        self.assertEqual("zai",report["lanes"][-1]["lane"])
+        self.assertEqual(["grok-bot","vscode-coding-bot"],[row["contact"] for row in report["additional_contacts"]])
+        self.assertEqual(2,len(ADDITIONAL_CONTACTS))
         for row in report["lanes"]:
             self.assertEqual("UNKNOWN",row["verdict"])
             self.assertEqual("UNKNOWN",row["enrollment_and_live_eligibility"])
@@ -76,7 +80,7 @@ class ReadOnlyLanePreflightTests(unittest.TestCase):
             self.assertEqual("UNKNOWN",contact["separate_contact_qualification"])
         self.assertEqual((0,0,0),(report["provider_calls"],report["work_reservations"],report["spend_reservations"]))
         self.assertEqual(0,report["qualified_lane_count"])
-        self.assertEqual(8,report["unknown_lane_count"])
+        self.assertEqual(9,report["unknown_lane_count"])
         self.assertTrue(report["read_only"])
 
     def test_same_fixture_digest_for_every_lane_and_research_lanes_keep_zero_engineering(self):
@@ -1623,3 +1627,4 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

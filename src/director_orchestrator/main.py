@@ -560,6 +560,8 @@ def health() -> dict:
         # Trial-only contact lane (owner directive #207): individual readiness
         # booleans so an operator can see which gate is closed; never a value.
         "zai_trial": settings.zai_trial_readiness(),
+        # Enrolled production lane (2026-09-27): booleans only, closed by default.
+        "zai_production": settings.zai_production_readiness(),
         "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
@@ -765,6 +767,14 @@ def intake(
                 status_code=503,
                 detail="LangGraph primary intake is unavailable",
             ) from exc
+    if payload.primary_committee_debate is not None:
+        # The legacy engine has no Z.ai seat and cannot run under the primary
+        # fence: an invited debate is refused here, never silently dropped.
+        raise HTTPException(
+            status_code=409,
+            detail="Invited committee debates require the LangGraph primary; "
+            "Z.ai is unavailable under legacy rollback",
+        )
     if settings.langgraph_primary_postgres_dsn:
         postgres_module = importlib.import_module(
             ".langgraph_postgres", package=__package__

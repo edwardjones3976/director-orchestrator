@@ -1,3 +1,10 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
@@ -73,7 +80,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 
 | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | --- | --- | --- |
-| 33 | 25 | 25 | 38 |
+| 27 | 21 | 21 | 31 |
 
 ## Roles and responsibilities
 
@@ -273,7 +280,7 @@ Separation of duties:
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
 | `dependency-outcome-forwarding` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/antigravity.py` |
 | `review-to-merge-handoff` | mediated | director_to_provider | director | authorized | enabled | evidence_for_deterministic_gate | `src/director_orchestrator/review_handoff.py`, `src/director_orchestrator/primary_roster.py` |
-| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes` |
+| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes`, `src/director_orchestrator/primary_committee.py` |
 | `oracle-exact-sha-merge-gate` | mediated | provider_to_director | director | authorized | disabled | evidence_for_deterministic_gate | `src/director_orchestrator/oracle_merge.py`, `src/director_orchestrator/policy.py` |
 | `typed-external-effect-gateways` | mediated | director_to_owner | director | authorized | disabled | none | `src/director_orchestrator/primary_effect_gateways.py:SUPPORTED_EFFECT_ACTIONS`, `src/director_orchestrator/primary_default.py` |
 | `provider-usage-checks` | mediated | director_to_provider | timer_or_owner | authorized | disabled | none | `src/director_orchestrator/usage.py` |
@@ -295,6 +302,7 @@ Separation of duties:
 | `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `provider-usage-checks`, `owner-manual-recovery` |
 | `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `zai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -332,3 +340,10 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | END]] -->

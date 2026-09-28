@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -124,16 +125,24 @@ def enforces_attempt_limits(argv: Sequence[str]) -> bool:
     return any(PurePath(str(item)).name in ATTEMPT_LIMIT_COMMANDS for item in argv)
 
 
+# Lanes whose exact host argv is reported (and signed) without any read-only
+# claim: the Z.ai entry names its GLM model, bounds and key-ID digest, which the
+# Director checks against its own expectation before dispatching. It never
+# joins the small read-only class.
+IDENTITY_REPORTED_LANES = frozenset({"zai"})
+
+
 def lane_attestations(commands: Mapping[str, Sequence[str]]) -> dict[str, dict[str, object]]:
-    """What the bridge reports for each lane that has a restriction set."""
+    """What the bridge reports for each lane that has a restriction set or identity."""
 
     return {
         lane: {"argv": list(argv), "argv_digest": argv_digest(argv),
                "read_only_attested": read_only_attested(lane, argv),
                "enforces_attempt_limits": enforces_attempt_limits(argv)}
         for lane, argv in sorted(commands.items())
-        if lane in READ_ONLY_REQUIREMENTS
+        if lane in READ_ONLY_REQUIREMENTS or lane in IDENTITY_REPORTED_LANES
     }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

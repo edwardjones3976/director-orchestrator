@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -66,7 +69,7 @@
 # Director Orchestrator
 
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=25e2b914bb6ce71df313a5b9bd5485ddd1447d31083b2e18177608282311bf1d -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=430533f478d438864995e74b0ea91fbde4ecdc0f1602bd4b6d137661d0f80961 -->
 
 I am the Director.
 
@@ -140,10 +143,11 @@ removes no gate. The canonical rule is the charter's
   supplemental research. Membership and allocation attest nothing about whether a provider
   route is enrolled or live — that is a separate evidence chain, and it is not satisfied by
   configuration.
-- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all eight
-  provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and
-  Antigravity 10%; other profiles reserve real research and enterprise work. A fixed
-  real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement) and zero-target exclusion,
+- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine
+  provider lanes. Engineering defaults to OpenAI 33%, Claude 21%, Z.ai 18%, Cursor 12%, Grok 8%,
+  and Antigravity 8% since the owner's 2026-09-27 Z.ai enrollment; other profiles reserve real
+  research and enterprise work. A fixed
+  real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement; for Z.ai since 2026-09-27) and zero-target exclusion,
   with ±3-point normal preference. A zero-target lane is ineligible, not merely unlikely.
 - Deterministic accepted-productive-work accounting, an immutable pre-stage packet, rolling
   twenty-assignment preferences, cheap-capable-model selection, and a five-action ordinary
@@ -781,3 +785,6 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
@@ -2530,7 +2531,11 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             trusted_provider_cost_ranks_json='{"openai":4,"claude":3,"cursor":2,"gemini":1}')
         record = self._record(settings)
         record.intake = record.intake.model_copy(update={"primary_required_capabilities":("bounded_scaffolding",)})
-        _live_parallel_plan(record, settings, available=("openai","claude","cursor","antigravity"), history=())
+        # Since the Z.ai enrollment (2026-09-27) Antigravity's 8% engineering target
+        # sits in band on an empty history, so the others are placed above theirs;
+        # an unaliased "gemini" rank would still hold the plan.
+        history = ("cursor",) * 3 + ("claude",) * 6 + ("openai",) * 10
+        _live_parallel_plan(record, settings, available=("openai","claude","cursor","antigravity"), history=history)
         self.assertEqual(record.plan.assignments[0].primary_provider_lane,"antigravity")
         self.assertIn(record.plan.assignments[-1].primary_provider_lane, {"claude","cursor","grok"})
 
@@ -6363,3 +6368,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 16:59 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

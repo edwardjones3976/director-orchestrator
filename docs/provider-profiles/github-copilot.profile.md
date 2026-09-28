@@ -1,3 +1,10 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -70,7 +77,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 
 | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | --- | --- | --- |
-| 5 | 0 | 0 | 10 |
+| 4 | 0 | 0 | 8 |
 
 ## Roles and responsibilities
 
@@ -272,6 +279,7 @@ Separation of duties:
 | `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `zai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -306,3 +314,10 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | END]] -->

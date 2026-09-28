@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
@@ -239,7 +241,7 @@ if ($pinnedEnvironmentFile -and -not (Test-Path -LiteralPath $pinnedEnvironmentF
 }
 # A pinned bridge forwards only the lane credentials this profile names, with
 # this profile's values; Python drops every other inherited lane credential.
-$laneAuthNames = @("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")
+$laneAuthNames = @("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "ZAI_API_KEY")
 $profileAuthNames = @(([string]$values["DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"]).Split(",", [StringSplitOptions]::RemoveEmptyEntries))
 foreach ($name in $profileAuthNames) {
     if ($name -cnotin $laneAuthNames -or [string]::IsNullOrWhiteSpace([string]$values[$name])) {
@@ -262,11 +264,23 @@ foreach ($otherSecret in @(
 
 $commands = $values["DIRECTOR_HOST_PROVIDER_COMMANDS_JSON"] | ConvertFrom-Json -AsHashtable
 foreach ($provider in $commands.Keys) {
-    if ($provider -notin @("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")) {
+    if ($provider -notin @("openai", "claude", "cursor", "grok", "antigravity", "github-copilot", "zai")) {
         throw "The host bridge command map contains an unallowlisted provider."
     }
     $argv = @($commands[$provider])
     if ($argv.Count -lt 1) { throw "The host bridge command map contains an empty command." }
+    if ($provider -eq "zai") {
+        # The shape the bridge enforces at startup, checked before installation so a
+        # malformed entry fails here instead of stopping the whole bridge later.
+        if ($argv.Count -ne 5 -or
+            -not [IO.Path]::IsPathRooted([string]$argv[0]) -or
+            [string]$argv[1] -cnotmatch '^glm-[0-9a-z][0-9a-z.\-]{0,62}$' -or
+            [string]$argv[2] -cnotmatch '^[1-9][0-9]{0,2}$' -or [int]$argv[2] -gt 100 -or
+            [string]$argv[3] -cnotin @("read-only", "owned-path-writes") -or
+            [string]$argv[4] -cnotmatch '^sha256:[0-9a-f]{64}$') {
+            throw "The host bridge zai command must be [absolute executable, GLM model, max turns 1-100, read-only or owned-path-writes, sha256 key-ID digest]."
+        }
+    }
     $executable = Get-Command ([string]$argv[0]) -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $executable) { throw "A configured host bridge executable is unavailable: $provider." }
 }
@@ -426,3 +440,5 @@ finally {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

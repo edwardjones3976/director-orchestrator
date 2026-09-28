@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
@@ -150,6 +151,18 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
             EngineeringWorkloadLedger(old_path).bootstrap(manifest())
         EngineeringWorkloadLedger(old_path).status()
 
+        # 3b. A ledger bootstrapped under the eight-lane identity in force before
+        # the Z.ai enrollment still authenticates, and still mints no new authority.
+        from director_orchestrator.allocation_profiles import pre_zai_allocation_profile_digest
+        pre_zai_digest = pre_zai_allocation_profile_digest("engineering")
+        pre_zai_path = Path(self.temp.name) / "pre-zai-v2.sqlite3"
+        with patch("director_orchestrator.engineering_workload_ledger.allocation_profile_digest",
+                   return_value=pre_zai_digest):
+            EngineeringWorkloadLedger(pre_zai_path).bootstrap(manifest())
+        EngineeringWorkloadLedger(pre_zai_path).status()
+        with self.assertRaisesRegex(LedgerError, "canonical_policy_superseded_new_authority_required"):
+            EngineeringWorkloadLedger(pre_zai_path).reserve(request(50))
+
         # 4. A forged/mismatched canonical_digest recorded at bootstrap fails
         # closed on every subsequent read.
         forged_path = Path(self.temp.name) / "forged.sqlite3"
@@ -255,7 +268,8 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
         self.ledger.reserve(request(9))
         state = self.ledger.status()
         row = next(r for r in state["utilization"] if r["bucket"] == "openai")
-        self.assertEqual((row["admitted"], row["share_percent"], row["delta_points"]), (10, 50, 10))
+        # openai's engineering target is 33% since the Z.ai enrollment.
+        self.assertEqual((row["admitted"], row["share_percent"], row["delta_points"]), (10, 50, 17))
         self.assertEqual(row["normal_band_state"], "above")
         self.assertEqual(row["reserved_or_in_flight"], 7)
 
@@ -348,7 +362,7 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
         self.ledger.reserve(request(9, "grok-bot"))
         self.assertEqual(len(self.ledger.status()["records"]), 10)
         from director_orchestrator.allocation_profiles import allocation_targets
-        self.assertEqual(dict(allocation_targets())["grok"], 10)
+        self.assertEqual(dict(allocation_targets())["grok"], 8)
 
     def test_explicit_shared_bucket_does_not_duplicate_its_quota(self):
         data = manifest()
@@ -602,3 +616,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
