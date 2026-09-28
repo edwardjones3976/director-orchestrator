@@ -15,6 +15,7 @@
     "terms_tier",
     "generated_at",
     "receipt_ref",
+    "source_group",
     "input",
     "target",
     "scrub",
@@ -36,7 +37,7 @@
         "train",
         "dev"
       ],
-      "description": "Held-out sets A and B are not splits of this file; they live only under C:\\llm\\datasets\\heldout and are pinned by the D-M1-0 manifests."
+      "description": "Assigned per source_group, not per row: every row sharing a source_group carries the same split value. Held-out sets A and B are not splits of this file; they live only under C:\\llm\\datasets\\heldout and are pinned by the D-M1-0 manifests."
     },
     "source_kind": {
       "type": "string",
@@ -87,6 +88,11 @@
       "type": "string",
       "minLength": 1,
       "description": "Relative path of the provider-dispatch receipt, the assignment ledger key, or the owner-seed SHA-256 reference. Never a raw seed and never an absolute host path."
+    },
+    "source_group": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Lineage key shared by every row derived from the same seed, source PR, assignment or work order, including perturbations, critique-and-repair variants and provider re-generations. The train/dev split is assigned per source_group, never per row (D-M2-4): all rows of a group sit on one side. The validator reports unique source_group counts per split and refuses a group that appears on both sides."
     },
     "input": {
       "type": "object",
