@@ -8,7 +8,18 @@
 
 Usage:
     python projects/homemade-llm/eval/build_inputs.py \\
-        --set a --refs path/to/refs --out path/to/inputs [--titles titles.json]
+        --set a --refs path/to/refs --out path/to/inputs [--titles titles.json] \\
+        [--context path/to/context]
+
+Input contracts. Without ``--context`` an input carries ``id``, ``objective``,
+``repository`` and ``title`` (D-M1-1, the historical M1 runs). With ``--context``
+(D-M2-10, packet M2-C1) every input also carries ``context``: the items read from
+``<context>/<id>.context.json``, a JSON array of provenance-bound excerpts with
+``kind``, ``text``, ``source_ref`` and ``source_sha256``, in the shape of
+``input.context`` in ``schemas/director-data-v1-row.schema.json``. A context
+item is refused, and no input is written, when its ``source_ref`` resolves to a
+held-out item (any reference id, or any reference's recorded source file or
+title) or when its text overlaps a scored target field of any reference.
 """
 from __future__ import annotations
 
@@ -23,6 +34,9 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
+import prompt_template  # noqa: E402
 
 SCORED_FIELDS: tuple[str, ...] = (
     "non_goals",
@@ -93,7 +107,12 @@ def _scored_field_strings(reference: dict[str, Any]) -> list[str]:
 
 
 def _leak_match(reference: dict[str, Any], objective: str, repository: str, title: str) -> str | None:
-    combined = _normalize_text(f"{objective} {repository} {title}")
+    return _text_leak_match(reference, f"{objective} {repository} {title}")
+
+
+def _text_leak_match(reference: dict[str, Any], text: str) -> str | None:
+    """A scored-field string or eight-word shingle of ``reference`` found in ``text``, or None."""
+    combined = _normalize_text(text)
     if not combined:
         return None
     for scored in _scored_field_strings(reference):
@@ -157,14 +176,94 @@ def _resolve_title(
     return _title_from_heading(source_path)
 
 
-def _format_task_input(item_id: str, objective: str, repository: str, title: str) -> str:
-    payload = {
+def _format_task_input(
+    item_id: str,
+    objective: str,
+    repository: str,
+    title: str,
+    context: list[dict[str, str]] | None = None,
+) -> str:
+    payload: dict[str, Any] = {
         "id": item_id,
         "objective": objective,
         "repository": repository,
         "title": title,
     }
+    if context is not None:
+        payload["context"] = [
+            {key: item[key] for key in sorted(prompt_template.CONTEXT_ITEM_FIELDS)} for item in context
+        ]
     return json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+
+
+def lineage_keys(refs_dir: Path, item_ids: list[str]) -> set[str]:
+    """Normalized identities a context source_ref must not resolve to (D-M2-3 check 1).
+
+    Every reference id, plus each reference's recorded source file and source
+    title from ``metadata/<id>.meta.json`` when present.
+    """
+    keys: set[str] = set()
+    for item_id in item_ids:
+        keys.add(_normalize_text(item_id))
+        meta_path = refs_dir / "metadata" / f"{item_id}.meta.json"
+        if not meta_path.is_file():
+            continue
+        meta = _load_json(meta_path)
+        if not isinstance(meta, dict):
+            continue
+        for field in ("source_file", "source_title"):
+            value = meta.get(field)
+            if isinstance(value, str) and value.strip():
+                keys.add(_normalize_text(value))
+                keys.add(_normalize_text(Path(value).name))
+                keys.add(_normalize_text(Path(value).stem))
+    keys.discard("")
+    return keys
+
+
+def _source_ref_forms(source_ref: str) -> set[str]:
+    """Normalized forms of a source_ref that lineage keys are compared against."""
+    forms = {_normalize_text(source_ref)}
+    tail = source_ref.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    forms.add(_normalize_text(tail))
+    stem = tail.split(".", 1)[0]
+    forms.add(_normalize_text(stem))
+    forms.discard("")
+    return forms
+
+
+def validate_context(
+    context: Any,
+    references: dict[str, dict[str, Any]],
+    lineage_keys: set[str],
+) -> list[str]:
+    """Every reason a context array may not be written, as messages; empty means accepted.
+
+    Shape follows ``input.context`` of the row schema. Lineage: a ``source_ref``
+    that resolves to any held-out identity is refused. Leak: text that carries a
+    scored-field string or eight-word shingle of any reference is refused, with
+    the reference id and the matched text named.
+    """
+    errors = list(prompt_template.context_shape_errors(context))
+    if errors:
+        return errors
+    for index, item in enumerate(context):
+        where = f"context[{index}]"
+        if _source_ref_forms(item["source_ref"]) & lineage_keys:
+            errors.append(f"{where}: source_ref resolves to a held-out item")
+        for ref_id in sorted(references):
+            leak = _text_leak_match(references[ref_id], item["text"])
+            if leak is not None:
+                errors.append(f"{where}: text overlaps scored field of {ref_id}: {leak}")
+                break
+    return errors
+
+
+def _load_context_file(context_dir: Path, item_id: str) -> Any:
+    path = context_dir / f"{item_id}.context.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"missing context file: {path}")
+    return _load_json(path)
 
 
 def _fail(message: str, code: int = 1) -> int:
@@ -178,6 +277,12 @@ def build(argv: list[str] | None = None) -> int:
     parser.add_argument("--refs", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--titles", type=Path, default=None, help="JSON object mapping id to title.")
+    parser.add_argument(
+        "--context",
+        type=Path,
+        default=None,
+        help="Directory of <id>.context.json arrays (D-M2-10). Every built input must have one.",
+    )
     parser.add_argument(
         "--allow-leak",
         action="append",
@@ -206,6 +311,9 @@ def build(argv: list[str] | None = None) -> int:
 
     if not refs_dir.is_dir():
         return _fail(f"refs is not a directory: {refs_dir}")
+    context_dir = args.context.resolve() if args.context is not None else None
+    if context_dir is not None and not context_dir.is_dir():
+        return _fail(f"context is not a directory: {context_dir}")
 
     titles_override: dict[str, str] = {}
     if args.titles is not None:
@@ -236,13 +344,21 @@ def build(argv: list[str] | None = None) -> int:
 
     missing_titles: list[str] = []
     leak_errors: list[tuple[str, str]] = []
+    context_errors: list[tuple[str, str]] = []
     built: dict[str, str] = {}
+
+    references: dict[str, dict[str, Any]] = {}
+    for item_id in item_ids:
+        reference = _load_json(refs_dir / f"{item_id}.json")
+        if not isinstance(reference, dict):
+            return _fail(f"reference {item_id} is not a JSON object")
+        references[item_id] = reference
+    held_out_keys = lineage_keys(refs_dir, item_ids) if context_dir is not None else set()
 
     for item_id in item_ids:
         if item_id in exclusions:
             continue
-        ref_path = refs_dir / f"{item_id}.json"
-        reference = _load_json(ref_path)
+        reference = references[item_id]
         objective = reference.get("objective")
         repository = reference.get("repository")
         if not isinstance(objective, str) or not objective:
@@ -263,7 +379,19 @@ def build(argv: list[str] | None = None) -> int:
             leak_errors.append((item_id, leak))
             continue
 
-        built[item_id] = _format_task_input(item_id, objective, repository, title)
+        context: list[dict[str, str]] | None = None
+        if context_dir is not None:
+            try:
+                context = _load_context_file(context_dir, item_id)
+            except FileNotFoundError as exc:
+                context_errors.append((item_id, str(exc)))
+                continue
+            problems = validate_context(context, references, held_out_keys)
+            if problems:
+                context_errors.extend((item_id, problem) for problem in problems)
+                continue
+
+        built[item_id] = _format_task_input(item_id, objective, repository, title, context)
 
     if missing_titles:
         return _fail("missing or empty title: " + ", ".join(missing_titles))
@@ -271,6 +399,11 @@ def build(argv: list[str] | None = None) -> int:
     if leak_errors:
         for item_id, shingle in leak_errors:
             print(f"leak {item_id}: {shingle}", file=sys.stderr)
+        return 1
+
+    if context_errors:
+        for item_id, problem in context_errors:
+            print(f"context {item_id}: {problem}", file=sys.stderr)
         return 1
 
     reference_manifest = manifest(refs_dir)
@@ -304,6 +437,12 @@ def build(argv: list[str] | None = None) -> int:
             "n_inputs": len(built),
             "override_ids": override_ids,
             "allow_leak_ids": allow_leak_ids,
+            "input_contract": (
+                prompt_template.INPUT_CONTRACT_CONTEXT if context_dir is not None
+                else prompt_template.INPUT_CONTRACT_LEGACY
+            ),
+            "context_dir": str(context_dir) if context_dir is not None else None,
+            "context_manifest": manifest(context_dir) if context_dir is not None else None,
             "utc_time": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         }
         with tempfile.NamedTemporaryFile(dir=out_dir.parent, prefix=f"{run_path.name}.", delete=False) as handle:
