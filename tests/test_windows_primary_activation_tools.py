@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
@@ -925,6 +927,12 @@ function docker {
             if ($script:listingFails) { $global:LASTEXITCODE = 1; return }
             foreach ($row in $script:items.Values) {
                 $parts = $row -split '\|'
+                if ($args -contains '--filter') {
+                    Check ($args -contains '--no-trunc' -and $args -contains '-q') 'Expected full ID query'
+                    $filter = $args[[Array]::IndexOf($args, '--filter') + 1]
+                    if ($filter -ceq "id=$($parts[0])") { $parts[0] }
+                    continue
+                }
                 "$($parts[0])|$($parts[1])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
             }
             return
@@ -1044,6 +1052,26 @@ Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed slot remo
 $script:removeFails = $false
 Stop-Lane
 Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Absent lane retained slot'
+Item 'director-test-lane-slot-1' 'candidate'
+$removedId = [string]$script:serial
+$script:items.Remove('director-test-lane-slot-1')
+Item 'director-test-lane-slot-1' 'replacement'
+Remove-SlotContainer $removedId
+Check ($ErrorActionPreference -eq 'Stop') 'Removal changed error preference'
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[2] -eq 'replacement') 'Removed replacement slot'
+$remainingId = [string]$script:serial
+$script:removeFails = $true
+try { Remove-SlotContainer $remainingId; throw 'Expected existing slot failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed removal lost existing slot'
+$script:listingFails = $true
+try { Remove-SlotContainer $removedId; throw 'Expected listing failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($ErrorActionPreference -eq 'Stop') 'Failed removal changed error preference'
+$script:listingFails = $false
+$script:removeFails = $false
 Write-Output 'slot-checks-passed'
 """
             path = Path(directory) / "slots.ps1"
@@ -1058,6 +1086,11 @@ Write-Output 'slot-checks-passed'
 
     def test_postgres_test_lane_mirrors_ci_and_refuses_foreign_containers(self) -> None:
         text = self.text("windows-postgres-test-lane.ps1")
+        self.assertIn("[ValidateRange(1, 256)][int]$Parallel", text)
+        self.assertIn("$PSBoundParameters.ContainsKey('Parallel')", text)
+        self.assertIn("-Parallel requires -Action Test and full discovery (no -TestNames).", text)
+        self.assertIn("& $pythonPath scripts/run-tests-parallel.py --shards $Parallel", text)
+        self.assertIn("else { & $pythonPath -m unittest discover -s tests -v }", text)
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         for action in ('"Start"', '"Stop"', '"Status"', '"Dsn"', '"Test"'):
@@ -1302,3 +1335,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | END]]

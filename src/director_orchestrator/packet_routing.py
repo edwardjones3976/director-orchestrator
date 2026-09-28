@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
@@ -31,6 +32,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import hmac
+import logging
 import re
 import subprocess
 import threading
@@ -108,8 +110,8 @@ def set_compact_view_blob_reader(reader: Callable[[str], bytes | None] | None) -
     _BLOB_READER = reader
 
 
-# The caller's absolute deadline for every blob read made in this context. A
-# reader never runs past it; nesting only narrows it.
+# The caller's absolute deadline for read work in this context. Bounded process
+# cleanup follows the deadline; nesting only narrows the read window.
 _READ_DEADLINE: ContextVar[float | None] = ContextVar("blob_read_deadline", default=None)
 
 
@@ -164,6 +166,7 @@ def git_blob_reader(
     so a size the object store misreports still cannot fill memory. Both steps
     share one ``timeout_seconds`` deadline; a read still running when it
     passes has its process ended and returns nothing, keeping the button.
+    Cleanup allows two bounded one-second waits to reap the child synchronously.
     """
 
     git = ("git", "-c", f"safe.directory={root}", "cat-file")
@@ -191,30 +194,49 @@ def git_blob_reader(
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return None
         received: list[bytes] = []
-        pump = threading.Thread(
-            target=lambda: received.append(process.stdout.read(max_bytes + 1)), daemon=True)
-        pump.start()
-        pump.join(max(0.0, deadline - monotonic()))
-        timed_out = pump.is_alive()
-        if process.poll() is None:
-            process.kill()
+        cleanup_failed = False
+
+        def receive() -> None:
+            try:
+                received.append(process.stdout.read(max_bytes + 1))
+            except (OSError, ValueError):
+                # A failed or interrupted pipe read cannot supply blob content.
+                pass
+
         try:
-            # Reaped within what is left of the deadline, never a new window.
-            process.wait(timeout=max(0.0, deadline - monotonic()))
-        except subprocess.TimeoutExpired:
-            # Killed but not yet exited: a daemon reaps it, so nothing is
-            # left behind and this read still returns at the deadline.
-            threading.Thread(target=process.wait, daemon=True).start()
-            return None
-        if timed_out:
-            # The killed process ends the pipe; the daemon reader is not
-            # waited for, so the deadline holds.
-            return None
-        pump.join(max(0.0, deadline - monotonic()))
-        if pump.is_alive():
-            return None
-        process.stdout.close()
-        if not received:
+            pump = threading.Thread(target=receive, daemon=True)
+            pump.start()
+            pump.join(max(0.0, deadline - monotonic()))
+            timed_out = pump.is_alive()
+        finally:
+            # kill() alone is asynchronous on Windows. Try to reap before returning
+            # to release the child's handles in the snapshot repository.
+            try:
+                try:
+                    if process.poll() is None:
+                        process.kill()
+                finally:
+                    try:
+                        process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        cleanup_failed = True
+                        try:
+                            process.kill()
+                        finally:
+                            process.wait(timeout=1.0)
+            except Exception:
+                # Cleanup failures refuse the blob, never escape to the caller.
+                cleanup_failed = True
+                logging.getLogger(__name__).warning("Git blob child cleanup failed")
+            finally:
+                for pipe in (process.stdout, process.stderr):
+                    if pipe is not None:
+                        try:
+                            pipe.close()
+                        except Exception:
+                            cleanup_failed = True
+                            logging.getLogger(__name__).warning("Git blob pipe close failed")
+        if cleanup_failed or timed_out or not received:
             return None
         data = received[0]
         if len(data) > max_bytes or process.returncode not in (0, -9, 1):
@@ -1004,3 +1026,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | END]]

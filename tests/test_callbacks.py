@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:40 UTC | BEGIN]]
@@ -463,9 +464,9 @@ class ClaudeCallbackTests(unittest.TestCase):
             initial_reads = 0
             real_get_versioned = task_store.get_versioned
 
-            def synchronized_get_versioned(task_id: str):
+            def synchronized_get_versioned(task_id: str, **kwargs):
                 nonlocal initial_reads
-                result = real_get_versioned(task_id)
+                result = real_get_versioned(task_id, **kwargs)
                 with calls_lock:
                     initial_reads += 1
                     should_wait = initial_reads <= 2
@@ -514,12 +515,12 @@ class ClaudeCallbackTests(unittest.TestCase):
             real_get_versioned = task_store.get_versioned
             calls = 0
 
-            def stale_then_current(task_id: str):
+            def stale_then_current(task_id: str, **kwargs):
                 nonlocal calls
                 calls += 1
                 if calls == 1:
                     return stale.model_copy(deep=True), stale_version
-                return real_get_versioned(task_id)
+                return real_get_versioned(task_id, **kwargs)
 
             settings = replace(
                 main.settings,
@@ -557,3 +558,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 10:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | END]]
