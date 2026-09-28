@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
@@ -2973,12 +2974,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         cases.append(stopped)
         wrong_env = self.world(evaluate_rules=True)
         wrong_env.payload["environment"] = "edge-engine"
-        cases.append(wrong_env)
         for case in cases:
             observed = case.report(only_deployment=True)
             self.assertEqual(sum(item["status"] == "PASS" for item in observed["checks"]), 0)
             self.assertEqual(row(observed, "19")["status"], "UNKNOWN")
         self.assertEqual(stopped.opened, [])
+        # A foreign candidate health response invalidates health assertions, not
+        # independently bound daemon/store facts. Live containment still applies.
+        observed = wrong_env.report(only_deployment=True)
+        for key in ("05", "19"):
+            self.assertEqual(row(observed, key)["status"], "UNKNOWN")
+        self.assertEqual(row(observed, "17")["status"], "PASS")  # direct rule fixture only
 
     def test_no_committed_channel_or_legacy_endpoint(self):
         root = Path(__file__).resolve().parents[1]
@@ -5964,3 +5970,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]]

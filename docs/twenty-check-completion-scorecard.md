@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
@@ -511,8 +512,8 @@ a container ID, never a name.
   same name. FAIL when a hop has no such network or the name has another
   owner, UNKNOWN when a container shows no network attachments. No probe runs
   inside the gateway.
-- 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
-  `GET /v1/slack-thread-bindings` and the task readback (see below). A receipt
+- 03, 09: `--drill-thread` Slack threads, the bot's replies, the bounded
+  identity-bound read-only thread resolver and task snapshot (see below). A receipt
   or `BLOCKED` notice counts only as a reply's leading header (after the
   gateway's contribution BEGIN tag), at most one receipt per reply; the words
   quoted in a body count as neither, and the 4xx, 5xx and transport drills need
@@ -1780,3 +1781,4 @@ touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]] -->
