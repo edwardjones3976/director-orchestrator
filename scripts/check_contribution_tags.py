@@ -119,6 +119,7 @@ def validate_commits(base: str, head: str, default_branch_ref: str = "origin/mai
             and committer == "GitHub <noreply@github.com>"
             and re.fullmatch(
                 r"Merge pull request #[0-9]+ from .+|"
+                r"Merge branch '[^']+' into .+|"  # GitHub's "Update branch" button
                 r"Merge #[0-9]+: reviewer [a-z][a-z0-9_-]* after merge-preflight \(CI [0-9]+\)",
                 subject,
             )
