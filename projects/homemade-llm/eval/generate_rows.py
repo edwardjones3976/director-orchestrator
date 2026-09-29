@@ -77,7 +77,7 @@ GITHUB_CHRONOLOGY_QUERY = (
     "number body createdAt lastEditedAt repository{nameWithOwner} userContentEdits(first:1){totalCount}"
     "closingIssuesReferences(first:100){pageInfo{hasNextPage} nodes{number repository{nameWithOwner}}}"
     "commits(first:100){pageInfo{hasNextPage}"
-    "nodes{commit{committedDate}}}}}}}}}}}"
+    "nodes{commit{authoredDate committedDate}}}}}}}}}}}"
 )
 
 
@@ -121,7 +121,10 @@ def _load_references(refs_dir: Path) -> dict[str, dict[str, Any]]:
 
 def _held_out_guard(set_a: Path, set_b: Path) -> tuple[dict[str, dict[str, Any]], set[str], dict[str, set[str]]]:
     references = _load_references(set_a)
-    references.update(_load_references(set_b))
+    second = _load_references(set_b)
+    if overlap := references.keys() & second.keys():
+        fail(f"duplicate held-out reference IDs across sets: {', '.join(sorted(overlap))}")
+    references.update(second)
     lineage: set[str] = set()
     digests: dict[str, set[str]] = {}
     for refs_dir in (set_a, set_b):
@@ -247,8 +250,9 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
         commits = pr.get("commits") or {}
         if (commits.get("pageInfo") or {}).get("hasNextPage") is not False or not commits.get("nodes"):
             fail(f"{label}: linked PR commit history is incomplete")
-        dates = [utc((node.get("commit") or {}).get("committedDate"))
-                 for node in commits["nodes"]]
+        # Dates are editable Git metadata; independent source admission is still required.
+        dates = [utc((node.get("commit") or {}).get(field))
+                 for node in commits["nodes"] for field in ("authoredDate", "committedDate")]
         linked.append((min(utc(pr.get("createdAt")), *dates), pr["number"]))
     if (not linked or block["first_work_pr"] not in [number for _, number in linked]
             or created >= min(time for time, _ in linked)

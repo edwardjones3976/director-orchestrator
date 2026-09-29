@@ -102,6 +102,8 @@ class GenerateRowsTests(unittest.TestCase):
             pr.update(repository={"nameWithOwner": "edwardjones3976/director-orchestrator"},
                       lastEditedAt=None, userContentEdits={"totalCount": 0},
                       closingIssuesReferences={"pageInfo": {"hasNextPage": False}, "nodes": []})
+            for node in pr["commits"]["nodes"]:
+                node["commit"]["authoredDate"] = node["commit"]["committedDate"]
         mocked = patch.object(generate_rows, "github_chronology", return_value=self.github_record)
         mocked.start()
         self.addCleanup(mocked.stop)
@@ -300,6 +302,33 @@ class GenerateRowsTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])
+
+    def test_rebased_or_missing_author_date_is_refused_before_provider_call(self):
+        commit = self.github_record["issue"]["timelineItems"]["nodes"][1]["source"]["commits"]["nodes"][0]["commit"]
+        for authored in ("2026-09-26T11:00:00Z", None):
+            with self.subTest(authored=authored):
+                commit["authoredDate"] = authored
+                with self.assertRaises(SystemExit):
+                    self.generate([self.default_scenario()])
+                self.assertEqual(self.calls, [])
+                self.assertFalse(self.out.exists())
+
+    def test_cross_set_reference_id_collision_is_refused_before_provider_call(self):
+        # Replacing Set A's target with Set B's different target must not hide a leak.
+        original = json.loads((self.set_a / "ew-alpha.json").read_text(encoding="utf-8"))
+        replacement = json.loads((self.set_b / "pr-beta.json").read_text(encoding="utf-8"))
+        (self.set_b / "ew-alpha.json").write_text(json.dumps(replacement), encoding="utf-8")
+        row = self.default_scenario()
+        leaked = original["constraints"][0]
+        row["input"]["context"][0]["text"] = leaked
+        source = self.root / row["input"]["context"][0]["source_ref"]
+        source.write_bytes((self.github_record["issue"]["body"] + leaked).encode("utf-8"))
+        row["input"]["context"][0]["source_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        self.github_record["issue"]["body"] = source.read_text(encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.generate([row])
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.out.exists())
 
     def test_training_cannot_claim_a_held_out_own_source(self):
         row = self.default_scenario()
