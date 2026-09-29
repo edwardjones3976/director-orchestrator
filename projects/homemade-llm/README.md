@@ -1,3 +1,4 @@
+<!-- [[Cursor | Auto | 2026-09-29 | 04:22 UTC | BEGIN]] -->
 <!-- [[Cursor | Auto | 2026-09-29 | 03:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 07:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | BEGIN]] -->
@@ -171,7 +172,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
 | [`train/prompt_template.py`](train/prompt_template.py) | The one DIRECTOR prompt rendering shared by evaluation (`eval/generate_candidates.py`) and training (M2-T1): the D-M1-1 input (objective, repository, title) and the D-M2-10 input that adds cited `context` items; `eval/build_inputs.py --context` builds the latter and refuses context that cites or leaks a held-out item (packet M2-C1) |
 | [`eval/validate_rows.py`](eval/validate_rows.py) | M2-S1 row validator: schema, canonical `row_id`, provider `terms_verified_at`, manifest binding to both held-out sets, the three D-M2-3 leak-wall checks (lineage, title and objective, shingle near-duplicate with a quarantine band) and the group-wise train/dev split; writes `accepted.jsonl`, `quarantine.jsonl` and `report.json` |
-| [`train/train_adapter.py`](train/train_adapter.py) | M2-T1 QLoRA trainer. Response-only loss on the validator's train rows, smoke-base 20-step dry run, and the pinned Qwen3-14B probe. `scripts/train-adapter.ps1` holds the GPU lock and the storage guards |
+| [`train/train_adapter.py`](train/train_adapter.py) | M2-T1 QLoRA trainer. Response-only loss on the validator's train rows, with the attention mask kept on the batch. Smoke-base 20-step dry run and the pinned Qwen3-14B probe. `scripts/train-adapter.ps1` holds the GPU lock and the storage guards |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
@@ -211,3 +212,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 07:45 UTC | END]] -->
 <!-- [[Cursor | Auto | 2026-09-29 | 03:30 UTC | END]] -->
+<!-- [[Cursor | Auto | 2026-09-29 | 04:22 UTC | END]] -->
