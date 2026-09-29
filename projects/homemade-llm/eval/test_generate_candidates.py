@@ -109,6 +109,16 @@ class GenerateCandidatesTests(unittest.TestCase):
                     gen.run(self.args, self.transport)
                 self.transport.assert_not_called()
 
+    def test_input_without_id_is_rejected_before_any_request(self):
+        # The shared template tolerates a training row's id-less input block; an
+        # evaluation input file still needs its id to name the candidate.
+        (self.inputs / "p1.json").write_text(
+            json.dumps({k: v for k, v in self.item.items() if k != "id"}), encoding="utf-8")
+        self.args.inputs_manifest = gen.manifest(self.inputs)
+        with self.assertRaisesRegex(ValueError, "must carry id"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+
     def test_both_manifest_mismatches_stop_before_any_request(self):
         for name in ("refs_manifest", "inputs_manifest"):
             with self.subTest(name=name), mock.patch.object(self.args, name, "0" * 64):

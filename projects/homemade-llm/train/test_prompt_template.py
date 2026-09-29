@@ -43,9 +43,24 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertEqual(pt.input_contract(legacy_item()), pt.INPUT_CONTRACT_LEGACY)
         self.assertEqual(pt.input_contract(context_item_input()), pt.INPUT_CONTRACT_CONTEXT)
         for bad in (dict(legacy_item(), extra=1), {k: v for k, v in legacy_item().items() if k != "title"},
-                    dict(legacy_item(), non_goals=["x"]), {}):
+                    dict(legacy_item(), non_goals=["x"]), dict(context_item_input(), constraints=["x"]), {}):
             with self.subTest(bad=sorted(bad)), self.assertRaisesRegex(ValueError, "exactly"):
                 pt.input_contract(bad)
+
+    def test_training_row_input_block_renders_without_id_and_ignores_project(self):
+        # A director-data-v1 row's ``input`` has no ``id`` and may carry ``project``;
+        # the trainer feeds it straight in and gets the same text an evaluation
+        # input with those fields would produce.
+        row_input = {k: v for k, v in context_item_input().items() if k != "id"}
+        row_input["project"] = "homemade-llm"
+        self.assertEqual(pt.input_contract(row_input), pt.INPUT_CONTRACT_CONTEXT)
+        self.assertEqual(pt.render_user_message(row_input), pt.render_user_message(context_item_input()))
+        self.assertNotIn("homemade-llm", pt.render_user_message(row_input))
+        legacy_row_input = {k: v for k, v in legacy_item().items() if k != "id"}
+        self.assertEqual(pt.input_contract(legacy_row_input), pt.INPUT_CONTRACT_LEGACY)
+        self.assertEqual(pt.render_user_message(legacy_row_input), pt.render_user_message(legacy_item()))
+        self.assertEqual([m["role"] for m in pt.render_messages(row_input, {"non_goals": []})],
+                         ["system", "user", "assistant"])
 
     def test_legacy_user_message_is_byte_identical_to_the_m1_formula(self):
         item = legacy_item()
