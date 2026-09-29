@@ -6087,6 +6087,9 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                     client.close()
 
 
+# Ceiling for the real-startup child process below; see the comment at its call site.
+STARTUP_PROBE_TIMEOUT_SECONDS = 300.0
+
 class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -6232,17 +6235,38 @@ with TestClient(app) as client:
         "recover_classification": recovered.json()["terminal_classification"]
     }, sort_keys=True))
 '''
-            completed = subprocess.run(
-                (sys.executable, "-c", program),
-                cwd=Path(__file__).resolve().parents[1],
-                env=environment,
-                shell=False,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
+            # The child starts the real application, opens the PostgreSQL
+            # control plane, then runs intake, replay, read, cancel and
+            # recover in sequence. On the shared self-hosted host, with four
+            # test jobs and their lanes running at once, that has exceeded a
+            # 90 s budget twice on main (0a80036, 68393ad) with every other
+            # test in the job passing. One generous ceiling keeps a genuine
+            # hang bounded and carries the child's output tails when it fires;
+            # the assertions on the child's output are unchanged. The cleanup
+            # below now also runs when the child times out, so the schema
+            # never outlives a timed-out attempt.
+            started = time.monotonic()
             try:
+                try:
+                    completed = subprocess.run(
+                        (sys.executable, "-c", program),
+                        cwd=Path(__file__).resolve().parents[1],
+                        env=environment,
+                        shell=False,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=STARTUP_PROBE_TIMEOUT_SECONDS,
+                    )
+                except subprocess.TimeoutExpired as expired:
+                    def _tail(stream: object) -> str:
+                        text = stream.decode("utf-8", "replace") if isinstance(stream, bytes) else (stream or "")
+                        return "\n".join(str(text).splitlines()[-20:])
+                    self.fail(
+                        "startup probe child did not finish within "
+                        f"{STARTUP_PROBE_TIMEOUT_SECONDS:.0f} s (elapsed {time.monotonic() - started:.1f} s); "
+                        f"stdout tail:\n{_tail(expired.stdout)}\nstderr tail:\n{_tail(expired.stderr)}"
+                    )
                 self.assertEqual(0, completed.returncode, completed.stderr)
                 result = json.loads(completed.stdout.strip().splitlines()[-1])
                 self.assertEqual(202, result["first_status"])
