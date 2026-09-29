@@ -18,8 +18,9 @@ Input contracts (train/prompt_template.py). Every input in a run follows one
 contract: D-M1-1 (id, objective, repository, title) or D-M2-10 (the same plus
 context, packet M2-C1). Mixed inputs are refused. Under D-M2-10 each context item
 is re-checked here, before any request, against the references the run is bound
-to: a source_ref resolving to a held-out item or text overlapping a scored field
-stops the run. The system prompt and user turn are rendered by prompt_template so
+  to: only the item's verified frozen assignment source may be cited from held-out
+  lineage; another held-out source or text overlapping a scored field stops the run.
+  The system prompt and user turn are rendered by prompt_template so
 evaluation and training see the same text; run.json records input_contract.
 """
 from __future__ import annotations
@@ -364,6 +365,7 @@ def run(args, transport=http_json):
             raise ValueError(f"{path.name}: reference must be a JSON object")
         references[path.stem] = reference
     lineage_keys = build_inputs.lineage_keys(args.refs, sorted(references))
+    held_out_digests = build_inputs.source_digests(args.refs, sorted(references))
     items, input_hashes, ids, contracts = [], {}, set(), set()
     for path in sorted(args.inputs.glob("*.json")):
         raw = path.read_bytes()
@@ -381,16 +383,18 @@ def run(args, transport=http_json):
         scalar_fields = {k: v for k, v in item.items() if k != "context"}
         if any(not isinstance(v, str) or not v.strip() for v in scalar_fields.values()):
             raise ValueError(f"{path.name}: input fields must be nonempty strings")
-        if contract == prompt_template.INPUT_CONTRACT_CONTEXT:
-            problems = build_inputs.validate_context(item["context"], references, lineage_keys)
-            if problems:
-                raise ValueError(f"{path.name}: {problems[0]}")
         item_id = item["id"]
         if (not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", item_id)
                 or item_id.endswith(".") or item_id.casefold() in ids
                 or item_id.casefold() == "run"
                 or re.fullmatch(r"(?i:con|prn|aux|nul|com[0-9]|lpt[0-9])", item_id.split(".")[0])):
             raise ValueError(f"{path.name}: unsafe, reserved or duplicate id")
+        if contract == prompt_template.INPUT_CONTRACT_CONTEXT:
+            problems = build_inputs.validate_context(item["context"], references,
+                                                     lineage_keys, args.refs, item_id,
+                                                     held_out_digests)
+            if problems:
+                raise ValueError(f"{path.name}: {problems[0]}")
         ids.add(item_id.casefold())
         items.append(item)
     input_digest = manifest(args.inputs, input_hashes)

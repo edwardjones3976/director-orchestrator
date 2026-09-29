@@ -485,11 +485,12 @@ class GenerateCandidatesTests(unittest.TestCase):
 class GenerateCandidatesContextTests(GenerateCandidatesTests):
     """Packet M2-C1: the D-M2-10 input contract, re-checked before any request."""
 
-    SHA = "0123456789abcdef" * 4
+    SOURCE_TEXT = "The owner wants the mirror log kept nightly.\n"
+    SHA = hashlib.sha256(SOURCE_TEXT.encode("utf-8")).hexdigest()
 
     def context_item(self, **overrides):
         item = {"kind": "assignment_packet", "text": "The owner wants the mirror log kept nightly.",
-                "source_ref": "director-orchestrator/docs/work-order-41.md", "source_sha256": self.SHA}
+                "source_ref": "packets/p1-source.md", "source_sha256": self.SHA}
         item.update(overrides)
         return item
 
@@ -499,6 +500,12 @@ class GenerateCandidatesContextTests(GenerateCandidatesTests):
 
     def setUp(self):
         super().setUp()
+        (self.root / "packets").mkdir()
+        (self.root / "packets" / "p1-source.md").write_bytes(self.SOURCE_TEXT.encode("utf-8"))
+        (self.refs / "metadata").mkdir()
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_file": "packets/p1-source.md", "source_sha256": self.SHA}),
+            encoding="utf-8")
         self.item = dict(self.item, context=[self.context_item()])
         self.write_input("p1", self.item)
 
@@ -518,7 +525,7 @@ class GenerateCandidatesContextTests(GenerateCandidatesTests):
         user_message = json.loads(body["messages"][1]["content"])
         self.assertEqual(set(user_message), {"objective", "repository", "title", "context"})
         self.assertEqual(user_message["context"], [{
-            "kind": "assignment_packet", "source_ref": "director-orchestrator/docs/work-order-41.md",
+            "kind": "assignment_packet", "source_ref": "packets/p1-source.md",
             "text": "The owner wants the mirror log kept nightly.",
         }])
         self.assertNotIn(self.SHA, body["messages"][1]["content"])
@@ -543,22 +550,50 @@ class GenerateCandidatesContextTests(GenerateCandidatesTests):
         self.args.refs_manifest = gen.manifest(self.refs)
         for name, leaked in leaks.items():
             with self.subTest(name=name):
-                self.write_input("p1", dict(self.item, context=[self.context_item(text=f"Note: {leaked}.")]))
+                excerpt = f"Note: {leaked}."
+                policy = self.root / "policy.md"
+                policy.write_text(excerpt, encoding="utf-8")
+                self.write_input("p1", dict(self.item, context=[self.context_item(
+                    kind="project_policy", text=excerpt, source_ref="policy.md",
+                    source_sha256=hashlib.sha256(policy.read_bytes()).hexdigest())]))
                 with self.assertRaisesRegex(ValueError, "overlaps scored field of p1"):
                     gen.run(self.args, self.transport)
                 self.transport.assert_not_called()
 
     def test_context_citing_a_held_out_item_stops_before_any_request(self):
-        (self.refs / "metadata").mkdir()
         (self.refs / "metadata" / "p1.meta.json").write_text(
-            json.dumps({"source_file": "packets/p1-source.md", "source_title": "Frozen Source Title"}),
+            json.dumps({"source_file": "packets/p1-source.md", "source_title": "Frozen Source Title",
+                        "source_sha256": self.SHA}),
             encoding="utf-8")
-        for source_ref in ("p1", "heldout/set-a/p1.json", "packets/p1-source.md", "Frozen Source Title"):
+        for source_ref in ("p1", "heldout/set-a/p1.json", "Frozen Source Title"):
             with self.subTest(source_ref=source_ref):
                 self.write_input("p1", dict(self.item, context=[self.context_item(source_ref=source_ref)]))
                 with self.assertRaisesRegex(ValueError, "resolves to a held-out item"):
                     gen.run(self.args, self.transport)
                 self.transport.assert_not_called()
+
+    def test_forged_or_changed_source_stops_before_any_request(self):
+        cases = {
+            "nonexistent": (self.context_item(source_ref="packets/missing.md"),
+                            "does not resolve to a source file"),
+            "wrong hash": (self.context_item(source_sha256="0" * 64),
+                           "does not match source bytes"),
+            "invented text": (self.context_item(text="Not present in the frozen assignment."),
+                              "not an excerpt of source_ref"),
+        }
+        for name, (entry, expected) in cases.items():
+            with self.subTest(name=name):
+                self.write_input("p1", dict(self.item, context=[entry]))
+                with self.assertRaisesRegex(ValueError, expected):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+
+    def test_reconstructed_pr_has_no_verified_task_time_source(self):
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_pr": 103, "source_title": "Fixture PR"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no verified assignment-time source"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
 
     def test_malformed_context_and_mixed_contracts_stop_before_any_request(self):
         cases = {
