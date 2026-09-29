@@ -11,7 +11,12 @@ stops the run before ``--out`` is created.
     python projects/homemade-llm/eval/generate_rows.py --dry-run \\
         --scenarios scenarios.jsonl --provider anthropic_api \\
         --set-a set-a/refs --set-b set-b/refs --out rows.jsonl \\
-        --terms-verified-at 2026-09-28T20:00:00Z
+        --source-root path/to/dataset --terms-verified-at 2026-09-28T20:00:00Z
+
+Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and an
+offline chronology capture listed in ``source_provenance`` before a dry run succeeds
+or a provider is called. Historical scenarios without that capture contract remain
+refused; the chronology gate does not prove live issue timestamps.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
+import build_inputs  # noqa: E402
 import prompt_template  # noqa: E402
 import validate_rows  # noqa: E402
 
@@ -61,6 +67,13 @@ DISPATCH_PY = Path.home() / ".claude" / "skills" / "provider-dispatch" / "dispat
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
+CHRONOLOGY_CONTRACT = (
+    "source_provenance must carry assignment_capture_ref, assignment_captured_at, and "
+    "first_work_at; assignment_capture_ref must resolve to UTF-8 JSON whose fields match "
+    "and prove assignment_captured_at is strictly before first_work_at, with "
+    "context_bindings listing every assignment_packet source_ref and source_sha256"
+)
+
 
 class DispatchResult:
     """One completed provider call. ``model`` is the name the receipt records."""
@@ -74,6 +87,131 @@ class DispatchResult:
 def fail(message: str) -> None:
     print(message, file=sys.stderr)
     raise SystemExit(2)
+
+
+def infer_source_root(set_a: Path, set_b: Path, explicit: Path | None) -> Path:
+    if explicit is not None:
+        root = explicit.resolve()
+        if not root.is_dir():
+            fail(f"source-root is not a directory: {root}")
+        return root
+    if set_a.name != "refs" or set_b.name != "refs":
+        fail("set-a and set-b must be refs directories, or pass --source-root")
+    if not (set_a.parent.name.startswith("set-") and set_b.parent.name.startswith("set-")):
+        fail("could not infer --source-root from set paths; pass it explicitly")
+    if set_a.parent.parent != set_b.parent.parent:
+        fail("set-a and set-b do not share a dataset root; pass --source-root")
+    return set_a.parent.parent.resolve()
+
+
+def _load_references(refs_dir: Path) -> dict[str, dict[str, Any]]:
+    references: dict[str, dict[str, Any]] = {}
+    for item_id in build_inputs._reference_ids(refs_dir):
+        payload = json.loads((refs_dir / f"{item_id}.json").read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            references[item_id] = payload
+    return references
+
+
+def _held_out_guard(set_a: Path, set_b: Path) -> tuple[dict[str, dict[str, Any]], set[str], dict[str, set[str]]]:
+    references = _load_references(set_a)
+    references.update(_load_references(set_b))
+    lineage: set[str] = set()
+    digests: dict[str, set[str]] = {}
+    for refs_dir in (set_a, set_b):
+        item_ids = build_inputs._reference_ids(refs_dir)
+        lineage |= build_inputs.lineage_keys(refs_dir, item_ids)
+        for digest, owners in build_inputs.source_digests(refs_dir, item_ids).items():
+            digests.setdefault(digest, set()).update(owners)
+    return references, lineage, digests
+
+
+def validate_scenario_source_provenance(
+    scenario: dict[str, Any],
+    *,
+    source_root: Path,
+    set_a: Path,
+    set_b: Path,
+    label: str,
+) -> None:
+    references, lineage_keys, held_out_digests = _held_out_guard(set_a, set_b)
+    problems = build_inputs.validate_context(
+        scenario["input"]["context"],
+        references,
+        lineage_keys,
+        set_a,
+        str(scenario["source_group"]),
+        held_out_digests,
+        source_root=source_root,
+    )
+    if problems:
+        fail(f"{label}: {problems[0]}")
+
+
+def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str) -> None:
+    block = scenario.get("source_provenance")
+    if not isinstance(block, dict):
+        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
+    if block.get("chronology_verified") is True or block.get("pre_work") is True:
+        fail(f"{label}: source_provenance must not use self-asserted chronology flags")
+    capture_ref = block.get("assignment_capture_ref")
+    captured_at = block.get("assignment_captured_at")
+    first_work_at = block.get("first_work_at")
+    if not isinstance(capture_ref, str) or not capture_ref.strip():
+        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
+    if not isinstance(captured_at, str) or UTC_PATTERN.fullmatch(captured_at) is None:
+        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
+    if not isinstance(first_work_at, str) or UTC_PATTERN.fullmatch(first_work_at) is None:
+        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
+    relative = Path(capture_ref)
+    if (relative.is_absolute() or relative.drive or "\\" in capture_ref
+            or any(part in (".", "..") for part in relative.parts)):
+        fail(f"{label}: assignment_capture_ref must be a relative path under the source root")
+    capture_path = (source_root / relative).resolve()
+    if not capture_path.is_relative_to(source_root) or not capture_path.is_file():
+        fail(f"{label}: assignment_capture_ref does not resolve to a capture artifact")
+    try:
+        capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        fail(f"{label}: assignment capture artifact is not UTF-8 JSON")
+    if not isinstance(capture, dict):
+        fail(f"{label}: assignment capture artifact must be a JSON object")
+    for field in ("assignment_captured_at", "first_work_at"):
+        if capture.get(field) != block.get(field):
+            fail(f"{label}: source_provenance.{field} does not match capture artifact")
+    if captured_at >= first_work_at:
+        fail(f"{label}: assignment capture is not before first work time")
+    bindings = capture.get("context_bindings")
+    if not isinstance(bindings, list) or not bindings:
+        fail(f"{label}: capture artifact must list context_bindings with source_ref and source_sha256")
+    for item in scenario["input"]["context"]:
+        if item["kind"] != "assignment_packet":
+            continue
+        matched = False
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                continue
+            if (binding.get("source_ref") == item["source_ref"]
+                    and binding.get("source_sha256") == item["source_sha256"]):
+                matched = True
+                break
+        if not matched:
+            fail(f"{label}: assignment_packet context is not listed in capture context_bindings")
+
+
+def validate_scenarios_for_dispatch(
+    scenarios: list[dict[str, Any]],
+    *,
+    source_root: Path,
+    set_a: Path,
+    set_b: Path,
+) -> None:
+    for index, scenario in enumerate(scenarios, start=1):
+        label = f"scenario {index} ({scenario.get('source_group', '?')})"
+        validate_scenario_source_provenance(
+            scenario, source_root=source_root, set_a=set_a, set_b=set_b, label=label,
+        )
+        validate_chronology(scenario, source_root, label)
 
 
 def _strings(value: Any) -> list[str]:
@@ -339,6 +477,7 @@ def generate(
     dry_run: bool,
     dispatch: Dispatch | None = None,
     scrub: Scrub | None = None,
+    source_root: Path | None = None,
     timeout: int = 120,
     max_output: int = 1024,
     worktree: Path | None = None,
@@ -355,6 +494,8 @@ def generate(
         fail(str(exc))
     if out.exists():
         fail(f"refusing existing --out: {out}")
+    root = infer_source_root(set_a, set_b, source_root)
+    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b)
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
     caller = dispatch or (lambda name, packet, purpose: live_dispatch(
@@ -419,6 +560,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-output", type=int, default=1024)
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--worktree", type=Path, default=None)
+    parser.add_argument("--source-root", type=Path, default=None, dest="source_root")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     generated_at = args.generated_at or args.terms_verified_at
@@ -427,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
         report = generate(
             scenarios, provider=args.provider, set_a=args.set_a, set_b=args.set_b, out=args.out,
             terms_verified_at=args.terms_verified_at, generated_at=generated_at, dry_run=args.dry_run,
+            source_root=args.source_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
         )
     except SystemExit as exc:

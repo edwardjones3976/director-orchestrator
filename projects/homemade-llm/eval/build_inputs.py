@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -44,6 +45,8 @@ SCORED_FIELDS: tuple[str, ...] = (
     "acceptance_checks",
     "evidence_requirements",
 )
+
+PULLS_SOURCE_REF = re.compile(r"^pulls/\d+(?:/|$)")
 
 
 def manifest(directory: Path) -> str:
@@ -232,6 +235,16 @@ def _source_ref_forms(source_ref: str) -> set[str]:
     return forms
 
 
+def _forbidden_assignment_source(source_ref: str, source_path: Path, source_root: Path) -> str | None:
+    """Reason a source_ref may not be cited as task-time assignment context, or None."""
+    normalized = source_ref.replace("\\", "/")
+    if PULLS_SOURCE_REF.match(normalized):
+        return "source_ref points at a completed pull request, not task-time assignment"
+    if source_path == (source_root / "raw" / "pr-bodies.jsonl").resolve():
+        return "PR body archive lacks assignment-time provenance"
+    return None
+
+
 def source_digests(refs_dir: Path, item_ids: list[str]) -> dict[str, set[str]]:
     """Map recorded held-out source hashes to the reference ids they belong to."""
     owners: dict[str, set[str]] = {}
@@ -253,6 +266,8 @@ def validate_context(
     refs_dir: Path,
     item_id: str,
     held_out_digests: dict[str, set[str]],
+    *,
+    source_root: Path | None = None,
 ) -> list[str]:
     """Every reason a context array may not be written, as messages; empty means accepted.
 
@@ -263,7 +278,7 @@ def validate_context(
     errors = list(prompt_template.context_shape_errors(context))
     if errors:
         return errors
-    source_root = refs_dir.parent.resolve()
+    source_root = (source_root or refs_dir.parent).resolve()
     meta_path = refs_dir / "metadata" / f"{item_id}.meta.json"
     meta = _load_json(meta_path) if meta_path.is_file() else {}
     if not isinstance(meta, dict):
@@ -290,9 +305,13 @@ def validate_context(
             source_path = (source_root / relative).resolve()
             if not source_path.is_relative_to(source_root) or not source_path.is_file():
                 errors.append(f"{where}: source_ref does not resolve to a source file")
-            elif source_path == (source_root / "raw" / "pr-bodies.jsonl").resolve():
-                errors.append(f"{where}: PR body archive lacks assignment-time provenance")
+            elif source_path.is_symlink() and not source_path.resolve().is_relative_to(source_root):
+                errors.append(f"{where}: source_ref symlink escapes the source root")
             else:
+                forbidden = _forbidden_assignment_source(source_ref, source_path, source_root)
+                if forbidden:
+                    errors.append(f"{where}: {forbidden}")
+                    continue
                 raw = source_path.read_bytes()
                 digest = hashlib.sha256(raw).hexdigest()
                 if digest != item["source_sha256"]:
