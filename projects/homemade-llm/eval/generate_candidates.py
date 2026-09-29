@@ -376,6 +376,8 @@ def run(args, transport=http_json):
         except ValueError as exc:
             raise ValueError(f"{path.name}: {exc}") from None
         contracts.add(contract)
+        if "id" not in item:
+            raise ValueError(f"{path.name}: an evaluation input must carry id")
         scalar_fields = {k: v for k, v in item.items() if k != "context"}
         if any(not isinstance(v, str) or not v.strip() for v in scalar_fields.values()):
             raise ValueError(f"{path.name}: input fields must be nonempty strings")

@@ -29,6 +29,11 @@ INPUT_CONTRACT_CONTEXT = "D-M2-10"
 LEGACY_INPUT_FIELDS: frozenset[str] = frozenset({"id", "objective", "repository", "title"})
 CONTEXT_INPUT_FIELDS: frozenset[str] = LEGACY_INPUT_FIELDS | {"context"}
 MODEL_INPUT_FIELDS: tuple[str, ...] = ("objective", "repository", "title")
+# Keys an item may carry without changing its contract or its rendering: ``id``
+# names an evaluation input file (a training row's ``input`` block has none; the
+# row is identified by ``row_id``) and ``project`` is the optional row-schema
+# field. Neither is shown to the model.
+OPTIONAL_INPUT_FIELDS: frozenset[str] = frozenset({"id", "project"})
 
 CONTEXT_KINDS: tuple[str, ...] = ("assignment_packet", "project_policy")
 CONTEXT_ITEM_FIELDS: frozenset[str] = frozenset({"kind", "text", "source_ref", "source_sha256"})
@@ -48,11 +53,16 @@ SYSTEM_PROMPT_CONTEXT = SYSTEM_PROMPT + (
 
 
 def input_contract(item: dict[str, Any]) -> str:
-    """Name the contract an input item follows, by its key set alone."""
-    keys = set(item)
-    if keys == CONTEXT_INPUT_FIELDS:
+    """Name the contract an input item follows, by its key set alone.
+
+    Accepts an evaluation input (with ``id``) and a training row's ``input``
+    block (without ``id``, possibly with ``project``) alike; any other key,
+    including a scored target field, is refused.
+    """
+    keys = set(item) - OPTIONAL_INPUT_FIELDS
+    if keys == set(MODEL_INPUT_FIELDS) | {"context"}:
         return INPUT_CONTRACT_CONTEXT
-    if keys == LEGACY_INPUT_FIELDS:
+    if keys == set(MODEL_INPUT_FIELDS):
         return INPUT_CONTRACT_LEGACY
     raise ValueError(
         "input must contain exactly id, objective, repository, title"
