@@ -169,6 +169,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`workstream-plan-m2.md`](workstream-plan-m2.md) | M2 plan, owner-approved 2026-09-28 (O-M2-A): DIRECTOR data v1 packets, adapter v0.1 to v0.3, gates and stops; packets dispatch only under their own gates, caps and the D-M2-8 meter rule; row contract in `schemas/director-data-v1-row.schema.json` |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 06:20 UTC | END]] -->
 | [`train/prompt_template.py`](train/prompt_template.py) | The one DIRECTOR prompt rendering shared by evaluation (`eval/generate_candidates.py`) and training (M2-T1): the D-M1-1 input (objective, repository, title) and the D-M2-10 input that adds cited `context` items; `eval/build_inputs.py --context` builds the latter and refuses context that cites or leaks a held-out item (packet M2-C1) |
+| [`eval/validate_rows.py`](eval/validate_rows.py) | M2-S1 row validator: schema, canonical `row_id`, provider `terms_verified_at`, manifest binding to both held-out sets, the three D-M2-3 leak-wall checks (lineage, title and objective, shingle near-duplicate with a quarantine band) and the group-wise train/dev split; writes `accepted.jsonl`, `quarantine.jsonl` and `report.json` |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
