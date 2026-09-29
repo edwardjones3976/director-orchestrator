@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-29 | 04:18 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 04:03 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 01:12 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 01:10 UTC | BEGIN]]
@@ -189,6 +190,12 @@ class TrainAdapterTests(unittest.TestCase):
             self.assertNotIn("n8n intake webhook", messages[1]["content"])
             self.assertIn("acceptance_checks", messages[2]["content"])
 
+    def test_the_trainer_keeps_the_attention_mask_column(self):
+        args = train_adapter.sft_arguments("out", 20)
+        self.assertIs(args["remove_unused_columns"], False)
+        self.assertEqual(args["dataset_kwargs"], {"skip_prepare_dataset": True})
+        self.assertIs(args["packing"], False)
+
     def test_pinned_revision_must_match_the_loaded_commit(self):
         pin = "a" * 40
         self.assertEqual(train_adapter.resolve_commit(pin, "org/model", pin), pin)
@@ -249,3 +256,4 @@ if __name__ == "__main__":
 # [[Cursor | Auto | 2026-09-29 | 01:10 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 01:12 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 04:03 UTC | END]]
+# [[Cursor | Auto | 2026-09-29 | 04:18 UTC | END]]

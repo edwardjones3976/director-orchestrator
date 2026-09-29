@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-29 | 04:18 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 04:03 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 02:10 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 01:12 UTC | BEGIN]]
@@ -231,6 +232,25 @@ def build_report(
     }
 
 
+def sft_arguments(output_dir: str, steps: int) -> dict[str, Any]:
+    """Trainer settings. ``remove_unused_columns`` stays off so the attention mask is not dropped before collation."""
+    return {
+        "output_dir": output_dir,
+        "max_length": SEQ,
+        "packing": False,
+        "dataset_kwargs": {"skip_prepare_dataset": True},
+        "remove_unused_columns": False,
+        "per_device_train_batch_size": 1,
+        "gradient_accumulation_steps": 1,
+        "max_steps": steps,
+        "learning_rate": 2e-4,
+        "logging_steps": max(1, steps // 4),
+        "save_strategy": "no",
+        "report_to": "none",
+        "seed": SEED,
+    }
+
+
 def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, report_path: Path, *, winner: bool) -> dict[str, Any]:
     """QLoRA for ``steps`` on ``base@revision``. Thinking stays off. The mask is checked before ``trainer.train``."""
     started = time.time()
@@ -285,20 +305,7 @@ def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, repo
         processing_class=tokenizer,
         train_dataset=Dataset.from_list(encoded),
         data_collator=collate,
-        args=SFTConfig(
-            output_dir=str(report_path.with_suffix("")) + "-trainer",
-            max_length=SEQ,
-            packing=False,
-            dataset_kwargs={"skip_prepare_dataset": True},
-            per_device_train_batch_size=1,
-            gradient_accumulation_steps=1,
-            max_steps=steps,
-            learning_rate=2e-4,
-            logging_steps=max(1, steps // 4),
-            save_strategy="no",
-            report_to="none",
-            seed=SEED,
-        ),
+        args=SFTConfig(**sft_arguments(str(report_path.with_suffix("")) + "-trainer", steps)),
     )
     torch.cuda.reset_peak_memory_stats()
     result = trainer.train()
@@ -345,3 +352,4 @@ if __name__ == "__main__":
 # [[Cursor | Auto | 2026-09-29 | 01:12 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 02:10 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 04:03 UTC | END]]
+# [[Cursor | Auto | 2026-09-29 | 04:18 UTC | END]]
