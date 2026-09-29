@@ -995,9 +995,9 @@ $script:removeFails = $false
 $script:createFails = $false
 $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
 $env:GITHUB_ACTIONS = $null
-function Item($name, $owner = '', $lane = '', $managed = '') {
+function Item($name, $owner = '', $lane = '', $managed = '', $state = 'running') {
     $script:serial++
-    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed"
+    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed|$state"
 }
 function docker {
     $global:LASTEXITCODE = 0
@@ -1012,7 +1012,7 @@ function docker {
                     if ($filter -ceq "id=$($parts[0])") { $parts[0] }
                     continue
                 }
-                "$($parts[0])|$($parts[1])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
+                "$($parts[0])|$($parts[1])|$($parts[5])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
             }
             return
         }
@@ -1099,6 +1099,31 @@ Item 'ci-four' '' 'true' 'true'
 Item 'director-test-lane-slot-3' 'ci-three'
 Item 'director-test-lane-slot-4' 'ci-four'
 MustFail '*cap 2*'
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '2'
+$script:items = @{}
+Item 'candidate' '' 'true' 'true'
+Item 'dead-lane' '' 'true' 'true' 'exited'
+Item 'director-test-lane-slot-1' 'dead-lane'
+Item 'pending-lane' '' 'true' 'true' 'created'
+Item 'director-test-lane-slot-2' 'pending-lane'
+Enter-LaneSlot
+Check (-not $script:items.ContainsKey('dead-lane')) 'Exited managed lane retained'
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[2] -eq 'candidate') 'Dead lane slot not reclaimed'
+Check ($script:items.ContainsKey('pending-lane')) 'Created lane removed'
+Check (($script:items['director-test-lane-slot-2'] -split '\|')[2] -eq 'pending-lane') 'Created lane slot reclaimed'
+Remove-LaneSlot
+$script:items = @{}
+Item 'candidate' '' 'true' 'true'
+Item 'foreign' '' '' '' 'exited'
+Item 'director-test-lane-slot-1' 'foreign'
+Item 'unmanaged-lane' '' 'true' '' 'dead'
+Item 'director-test-lane-slot-2' 'unmanaged-lane'
+MustFail '*cap 2*'
+Check ($script:items.ContainsKey('foreign')) 'Foreign exited container removed'
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Foreign owner slot reclaimed'
+Check ($script:items.ContainsKey('unmanaged-lane')) 'Unmanaged lane removed'
+Check ($script:items.ContainsKey('director-test-lane-slot-2')) 'Unmanaged owner slot reclaimed'
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
 $script:items = @{}
 Item 'candidate' '' 'true' 'true'
 $script:listingFails = $true
