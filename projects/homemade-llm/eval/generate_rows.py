@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
 """M2-G1 exemplar harness: one bounded competing-only dispatch per scenario.
 
@@ -51,6 +52,10 @@ PURPOSE_PATTERN = re.compile(
 )
 RECEIPT_LINE = re.compile(
     r"^(?:anthropic|codex exit \d+;|cursor exit \d+;).*receipt:?\s+(\S+)\s*$"
+)
+RECEIPT_MODEL_TAG = re.compile(
+    r"^\[\[(?:[^|\]]+) \| (?P<model>[^|\]]+?) \| [0-9]{4}-[0-9]{2}-[0-9]{2} \| "
+    r"[0-9]{2}:[0-9]{2} UTC \| BEGIN\]\]$"
 )
 DISPATCH_PY = Path.home() / ".claude" / "skills" / "provider-dispatch" / "dispatch.py"
 Dispatch = Callable[[str, str, str], "DispatchResult"]
@@ -174,16 +179,30 @@ def receipt_ref(path: Path) -> str:
 
 
 def model_from_receipt(path: Path) -> str:
-    if path.suffix != ".json":
-        fail("receipt does not record a model")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        fail("receipt does not record a model")
-    model = payload.get("model") if isinstance(payload, dict) else None
-    if not isinstance(model, str) or not model.strip():
-        fail("receipt does not record a model")
-    return model
+    """Return the model the receipt itself records. A missing label fails closed."""
+    if path.suffix == ".json":
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            fail("receipt does not record a model")
+        model = payload.get("model") if isinstance(payload, dict) else None
+        if not isinstance(model, str) or not model.strip():
+            fail("receipt does not record a model")
+        return model.strip()
+    if path.suffix == ".md":
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            fail("receipt does not record a model")
+        for line in lines:
+            match = RECEIPT_MODEL_TAG.fullmatch(line.strip())
+            if match is None:
+                continue
+            model = match.group("model").strip()
+            if model and not any(marker in model for marker in SECRET_MARKERS):
+                return model
+            break
+    fail("receipt does not record a model")
 
 
 def purpose_for(source_group: str) -> str:
@@ -421,3 +440,4 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     sys.exit(main())
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
+# [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
 """Unit tests for the M2-G1 exemplar harness. No provider is contacted.
 
@@ -127,6 +128,22 @@ class GenerateRowsTests(unittest.TestCase):
             generate_rows.load_scenarios(self.write_scenarios(rows), generate_rows.MAX_ROWS_PER_CALL)
         self.assertEqual(self.calls, [])
 
+    def test_a_markdown_receipt_supplies_its_tagged_model(self):
+        path = self.root / "receipts" / "codex" / "codex-1.out.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "[[OpenAI Codex | GPT-6 | 2026-09-28 | 03:16 UTC | BEGIN]]\n\n{\"ok\": true}\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(generate_rows.model_from_receipt(path), "GPT-6")
+
+    def test_a_markdown_receipt_without_a_model_tag_is_refused(self):
+        path = self.root / "receipts" / "codex" / "codex-bare.out.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("final message without a model label\n", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            generate_rows.model_from_receipt(path)
+
     def test_a_secret_marker_is_refused_before_a_call(self):
         marked = scenario()
         marked["input"]["objective"] = "Store the value as API_KEY=hidden"
@@ -138,3 +155,4 @@ class GenerateRowsTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
+# [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
