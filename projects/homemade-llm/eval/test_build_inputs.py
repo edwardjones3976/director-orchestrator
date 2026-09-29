@@ -77,6 +77,30 @@ class BuildInputsTests(unittest.TestCase):
         (refs / "metadata").mkdir()
         return root, refs, out
 
+    def test_explicit_dataset_root_rejects_pr_body_and_path_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dataset"
+            refs = root / "set-b" / "refs"
+            refs.mkdir(parents=True)
+            source = root / "pulls" / "360" / "body.md"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"Completed pull request body.\n")
+            item = {"kind": "assignment_packet", "text": "Completed pull request body.",
+                    "source_ref": "pulls/360/body.md",
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+            errors = build_inputs.validate_context(
+                [item], {}, set(), refs, "p1", {}, source_root=root,
+            )
+            self.assertTrue(any("completed pull request" in error for error in errors))
+            self.assertIsNotNone(build_inputs._forbidden_assignment_source(
+                "alias/body.md", source.resolve(), root.resolve(),
+            ))
+            item["source_ref"] = "assignments/../pulls/360/body.md"
+            errors = build_inputs.validate_context(
+                [item], {}, set(), refs, "p1", {}, source_root=root,
+            )
+            self.assertTrue(any("relative source path" in error for error in errors))
+
     def test_source_file_rejects_absolute_and_parent_escape(self):
         for source_kind in ("absolute_inside", "absolute_outside", "parent_escape"):
             with self.subTest(source_kind=source_kind), tempfile.TemporaryDirectory() as tmp:

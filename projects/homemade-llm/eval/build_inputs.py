@@ -238,7 +238,8 @@ def _source_ref_forms(source_ref: str) -> set[str]:
 def _forbidden_assignment_source(source_ref: str, source_path: Path, source_root: Path) -> str | None:
     """Reason a source_ref may not be cited as task-time assignment context, or None."""
     normalized = source_ref.replace("\\", "/")
-    if PULLS_SOURCE_REF.match(normalized):
+    resolved = source_path.relative_to(source_root).as_posix()
+    if PULLS_SOURCE_REF.match(normalized) or PULLS_SOURCE_REF.match(resolved):
         return "source_ref points at a completed pull request, not task-time assignment"
     if source_path == (source_root / "raw" / "pr-bodies.jsonl").resolve():
         return "PR body archive lacks assignment-time provenance"

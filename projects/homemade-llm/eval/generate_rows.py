@@ -14,7 +14,7 @@ stops the run before ``--out`` is created.
         --source-root path/to/dataset --terms-verified-at 2026-09-28T20:00:00Z
 
 Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and
-GitHub issue/first-PR-commit chronology before a dry run or provider call.
+GitHub issue/linked-PR chronology before a dry run or provider call.
 Other source types fail closed until they have an independent chronology route.
 """
 from __future__ import annotations
@@ -69,10 +69,13 @@ Scrub = Callable[[Path], str | None]
 
 GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 GITHUB_CHRONOLOGY_QUERY = (
-    "query($owner:String!,$repo:String!,$issue:Int!,$pr:Int!){"
+    "query($owner:String!,$repo:String!,$issue:Int!){"
     "repository(owner:$owner,name:$repo){"
-    "issue(number:$issue){createdAt lastEditedAt body userContentEdits(first:1){totalCount}}"
-    "pullRequest(number:$pr){createdAt commits(first:1){nodes{commit{oid committedDate}}}}}}"
+    "issue(number:$issue){createdAt lastEditedAt body userContentEdits(first:1){totalCount}"
+    "timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT]){pageInfo{hasNextPage}"
+    "nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{"
+    "number body createdAt commits(first:100){pageInfo{hasNextPage}"
+    "nodes{commit{committedDate}}}}}}}}}}}"
 )
 
 
@@ -149,19 +152,20 @@ def validate_scenario_source_provenance(
         fail(f"{label}: {problems[0]}")
 
 
-def github_chronology(repository: str, issue: int, pr: int) -> dict[str, Any]:
+def github_chronology(repository: str, issue: int) -> dict[str, Any]:
     owner, repo = repository.split("/", 1)
     try:
         result = subprocess.run(
             ["gh", "api", "graphql", "-f", f"query={GITHUB_CHRONOLOGY_QUERY}",
              "-F", f"owner={owner}", "-F", f"repo={repo}",
-             "-F", f"issue={issue}", "-F", f"pr={pr}"],
+             "-F", f"issue={issue}"],
             capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
         )
         record = json.loads(result.stdout)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
         fail("GitHub chronology lookup failed")
-    if result.returncode != 0 or record.get("errors") or not isinstance(record.get("data"), dict):
+    if (result.returncode != 0 or not isinstance(record, dict) or record.get("errors")
+            or not isinstance(record.get("data"), dict)):
         fail("GitHub chronology lookup failed")
     return record["data"].get("repository") or {}
 
@@ -179,21 +183,43 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
                     if item["kind"] == "assignment_packet"]
     if not source_items or len(source_items) != len(scenario["input"]["context"]):
         fail(f"{label}: this chronology route supports assignment issue context only")
-    record = github_chronology(repository, block["github_issue"], block["first_work_pr"])
-    issue, pr = record.get("issue") or {}, record.get("pullRequest") or {}
-    commits = ((pr.get("commits") or {}).get("nodes") or [])
-    first = (commits[0] or {}).get("commit") if commits else {}
-    created, first_work, pr_created = (
-        issue.get("createdAt"), (first or {}).get("committedDate"), pr.get("createdAt")
-    )
-    if (not all(isinstance(value, str) and UTC_PATTERN.fullmatch(value)
-                for value in (created, first_work, pr_created))
-            or datetime.fromisoformat(created.replace("Z", "+00:00")) >=
-               min(datetime.fromisoformat(value.replace("Z", "+00:00"))
-                   for value in (first_work, pr_created))
-            or issue.get("lastEditedAt") is not None
+    record = github_chronology(repository, block["github_issue"])
+    issue = record.get("issue") if isinstance(record, dict) else None
+    if not isinstance(issue, dict):
+        fail(f"{label}: GitHub assignment issue is missing")
+
+    def utc(value: Any) -> datetime:
+        if not isinstance(value, str) or UTC_PATTERN.fullmatch(value) is None:
+            fail(f"{label}: GitHub chronology timestamp is missing")
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            fail(f"{label}: GitHub chronology timestamp is invalid")
+
+    created = utc(issue.get("createdAt"))
+    if (issue.get("lastEditedAt") is not None
             or (issue.get("userContentEdits") or {}).get("totalCount") != 0):
-        fail(f"{label}: GitHub issue is not an unchanged pre-work assignment")
+        fail(f"{label}: GitHub assignment issue was edited")
+    timeline = issue.get("timelineItems") or {}
+    if (timeline.get("pageInfo") or {}).get("hasNextPage") is not False:
+        fail(f"{label}: GitHub cross-reference history is incomplete")
+    linked: list[tuple[datetime, int]] = []
+    for event in timeline.get("nodes") or []:
+        pr = (event or {}).get("source") or {}
+        if pr.get("__typename") != "PullRequest":
+            continue
+        if re.search(rf"(?m)^Issue:\s*#{block['github_issue']}\b", pr.get("body") or "") is None:
+            continue  # A discussion cross-reference is not a work claim.
+        commits = pr.get("commits") or {}
+        if (commits.get("pageInfo") or {}).get("hasNextPage") is not False or not commits.get("nodes"):
+            fail(f"{label}: linked PR commit history is incomplete")
+        dates = [utc((node.get("commit") or {}).get("committedDate"))
+                 for node in commits["nodes"]]
+        linked.append((min(utc(pr.get("createdAt")), *dates), pr["number"]))
+    if (not linked or block["first_work_pr"] not in [number for _, number in linked]
+            or created >= min(time for time, _ in linked)
+            or block["first_work_pr"] != min(linked)[1]):
+        fail(f"{label}: first_work_pr is not the earliest linked GitHub work")
     body = issue.get("body")
     if not isinstance(body, str):
         fail(f"{label}: GitHub issue has no verifiable body")

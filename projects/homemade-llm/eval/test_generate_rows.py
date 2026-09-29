@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate_rows  # noqa: E402
@@ -81,10 +81,20 @@ class GenerateRowsTests(unittest.TestCase):
                 "createdAt": ISSUE_CREATED_AT, "lastEditedAt": None,
                 "userContentEdits": {"totalCount": 0},
                 "body": "# Webhook secret rotation\n\n" + ASSIGNMENT_EXCERPT + "\n",
+                "timelineItems": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                    {"source": {"__typename": "PullRequest", "number": 66,
+                                "body": "Discussion of #77; not a work claim", "createdAt": "2026-09-26T12:00:00Z",
+                                "commits": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                                    {"commit": {"committedDate": "2026-09-26T11:00:00Z"}},
+                                ]}}},
+                    {"source": {"__typename": "PullRequest", "number": 88,
+                                "body": "Issue: #77\n", "createdAt": "2026-09-28T12:01:00Z",
+                                "commits": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                                    {"commit": {"committedDate": "2026-09-28T12:30:00Z"}},
+                                    {"commit": {"committedDate": FIRST_COMMIT_AT}},
+                                ]}}},
+                ]},
             },
-            "pullRequest": {"createdAt": "2026-09-28T12:01:00Z", "commits": {"nodes": [{"commit": {
-                "oid": "a" * 40, "committedDate": FIRST_COMMIT_AT,
-            }}]}},
         }
         mocked = patch.object(generate_rows, "github_chronology", return_value=self.github_record)
         mocked.start()
@@ -254,6 +264,53 @@ class GenerateRowsTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])
+
+    def test_earlier_linked_work_claim_is_refused(self):
+        self.github_record["issue"]["timelineItems"]["nodes"].append({"source": {
+            "__typename": "PullRequest", "number": 55, "body": "Issue: #77\n",
+            "createdAt": "2026-09-27T12:00:00Z",
+            "commits": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                {"commit": {"committedDate": "2026-09-27T11:00:00Z"}},
+            ]},
+        }})
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+    def test_unordered_earlier_commit_is_refused(self):
+        work_pr = self.github_record["issue"]["timelineItems"]["nodes"][1]["source"]
+        work_pr["commits"]["nodes"].append({"commit": {
+            "committedDate": "2026-09-26T11:00:00Z",
+        }})
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+    def test_incomplete_cross_references_are_refused(self):
+        self.github_record["issue"]["timelineItems"]["pageInfo"]["hasNextPage"] = True
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+
+class GitHubLookupTests(unittest.TestCase):
+    def test_query_reads_cross_references_and_handles_graphql_errors(self):
+        response = {"data": {"repository": {"issue": {"createdAt": ISSUE_CREATED_AT}}}}
+        with patch.object(generate_rows.subprocess, "run", return_value=Mock(
+            returncode=0, stdout=json.dumps(response),
+        )) as call:
+            self.assertEqual(
+                generate_rows.github_chronology("edwardjones3976/director-orchestrator", 77),
+                response["data"]["repository"],
+            )
+        command = call.call_args.args[0]
+        self.assertTrue(any("timelineItems" in part and "commits(first:100)" in part
+                            for part in command))
+        with patch.object(generate_rows.subprocess, "run", return_value=Mock(
+            returncode=0, stdout=json.dumps({"errors": [{"message": "denied"}]}),
+        )):
+            with self.assertRaises(SystemExit):
+                generate_rows.github_chronology("edwardjones3976/director-orchestrator", 77)
 
 
 if __name__ == "__main__":
