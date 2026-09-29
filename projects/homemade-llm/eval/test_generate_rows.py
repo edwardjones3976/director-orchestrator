@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate_rows  # noqa: E402
@@ -26,33 +27,20 @@ TARGET = {
 }
 
 ASSIGNMENT_EXCERPT = "Both secrets are accepted for one hour after rotation."
-CAPTURED_AT = "2026-09-27T10:00:00Z"
-FIRST_WORK_AT = "2026-09-28T12:00:00Z"
+ISSUE_CREATED_AT = "2026-09-27T10:00:00Z"
+FIRST_COMMIT_AT = "2026-09-28T12:00:00Z"
 
 
 def install_pre_work_assignment(root: Path) -> tuple[str, str, dict]:
-    """Write assignment bytes and an offline capture artifact under ``root``."""
+    """Write assignment bytes; GitHub chronology is mocked in this offline test."""
     assignment_path = root / "assignments" / "wo-77.md"
     assignment_path.parent.mkdir(parents=True, exist_ok=True)
-    assignment_path.write_text(
-        f"# Webhook secret rotation\n\n{ASSIGNMENT_EXCERPT}\n",
-        encoding="utf-8",
+    assignment_path.write_bytes(
+        f"# Webhook secret rotation\n\n{ASSIGNMENT_EXCERPT}\n".encode("utf-8")
     )
     source_ref = "assignments/wo-77.md"
     source_sha256 = hashlib.sha256(assignment_path.read_bytes()).hexdigest()
-    capture = {
-        "assignment_captured_at": CAPTURED_AT,
-        "first_work_at": FIRST_WORK_AT,
-        "context_bindings": [{"source_ref": source_ref, "source_sha256": source_sha256}],
-    }
-    capture_path = root / "captures" / "wo-77.capture.json"
-    capture_path.parent.mkdir(parents=True, exist_ok=True)
-    capture_path.write_text(json.dumps(capture, sort_keys=True), encoding="utf-8")
-    provenance = {
-        "assignment_capture_ref": "captures/wo-77.capture.json",
-        "assignment_captured_at": CAPTURED_AT,
-        "first_work_at": FIRST_WORK_AT,
-    }
+    provenance = {"github_issue": 77, "first_work_pr": 88}
     return source_ref, source_sha256, provenance
 
 
@@ -88,6 +76,19 @@ class GenerateRowsTests(unittest.TestCase):
         self.set_a, self.set_b = write_sets(self.root)
         self.out = self.root / "rows.jsonl"
         self.calls: list[str] = []
+        self.github_record = {
+            "issue": {
+                "createdAt": ISSUE_CREATED_AT, "lastEditedAt": None,
+                "userContentEdits": {"totalCount": 0},
+                "body": "# Webhook secret rotation\n\n" + ASSIGNMENT_EXCERPT + "\n",
+            },
+            "pullRequest": {"createdAt": "2026-09-28T12:01:00Z", "commits": {"nodes": [{"commit": {
+                "oid": "a" * 40, "committedDate": FIRST_COMMIT_AT,
+            }}]}},
+        }
+        mocked = patch.object(generate_rows, "github_chronology", return_value=self.github_record)
+        mocked.start()
+        self.addCleanup(mocked.stop)
 
     def write_scenarios(self, rows: list[dict]) -> Path:
         path = self.root / "scenarios.jsonl"
@@ -212,13 +213,6 @@ class GenerateRowsTests(unittest.TestCase):
             "source_ref": "raw/pr-bodies.jsonl",
             "source_sha256": hashlib.sha256(raw.read_bytes()).hexdigest(),
         }]
-        capture_path = self.root / "captures" / "wo-77.capture.json"
-        capture = json.loads(capture_path.read_text(encoding="utf-8"))
-        capture["context_bindings"] = [{
-            "source_ref": "raw/pr-bodies.jsonl",
-            "source_sha256": row["input"]["context"][0]["source_sha256"],
-        }]
-        capture_path.write_text(json.dumps(capture), encoding="utf-8")
         with self.assertRaises(SystemExit):
             self.generate([row])
         self.assertEqual(self.calls, [])
@@ -235,13 +229,6 @@ class GenerateRowsTests(unittest.TestCase):
             "source_ref": "pulls/360/body.md",
             "source_sha256": digest,
         }]
-        capture_path = self.root / "captures" / "wo-77.capture.json"
-        capture = json.loads(capture_path.read_text(encoding="utf-8"))
-        capture["context_bindings"] = [{
-            "source_ref": "pulls/360/body.md",
-            "source_sha256": digest,
-        }]
-        capture_path.write_text(json.dumps(capture), encoding="utf-8")
         with self.assertRaises(SystemExit):
             self.generate([row])
         self.assertEqual(self.calls, [])
@@ -253,15 +240,19 @@ class GenerateRowsTests(unittest.TestCase):
             self.generate([row])
         self.assertEqual(self.calls, [])
 
-    def test_late_capture_chronology_is_refused_before_provider_call(self):
+    def test_locally_forged_earlier_timestamps_cannot_override_github(self):
         row = self.default_scenario()
-        row["source_provenance"]["assignment_captured_at"] = "2026-09-29T20:00:00Z"
-        capture_path = self.root / "captures" / "wo-77.capture.json"
-        capture = json.loads(capture_path.read_text(encoding="utf-8"))
-        capture["assignment_captured_at"] = "2026-09-29T20:00:00Z"
-        capture_path.write_text(json.dumps(capture), encoding="utf-8")
+        row["source_provenance"]["assignment_captured_at"] = "2026-09-26T01:00:00Z"
+        row["source_provenance"]["first_work_at"] = "2026-09-28T12:00:00Z"
+        self.github_record["issue"]["createdAt"] = "2026-09-29T20:00:00Z"
         with self.assertRaises(SystemExit):
             self.generate([row])
+        self.assertEqual(self.calls, [])
+
+    def test_edited_issue_body_is_refused_before_provider_call(self):
+        self.github_record["issue"]["lastEditedAt"] = "2026-09-27T11:00:00Z"
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])
 
 

@@ -13,10 +13,9 @@ stops the run before ``--out`` is created.
         --set-a set-a/refs --set-b set-b/refs --out rows.jsonl \\
         --source-root path/to/dataset --terms-verified-at 2026-09-28T20:00:00Z
 
-Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and an
-offline chronology capture listed in ``source_provenance`` before a dry run succeeds
-or a provider is called. Historical scenarios without that capture contract remain
-refused; the chronology gate does not prove live issue timestamps.
+Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and
+GitHub issue/first-PR-commit chronology before a dry run or provider call.
+Other source types fail closed until they have an independent chronology route.
 """
 from __future__ import annotations
 
@@ -27,6 +26,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -67,11 +67,12 @@ DISPATCH_PY = Path.home() / ".claude" / "skills" / "provider-dispatch" / "dispat
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
-CHRONOLOGY_CONTRACT = (
-    "source_provenance must carry assignment_capture_ref, assignment_captured_at, and "
-    "first_work_at; assignment_capture_ref must resolve to UTF-8 JSON whose fields match "
-    "and prove assignment_captured_at is strictly before first_work_at, with "
-    "context_bindings listing every assignment_packet source_ref and source_sha256"
+GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+GITHUB_CHRONOLOGY_QUERY = (
+    "query($owner:String!,$repo:String!,$issue:Int!,$pr:Int!){"
+    "repository(owner:$owner,name:$repo){"
+    "issue(number:$issue){createdAt lastEditedAt body userContentEdits(first:1){totalCount}}"
+    "pullRequest(number:$pr){createdAt commits(first:1){nodes{commit{oid committedDate}}}}}}"
 )
 
 
@@ -148,55 +149,58 @@ def validate_scenario_source_provenance(
         fail(f"{label}: {problems[0]}")
 
 
+def github_chronology(repository: str, issue: int, pr: int) -> dict[str, Any]:
+    owner, repo = repository.split("/", 1)
+    try:
+        result = subprocess.run(
+            ["gh", "api", "graphql", "-f", f"query={GITHUB_CHRONOLOGY_QUERY}",
+             "-F", f"owner={owner}", "-F", f"repo={repo}",
+             "-F", f"issue={issue}", "-F", f"pr={pr}"],
+            capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
+        )
+        record = json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        fail("GitHub chronology lookup failed")
+    if result.returncode != 0 or record.get("errors") or not isinstance(record.get("data"), dict):
+        fail("GitHub chronology lookup failed")
+    return record["data"].get("repository") or {}
+
+
 def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str) -> None:
     block = scenario.get("source_provenance")
-    if not isinstance(block, dict):
-        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
-    if block.get("chronology_verified") is True or block.get("pre_work") is True:
-        fail(f"{label}: source_provenance must not use self-asserted chronology flags")
-    capture_ref = block.get("assignment_capture_ref")
-    captured_at = block.get("assignment_captured_at")
-    first_work_at = block.get("first_work_at")
-    if not isinstance(capture_ref, str) or not capture_ref.strip():
-        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
-    if not isinstance(captured_at, str) or UTC_PATTERN.fullmatch(captured_at) is None:
-        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
-    if not isinstance(first_work_at, str) or UTC_PATTERN.fullmatch(first_work_at) is None:
-        fail(f"{label}: {CHRONOLOGY_CONTRACT}")
-    relative = Path(capture_ref)
-    if (relative.is_absolute() or relative.drive or "\\" in capture_ref
-            or any(part in (".", "..") for part in relative.parts)):
-        fail(f"{label}: assignment_capture_ref must be a relative path under the source root")
-    capture_path = (source_root / relative).resolve()
-    if not capture_path.is_relative_to(source_root) or not capture_path.is_file():
-        fail(f"{label}: assignment_capture_ref does not resolve to a capture artifact")
-    try:
-        capture = json.loads(capture_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        fail(f"{label}: assignment capture artifact is not UTF-8 JSON")
-    if not isinstance(capture, dict):
-        fail(f"{label}: assignment capture artifact must be a JSON object")
-    for field in ("assignment_captured_at", "first_work_at"):
-        if capture.get(field) != block.get(field):
-            fail(f"{label}: source_provenance.{field} does not match capture artifact")
-    if captured_at >= first_work_at:
-        fail(f"{label}: assignment capture is not before first work time")
-    bindings = capture.get("context_bindings")
-    if not isinstance(bindings, list) or not bindings:
-        fail(f"{label}: capture artifact must list context_bindings with source_ref and source_sha256")
-    for item in scenario["input"]["context"]:
-        if item["kind"] != "assignment_packet":
-            continue
-        matched = False
-        for binding in bindings:
-            if not isinstance(binding, dict):
-                continue
-            if (binding.get("source_ref") == item["source_ref"]
-                    and binding.get("source_sha256") == item["source_sha256"]):
-                matched = True
-                break
-        if not matched:
-            fail(f"{label}: assignment_packet context is not listed in capture context_bindings")
+    repository = scenario["input"]["repository"]
+    if (not isinstance(block, dict) or not isinstance(repository, str)
+            or GITHUB_REPOSITORY.fullmatch(repository) is None
+            or type(block.get("github_issue")) is not int
+            or type(block.get("first_work_pr")) is not int
+            or min(block["github_issue"], block["first_work_pr"]) < 1):
+        fail(f"{label}: an unverified source needs github_issue and first_work_pr")
+    source_items = [item for item in scenario["input"]["context"]
+                    if item["kind"] == "assignment_packet"]
+    if not source_items or len(source_items) != len(scenario["input"]["context"]):
+        fail(f"{label}: this chronology route supports assignment issue context only")
+    record = github_chronology(repository, block["github_issue"], block["first_work_pr"])
+    issue, pr = record.get("issue") or {}, record.get("pullRequest") or {}
+    commits = ((pr.get("commits") or {}).get("nodes") or [])
+    first = (commits[0] or {}).get("commit") if commits else {}
+    created, first_work, pr_created = (
+        issue.get("createdAt"), (first or {}).get("committedDate"), pr.get("createdAt")
+    )
+    if (not all(isinstance(value, str) and UTC_PATTERN.fullmatch(value)
+                for value in (created, first_work, pr_created))
+            or datetime.fromisoformat(created.replace("Z", "+00:00")) >=
+               min(datetime.fromisoformat(value.replace("Z", "+00:00"))
+                   for value in (first_work, pr_created))
+            or issue.get("lastEditedAt") is not None
+            or (issue.get("userContentEdits") or {}).get("totalCount") != 0):
+        fail(f"{label}: GitHub issue is not an unchanged pre-work assignment")
+    body = issue.get("body")
+    if not isinstance(body, str):
+        fail(f"{label}: GitHub issue has no verifiable body")
+    for item in source_items:
+        source = (source_root / item["source_ref"]).resolve()
+        if source.read_bytes() != body.encode("utf-8"):
+            fail(f"{label}: captured source bytes differ from GitHub issue body")
 
 
 def validate_scenarios_for_dispatch(

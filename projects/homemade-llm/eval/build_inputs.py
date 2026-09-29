@@ -46,7 +46,7 @@ SCORED_FIELDS: tuple[str, ...] = (
     "evidence_requirements",
 )
 
-PULLS_SOURCE_REF = re.compile(r"^pulls/\d+(?:/|$)")
+PULLS_SOURCE_REF = re.compile(r"^pulls/\d+(?:/|$)", re.IGNORECASE)
 
 
 def manifest(directory: Path) -> str:
@@ -305,8 +305,6 @@ def validate_context(
             source_path = (source_root / relative).resolve()
             if not source_path.is_relative_to(source_root) or not source_path.is_file():
                 errors.append(f"{where}: source_ref does not resolve to a source file")
-            elif source_path.is_symlink() and not source_path.resolve().is_relative_to(source_root):
-                errors.append(f"{where}: source_ref symlink escapes the source root")
             else:
                 forbidden = _forbidden_assignment_source(source_ref, source_path, source_root)
                 if forbidden:
