@@ -17,9 +17,9 @@ Input contracts. Without ``--context`` an input carries ``id``, ``objective``,
 ``<context>/<id>.context.json``, a JSON array of provenance-bound excerpts with
 ``kind``, ``text``, ``source_ref`` and ``source_sha256``, in the shape of
 ``input.context`` in ``schemas/director-data-v1-row.schema.json``. A context
-item is refused, and no input is written, when its ``source_ref`` resolves to a
-held-out item (any reference id, or any reference's recorded source file or
-title) or when its text overlaps a scored target field of any reference.
+item is refused, and no input is written, unless its citation resolves to
+matching source bytes containing the excerpt. The item's own frozen assignment
+source is allowed; another held-out item's source and scored target text are not.
 """
 from __future__ import annotations
 
@@ -232,30 +232,80 @@ def _source_ref_forms(source_ref: str) -> set[str]:
     return forms
 
 
+def source_digests(refs_dir: Path, item_ids: list[str]) -> dict[str, set[str]]:
+    """Map recorded held-out source hashes to the reference ids they belong to."""
+    owners: dict[str, set[str]] = {}
+    for item_id in item_ids:
+        meta_path = refs_dir / "metadata" / f"{item_id}.meta.json"
+        if meta_path.is_file():
+            meta = _load_json(meta_path)
+            if isinstance(meta, dict):
+                digest = meta.get("source_sha256")
+                if isinstance(digest, str):
+                    owners.setdefault(digest, set()).add(item_id)
+    return owners
+
+
 def validate_context(
     context: Any,
     references: dict[str, dict[str, Any]],
     lineage_keys: set[str],
+    refs_dir: Path,
+    item_id: str,
+    held_out_digests: dict[str, set[str]],
 ) -> list[str]:
     """Every reason a context array may not be written, as messages; empty means accepted.
 
-    Shape follows ``input.context`` of the row schema. Lineage: a ``source_ref``
-    that resolves to any held-out identity is refused. Leak: text that carries a
-    scored-field string or eight-word shingle of any reference is refused, with
-    the reference id and the matched text named.
+    Shape follows ``input.context`` of the row schema. Only the item's own
+    frozen assignment source may be cited from held-out lineage. Every citation
+    must resolve to bytes with the stated hash and contain its excerpt.
     """
     errors = list(prompt_template.context_shape_errors(context))
     if errors:
         return errors
+    source_root = refs_dir.parent.resolve()
+    meta_path = refs_dir / "metadata" / f"{item_id}.meta.json"
+    meta = _load_json(meta_path) if meta_path.is_file() else {}
+    if not isinstance(meta, dict):
+        meta = {}
     for index, item in enumerate(context):
         where = f"context[{index}]"
-        if _source_ref_forms(item["source_ref"]) & lineage_keys:
-            errors.append(f"{where}: source_ref resolves to a held-out item")
         for ref_id in sorted(references):
             leak = _text_leak_match(references[ref_id], item["text"])
             if leak is not None:
                 errors.append(f"{where}: text overlaps scored field of {ref_id}: {leak}")
                 break
+        source_ref = item["source_ref"]
+        own_source = (item["kind"] == "assignment_packet"
+                      and source_ref == meta.get("source_file"))
+        if _source_ref_forms(source_ref) & lineage_keys and not own_source:
+            errors.append(f"{where}: source_ref resolves to a held-out item")
+        relative = Path(source_ref)
+        if (relative.is_absolute() or relative.drive or "\\" in source_ref
+                or any(part in (".", "..") for part in relative.parts)):
+            errors.append(f"{where}: source_ref must be a relative source path")
+        else:
+            source_path = (source_root / relative).resolve()
+            if not source_path.is_relative_to(source_root) or not source_path.is_file():
+                errors.append(f"{where}: source_ref does not resolve to a source file")
+            elif source_path == (source_root / "raw" / "pr-bodies.jsonl").resolve():
+                errors.append(f"{where}: PR body archive lacks assignment-time provenance")
+            else:
+                raw = source_path.read_bytes()
+                digest = hashlib.sha256(raw).hexdigest()
+                if digest != item["source_sha256"]:
+                    errors.append(f"{where}: source_sha256 does not match source bytes")
+                if own_source and digest != meta.get("source_sha256"):
+                    errors.append(f"{where}: source_sha256 does not match reference metadata")
+                if held_out_digests.get(digest) and not own_source:
+                    errors.append(f"{where}: source bytes belong to a held-out item")
+                try:
+                    source_text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    errors.append(f"{where}: source file is not UTF-8 text")
+                else:
+                    if " ".join(item["text"].split()) not in " ".join(source_text.split()):
+                        errors.append(f"{where}: text is not an excerpt of source_ref")
     return errors
 
 
@@ -354,6 +404,7 @@ def build(argv: list[str] | None = None) -> int:
             return _fail(f"reference {item_id} is not a JSON object")
         references[item_id] = reference
     held_out_keys = lineage_keys(refs_dir, item_ids) if context_dir is not None else set()
+    held_out_digests = source_digests(refs_dir, item_ids) if context_dir is not None else {}
 
     for item_id in item_ids:
         if item_id in exclusions:
@@ -386,7 +437,8 @@ def build(argv: list[str] | None = None) -> int:
             except FileNotFoundError as exc:
                 context_errors.append((item_id, str(exc)))
                 continue
-            problems = validate_context(context, references, held_out_keys)
+            problems = validate_context(context, references, held_out_keys, refs_dir,
+                                        item_id, held_out_digests)
             if problems:
                 context_errors.extend((item_id, problem) for problem in problems)
                 continue
