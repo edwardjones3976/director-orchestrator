@@ -505,6 +505,175 @@ class BuildInputsTests(unittest.TestCase):
             self.assertEqual(run["item_count"], 1)
 
 
+SHA = "0123456789abcdef" * 4
+
+
+def _context_item(**overrides):
+    item = {"kind": "assignment_packet", "text": "The packet asks for a mirror log check.",
+            "source_ref": "packets/other-source.md", "source_sha256": SHA}
+    item.update(overrides)
+    return item
+
+
+class BuildInputsContextTests(unittest.TestCase):
+    """Packet M2-C1: the D-M2-10 input contract with provenance-bound context."""
+
+    def _layout(self, tmp: Path) -> tuple[Path, Path, Path, Path]:
+        root = tmp / "dataset"
+        refs, out, context = root / "refs", root / "inputs", root / "context"
+        refs.mkdir(parents=True)
+        (refs / "metadata").mkdir()
+        context.mkdir()
+        return root, refs, out, context
+
+    def _held_out_task(self, root: Path, refs: Path) -> str:
+        """A set A item whose frozen source is a markdown packet beside the refs."""
+        item_id = "ew-one"
+        (refs / f"{item_id}.json").write_text(json.dumps(_minimal_ref(
+            item_id, constraints=["stdlib only", "alpha beta gamma delta epsilon zeta eta theta iota"],
+        )), encoding="utf-8")
+        md_path = root / "packets" / "ew-one.md"
+        md_path.parent.mkdir(exist_ok=True)
+        md_path.write_text(
+            "# Heading From Markdown\n\nBackground: the mirror task runs nightly on the G drive "
+            "and the owner wants the log kept.\n\n## Constraints\n\n- alpha beta gamma delta epsilon "
+            "zeta eta theta iota\n", encoding="utf-8")
+        (refs / "metadata" / f"{item_id}.meta.json").write_text(
+            json.dumps({"source_file": "packets/ew-one.md"}), encoding="utf-8")
+        (refs / "p2.json").write_text(json.dumps(_minimal_ref("p2", non_goals=["never touch the archive drive"])),
+                                      encoding="utf-8")
+        (refs / "metadata" / "p2.meta.json").write_text(json.dumps({"source_file": "packets/p2.md"}), encoding="utf-8")
+        (root / "packets" / "p2.md").write_text("# Second Packet\n", encoding="utf-8")
+        return item_id
+
+    def _build(self, refs: Path, out: Path, context: Path) -> tuple[int, str]:
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            code = build_inputs.build(["--set", "a", "--refs", str(refs), "--out", str(out),
+                                       "--context", str(context)])
+        return code, errors.getvalue()
+
+    def test_context_cut_from_the_frozen_source_is_written_with_the_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            excerpt = "Background: the mirror task runs nightly on the G drive and the owner wants the log kept."
+            for name in (item_id, "p2"):
+                (context / f"{name}.context.json").write_text(json.dumps([
+                    _context_item(text=excerpt, source_ref="director-orchestrator/docs/work-order-41.md"),
+                    _context_item(kind="project_policy", text="One writer per file.",
+                                  source_ref="AGENTS.md@a1b2c3", source_sha256="f" * 64),
+                ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 0, stderr)
+            payload = json.loads((out / f"{item_id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(payload), {"id", "objective", "repository", "title", "context"})
+            self.assertEqual(payload["title"], "Heading From Markdown")
+            self.assertEqual(payload["context"][0]["text"], excerpt)
+            self.assertEqual(set(payload["context"][0]), {"kind", "text", "source_ref", "source_sha256"})
+            self.assertEqual(payload["context"][1]["kind"], "project_policy")
+            run = json.loads((out.parent / f"{out.name}.build.json").read_text(encoding="utf-8"))
+            self.assertEqual(run["input_contract"], "D-M2-10")
+            self.assertEqual(run["context_dir"], str(context.resolve()))
+            self.assertEqual(run["context_manifest"], build_inputs.manifest(context))
+            self.assertEqual(run["n_inputs"], 2)
+
+    def test_legacy_build_without_context_records_the_m1_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, _context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            self.assertEqual(build_inputs.build(["--set", "a", "--refs", str(refs), "--out", str(out)]), 0)
+            payload = json.loads((out / f"{item_id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(payload), {"id", "objective", "repository", "title"})
+            run = json.loads((out.parent / f"{out.name}.build.json").read_text(encoding="utf-8"))
+            self.assertEqual(run["input_contract"], "D-M1-1")
+            self.assertIsNone(run["context_dir"])
+            self.assertIsNone(run["context_manifest"])
+
+    def test_context_whose_source_ref_resolves_to_a_held_out_item_is_refused(self):
+        refusals = {
+            "own id": "ew-one",
+            "other reference id": "p2",
+            "other id as path": "C:\\llm\\datasets\\heldout\\set-a\\p2.json",
+            "own source file": "packets/ew-one.md",
+            "own source file name": "ew-one.md",
+            "other source file stem": "packets/P2.md",
+            "case and punctuation folded": "EW_ONE",
+        }
+        for name, source_ref in refusals.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                (context / f"{item_id}.context.json").write_text(
+                    json.dumps([_context_item(source_ref=source_ref)]), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(f"context {item_id}: context[0]: source_ref resolves to a held-out item", stderr)
+                self.assertFalse(out.exists())
+                self.assertFalse((root / "inputs.build.json").exists())
+
+    def test_context_text_overlapping_a_scored_field_is_refused(self):
+        leaks = {
+            "own constraint shingle": ("Remember alpha beta gamma delta epsilon zeta eta theta when planning.", "ew-one"),
+            "other item non-goal": ("The owner said: never touch the archive drive.", "p2"),
+        }
+        for name, (text, leaked_from) in leaks.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                (context / f"{item_id}.context.json").write_text(
+                    json.dumps([_context_item(), _context_item(text=text)]), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(f"context {item_id}: context[1]: text overlaps scored field of {leaked_from}:", stderr)
+                self.assertFalse(out.exists())
+
+    def test_missing_empty_or_malformed_context_is_refused(self):
+        cases = {
+            "missing file": (None, "missing context file"),
+            "empty array": ([], "at least one item"),
+            "not an array": ({"kind": "assignment_packet"}, "must be a list"),
+            "bad kind": ([_context_item(kind="held_out_reference")], "kind must be one of"),
+            "bad hash": ([_context_item(source_sha256="nope")], "64 lowercase hex"),
+            "extra field": ([dict(_context_item(), constraints=["x"])], "exactly kind, text"),
+        }
+        for name, (context_value, fragment) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                if context_value is not None:
+                    (context / f"{item_id}.context.json").write_text(json.dumps(context_value), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(f"context {item_id}: ", stderr)
+                self.assertIn(fragment, stderr)
+                self.assertFalse(out.exists())
+
+    def test_excluded_item_needs_no_context_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            (context / f"{item_id}.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                code = build_inputs.build(["--set", "a", "--refs", str(refs), "--out", str(out),
+                                           "--context", str(context), "--exclude", "p2=answer revealed"])
+            self.assertEqual(code, 0, errors.getvalue())
+            self.assertEqual([p.name for p in out.iterdir()], [f"{item_id}.json"])
+
+    def test_context_dir_must_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            self._held_out_task(root, refs)
+            code, stderr = self._build(refs, out, context / "absent")
+            self.assertEqual(code, 1)
+            self.assertIn("context is not a directory", stderr)
+            self.assertFalse(out.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]

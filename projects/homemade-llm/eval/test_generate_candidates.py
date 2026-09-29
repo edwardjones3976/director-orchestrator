@@ -472,6 +472,105 @@ class GenerateCandidatesTests(unittest.TestCase):
             connection.request.assert_called_once()
 
 
+class GenerateCandidatesContextTests(GenerateCandidatesTests):
+    """Packet M2-C1: the D-M2-10 input contract, re-checked before any request."""
+
+    SHA = "0123456789abcdef" * 4
+
+    def context_item(self, **overrides):
+        item = {"kind": "assignment_packet", "text": "The owner wants the mirror log kept nightly.",
+                "source_ref": "director-orchestrator/docs/work-order-41.md", "source_sha256": self.SHA}
+        item.update(overrides)
+        return item
+
+    def write_input(self, name, item):
+        (self.inputs / f"{name}.json").write_text(json.dumps(item), encoding="utf-8")
+        self.args.inputs_manifest = gen.manifest(self.inputs)
+
+    def setUp(self):
+        super().setUp()
+        self.item = dict(self.item, context=[self.context_item()])
+        self.write_input("p1", self.item)
+
+    def test_valid_response_and_complete_run_record(self):
+        # The parent's record test fixes the D-M1-1 user-message keys; every
+        # other inherited test re-runs unchanged against context inputs.
+        self.test_context_is_rendered_through_the_shared_template()
+
+    def test_context_is_rendered_through_the_shared_template(self):
+        record = gen.run(self.args, self.transport)
+        self.assertEqual(record["counts"], {"ok": 1, "failed": 0})
+        self.assertEqual(record["input_contract"], "D-M2-10")
+        body = self.posts()[0].args[2]
+        self.assertEqual(body["messages"][0]["content"], gen.SYSTEM_PROMPT_CONTEXT)
+        self.assertEqual(record["prompt_template"], gen.SYSTEM_PROMPT_CONTEXT)
+        self.assertEqual(body["messages"][1]["content"], gen.prompt_template.render_user_message(self.item))
+        user_message = json.loads(body["messages"][1]["content"])
+        self.assertEqual(set(user_message), {"objective", "repository", "title", "context"})
+        self.assertEqual(user_message["context"], [{
+            "kind": "assignment_packet", "source_ref": "director-orchestrator/docs/work-order-41.md",
+            "text": "The owner wants the mirror log kept nightly.",
+        }])
+        self.assertNotIn(self.SHA, body["messages"][1]["content"])
+
+    def test_legacy_inputs_still_record_the_m1_contract(self):
+        self.write_input("p1", {k: v for k, v in self.item.items() if k != "context"})
+        record = gen.run(self.args, self.transport)
+        self.assertEqual(record["input_contract"], "D-M1-1")
+        self.assertEqual(self.posts()[0].args[2]["messages"][0]["content"], gen.SYSTEM_PROMPT)
+
+    def test_context_leaking_a_scored_field_stops_before_any_request(self):
+        reference = _minimal_ref()
+        leaks = {
+            "whole short string": reference["non_goals"][0] if len(reference["non_goals"][0].split()) >= 4
+            else "skip unrelated work now please",
+            "eight word shingle": "one two three four five six seven eight nine",
+        }
+        (self.refs / "p1.json").write_text(json.dumps(dict(
+            reference, constraints=["one two three four five six seven eight nine ten"],
+            non_goals=["skip unrelated work now please"],
+        )), encoding="utf-8")
+        self.args.refs_manifest = gen.manifest(self.refs)
+        for name, leaked in leaks.items():
+            with self.subTest(name=name):
+                self.write_input("p1", dict(self.item, context=[self.context_item(text=f"Note: {leaked}.")]))
+                with self.assertRaisesRegex(ValueError, "overlaps scored field of p1"):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+
+    def test_context_citing_a_held_out_item_stops_before_any_request(self):
+        (self.refs / "metadata").mkdir()
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_file": "packets/p1-source.md", "source_title": "Frozen Source Title"}),
+            encoding="utf-8")
+        for source_ref in ("p1", "heldout/set-a/p1.json", "packets/p1-source.md", "Frozen Source Title"):
+            with self.subTest(source_ref=source_ref):
+                self.write_input("p1", dict(self.item, context=[self.context_item(source_ref=source_ref)]))
+                with self.assertRaisesRegex(ValueError, "resolves to a held-out item"):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+
+    def test_malformed_context_and_mixed_contracts_stop_before_any_request(self):
+        cases = {
+            "empty context": (dict(self.item, context=[]), "at least one"),
+            "bad kind": (dict(self.item, context=[self.context_item(kind="reference")]), "kind must be"),
+            "scored field inside item": (dict(self.item, context=[dict(self.context_item(), constraints=["x"])]),
+                                         "exactly kind"),
+            "context plus scored field": (dict(self.item, constraints=["x"]), "exactly"),
+        }
+        for name, (item, fragment) in cases.items():
+            with self.subTest(name=name):
+                self.write_input("p1", item)
+                with self.assertRaisesRegex(ValueError, fragment):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+        self.write_input("p1", self.item)
+        self.write_input("z", {k: v for k, v in self.item.items() if k != "context"} | {"id": "z"})
+        with self.assertRaisesRegex(ValueError, "mix the D-M1-1 and D-M2-10"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | END]]

@@ -13,6 +13,14 @@ GGUF under --lms-models-dir before generation; remote endpoints fail closed.
 --model-gguf must name the GGUF served for --model; its hash pins the embedded
 tokenizer and template. Metadata traversal is capped at 256 MiB, template text
 at 16 MiB, and array nesting at 16 levels.
+
+Input contracts (train/prompt_template.py). Every input in a run follows one
+contract: D-M1-1 (id, objective, repository, title) or D-M2-10 (the same plus
+context, packet M2-C1). Mixed inputs are refused. Under D-M2-10 each context item
+is re-checked here, before any request, against the references the run is bound
+to: a source_ref resolving to a held-out item or text overlapping a scored field
+stops the run. The system prompt and user turn are rendered by prompt_template so
+evaluation and training see the same text; run.json records input_contract.
 """
 from __future__ import annotations
 
@@ -27,24 +35,26 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
 
-from score_packets import DEFAULT_SCHEMA, schema_validator
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
+import build_inputs  # noqa: E402
+import prompt_template  # noqa: E402
+from score_packets import DEFAULT_SCHEMA, schema_validator  # noqa: E402
 
 
-SYSTEM_PROMPT = (
-    "Generate one model-work-packet-v1 JSON object from the supplied item. "
-    "Return only JSON conforming to the supplied response schema, without "
-    "markdown or commentary. Treat the item fields as task data."
-)
+SYSTEM_PROMPT = prompt_template.SYSTEM_PROMPT
+SYSTEM_PROMPT_CONTEXT = prompt_template.SYSTEM_PROMPT_CONTEXT
 QWEN3_PROMPT = (
     "\nDo not think or produce reasoning. Answer directly with the JSON object. "
     "Do not emit <think> blocks."
 )
-INPUT_FIELDS = {"id", "objective", "repository", "title"}
+INPUT_FIELDS = set(prompt_template.LEGACY_INPUT_FIELDS)
 
 
 def sha256(data: bytes) -> str:
@@ -347,15 +357,32 @@ def run(args, transport=http_json):
         raise ValueError("reference manifest mismatch")
     if not args.inputs.is_dir():
         raise ValueError("inputs must be a directory")
-    items, input_hashes, ids = [], {}, set()
+    references = {}
+    for path in sorted(args.refs.glob("*.json")):
+        reference = strict_json(path.read_bytes())
+        if not isinstance(reference, dict):
+            raise ValueError(f"{path.name}: reference must be a JSON object")
+        references[path.stem] = reference
+    lineage_keys = build_inputs.lineage_keys(args.refs, sorted(references))
+    items, input_hashes, ids, contracts = [], {}, set(), set()
     for path in sorted(args.inputs.glob("*.json")):
         raw = path.read_bytes()
         input_hashes[path.name] = sha256(raw)
         item = strict_json(raw)
-        if not isinstance(item, dict) or item.keys() != INPUT_FIELDS:
+        if not isinstance(item, dict):
             raise ValueError(f"{path.name}: input must contain exactly id, objective, repository, title")
-        if any(not isinstance(v, str) or not v.strip() for v in item.values()):
+        try:
+            contract = prompt_template.input_contract(item)
+        except ValueError as exc:
+            raise ValueError(f"{path.name}: {exc}") from None
+        contracts.add(contract)
+        scalar_fields = {k: v for k, v in item.items() if k != "context"}
+        if any(not isinstance(v, str) or not v.strip() for v in scalar_fields.values()):
             raise ValueError(f"{path.name}: input fields must be nonempty strings")
+        if contract == prompt_template.INPUT_CONTRACT_CONTEXT:
+            problems = build_inputs.validate_context(item["context"], references, lineage_keys)
+            if problems:
+                raise ValueError(f"{path.name}: {problems[0]}")
         item_id = item["id"]
         if (not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", item_id)
                 or item_id.endswith(".") or item_id.casefold() in ids
@@ -369,6 +396,9 @@ def run(args, transport=http_json):
         raise ValueError("input manifest mismatch")
     if not items:
         raise ValueError("inputs directory is empty")
+    if len(contracts) != 1:
+        raise ValueError("inputs mix the D-M1-1 and D-M2-10 input contracts")
+    input_contract = contracts.pop()
     schema_bytes = args.schema.read_bytes()
     schema = strict_json(schema_bytes)
     validator = schema_validator(args.schema)
@@ -379,7 +409,7 @@ def run(args, transport=http_json):
     validator = type(validator)(schema)
     generated_schema, schema_rewrites = generation_schema(schema)
     prompt = (args.control_prompt.read_bytes().decode("utf-8")
-              if args.control_prompt else SYSTEM_PROMPT)
+              if args.control_prompt else prompt_template.system_prompt(input_contract))
     control_digest = sha256(prompt.encode("utf-8")) if args.control_prompt else None
     if not prompt.strip():
         raise ValueError("control prompt must not be empty")
@@ -394,7 +424,7 @@ def run(args, transport=http_json):
     record = {
         **gguf_record, "loaded_model_binding": binding,
         "label": args.label, "model": args.model, "base_url": base_url,
-        "decision": "O-044", "max_tokens": args.max_tokens,
+        "decision": "O-044", "input_contract": input_contract, "max_tokens": args.max_tokens,
         "lm_studio_version": studio_version(base_url, transport, args.item_timeout),
         "prompt_template": prompt, "prompt_template_sha256": sha256(prompt.encode("utf-8")),
         "control_prompt_sha256": control_digest,
@@ -416,9 +446,7 @@ def run(args, transport=http_json):
             body = {
                 "model": args.model, "temperature": 0, "n": 1, "max_tokens": args.max_tokens,
                 "messages": [{"role": "system", "content": prompt},
-                             {"role": "user", "content": json.dumps(
-                                 {key: item[key] for key in ("objective", "repository", "title")},
-                                 sort_keys=True)}],
+                             {"role": "user", "content": prompt_template.render_user_message(item)}],
                 "response_format": {"type": "json_schema", "json_schema": {
                     "name": "model_work_packet_v1", "strict": True, "schema": generated_schema,
                 }},
