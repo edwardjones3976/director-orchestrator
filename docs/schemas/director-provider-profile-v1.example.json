@@ -420,10 +420,10 @@
       "default_profile": "engineering",
       "overall_effort_policy": "telemetry_only_no_separate_allocation",
       "profiles": {
-        "engineering": 10,
-        "enterprise": 5,
-        "mixed": 10,
-        "public_research": 5
+        "engineering": 8,
+        "enterprise": 4,
+        "mixed": 8,
+        "public_research": 4
       },
       "zero_target_rule": "ineligible"
     },

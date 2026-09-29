@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
@@ -75,7 +76,7 @@ class RecordOfflineTrialTests(unittest.TestCase):
         trial.update(wall_seconds=65.1816, owner_pause_seconds=0, machine_seconds=65.1816)
         row = recorder.row_from_receipt(receipt, rubric, sha)
         self.assertEqual(row["wall_seconds"], 65.1816)
-        self.assertFalse(recorder.append_row(self.log, row))
+        self.assertTrue(recorder.append_row(self.log, row))
 
     def test_pause_summary_requires_matching_approved_intervals(self):
         rubric, sha = rubric_fixture()
@@ -161,7 +162,7 @@ class RecordOfflineTrialTests(unittest.TestCase):
     def test_records_first_failure_then_refuses_append_without_changing_bytes(self):
         row = measured_row()
         row["wall_seconds"] = 65.18
-        row["machine_seconds"] = 65.18
+        row["machine_seconds"] = 0  # Inconsistent accounting remains a genuine failure.
         self.assertFalse(recorder.append_row(self.log, row))
         before = self.log.read_bytes()
         following = {**measured_row(), "run_id": "DIR-LG-CD34"}
@@ -253,3 +254,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]

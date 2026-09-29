@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
@@ -90,45 +93,59 @@ class IdentityTests(unittest.TestCase):
         for flag in ("production_lane", "production_credit", "review_authority", "merge_authority"):
             self.assertIs(lane[flag], False, flag)
 
-    def test_zai_is_absent_from_every_production_and_review_enumeration(self):
-        # This absence is the structural guarantee: no admission, credit,
-        # review verdict, committee vote or reviewer independence can name zai.
+    def test_production_enrollment_is_prospective_and_leaves_the_trial_ledger_closed(self):
+        # The owner enrolled zai as a production lane on 2026-09-27. The trial
+        # contact descriptor and its ledger keep their no-credit, no-authority
+        # record (above and in LedgerTests); enrollment is prospective and lives
+        # in the production registries below instead.
         from director_orchestrator import engine, langgraph_postgres, team_charter
         from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, LANES
         from director_orchestrator.interactions import InteractionProvider, ProviderTransport
         from director_orchestrator.models import ProviderName
         from director_orchestrator.native_v3_review_issuer import QUALIFIED_PRODUCTS
-        from director_orchestrator.primary_roster import KNOWN_LANES, REVIEWERS
+        from director_orchestrator.primary_roster import IMPLEMENTERS, KNOWN_LANES, PRIMARY_TEAM, REVIEWERS
         from director_orchestrator.primary_transports import PRIMARY_PROVIDER_LANES
         from director_orchestrator.workload_policy import DirectProductionProvider, Provider
 
-        enumerations = {
+        enrolled = {
             "ProviderName": {member.value for member in ProviderName},
             "Provider": {member.value for member in Provider},
             "DirectProductionProvider": {member.value for member in DirectProductionProvider},
             "LANES": set(LANES),
             "PRIMARY_PROVIDER_LANES": set(PRIMARY_PROVIDER_LANES),
             "KNOWN_LANES": set(KNOWN_LANES),
+            "IMPLEMENTERS": set(IMPLEMENTERS),
             "REVIEWERS": set(REVIEWERS),
+            # Foreman scope ruling 2026-09-27: interaction identities and a
+            # committee debate seat, as for other enrolled production lanes.
+            "InteractionProvider": {member.value for member in InteractionProvider},
+            "ProviderTransport": {"zai" for member in ProviderTransport if member.value == "zai_coding_cli"},
+            "committee seat": set(team_charter._TEAM_OPERATING_CHARTER["committee"]["debate"]["seatable_members"]),
+            # Owner decision 2026-09-27: "Approve 1.5; total 10.0".
+            "committee weight": set(team_charter._TEAM_OPERATING_CHARTER["committee"]["members"]),
+        }
+        for name, values in enrolled.items():
+            self.assertIn("zai", values, name)
+        for profile, targets in ALLOCATION_PROFILES.items():
+            self.assertEqual(targets["zai"], 18, profile)
+        # Not granted by this enrollment: the core-inventory floor, the legacy
+        # engine's reviewer set (it has no Z.ai worker) and native acceptance
+        # products (no protected signing authority).
+        not_granted = {
+            "PRIMARY_TEAM": set(PRIMARY_TEAM),
             "_TRUSTED_PRIMARY_REVIEWERS": {
                 getattr(member, "value", member) for member in engine._TRUSTED_PRIMARY_REVIEWERS
             },
             "QUALIFIED_PRODUCTS": set(QUALIFIED_PRODUCTS),
-            "InteractionProvider": {member.value for member in InteractionProvider},
-            "ProviderTransport": {member.value for member in ProviderTransport},
-            "committee": set(team_charter._TEAM_OPERATING_CHARTER["committee"]["members"]),
         }
-        for name, values in enumerations.items():
+        for name, values in not_granted.items():
             self.assertNotIn("zai", {str(value).lower() for value in values}, name)
-        for profile, targets in ALLOCATION_PROFILES.items():
-            self.assertNotIn("zai", targets, profile)
         # The Postgres admission ledger's lane allowlist is literal SQL, not an enum.
         ddl = Path(langgraph_postgres.__file__).read_text(encoding="utf-8")
         literals = re.findall(r"provider_lane\s+IN\s*\(([^)]*)\)", ddl)
         self.assertTrue(literals, "expected at least one provider_lane IN (...) literal")
         for literal in literals:
             lanes = {item.strip().strip("'") for item in literal.split(",")}
-            self.assertNotIn("zai", lanes)
             self.assertEqual(lanes, set(PRIMARY_PROVIDER_LANES))
 
 
@@ -171,7 +188,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_each_widening_setting_fails_startup_validation(self):
         widenings = {
-            "ZAI_MODE": dict(zai_mode="production"),
+            "ZAI_MODE": dict(zai_mode="unrestricted"),
             "ZAI_ALLOW_REPOSITORY_WRITE": dict(zai_allow_repository_write=True),
             "ZAI_ALLOW_REVIEW_VERDICT": dict(zai_allow_review_verdict=True),
             "ZAI_PRODUCTION_ACTIVATION": dict(zai_production_activation="sha256:" + "f" * 64),
@@ -186,6 +203,10 @@ class SettingsTests(unittest.TestCase):
                     widened.validate_zai_trial_configuration()
                 self.assertIn(variable, str(caught.exception))
                 self.assertFalse(all(widened.zai_trial_readiness(moment=BEFORE_END).values()))
+        # The production lane's switch is refused outside production mode.
+        with self.assertRaises(ValueError) as caught:
+            replace(self.ready, zai_enabled=True).validate_zai_trial_configuration()
+        self.assertIn("ZAI_ENABLED", str(caught.exception))
         self.ready.validate_zai_trial_configuration()
 
     def test_individual_readiness_checks_close_the_lane(self):
@@ -700,3 +721,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

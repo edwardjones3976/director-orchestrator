@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
@@ -18,7 +19,7 @@ from dataclasses import asdict
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sqlite3
 import re
 
@@ -134,19 +135,25 @@ def require_validation_generation(identity):
         raise ActivationEvidenceError("provider validation manifest differs from staged generation") from None
 
 
-def require_generation(settings, identity, *, reserve=False):
+def require_generation(settings, identity, *, reserve=False, environment=None, local_artifact=None,
+                       journal_connection=None):
     """Verify every binding before any journal creation or runtime mutation.
 
     A missing manifest is never treated as an implicit legacy generation. The
     owner selects the manifest's exact bytes via a separately protected digest.
     """
+    environment = os.environ if environment is None else environment
+    artifact = Path if local_artifact is None else local_artifact
+    deployment_path = Path if local_artifact is None else PurePosixPath
     try:
+        if reserve and (local_artifact is not None or journal_connection is not None):
+            raise ValueError("local evidence access cannot reserve a generation")
         settings.project_execution_authority_pins()
         local = settings.langgraph_primary_acceptance_mode == "owner-local-evidence-v1"
         if settings.langgraph_primary_acceptance_mode not in {"provider-v2", "provider-v3-two-party", "owner-local-evidence-v1"}:
             raise ValueError("generation selection requires signed provider acceptance")
-        source = Path(os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH"])
-        pin = os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
+        source = artifact(environment["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH"])
+        pin = environment["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
         raw = source.read_bytes()
         if len(raw) > 131072 or len(pin) != 64 or hashlib.sha256(raw).hexdigest() != pin:
             raise ValueError("manifest pin mismatch")
@@ -162,9 +169,9 @@ def require_generation(settings, identity, *, reserve=False):
             raise ValueError("closed generation contract mismatch")
         if local:
             from .primary_activation_evidence import load_pinned_owner_local_adoption
-            evidence_path = Path(settings.langgraph_primary_local_evidence_adoption_path)
+            evidence_path = deployment_path(settings.langgraph_primary_local_evidence_adoption_path)
             evidence_digest = settings.langgraph_primary_local_evidence_adoption_sha256
-            adoption = load_pinned_owner_local_adoption(evidence_path,
+            adoption = load_pinned_owner_local_adoption(artifact(str(evidence_path)),
                 expected_sha256=evidence_digest, owner_token=settings.langgraph_primary_owner_token)
             if adoption["reviewed_source_tree"] != identity.candidate_tree:
                 raise ValueError("adopted review source differs from generation")
@@ -178,27 +185,28 @@ def require_generation(settings, identity, *, reserve=False):
                 raise ValueError("adopted repository differs from configured authority")
             observed_evidence_digest = adoption["adoption_digest"]
         else:
-            evidence_path = Path(settings.langgraph_primary_acceptance_registry_path)
+            evidence_path = deployment_path(settings.langgraph_primary_acceptance_registry_path)
             evidence_digest = settings.langgraph_primary_acceptance_registry_sha256
-            observed_evidence_digest = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+            observed_evidence_digest = hashlib.sha256(artifact(str(evidence_path)).read_bytes()).hexdigest()
         if (manifest["activation"] != asdict(identity)
             or manifest["journal_path"] != settings.langgraph_primary_acceptance_journal_path
             or manifest[evidence_path_field] != str(evidence_path)
             or manifest[evidence_digest_field] != evidence_digest
             or observed_evidence_digest != manifest[evidence_digest_field]
             or manifest["provider_bindings_sha256"] != hashlib.sha256(
-                os.environ.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "").encode()).hexdigest()
+                environment.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "").encode()).hexdigest()
             or manifest["deployment_configuration_sha256"] != deployment_digest(settings)):
             raise ValueError("mixed generation inputs")
         if (not re.fullmatch(r"sha256:[0-9a-f]{64}", manifest["image_id"])
-            or manifest["image_id"] != os.environ.get("DIRECTOR_RUNTIME_IMAGE_ID")
+            or manifest["image_id"] != environment.get("DIRECTOR_RUNTIME_IMAGE_ID")
             or not re.fullmatch(r"[0-9a-f]{64}", manifest["resolved_compose_sha256"])
-            or manifest["resolved_compose_sha256"] != os.environ.get("DIRECTOR_RESOLVED_DEPLOYMENT_SHA256")):
+            or manifest["resolved_compose_sha256"] != environment.get("DIRECTOR_RESOLVED_DEPLOYMENT_SHA256")):
             raise ValueError("deployed image or Compose configuration differs")
-        journal = Path(manifest["journal_path"])
+        journal = deployment_path(manifest["journal_path"])
         # Keep generation storage in the durable data mount and away from every
         # manifest/registry. Selection never overwrites an earlier generation.
-        if not journal.is_absolute() or journal.parent != GENERATION_DATA_ROOT or journal.suffix != ".sqlite3":
+        data_root = GENERATION_DATA_ROOT if local_artifact is None else PurePosixPath("/data")
+        if not journal.is_absolute() or journal.parent != data_root or journal.suffix != ".sqlite3":
             raise ValueError("generation journal must be a direct /data SQLite file")
         if reserve:
             # Preserve exact reviewed bytes under a content-addressed name. The
@@ -223,16 +231,17 @@ def require_generation(settings, identity, *, reserve=False):
                     connection.execute("INSERT INTO activation_generation VALUES (1,?)", (pin,))
             finally:
                 connection.close()
-        elif not journal.is_file():
+        elif not artifact(str(journal)).is_file():
             raise ValueError("selected generation journal is absent")
         else:
-            connection = sqlite3.connect(journal.resolve().as_uri() + "?mode=ro", uri=True)
+            connection = journal_connection or sqlite3.connect(artifact(str(journal)).resolve().as_uri() + "?mode=ro", uri=True)
             try:
                 row = connection.execute("SELECT manifest_sha256 FROM activation_generation WHERE singleton=1").fetchone()
                 if row != (pin,):
                     raise ValueError("journal belongs to another generation")
             finally:
-                connection.close()
+                if journal_connection is None:
+                    connection.close()
         return manifest
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
         raise ActivationEvidenceError("generation manifest or bindings unavailable, mixed, or already reserved") from None
@@ -322,3 +331,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]

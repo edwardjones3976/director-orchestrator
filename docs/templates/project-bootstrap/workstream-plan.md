@@ -144,10 +144,7 @@ serious-safety signal. Any changed candidate invalidates prior review evidence.
 - <merge/deployment/publication/access gate>
 - <serious-safety stop>
 
-Contribution tags record the author of the plan or artifact. They do not prove
-the provider identity or satisfy any gate above. Preserve prior valid tags and
-add a new outer pair when this plan is revised; for syntax-sensitive artifacts,
-use the commit, pull-request, or `REVIEW_READY` envelope instead.
+Record actual contributors in `Contributed-by:` commit trailers and use one `Sole author:` PR header with assistance when applicable, following PR #284. Keep `Co-Authored-By` trailers. Write no new in-file tags; existing tags are historical pending mechanical cleanup. Attribution does not prove provider identity or satisfy any gate above.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | claude-code/chief-programmer | 2026-08-24 | 21:35 UTC | END]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 22:10 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
@@ -113,9 +114,16 @@ class PrimaryRosterTests(unittest.TestCase):
     def test_zero_target_is_ineligible_at_startup(self):
         self.assertEqual(admission_reason("perplexity", [], allocation_profile="engineering"), "workload_profile_lane_ineligible")
 
+    # Since the Z.ai enrollment reduced antigravity to 8% and GitHub Copilot to 8%,
+    # an empty history leaves them inside their normal band while larger lanes are
+    # below theirs. This history puts every candidate inside its band, so these
+    # tests exercise capability gating and cost order rather than share tiers.
+    ENGINEERING_IN_BAND = ("openai",) * 5 + ("claude",) * 3
+    ENTERPRISE_IN_BAND = ("openai",) * 4 + ("claude",) * 5
+
     def test_antigravity_requires_primary_verifier(self):
         roster = self.select(available=("openai", "claude", "grok", "antigravity"),
-            required_capabilities=("bounded_scaffolding",),
+            required_capabilities=("bounded_scaffolding",), history=self.ENGINEERING_IN_BAND,
             trusted_cost_ranks={"openai": 3, "claude": 2, "grok": 4, "antigravity": 0})
         self.assertEqual(roster.producer, "antigravity")
         self.assertIn(roster.reviewer, PRIMARY_TEAM)
@@ -123,6 +131,7 @@ class PrimaryRosterTests(unittest.TestCase):
 
     def test_explicit_team_mode_plans_engineering_without_scaffolding_permission(self):
         roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
+            history=self.ENGINEERING_IN_BAND,
             trusted_cost_ranks={"openai":3,"claude":2,"grok":4,"antigravity":0})
         self.assertEqual(roster.producer,"antigravity")
         self.assertNotEqual(roster.reviewer,"antigravity")
@@ -135,6 +144,7 @@ class PrimaryRosterTests(unittest.TestCase):
 
     def test_explicit_team_mode_can_plan_independent_antigravity_review(self):
         roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
+            history=self.ENGINEERING_IN_BAND,
             trusted_cost_ranks={"openai":0,"claude":3,"grok":4,"antigravity":1})
         self.assertEqual(roster.producer,"openai")
         self.assertEqual(roster.reviewer,"antigravity")
@@ -147,6 +157,7 @@ class PrimaryRosterTests(unittest.TestCase):
 
     def test_github_copilot_only_explicit_repository_assistance(self):
         args = dict(available=("openai", "claude", "cursor", "github-copilot"), allocation_profile="enterprise",
+            history=self.ENTERPRISE_IN_BAND,
             trusted_cost_ranks={"openai": 4, "claude": 3, "cursor": 2, "github-copilot": 0})
         self.assertNotEqual(self.select(**args).producer, "github-copilot")
         args["required_capabilities"] = ("repository_assistance",)
@@ -314,3 +325,4 @@ class SelectableLaneCostRankTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

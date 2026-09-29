@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -16,9 +17,12 @@ from director_orchestrator.allocation_profiles import (
     ALLOCATION_PROFILES,
     DEFAULT_ALLOCATION_PROFILE,
     LANES,
+    PRE_ZAI_ALLOCATION_PROFILES,
+    PRE_ZAI_LANES,
     allocation_profile_digest,
     allocation_targets,
     historical_allocation_profile_digest,
+    pre_zai_allocation_profile_digest,
     prospective_allocation_profile_digest,
 )
 from director_orchestrator.conditional_allocation import (
@@ -53,6 +57,13 @@ VERIFIED_LEGACY_DIGESTS = {
     "enterprise": "sha256:db08376ea3c632828f326d6e08f4ead2a865bd8fbb7faa1396969275c5a8815a",
     "mixed": "sha256:f228e056553673abdffce8f84af45801deb73e0b2bd612930e07fcc36980e976",
     "public_research": "sha256:81687a465f4fcbae938733dc83cddc2ad293e519983f4f9c79394f41a9d9474c",
+}
+# The v2 prospective identities bound to admissions before the Z.ai enrollment.
+VERIFIED_PRE_ZAI_DIGESTS = {
+    "engineering": "sha256:d6e1b1845fdbe0ea0668362b90ad61951b5b1ba3dd12ebdd1e39d12cc4dbb0ff",
+    "enterprise": "sha256:f13e3660a3ca511e780fbdee01a872ab730790f1e712e7ffacd266d5641902a2",
+    "mixed": "sha256:29e6c0aaef011c0c42a45e883ecc345af726bb6776b5aa09a1fdc65559b6f414",
+    "public_research": "sha256:2c468e15e80c666cf7d638397c390a30acb9621dc58f10e6a31165e1a988b609",
 }
 
 
@@ -278,31 +289,28 @@ class TestConditionalAllocation(unittest.TestCase):
 
     def test_pinned_legacy_profiles_and_digests_unchanged(self):
         """Verify legacy allocation profiles, lanes, default, and exact pinned digests remain untouched."""
+        # The Z.ai enrollment appended one lane; the eight earlier lanes and their
+        # pre-enrollment targets are pinned separately and never edited.
         self.assertEqual(
-            LANES,
+            PRE_ZAI_LANES,
             ("openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot"),
         )
+        self.assertEqual(LANES, (*PRE_ZAI_LANES, "zai"))
         self.assertEqual(DEFAULT_ALLOCATION_PROFILE, "engineering")
         self.assertEqual(
             set(ALLOCATION_PROFILES.keys()),
             {"engineering", "mixed", "public_research", "enterprise"},
         )
-        self.assertEqual(
-            tuple(allocation_targets("engineering").values()),
-            (40, 25, 15, 10, 10, 0, 0, 0),
-        )
-        self.assertEqual(
-            tuple(allocation_targets("mixed").values()),
-            (27, 33, 10, 10, 5, 5, 5, 5),
-        )
-        self.assertEqual(
-            tuple(allocation_targets("public_research").values()),
-            (20, 25, 5, 5, 5, 25, 15, 0),
-        )
-        self.assertEqual(
-            tuple(allocation_targets("enterprise").values()),
-            (32, 38, 5, 5, 5, 0, 5, 10),
-        )
+        pinned = {
+            "engineering": (40, 25, 15, 10, 10, 0, 0, 0),
+            "mixed": (27, 33, 10, 10, 5, 5, 5, 5),
+            "public_research": (20, 25, 5, 5, 5, 25, 15, 0),
+            "enterprise": (32, 38, 5, 5, 5, 0, 5, 10),
+        }
+        for profile_name, weights in pinned.items():
+            self.assertEqual(tuple(PRE_ZAI_ALLOCATION_PROFILES[profile_name].values()), weights)
+            self.assertEqual(
+                pre_zai_allocation_profile_digest(profile_name), VERIFIED_PRE_ZAI_DIGESTS[profile_name])
 
         # Pin the exact verified legacy (retired hard-tolerance) digests. The
         # historical helper reproduces the original payload; it never binds a
@@ -365,11 +373,18 @@ class TrialLaneConsistencyTests(unittest.TestCase):
         # One date: the descriptor's eligibility floor is the trial lane's TRIAL_END day.
         self.assertEqual(CONDITIONAL_EFFECTIVE_DATE_FLOOR, TRIAL_END.date().isoformat())
         self.assertIn(CONDITIONAL_EFFECTIVE_DATE_FLOOR, ZAI_CONTACT_LANE.activation)
-        # One lane id, still absent from the active registry: the descriptor stays PROPOSED.
+        # One lane id. The owner enrolled only Z.ai, at the descriptor's 18%, into
+        # the active profiles; the rest of the conditional roster stays PROPOSED
+        # and none of its unimplemented lanes was enrolled incidentally.
         self.assertEqual(ZAI_CONTACT_LANE.lane_id, "zai")
         self.assertIn("zai", CONDITIONAL_LANES)
         self.assertEqual(CONDITIONAL_TARGETS["zai"], 18)
-        self.assertNotIn("zai", LANES)
+        self.assertIn("zai", LANES)
+        for profile_name in ALLOCATION_PROFILES:
+            self.assertEqual(allocation_targets(profile_name)["zai"], CONDITIONAL_TARGETS["zai"])
+        self.assertEqual(set(LANES) - set(PRE_ZAI_LANES), {"zai"})
+        for lane in ("grok-bot", "vscode-coding-bot"):
+            self.assertNotIn(lane, LANES)
         self.assertEqual(CONDITIONAL_PROFILE.status, "PROPOSED")
         contact = CONDITIONAL_CONTACTS["zai"]
         self.assertEqual(contact.binding_status, "unbound")
@@ -393,3 +408,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

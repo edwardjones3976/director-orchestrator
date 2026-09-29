@@ -1,6 +1,19 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]]
@@ -676,8 +689,29 @@ class World:
         return httpx.Response(404, json={"detail": "fixture"})
 
     def slack(self, runtime, channel, owner=None):
-        return REAL_SLACK_THREADS(runtime, channel, owner, client=httpx.Client(
+        reader = REAL_SLACK_THREADS(runtime, channel, owner, client=httpx.Client(
             transport=httpx.MockTransport(self.handle), follow_redirects=False, trust_env=False))
+        # Rule fixtures supply synthetic records, including intentionally malformed
+        # ones. They do not exercise or attest the real trusted-store consumer;
+        # TrustedTaskConsumerTests and the sanctioned TLS fixture cover that path.
+        reader.task = lambda task: reader.reads.get(API + "/v1/tasks/" + task,
+                                                   params=dict(reader.m.READBACK_QUERY))
+        reader.deliveries = lambda task: reader.reads.get(API + "/v1/primary/tasks/" + task + "/deliveries")[0]
+        def binding(thread):
+            status, body = reader._get(API + "/v1/slack-thread-bindings",
+                {"channel_id": reader.channel, "thread_ts": thread}, reader.env["ORCHESTRATOR_SHARED_SECRET"])
+            if status in (404, 409):
+                return None if status == 404 else "AMBIGUOUS"
+            if status != 200:
+                raise ValueError("fixture binding unavailable")
+            value = json.loads(body)
+            task = value.get("task_id") if isinstance(value, dict) else None
+            if (not isinstance(task, str) or not sc._TASK.fullmatch(task)
+                    or value.get("channel_id") != reader.channel or value.get("thread_ts") != thread):
+                raise ValueError("fixture binding does not echo the selected thread")
+            return task
+        reader.binding = binding
+        return reader
 
     def observe(self, only_deployment=False, evaluate_rules=False, **options):
         selected = dict(deployment=DEPLOYMENT)
@@ -749,12 +783,21 @@ class World:
                 except sc._SOURCE_ERRORS:
                     pass
             if t is not None:
+                try:
+                    put([sc._trial_observation(at, runtime, t, selected.get("trials"),
+                                               selected.get("rubric_path"))])
+                except sc._SOURCE_ERRORS:
+                    pass
                 if selected.get("paid_thread") is not None:
                     try:
                         paid = sc._paid_facts(t, selected["paid_thread"], runtime.runtime_sha)
                     except sc._SOURCE_ERRORS:
                         pass
-                if selected.get("approval_task") is not None:
+                if selected.get("approval_task") is None:
+                    put([sc._observation(key, None, "No --approval-task was supplied.",
+                                         sc._SLACK_SOURCE, {}, at, **runtime.binding)
+                         for key in ("06", "08")])
+                else:
                     try:
                         put(sc._approval_observations(at, runtime, t, selected["approval_task"], consistency))
                     except sc._SOURCE_ERRORS:
@@ -772,7 +815,7 @@ class World:
             cost = sc._settled_cost(consistency, paid)[0] if paid is not None else None
             put([sc._monetary_observation(at, runtime, paid, consistency, cost)])
             if verified is not True or t is None:
-                for key in ("08", "20"):
+                for key in ("08", "10", "20"):
                     found[key] = next(item for item in observations if item.check_id == key)
             if t is None:
                 found["11"] = next(item for item in observations if item.check_id == "11")
@@ -1288,7 +1331,611 @@ class ScorecardGitTrustTests(unittest.TestCase):
             sc._run_bytes(["git", "-C", str(self.repo), "show", self.pin])
 
 
+class TrustedCollectionLaneTests(unittest.TestCase):
+    """Real store collection; missing paid/approval evidence must stay UNKNOWN."""
+
+    def setUp(self):
+        self.dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        if not self.dsn:
+            self.skipTest("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN unset; sanctioned Postgres lane unavailable")
+        import psycopg
+        from tests import test_primary_scorecard_evidence as fixtures
+        try:
+            with psycopg.connect(self.dsn, connect_timeout=3):
+                pass
+        except psycopg.OperationalError:
+            self.skipTest("Sanctioned Postgres lane unavailable; connection details withheld")
+        self.fixtures = fixtures
+        self.primary = fixtures.ScorecardEvidencePostgresTests()
+        self.primary.coordinator_fixtures = fixtures._load("test_primary_coordinator")
+        self.primary.setUp()
+        self.addCleanup(self.primary.tearDown)
+
+    def clock_bounds(self):
+        """Bound fixture evidence from both host and disposable database clocks."""
+        before = datetime.now(timezone.utc)
+        with self.primary.handle.pool.connection() as connection:
+            database_now = connection.execute("SELECT clock_timestamp() AS observed").fetchone()["observed"]
+        after = datetime.now(timezone.utc)
+        return min(before, database_now), max(after, database_now)
+
+    def produce_offline_trials(self):
+        """Use the production graph, approval, checkpoint and offline ledger wiring."""
+        from tests import test_primary_default as fixture
+
+        settings = dataclasses.replace(fixture.Settings(), allow_paid_runs=False,
+            langgraph_primary_offline_simulation_enabled=True,
+            project_allowlist=("default",), repository_allowlist=("owner/director-orchestrator",),
+            allowed_starting_refs=("main",))
+        services = fixture.DefaultOfflineSimulationServices(settings, packet_router=fixture.packet_router(settings))
+
+        def coordinator():
+            value = fixture.PrimaryTaskCoordinator(self.primary.handle, services.handlers(),
+                owner_token="default-director-owner", checkpoint_namespace="default-director-primary-v1",
+                auto_execute_provider=False, application_projection_provider=services.application_projection)
+            value.adopt_or_activate_new_intake()
+            return value
+
+        current = coordinator()
+        application = fixture.DefaultPrimaryApplication(settings, current, services,
+            fixture.DefaultPrimaryAuthority(starting_sha=SHA, authority_snapshot_digest=fixture.digest("authority")),
+            parallel_dispatcher=fixture.build_offline_parallel_dispatcher(services, lambda: current))
+        tasks = []
+        # Network and native process boundaries are fatal here; only offline doubles may execute.
+        with patch("httpx.AsyncClient.send", side_effect=AssertionError("offline network call")) as network, \
+                patch("subprocess.Popen", side_effect=AssertionError("offline native call")) as process:
+            for index in range(10):
+                intake = fixture.DefaultPrimaryApplicationIntegrationTests.intake().model_copy(update={
+                    "source_event_id": f"trusted-offline-{index}",
+                    "thread_ts": f"{int(time.time())}.{index:06d}"})
+                pending = application.create_intake(intake,
+                    intake_authentication=fixture.IntakeAuthentication.BEARER_DRY_RUN)
+                before = current.get_projection(pending.task_id)
+                if index == 0:
+                    # Reconstruct the coordinator and recover the durable approval interrupt.
+                    current = coordinator()
+                    recovered = current.recover(pending.task_id)
+                    self.assertEqual(recovered.projection_digest, before.projection_digest)
+                    application.coordinator = current
+                approval = before.projection["pending_approval"]
+                command_id = f"trusted-approve-{index}"
+                completed = application.resume_approval(fixture.ApprovalResume(
+                    task_id=pending.task_id, kind=fixture.ApprovalKind(approval["kind"]),
+                    request_digest=approval["request_digest"], approval_event_id=command_id,
+                    decision=fixture.ApprovalDecision.APPROVE))
+                self.assertEqual(completed.status, fixture.TaskStatus.DONE)
+                current.record_command_receipt(task_id=pending.task_id, operation="approval_resume",
+                    command_id=command_id, command_digest=fixture.digest(command_id),
+                    projection=current.get_projection(pending.task_id))
+                tasks.append(pending.task_id)
+            network.assert_not_called()
+            process.assert_not_called()
+        self.primary.coordinator = current
+        self.assertGreater(services.provider_calls, 0)  # Offline doubles actually ran.
+        return tasks
+
+    def produce_metered_attempt(self):
+        """Receive a native response through the real transport, meter and attempt ledger."""
+        from types import SimpleNamespace
+        from tests import test_response_meter as fixture
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
+        from director_orchestrator.primary_parallel import ParallelAssignment, ParallelDispatchPolicy, ParallelAssignmentStatus
+        from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+
+        meter_fixture = fixture.ResponseMeterTests()
+        meter_fixture.setUpClass()
+        self.addCleanup(meter_fixture.tearDownClass)
+        meter_fixture.setUp()
+        self.addCleanup(meter_fixture.tearDown)
+        authority = PrimaryProviderBudgetAuthority(meter_fixture.store, primary_schema=self.primary.schema)
+        routing = PrimaryProviderBudgetRouting(authority=authority, pool=self.primary.handle.pool)
+        coordinator = PrimaryTaskCoordinator(self.primary.handle, self.primary.coordinator_fixtures.handlers(),
+            owner_token="default-director-owner", checkpoint_namespace="default-director-primary-v1",
+            auto_execute_provider=False)
+        coordinator.adopt_or_activate_new_intake()
+        task = "DIR-LG-FEED"
+        coordinator.create_intake(self.primary.coordinator_fixtures.request(task))
+        policy = ParallelDispatchPolicy()
+        plan = coordinator.register_parallel_plan(task_id=task,
+            plan_digest="sha256:" + "7" * 64,
+            assignments=(ParallelAssignment("metered", 1, "openai", "fixture"),), policy=policy)
+        reservation, = coordinator.reserve_parallel_ready(task_id=task, policy=policy)
+        budget = fixture.team.signed(meter_fixture.budget.model_copy(update={"task_id": task}),
+                                     fixture.team.fixtures.OWNER_SECRET)
+        with self.primary.handle.pool.connection() as connection, connection.transaction():
+            authority.register(connection, budget)
+        packet = json.loads(meter_fixture.packet)
+        packet.update(task_id=task, assignment_id=reservation.assignment_id, starting_ref=SHA)
+        admission = live_provider_admissions(settings=fixture.Settings(), budget_routing=routing,
+            team_routing=None, provider="openai", packet=packet, attempt_usd=0.00006)
+        attempt = coordinator.reserve_provider_attempt(reservation=reservation, attempt_ordinal=1,
+            format_roster=(("model-work-packet-v1", "responses-api"),),
+            idempotency_key_digest="sha256:" + "6" * 64, budget_evidence_digest="sha256:" + "5" * 64,
+            **admission)
+        packet_bytes = canonical_json_bytes(packet)
+        packet_digest = "sha256:" + hashlib.sha256(packet_bytes).hexdigest()
+        enrollment = fixture.team.signed(meter_fixture.enrollment.model_copy(update={
+            "task_id": task, "assignment_id": reservation.assignment_id,
+            "attempt_digest": attempt.attempt_digest, "work_packet_digest": packet_digest}),
+            fixture.team.fixtures.OWNER_SECRET)
+        meter = fixture.EnrolledResponseMeter(enrollment=enrollment, authority=authority,
+                                              pool=meter_fixture.store._pool)
+        context = SimpleNamespace(task_id=task, assignment_id=reservation.assignment_id,
+            idempotency_key=attempt.attempt_digest, work_packet_digest=packet_digest,
+            fencing_generation=coordinator.get_task_writer(task).fencing_generation,
+            timeout_seconds=5, total_token_limit=1000)
+        requests = []
+
+        def respond(request):
+            requests.append(request.url.path)
+            body = ({"object": "response.input_tokens", "input_tokens": 8}
+                    if request.url.path.endswith("input_tokens") else meter_fixture.native())
+            return httpx.Response(200, json=body, headers=meter_fixture.headers)
+
+        original = httpx.AsyncClient
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                side_effect=lambda **kwargs: original(transport=httpx.MockTransport(respond), **kwargs)):
+            result = fixture.OpenAIResponsesPacketTransport(api_key="test-key", model=enrollment.model,
+                response_meter=meter).send(packet_bytes, context=context)
+        self.assertEqual(len(requests), 2)  # Input count plus one response; no retry.
+        result_digest = "sha256:" + hashlib.sha256(canonical_json_bytes(result)).hexdigest()
+        coordinator.record_provider_attempt(attempt=attempt, status=ParallelAssignmentStatus.SUCCEEDED,
+            result_digest=result_digest, reason_code="attempt_succeeded")
+        coordinator.record_parallel_result(plan_digest=plan, reservation=reservation,
+            status=ParallelAssignmentStatus.SUCCEEDED, result_digest=result_digest, reason_code="attempt_succeeded")
+        self.primary.coordinator = coordinator
+        return task, fixture.team.fixtures.ROUTE_SECRET, fixture.team.fixtures.OWNER_SECRET
+
+    def test_tls_owner_bound_collection_reads_producers_and_rejects_hostile_candidate(self):
+        from pathlib import PurePosixPath
+        from director_orchestrator.config import Settings
+        from director_orchestrator import primary_activation_evidence as acceptance
+        from director_orchestrator import primary_generation as generation_module
+        from director_orchestrator.provider_activation import (
+            ProviderActivationRegistry, ProviderActivationStage, ProviderActivationSurface,
+        )
+        from director_orchestrator.provider_validation import (
+            PostgresValidationStore, ValidationBridgeService, ValidationRequest, production_configuration_digest,
+        )
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        from director_orchestrator.host_provider_bridge_server import executable_digest
+        from psycopg.conninfo import conninfo_to_dict
+
+        ca = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_CA")
+        if not ca or conninfo_to_dict(self.dsn).get("sslmode") != "verify-full":
+            self.skipTest("Verified TLS lane required: -Action Test -Tls")
+        fixture = self.fixtures._load("test_provider_validation")
+        world = World(self)
+        world.consistency = world.captures = None
+        # The fixtures below mint test authority locally; no ambient authority,
+        # candidate reports, provider calls, or external writes are used.
+        adoption_fixture_class = self.fixtures._load("test_local_activation_evidence").LocalActivationEvidenceTests
+        local = adoption_fixture_class()
+        local.setUp()
+        self.addCleanup(local.doCleanups)
+        self.addCleanup(local.tearDown)
+        root = Path(local.temporary.name)
+        local.adoption_document.update(repository=sc.REPOSITORY, reviewed_source_commit=SHA,
+                                       reviewed_source_tree=world.commit_tree)
+        adoption_path, adoption_pin = local.write_adoption()
+        provider_binding = dataclasses.replace(fixture.binding(), binding_version=root.name)
+        raw_bindings = json.dumps({"claude": {key: value for key, value in dataclasses.asdict(provider_binding).items()
+                                             if key != "provider_id"}})
+        identity = acceptance.ActivationIdentity(SHA, world.commit_tree, "local", DEPLOYMENT,
+            self.primary.identity.database_identity, self.primary.identity.database_instance_id,
+            self.primary.schema, "default-director-primary-v1")
+        settings = dataclasses.replace(Settings(), app_env="local",
+            repository_allowlist=(sc.REPOSITORY,), langgraph_primary_service_repository=sc.REPOSITORY,
+            langgraph_primary_postgres_dsn=self.dsn, langgraph_primary_postgres_schema=self.primary.schema,
+            langgraph_primary_checkpoint_namespace=identity.checkpoint_namespace,
+            langgraph_primary_pinned_commit_sha=SHA, langgraph_primary_pinned_tree_sha=world.commit_tree,
+            langgraph_primary_acceptance_mode="owner-local-evidence-v1",
+            langgraph_primary_owner_token=local.owner_token,
+            langgraph_primary_local_evidence_adoption_path="/data/adoption.json",
+            langgraph_primary_local_evidence_adoption_sha256=adoption_pin,
+            langgraph_primary_acceptance_journal_path="/data/selected.sqlite3",
+            langgraph_primary_provider_activation_bindings_json=raw_bindings,
+            langgraph_primary_required_providers=("claude",))
+        manifest = dict(version="director-primary-generation/owner-local-evidence-v1",
+            activation=dataclasses.asdict(identity), journal_path=settings.langgraph_primary_acceptance_journal_path,
+            owner_adoption_path=settings.langgraph_primary_local_evidence_adoption_path,
+            owner_adoption_sha256=adoption_pin, provider_bindings_sha256=hashlib.sha256(raw_bindings.encode()).hexdigest(),
+            deployment_configuration_sha256=generation_module.deployment_digest(settings),
+            image_id=IMAGE, resolved_compose_sha256="9" * 64)
+        manifest_path = root / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        pin = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        environment = {"DIRECTOR_RUNTIME_IMAGE_ID": IMAGE, "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "9" * 64,
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": "/data/manifest.json",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": pin,
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": raw_bindings}
+        # The real reservation producer sees its Linux /data mount on Windows.
+        # Only filesystem paths are mapped; all generation/signature checks and
+        # journal writes execute unchanged, before the read-only collection.
+        def mounted(path):
+            return root.joinpath(*PurePosixPath(path).relative_to("/data").parts)
+
+        class MountedPath(PurePosixPath):
+            def read_bytes(self):
+                return mounted(self).read_bytes()
+
+        real_open, real_connect = os.open, sqlite3.connect
+
+        def mapped_open(path, *args, **kwargs):
+            return real_open(mounted(path) if str(path).startswith("/data/") else path, *args, **kwargs)
+
+        with patch.object(generation_module, "Path", MountedPath), \
+                patch.object(generation_module, "GENERATION_DATA_ROOT", MountedPath("/data")), \
+                patch.object(acceptance, "Path", side_effect=mounted), \
+                patch.object(os, "open", side_effect=mapped_open), \
+                patch.object(sqlite3, "connect", side_effect=lambda path: real_connect(mounted(path))):
+            generation_module.require_generation(settings, identity, reserve=True, environment=environment)
+        environment.update(LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH="/data/manifest.json",
+            LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=pin,
+            LANGGRAPH_PRIMARY_POSTGRES_DSN=self.dsn, DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN=self.dsn,
+            DIRECTOR_PROVIDER_VALIDATION_CANDIDATE=SHA, DIRECTOR_PROVIDER_VALIDATION_TREE=world.commit_tree)
+        # A real admission, execution claim, signed V2 capture, and settlement.
+        validation = PostgresValidationStore(self.dsn)
+        validation.bootstrap()
+        work = fixture.work_packet()
+        work["starting_ref"] = SHA
+        native = json.loads(fixture.claude_cli_native())
+        native_path = root / "native_fixture.py"
+        native_path.write_text("import sys\nsys.stdin.buffer.read()\nprint(" + repr(json.dumps(native)) + ")\n",
+                               encoding="utf-8")
+        account = root / "fixture-account-pin"
+        account.write_text("Synthetic account binding; no credential", encoding="utf-8")
+        executor = WindowsHostProviderExecutor(
+            {"claude": (str(Path(sys.executable).resolve()), str(native_path))}, cwd=root)
+        configuration = production_configuration_digest(executor, "claude", account_files=(str(account),))
+        executable = executable_digest(executor.commands["claude"])
+        expires = int(self.clock_bounds()[1].timestamp()) + 3600
+        validation.create_generation(generation=pin, candidate=SHA, tree=world.commit_tree,
+            owner_token=fixture.OWNER, expires_at=expires, budget_units=2,
+            lanes={"claude": {"binding": dataclasses.asdict(provider_binding), "configuration_digest": configuration,
+                              "cost_units": 2, "work_packet": work}})
+        bridge = ValidationBridgeService(store=validation, production_executor=executor,
+            capture_key=fixture.KEY, owner_token=fixture.OWNER, account_files={"claude": (str(account),)})
+        receipt = bridge.run(ValidationRequest(generation=pin, provider="claude"), fixture.OWNER)
+        evidence_digest = receipt["evidence_digest"]
+        observed = self.clock_bounds()[0] - timedelta(minutes=1)
+        registry = ProviderActivationRegistry(self.primary.handle.claim_store, provider_binding)
+        for surface in ProviderActivationSurface:
+            for index, stage in enumerate(ProviderActivationStage):
+                when = observed + timedelta(seconds=index)
+                registry.record(surface=surface, stage=stage, evidence_id=f"tls-{surface.value}-{index}",
+                    evidence_digest=evidence_digest, observed_at=when,
+                    expires_at=datetime.fromtimestamp(expires, timezone.utc), now=when)
+        self.primary.coordinator.activate_new_intake(expected_generation=0)
+        started = self.clock_bounds()[0]
+        payload = health()
+        payload["langgraph_primary"]["intake_fencing_generation"] = 1
+        runtime = runtime_fixture(env=environment, runtime_tree=world.commit_tree, health=payload,
+            collected_at=started, collection_end=lambda: self.clock_bounds()[1])
+        world.rows[0]["Config"]["Env"] = [f"{key}={value}" for key, value in environment.items()]
+        world.rows[0]["Mounts"] = [{"Type": "bind", "Source": str(root), "Destination": "/data"}]
+        inputs = {"environment": environment, "settings": dataclasses.asdict(settings),
+            "mounts": [{"source": str(root), "destination": "/data"}],
+            "ca": {"path": str(Path(ca).resolve()), "sha256": hashlib.sha256(Path(ca).read_bytes()).hexdigest()},
+            "capture_key": fixture.KEY, "route_verifier_secret": "test-route-authority-only",
+            "owner_authority_secret": "test-owner-authority-only"}
+        descriptor = {"version": self.fixtures.evidence.CLI_RELEASE_DESCRIPTOR_VERSION,
+            "trusted_collection_inputs_env": "TEST_SCORECARD_INPUTS",
+            "releases": [{"provider": "claude", "product": "anthropic-claude", "executable_sha256": executable}]}
+        candidate_reads = []
+        original_run = world.run
+
+        def hostile_run(args, timeout=15):
+            if args[:2] == ["docker", "exec"] and "director_orchestrator.primary_generation" in args:
+                candidate_reads.append(True)
+                return json.dumps({"checks": [{"id": key, "status": "PASS"}
+                    for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20")]}).encode()
+            return original_run(args, timeout)
+
+        with patch.object(sc, "cli_release_descriptor", return_value=descriptor), \
+                patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}), \
+                patch.object(sc, "_run_bytes", side_effect=hostile_run):
+            consistency, captures = sc._trusted_collection(runtime, [])
+            self.assertIsNotNone(captures)
+            self.assertEqual(captures["lanes"]["claude"]["product"], "anthropic-claude")
+            for surface in captures["lanes"]["claude"]["surfaces"].values():
+                self.assertEqual(surface["executable_sha256"], executable)
+            observations = [sc._reconciliation_observation(started, runtime, consistency),
+                            sc._acceptance_observation(started, SHA, consistency),
+                            *sc._capture_observations(started, runtime, captures, None),
+                            sc._monetary_observation(started, runtime, None, consistency, None),
+                            sc._paid_observation(started, runtime, None, None, consistency, "fixture"),
+                            sc._trial_observation(started, runtime, None, None, None)]
+            report = sc.score(SHA, observations, now=started, runtime_sha=SHA, image_id=IMAGE)
+            for check in ("07", "12", "17"):
+                self.assertEqual(row(report, check)["status"], "PASS", check)
+            for check in ("06", "08", "10", "11", "15", "20"):
+                self.assertEqual(row(report, check)["status"], "UNKNOWN", check)
+
+            offline_tasks = self.produce_offline_trials()
+            from types import SimpleNamespace
+            from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
+            delivery = PrimarySlackDelivery(
+                SimpleNamespace(handle=self.primary.handle, coordinator=self.primary.coordinator),
+                dataclasses.replace(settings, slack_bot_token="offline-fixture-no-network",
+                                    slack_channel_id="CDEFAULT", slack_owner_user_id="UOWNER"))
+            self.assertGreater(delivery.enqueue(), 0)  # Real local ledger producer; no Slack transport.
+            offline, _ = sc._trusted_collection(runtime, offline_tasks)
+            snapshots, _ = sc._trusted_collection(runtime, offline_tasks, qualification_only=True)
+            self.assertEqual(offline["counts"]["graph_task_count"], 10)
+            self.assertEqual(offline["counts"]["provider_usage_invalid"], 0)
+            for task in offline_tasks:
+                entry = offline["tasks"][task]
+                self.assertEqual(entry["application"]["execution_mode"], "offline_simulation")
+                self.assertIsNone(entry["registered_plan"]["error"])
+                self.assertTrue(entry["application"]["task_record"]["assignment_outcomes"])
+                qualification = snapshots[task]
+                self.assertTrue(qualification["complete"])
+                self.assertTrue(qualification["snapshot"]["read_only"])
+                self.assertTrue(qualification["snapshot"]["single_transaction"])
+                self.assertEqual(qualification["projection"].task_id, task)
+                self.assertEqual(entry["spend"], [])
+                self.assertEqual(len(entry["approval_receipts"]), 1)
+                # Local approval_resume is real, but has no authenticated gateway command.
+                self.assertFalse(entry["approval_receipts"][0]["authorized"])
+
+            from director_orchestrator.langgraph_postgres import read_postgres_slack_thread_binding
+            intake = snapshots[offline_tasks[0]]["projection"].projection["application"]["task_record"]["intake"]
+            expected = tuple(task for task in offline_tasks
+                if snapshots[task]["projection"].projection["application"]["task_record"]["intake"]["thread_ts"]
+                == intake["thread_ts"])
+            matches = read_postgres_slack_thread_binding(self.dsn,
+                channel_id=intake["channel_id"], thread_ts=intake["thread_ts"], schema=self.primary.schema,
+                accepted_storage_identity=self.primary.identity.database_identity,
+                accepted_instance_id=self.primary.identity.database_instance_id)
+            self.assertEqual(set(matches), set(expected[:2]))
+
+            # Exercise the actual consumer against those same TLS-backed producers.
+            # Slack authentication is outside this task/readback-focused fixture;
+            # any attempt to use a Director HTTP client here is fatal.
+            reader = object.__new__(sc._SlackThreads)
+            reader.runtime, reader._task_snapshots = runtime, {}
+            reader.reads = Mock()
+            reader.reads.get.side_effect = AssertionError("candidate HTTP forbidden")
+            body, headers = reader.task(offline_tasks[0])
+            self.assertEqual(body["task_id"], offline_tasks[0])
+            self.assertEqual(headers["x-task-engine-owner"], "langgraph")
+            deliveries = reader.deliveries(offline_tasks[0])
+            self.assertTrue(deliveries)
+            self.assertTrue(all(item["task_id"] == offline_tasks[0] for item in deliveries))
+            self.assertEqual([item["client_msg_id"] for item in deliveries],
+                             [item["client_msg_id"] for item in body["qualification_evidence"]["slack_deliveries"]])
+            reader.reads.get.assert_not_called()
+
+            paid_task, route_secret, owner_secret = self.produce_metered_attempt()
+            inputs.update(route_verifier_secret=route_secret.decode(), owner_authority_secret=owner_secret.decode())
+            with patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}):
+                settled, _ = sc._trusted_collection(runtime, [paid_task])
+                entry = settled["tasks"][paid_task]
+                self.assertEqual(len(entry["spend"]), 1)
+                self.assertTrue(entry["spend"][0]["usage_verified"])
+                self.assertTrue(entry["spend"][0]["request_correlated"])
+                self.assertEqual(entry["spend"][0]["actual_microusd"], 58)
+                self.assertTrue(entry["budgets"][0]["signature_verified"])
+                # The live collection path must retain UNKNOWN without Slack evidence,
+                # even though real approval, restart, offline and metered rows now exist.
+                with patch.object(sc, "_runtime", return_value=([], runtime)), \
+                        patch.object(sc, "_deployment_state", return_value=()):
+                    collected, _ = sc._deployment_observations(started, SHA, DEPLOYMENT,
+                        channel=None, gateway=None, topology=False, drills={}, approval_task=offline_tasks[0],
+                        trials=None, rubric_path=None, paid_thread=None, paid_rubric_path=None)
+                by_check = {item.check_id: item for item in collected}
+                for check in ("06", "08", "10", "11", "15", "20"):
+                    self.assertIsNone(by_check[check].passed, check)
+                self.assertIsNone(by_check["12"].passed)
+                self.assertIsNone(by_check["17"].passed)
+            self.primary.coordinator.create_intake(self.primary.coordinator_fixtures.request("DIR-LG-FADE"))
+            hostile, _ = sc._trusted_collection(runtime, ["DIR-LG-FADE"])
+            verdict = sc._reconciliation_observation(started, runtime, hostile)
+            self.assertIsNot(verdict.passed, True)
+        self.assertFalse(candidate_reads, "Candidate reports cannot replace trusted evidence")
+
+    def test_lane_transport_blocks_all_nine_checks_even_with_hostile_candidate_pass(self):
+        from director_orchestrator.config import Settings
+        from psycopg.conninfo import conninfo_to_dict
+
+        if conninfo_to_dict(self.dsn).get("sslmode") != "disable":
+            self.skipTest("Non-TLS refusal regression; run the lane without -Tls")
+        world = World(self)
+        # Do not feed World's hand-authored evaluator evidence into collection.
+        world.consistency = world.captures = None
+        environment = sc._environment(world.rows[0])
+        environment.update(LANGGRAPH_PRIMARY_POSTGRES_DSN=self.dsn,
+            DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN=self.dsn,
+            DIRECTOR_PROVIDER_VALIDATION_CANDIDATE=SHA,
+            DIRECTOR_PROVIDER_VALIDATION_TREE=world.commit_tree,
+            DIRECTOR_RUNTIME_IMAGE_ID=IMAGE)
+        settings = dataclasses.replace(Settings(), langgraph_primary_postgres_dsn=self.dsn,
+            langgraph_primary_postgres_schema=self.primary.schema,
+            langgraph_primary_pinned_commit_sha=SHA, langgraph_primary_pinned_tree_sha=world.commit_tree)
+        world.rows[0]["Config"]["Env"] = [f"{key}={value}" for key, value in environment.items()]
+        world.rows[0]["Mounts"] = []
+        inputs = {"environment": environment, "settings": dataclasses.asdict(settings), "mounts": []}
+        runtime = runtime_fixture(env=environment, runtime_tree=world.commit_tree)
+        original_run = world.run
+        candidate_reads = []
+
+        def hostile_run(args, timeout=15):
+            if args[:2] == ["docker", "exec"] and "director_orchestrator.primary_generation" in args:
+                candidate_reads.append(True)
+                return json.dumps({"checks": [{"id": key, "status": "PASS"}
+                    for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20")]}).encode()
+            return original_run(args, timeout)
+
+        self.primary.coordinator.activate_new_intake(expected_generation=0)
+        for hostile in (False, True):
+            with self.subTest(hostile=hostile):
+                if hostile:
+                    # The producer creates actual in-flight work, not a fabricated report/count.
+                    request = self.primary.coordinator_fixtures.request("DIR-LG-FADE")
+                    self.primary.coordinator.create_intake(request)
+                    world.run = hostile_run
+                store_report = self.primary.report()
+                self.assertEqual(store_report["counts"]["graph_task_count"], int(hostile))
+                self.assertEqual(store_report["counts"]["nonterminal_projections"], int(hostile))
+                with patch.object(sc, "cli_release_descriptor", return_value={
+                        "trusted_collection_inputs_env": "TEST_SCORECARD_INPUTS"}), \
+                        patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}), \
+                        patch("director_orchestrator.langgraph_postgres.database_binding") as binding_read:
+                    # All prior owner/inspect bindings match. Reach the DSN parser, but the TLS
+                    # requirement refuses before database_binding or any trusted store read.
+                    with patch.object(sc, "_run_bytes", side_effect=world.run), \
+                            patch("psycopg.conninfo.conninfo_to_dict", wraps=conninfo_to_dict) as parsed:
+                        with self.assertRaisesRegex(ValueError, "^Trusted collection unavailable:"):
+                            sc._trusted_collection(runtime, [])
+                        self.assertEqual(parsed.call_count, 1)
+                    report = world.report()
+                    self.assertFalse(binding_read.called, "TLS refusal must precede database binding")
+                for key in ("06", "07", "08", "10", "11", "12", "15", "17", "20"):
+                    self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
+                    self.assertEqual(row(report, key)["explanation"], "collector not yet trusted", key)
+        self.assertFalse(candidate_reads, "Candidate in-image report must never be executed")
+
+    def test_real_signed_cli_capture_remains_unattested_with_pinned_release(self):
+        self.check_signed_cli_capture(None, "anthropic-claude-unattested")
+
+    def test_real_signed_cli_capture_attests_only_the_pinned_executable(self):
+        for executable, product in (("e" * 64, "anthropic-claude"),
+                                    ("f" * 64, "anthropic-claude-digest-mismatch")):
+            with self.subTest(product=product):
+                self.check_signed_cli_capture(executable, product)
+
+    def check_signed_cli_capture(self, executable, product):
+        from types import SimpleNamespace
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+        from director_orchestrator.provider_activation import (
+            ProviderActivationRegistry, ProviderActivationStage, ProviderActivationSurface,
+        )
+        from director_orchestrator.provider_validation import (
+            CaptureVerifier, PostgresValidationStore, ValidationRequest, make_capture,
+        )
+
+        fixture = self.fixtures._load("test_provider_validation")
+        store = PostgresValidationStore(self.dsn)
+        store.bootstrap()
+        generation = hashlib.sha256(os.urandom(32)).hexdigest()
+        expires = int(self.clock_bounds()[1].timestamp()) + 3600
+        provider_binding = dataclasses.replace(fixture.binding(), binding_version=generation)
+        store.create_generation(generation=generation, candidate=fixture.CANDIDATE, tree=fixture.TREE,
+            owner_token=fixture.OWNER, expires_at=expires, budget_units=2,
+            lanes={"claude": {"binding": dataclasses.asdict(provider_binding), "configuration_digest": "c" * 64,
+                              "cost_units": 2, "work_packet": fixture.work_packet()}})
+        admission = store.admit(ValidationRequest(generation=generation, provider="claude"), fixture.OWNER)
+        store.claim_execution(admission)
+        output = fixture.claude_cli_native()
+        capture = make_capture(admission, output, capture_key=fixture.KEY, executable_sha256=executable)
+        capture_digest = store.settle(admission, output, capture)
+        verifier = CaptureVerifier(store, capture_key=fixture.KEY, candidate=fixture.CANDIDATE,
+                                   tree=fixture.TREE, generation=generation)
+        self.assertTrue(verifier.verify(provider_binding, capture_digest))
+        self.assertEqual(getattr(capture, "executable_sha256", None), executable)
+        observed = self.clock_bounds()[0] - timedelta(minutes=1)
+        registry = ProviderActivationRegistry(self.primary.handle.claim_store, provider_binding)
+        for surface in ProviderActivationSurface:
+            for index, stage in enumerate(ProviderActivationStage):
+                when = observed + timedelta(seconds=index)
+                registry.record(surface=surface, stage=stage, evidence_id=f"capture-{surface.value}-{index}",
+                    evidence_digest=capture_digest, observed_at=when,
+                    expires_at=datetime.fromtimestamp(expires, timezone.utc), now=when)
+        settings = SimpleNamespace(langgraph_primary_postgres_dsn=self.dsn,
+            langgraph_primary_allow_insecure_local_postgres=True,
+            primary_provider_activation_bindings=lambda: {"claude": provider_binding},
+            langgraph_primary_required_providers=("claude",))
+        identity = SimpleNamespace(**vars(self.primary.identity), postgres_schema=self.primary.schema)
+        raw_bindings = json.dumps({"claude": dataclasses.asdict(provider_binding)})
+        manifest = {"provider_bindings_sha256": hashlib.sha256(raw_bindings.encode()).hexdigest()}
+        descriptor = {"version": self.fixtures.evidence.CLI_RELEASE_DESCRIPTOR_VERSION,
+                      "releases": [{"provider": "claude", "product": "anthropic-claude",
+                                    "executable_sha256": "e" * 64}]}
+        started = self.clock_bounds()[0]
+        captures = self.fixtures.evidence.activation_capture_report(settings, identity, manifest,
+            verifier=verifier, environment={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": generation},
+            descriptor=descriptor)
+        lane = captures["lanes"]["claude"]
+        self.assertEqual(lane["product"], product)
+        for surface in lane["surfaces"].values():
+            self.assertTrue(surface["capture_verified"])
+            self.assertTrue(surface["chain_valid"])
+            self.assertEqual(surface["executable_sha256"], executable)
+        runtime = runtime_fixture(collected_at=started, collection_end=lambda: self.clock_bounds()[1],
+            env={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": generation,
+                 "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": raw_bindings})
+        # This is the real store-reader's check-12 predicate, not a TRUSTED collection PASS.
+        passed, reason, _ = sc._capture_verdict(started, runtime, captures)
+        self.assertIs(passed, True, reason)
+        self.assertIsNone(next(item for item in sc._capture_observations(started, runtime, captures, None)
+                               if item.check_id == "11").passed)
+
+
 class CompletionScorecardTests(unittest.TestCase):
+    def test_check_11_distinguishes_missing_executable_from_pinned_digest_mismatch(self):
+        from director_orchestrator.primary_scorecard_evidence import _capture_product, CLI_RELEASE_DESCRIPTOR_VERSION
+        world = World(self)
+        descriptor = {"version": CLI_RELEASE_DESCRIPTOR_VERSION,
+            "releases": [{"provider": "claude", "product": "anthropic-claude", "executable_sha256": "e" * 64}]}
+        output = b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}'
+        for executable, expected in ((None, "UNKNOWN"), ("e" * 64, "PASS"), ("f" * 64, "FAIL")):
+            with self.subTest(expected=expected):
+                product = _capture_product("claude", output, executable_sha256=executable, descriptor=descriptor)
+                lane = world.captures["lanes"]["claude"]
+                lane["product"] = product
+                for surface in lane["surfaces"].values():
+                    surface["product"] = product
+                    surface["executable_sha256"] = executable
+                self.assertEqual(world.state("11", evaluate_rules=True), expected)
+        lane = world.captures["lanes"]["claude"]
+        for product, expected in (("anthropic-claude-unattested", "UNKNOWN"),
+                                  ("anthropic-claude-digest-mismatch", "FAIL")):
+            lane["product"] = None
+            lane["surfaces"]["app"]["product"] = product
+            lane["surfaces"]["runtime_adapter"]["product"] = "anthropic-claude"
+            self.assertEqual(world.state("11", evaluate_rules=True), expected)
+
+    def test_backup_reads_committed_wal_and_is_query_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "journal.sqlite3"
+            with closing(sqlite3.connect(path)) as writer:
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.execute("CREATE TABLE snapshot_probe (value INTEGER)")
+                writer.execute("INSERT INTO snapshot_probe VALUES (1)")
+                writer.commit()
+                snapshot = sc._sqlite_snapshot(path)
+                try:
+                    writer.execute("INSERT INTO snapshot_probe VALUES (2)")
+                    writer.commit()
+                    self.assertEqual(snapshot.execute("SELECT value FROM snapshot_probe").fetchall(), [(1,)])
+                    with self.assertRaises(sqlite3.OperationalError):
+                        snapshot.execute("INSERT INTO snapshot_probe VALUES (3)")
+                finally:
+                    snapshot.close()
+
+    def test_unavailable_or_invalid_backup_is_sanitized(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "private.sqlite3"
+            for exists in (False, True):
+                if exists:
+                    path.write_bytes(b"not a SQLite database")
+                with self.assertRaisesRegex(ValueError, "^SQLite snapshot unavailable or inconsistent$"):
+                    sc._sqlite_snapshot(path)
+
+    def test_owner_endpoint_mismatch_never_reaches_database_or_candidate(self):
+        runtime = runtime_fixture()
+        inputs = {"environment": {**runtime.env, "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "wrong"}}
+        with patch.object(sc, "cli_release_descriptor", return_value={"trusted_collection_inputs_env": "TEST_SCORECARD_INPUTS"}), \
+                patch.dict(os.environ, {"TEST_SCORECARD_INPUTS": json.dumps(inputs)}), \
+                patch.object(sc, "_run_json", side_effect=AssertionError("candidate executed")), \
+                patch("director_orchestrator.langgraph_postgres.database_binding",
+                      side_effect=AssertionError("database reached")):
+            with self.assertRaisesRegex(ValueError, "^Trusted collection unavailable:"):
+                sc._trusted_collection(runtime, [])
+
     def test_zero_hold_counters_are_not_reconciliation_proof(self):
         # Release 879 reported these exact zeros while authoritative plan digests conflicted.
         payload = health()
@@ -1297,7 +1944,7 @@ class CompletionScorecardTests(unittest.TestCase):
         self.assertEqual(report["checks"][6]["status"], "UNKNOWN")
         self.assertIn("health hold counters", report["checks"][6]["explanation"])
         self.assertEqual(report["checks"][18]["status"], "FAIL")
-        self.assertIn("trusted-collection follow-up", json.dumps(report["limitations"]))
+        self.assertIn("not independent proof", json.dumps(report["limitations"]))
 
     def test_reported_reconciliation_blocker_fails(self):
         for change in ({"ambiguous_effect_count": 2}, {"reconciliation_hold_reason": "plan digest conflict"},
@@ -1565,6 +2212,33 @@ class CompletionScorecardTests(unittest.TestCase):
         for item in cases:
             with self.subTest(item=item):
                 self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, [item], now=NOW)["checks"]), 0)
+
+    def test_runtime_binding_errors_preserve_unknown_reason_but_reject_results(self):
+        for passed in (None, True, False):
+            for binding in ({}, {"runtime_sha": SHA}, {"image_id": IMAGE},
+                            {"runtime_sha": OTHER, "image_id": IMAGE},
+                            {"runtime_sha": SHA, "image_id": "sha256:" + "d" * 64}):
+                with self.subTest(passed=passed, binding=binding):
+                    observation = sc._observation(
+                        "06", passed, "collector not yet trusted", "fixture", {}, NOW, **binding)
+                    result = row(sc.score(SHA, [observation], now=NOW,
+                                          runtime_sha=SHA, image_id=IMAGE), "06")
+                    self.assertEqual(result["status"], "UNKNOWN")
+                    self.assertEqual(result["explanation"], "collector not yet trusted" if passed is None else
+                                     "Evidence is missing or mismatches the runtime image binding.")
+
+    def test_unknown_observation_preserves_reason_despite_invalid_time_or_candidate(self):
+        observation = sc._observation(
+            "17", None, "collector not yet trusted", "fixture", {}, NOW, candidate_sha=SHA)
+        for changes in ({"observed_at": NOW.replace(tzinfo=None)},
+                        {"expires_at": NOW},
+                        {"observed_at": NOW + timedelta(seconds=1)},
+                        {"expires_at": NOW + timedelta(hours=1)},
+                        {"candidate_sha": OTHER}):
+            with self.subTest(changes=changes):
+                result = row(sc.score(SHA, [dataclasses.replace(observation, **changes)], now=NOW), "17")
+                self.assertEqual(result["status"], "UNKNOWN")
+                self.assertEqual(result["explanation"], observation.explanation)
 
     def test_runtime_head_or_image_mismatch_does_not_transfer(self):
         observed = runtime_observations(evaluate_rules=True)
@@ -2001,8 +2675,12 @@ class CompletionScorecardTests(unittest.TestCase):
             sc.evaluate_qualification_record(self.qualification_row(), runtime_sha=SHA, image_id=IMAGE,
                                              configuration_digest="not-a-digest")
 
-    def test_wall_time_not_machine_time_and_strict_cost_ceiling(self):
+    def test_latency_and_cost_are_metrics_but_invalid_evidence_still_fails(self):
         for changes in ({"wall_seconds": 65, "owner_pause_seconds": 35}, {"actual_cost_usd": 1},
+                        {"wall_seconds": 900, "owner_pause_seconds": 0, "machine_seconds": 900, "actual_cost_usd": 5}):
+            with self.subTest(changes=changes):
+                self.assertTrue(qualify([{**run("paid"), **changes}], "paid"))
+        for changes in ({"wall_seconds": -1}, {"actual_cost_usd": -1},
                         {"machine_seconds": 0}, {"actual_cost_usd": float("nan")},
                         {"wall_seconds": float("inf")}, {"actual_cost_usd": True},
                         {"runtime_sha": OTHER}, {"terminal_reply_count": 2}, {"delivery_ambiguous": True}):
@@ -2022,7 +2700,7 @@ class CompletionScorecardTests(unittest.TestCase):
         self.assertIn("unknown cost is not zero", text.lower())
         self.assertIn("Next:", text)
         self.assertIn("do not contribute points", text)
-        self.assertIn("Next: Run the in-image read-only consistency command; it must report zero unresolved, "
+        self.assertIn("Next: Run the evaluator-owned read-only consistency command; it must report zero unresolved, "
                       "ambiguous or conflicting records for the running generation.", text)
 
     def test_bad_candidate_and_naive_score_time_rejected(self):
@@ -2174,7 +2852,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         for key in sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE:
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
             self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
-            self.assertIn("Trusted-collection follow-up", row(report, key)["evidence"][0]["source"])
+            self.assertIn("Pinned evaluator", row(report, key)["evidence"][0]["source"])
 
         text = json.dumps(report)
         for secret in (*SECRETS, CHANNEL_FIXTURE, OWNER, BOT):
@@ -2191,6 +2869,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         with patch.object(sc, "_reconciliation_observation", return_value=passing("07")) as consistency, \
                 patch.object(sc, "_capture_observations", return_value=[passing("11"), passing("12")]) as captures, \
                 patch.object(sc, "_approval_observations", return_value=[passing("06"), passing("08")]) as approval, \
+                patch.object(sc, "_trial_observation", return_value=passing("10")), \
                 patch.object(sc, "_acceptance_observation", return_value=passing("17")) as acceptance, \
                 patch.object(sc, "_paid_observation", return_value=passing("20")) as paid, \
                 patch.object(sc, "_trial_observation", return_value=passing("10")) as trials, \
@@ -2214,27 +2893,41 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertTrue(all(name and trust in {"T", "C"} for name, trust in inputs))
         candidate = {key for key, inputs in sc.COLLECTOR_INPUTS.items()
                      if any(trust == "C" for _, trust in inputs)}
-        self.assertEqual(candidate, {"01", "02", "03", "04", "05", "06", "07", "08",
-                                     "09", "10", "11", "12", "15", "17", "19", "20"})
-        self.assertEqual(candidate, set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
+        self.assertEqual(candidate, {"01", "03", "04", "05", "06", "07", "08",
+                                     "09", "10", "11", "12", "15", "19", "20"})
+        self.assertEqual(sc._PENDING_TRUST_PROOF, {"02", "17"})
+        contained = candidate | sc._PENDING_TRUST_PROOF
+        self.assertEqual(contained, set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
         world = self.world()
         # Seed every candidate-dependent check with PASS inside collection, including
-        # the shared-health users 01/02/04. No rule-fixture containment bypass here.
+        # the still-held 02/17 paths. No rule-fixture containment bypass here.
         passing = [sc._observation(key, True, "candidate claims success", "fixture", {}, world.now,
-                                   candidate_sha=SHA, runtime_sha=SHA, image_id=IMAGE) for key in sorted(candidate)]
+                                   candidate_sha=SHA, runtime_sha=SHA, image_id=IMAGE) for key in sorted(contained)]
         with patch.object(sc, "_topology_observations", return_value=passing), \
                 patch.object(sc, "_status_observation", return_value=next(o for o in passing if o.check_id == "04")):
             observations = world.observe(topology=True)
         found = {item.check_id: item for item in observations}
         self.assertEqual(len(found), len(observations))
-        for key in candidate:
+        for key in contained:
             with self.subTest(check=key):
                 self.assertIsNone(found[key].passed)
                 self.assertEqual(found[key].explanation, "collector not yet trusted")
         document = (Path(__file__).resolve().parents[1] / "docs/twenty-check-completion-scorecard.md").read_text(
             encoding="utf-8")
         audited = dict(re.findall(r"^\| (\d{2}) \| .* \| (Yes|No) \|$", document, re.MULTILINE))
-        self.assertEqual(audited, {key: "Yes" if key in candidate else "No" for key in sc.COLLECTOR_INPUTS})
+        self.assertEqual(audited, {key: "Yes" if key in contained else "No" for key in sc.COLLECTOR_INPUTS})
+
+    def test_trusted_reports_do_not_promote_remaining_candidate_inputs(self):
+        world = self.world()
+        self.assertTrue(all(trust == "T" for _, trust in sc._CONSISTENCY_INPUTS + sc._CAPTURE_INPUTS))
+        with patch.object(sc, "_trusted_collection", return_value=(world.consistency, world.captures)) as collect:
+            report = world.report()
+        collect.assert_called_once()
+        for key, inputs in sc.COLLECTOR_INPUTS.items():
+            if any(trust == "C" for _, trust in inputs):
+                with self.subTest(check=key):
+                    self.assertEqual(row(report, key)["status"], "UNKNOWN")
+                    self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
 
     def test_live_requires_explicit_deployment_and_never_probes_legacy(self):
         forbidden = Mock(side_effect=AssertionError("no probe may run without --deployment"))
@@ -2281,12 +2974,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         cases.append(stopped)
         wrong_env = self.world(evaluate_rules=True)
         wrong_env.payload["environment"] = "edge-engine"
-        cases.append(wrong_env)
         for case in cases:
             observed = case.report(only_deployment=True)
             self.assertEqual(sum(item["status"] == "PASS" for item in observed["checks"]), 0)
             self.assertEqual(row(observed, "19")["status"], "UNKNOWN")
         self.assertEqual(stopped.opened, [])
+        # A foreign candidate health response invalidates health assertions, not
+        # independently bound daemon/store facts. Live containment still applies.
+        observed = wrong_env.report(only_deployment=True)
+        for key in ("05", "19"):
+            self.assertEqual(row(observed, key)["status"], "UNKNOWN")
+        self.assertEqual(row(observed, "17")["status"], "PASS")  # direct rule fixture only
 
     def test_no_committed_channel_or_legacy_endpoint(self):
         root = Path(__file__).resolve().parents[1]
@@ -2959,7 +3657,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = self.world().report(approval_task=None)
         for key in ("06", "08"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN")
-            self.assertEqual(row(report, key)["explanation"], "collector not yet trusted")
+            self.assertEqual(row(report, key)["explanation"],
+                             "collector not yet trusted")
         missing = self.world(evaluate_rules=True)
         del missing.tasks[APPROVAL_TASK]
         report = missing.report()
@@ -3369,7 +4068,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertTrue(runtime)
         self.assertTrue(all(item["status"] == "UNKNOWN" for item in runtime))
         self.assertTrue(all("more than one runtime binding" in item["explanation"] for item in runtime
-                            if any(o.check_id == item["id"] for o in observed)))
+                            if any(o.check_id == item["id"] and o.passed is not None for o in observed)))
 
     def test_paid_outcome_must_equal_the_persisted_result_artifact_20(self):
         self.assertEqual(self.world(evaluate_rules=True).state("20"), "PASS")
@@ -3990,7 +4689,7 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_one_task_evidence_rule_for_the_collector_and_the_global_count(self):
         """Reviews 4102705142, 4102705148, 4102705162: task_evidence_errors is the one per-task validation the
-        collector's readback and the in-image global count both run: attempts bounded by their assignment's
+        collector's readback and the evaluator-owned global count both run: attempts bounded by their assignment's
         reservation and completion, effects carrying their execution start before terminal evidence, and each
         assignment's status and digest agreeing with its last attempt's final event."""
         from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
@@ -5061,11 +5760,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual((record["actual_cost_usd"], record["wall_seconds"]), (0.3, 30.0))
         expensive = self.world(evaluate_rules=True)
         expensive.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = 1200000
-        self.assertEqual(expensive.state("20"), "FAIL")
+        self.assertEqual(expensive.state("20"), "PASS")
         slow = self.world(evaluate_rules=True)
         slow.add(task_entry(PAID_TASK, 20000, offline=False, text=slow.paid_text, answer="The audit answer is 42",
                             final_offset=65))
-        self.assertEqual(slow.state("20"), "FAIL")
+        self.assertEqual(slow.state("20"), "PASS")
         incorrect = self.world(evaluate_rules=True)
         incorrect.add(task_entry(PAID_TASK, 20000, offline=False, text=incorrect.paid_text, answer="No idea"))
         self.assertEqual(incorrect.state("20"), "FAIL")
@@ -5256,6 +5955,19 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]]

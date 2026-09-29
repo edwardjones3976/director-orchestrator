@@ -20,477 +20,219 @@ import subprocess
 import sys
 from pathlib import Path
 
-from director_orchestrator.contribution_tags import (
-    TAG_PATTERN,
-    contribution_tag_policy,
-    iter_contribution_tags,
-    parse_contribution_tag,
-    validate_inline_contribution_tags,
-)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+from director_orchestrator.contribution_tags import TAG_PATTERN  # noqa: E402
 
 
 ZERO_SHA = "0" * 40
-GITLINK_MODE = "160000"
-_GIT_TRAILER_LINE = re.compile(r"^(?P<key>[A-Za-z0-9][A-Za-z0-9-]*):[ \t]+\S")
-# Only trailers the repository or the hosting platform actually injects after a
-# submission envelope are ignored. Anything else is visible content that must
-# stay inside the envelope, so trailer-shaped prose such as "Note: ..." keeps
-# failing the submission check instead of being silently dropped.
-_SUPPORTED_TRAILER_KEYS = frozenset(
-    {
-        "claude-session",
-        "co-authored-by",
-        "signed-off-by",
-    }
+CONTRIBUTOR = re.compile(r"[^|<>\x00-\x1f\x7f]+ \| [^|<>\x00-\x1f\x7f]+")
+SOLE_AUTHOR = re.compile(
+    r"Sole author: ([^()<>\r\n]+) \(([^<>\r\n]+)\)"
+    r"(?:; assistance: ([^,<>\r\n]+(?:, [^,<>\r\n]+)*))?"
 )
-_CURSOR_SUMMARY_OPEN = "<!-- CURSOR_SUMMARY -->"
-_CURSOR_SUMMARY_CLOSE = "<!-- /CURSOR_SUMMARY -->"
-_CURSOR_SUMMARY_INVALID = "pull-request body contains an invalid CURSOR_SUMMARY block"
 
 
-def _strict_tag(line: str):
-    """Parse a line that is exactly one contribution tag, ignoring surrounding space."""
-
-    candidate = line.strip()
-    if TAG_PATTERN.fullmatch(candidate) is None:
-        return None
-    return parse_contribution_tag(candidate)
-
-
-def _is_supported_trailer(line: str) -> bool:
-    match = _GIT_TRAILER_LINE.match(line.strip())
-    return match is not None and match.group("key").lower() in _SUPPORTED_TRAILER_KEYS
-
-
-def _without_trailing_git_trailers(text: str) -> str:
-    """Ignore a strict supported trailer block appended after a commit envelope.
-
-    The block is removed only when every line after the last END contribution
-    tag is blank, whitespace-only, or a supported trailer, and the trailers form
-    one contiguous run. Trailing blank or whitespace-only lines after that run
-    are tolerated: they previously stopped the scan and made a correctly
-    trailered commit fail the envelope check. Any other content after the
-    envelope is preserved so the validator still reports it.
-    """
-
-    lines = text.splitlines()
-    end_index = next(
-        (
-            index
-            for index in range(len(lines) - 1, -1, -1)
-            if (tag := _strict_tag(lines[index])) is not None and tag.boundary == "END"
-        ),
-        None,
-    )
-    if end_index is None:
-        return text
-    seen_trailer = False
-    block_closed = False
-    for line in lines[end_index + 1 :]:
+def trailer_values(message: str) -> list[str]:
+    """Return every Contributed-by trailer value in a commit message, trailers block only."""
+    lines = message.rstrip("\n").splitlines()
+    block: list[str] = []
+    for line in reversed(lines):
         if not line.strip():
-            block_closed = seen_trailer
+            if block:
+                break
             continue
-        if block_closed or not _is_supported_trailer(line):
-            return text
-        seen_trailer = True
-    if not seen_trailer:
-        return text
-    return "\n".join(lines[: end_index + 1])
-
-
-def _cursor_summary_delimiter_indices(lines: list[str]) -> tuple[list[int], list[int]]:
-    open_indices = [
-        index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_OPEN
-    ]
-    close_indices = [
-        index for index, line in enumerate(lines) if line.strip() == _CURSOR_SUMMARY_CLOSE
-    ]
-    return open_indices, close_indices
-
-
-def _terminal_cursor_summary_shape(lines: list[str]) -> tuple[int, int] | None:
-    open_indices, close_indices = _cursor_summary_delimiter_indices(lines)
-    if not open_indices and not close_indices:
-        return None
-    nonblank_indices = [index for index, line in enumerate(lines) if line.strip()]
-    if (
-        len(open_indices) != 1
-        or len(close_indices) != 1
-        or open_indices[0] >= close_indices[0]
-        or not nonblank_indices
-        or close_indices[0] != nonblank_indices[-1]
-    ):
-        return None
-    return open_indices[0], close_indices[0]
-
-
-def _without_trailing_cursor_summary_block(text: str) -> str:
-    """Return text with one terminal Cursor summary block removed, if present.
-
-  Only the accepted terminal shape is removed. Any other delimiter placement
-  leaves the text unchanged so callers can distinguish strip from fail-closed
-  validation.
-    """
-
-    lines = text.splitlines()
-    shape = _terminal_cursor_summary_shape(lines)
-    if shape is None:
-        return text
-    open_index, _close_index = shape
-    return "\n".join(lines[:open_index])
-
-
-def _prepare_markdown_envelope_text(text: str) -> tuple[str, list[str]]:
-    lines = text.splitlines()
-    open_indices, close_indices = _cursor_summary_delimiter_indices(lines)
-    if not open_indices and not close_indices:
-        return text, []
-    shape = _terminal_cursor_summary_shape(lines)
-    if shape is None:
-        return text, [_CURSOR_SUMMARY_INVALID]
-    open_index, _close_index = shape
-    return "\n".join(lines[:open_index]), []
-
-
-def _git(*args: str, binary: bool = False) -> str | bytes:
-    result = subprocess.run(
-        ["git", *args],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    return result.stdout if binary else result.stdout.decode("utf-8", errors="replace")
-
-
-def _effective_base(base: str, head: str) -> str:
-    if base and base != ZERO_SHA:
-        return base
-    for candidate in ("origin/main", "github/main", "main"):
-        try:
-            return str(_git("merge-base", head, candidate)).strip()
-        except subprocess.CalledProcessError:
+        if re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*:[ \t]+\S", line):
+            block.append(line)
             continue
-    return str(_git("rev-list", "--max-parents=0", head)).splitlines()[0]
-
-
-_RENAME_DETECTION = ("--find-renames", "--find-copies", "--find-copies-harder")
-
-
-def changed_paths(base: str, head: str) -> list[tuple[str, str | None, str]]:
-    """Return (status, old path, new path) for each change in the exact range.
-
-    The old path is retained for rename and copy records so the per-file diff
-    below can be taken against the original content. Copy detection is enabled
-    so a duplicated taggable file is compared with its source instead of being
-    presented as an entirely new file that already carries someone else's tags.
-    """
-
-    raw = _git(
-        "diff", "--name-status", *_RENAME_DETECTION, "-z", base, head, binary=True
-    )
-    assert isinstance(raw, bytes)
-    fields = raw.decode("utf-8", errors="surrogateescape").split("\0")
-    changes: list[tuple[str, str | None, str]] = []
-    index = 0
-    while index < len(fields) and fields[index]:
-        status = fields[index]
-        index += 1
-        old_path: str | None = None
-        if status.startswith(("R", "C")):
-            old_path = fields[index]
-            index += 1
-        path = fields[index]
-        index += 1
-        changes.append((status, old_path, path))
-    return changes
-
-
-# The base-tree lookup carries no tag grammar of its own. It used to mirror
-# TAG_PATTERN as a POSIX ERE, and the copy drifted: it bounded each of the first
-# two fields at 80 characters before the delimiter, while TAG_PATTERN accepts an
-# 80-character label *plus* the whitespace padding it also allows. A maximum
-# length padded tag therefore never reached the parser, so its identity stayed
-# invisible to the inherited-pair check and stale reuse of exactly those
-# identities passed. Grep instead for the one literal every tag must contain and
-# let iter_contribution_tags decide what is a tag. A fixed string cannot drift.
-_BASE_TAG_MARKER = "[["
-
-
-class BaseTagLookupError(RuntimeError):
-    """The base tree's contribution tags could not be read."""
-
-
-def _base_tag_pairs(base: str) -> set[tuple[str, str, str, str]]:
-    """Return the matching BEGIN/END identities already present in the base tree.
-
-    Git's rename and copy detection is a similarity heuristic: a logical move or
-    copy that is edited past the threshold is reported as an unrelated delete and
-    add, and the destination's inherited tags then look like additions. Comparing
-    against the identities the base tree already carries rejects that reuse
-    without depending on the heuristic.
-
-    The grep is deliberately broad — a fixed-string search for the opening
-    bracket pair — and every surfaced line is parsed with the one recognizer the
-    rest of the repository uses. Narrowing the search with a second expression
-    is what let padded maximum-length identities through before.
-
-    Only exit status 1 means "no matching line". Every other failure, such as an
-    unresolvable base revision, is raised: silently returning an empty set would
-    disable the reuse check exactly when the range cannot be trusted.
-    """
-
-    command = ["git", "grep", "--no-color", "-h", "-I", "-F", _BASE_TAG_MARKER, base]
-    try:
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except OSError as error:
-        raise BaseTagLookupError(
-            f"could not run git grep against base {base}: {error}"
-        ) from error
-    if result.returncode == 1:
-        return set()
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip().replace("\n", "; ")
-        raise BaseTagLookupError(
-            f"git grep failed with status {result.returncode} against base {base}"
-            f"{': ' + detail if detail else ''}"
-        )
-    matches = result.stdout.decode("utf-8", errors="replace")
-    # Scan line by line: TAG_PATTERN tolerates whitespace around its delimiters,
-    # and whitespace includes newlines, so scanning the joined blob could stitch
-    # a tag out of two unrelated files' lines.
-    tags = [tag for line in matches.splitlines() for tag in iter_contribution_tags(line)]
-    begins = {
-        (tag.contributor, tag.system, tag.date, tag.time)
-        for tag in tags
-        if tag.boundary == "BEGIN"
-    }
-    ends = {
-        (tag.contributor, tag.system, tag.date, tag.time)
-        for tag in tags
-        if tag.boundary == "END"
-    }
-    return begins & ends
-
-
-def _content_at(head: str, path: str) -> bytes:
-    value = _git("show", f"{head}:{path}", binary=True)
-    assert isinstance(value, bytes)
-    return value
-
-
-def _tree_mode(head: str, path: str) -> str | None:
-    """Return the tree mode for a path, or None when it cannot be resolved."""
-
-    try:
-        entry = str(_git("ls-tree", head, "--", path))
-    except (subprocess.CalledProcessError, UnicodeEncodeError, OSError):
-        return None
-    return entry.split(" ", 1)[0] if entry.strip() else None
-
-
-def _added_lines(
-    base: str, head: str, path: str, old_path: str | None = None
-) -> list[str]:
-    paths = [path] if old_path is None or old_path == path else [old_path, path]
-    diff = str(
-        _git(
-            "diff",
-            "--unified=0",
-            "--no-color",
-            *_RENAME_DETECTION,
-            base,
-            head,
-            "--",
-            *paths,
-        )
-    )
+        break
     return [
-        line[1:]
-        for line in diff.splitlines()
-        if line.startswith("+") and not line.startswith("+++")
+        line.partition(":")[2].strip()
+        for line in reversed(block)
+        if line.lower().startswith("contributed-by:")
     ]
 
 
-def _validate_submission_envelope(
-    text: str, *, require_outer: bool, require_markdown_boundary: bool
-) -> list[str]:
-    envelope_text = text
-    if require_markdown_boundary:
-        envelope_text, cursor_summary_errors = _prepare_markdown_envelope_text(text)
-        if cursor_summary_errors:
-            return cursor_summary_errors
-
-    def strict_tag(line: str):
-        candidate = line.strip()
-        if require_markdown_boundary:
-            if not (candidate.startswith("**") and candidate.endswith("**")):
-                return None
-            candidate = candidate[2:-2]
-        return _strict_tag(candidate)
-
-    nonblank = [line for line in envelope_text.splitlines() if line.strip()]
-    visible_lines = nonblank
-    if require_markdown_boundary:
-        visible_lines = [
-            line
-            for line in nonblank
-            if not (
-                line.strip().startswith("<!--")
-                and line.strip().endswith("-->")
-            )
-        ]
-    candidate_lines = visible_lines
-    if require_markdown_boundary:
-        candidate_lines = [
-            line
-            for line in visible_lines
-            if line.strip().startswith("**[[") and line.strip().endswith("]]**")
-        ]
-    tags = [tag for line in candidate_lines if (tag := strict_tag(line))]
-    begins = {
-        (tag.contributor, tag.system, tag.date, tag.time)
-        for tag in tags
-        if tag.boundary == "BEGIN"
-    }
-    ends = {
-        (tag.contributor, tag.system, tag.date, tag.time)
-        for tag in tags
-        if tag.boundary == "END"
-    }
-    if not (begins & ends):
-        return ["submission envelope lacks one matching BEGIN/END contribution pair"]
-    if require_outer:
-        first = strict_tag(visible_lines[0]) if visible_lines else None
-        last = strict_tag(visible_lines[-1]) if visible_lines else None
-        if first is None or first.boundary != "BEGIN" or last is None or last.boundary != "END":
-            return ["submission must begin and end with contribution tags"]
-        if (first.contributor, first.system, first.date, first.time) != (
-            last.contributor,
-            last.system,
-            last.date,
-            last.time,
-        ):
-            # An inner matching pair is not enough: the outer boundaries carry
-            # the identity of the submission itself, as the file validator
-            # already requires.
-            return ["submission outer BEGIN and END contribution tags do not match"]
-        if require_markdown_boundary and (
-            visible_lines[0] not in candidate_lines or visible_lines[-1] not in candidate_lines
-        ):
-            return ["pull-request body must begin and end with bold contribution tags"]
-    return []
-
-
-def _validate_github_event(path: Path) -> list[str]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload.get("pull_request"), dict):
-        body = payload["pull_request"].get("body") or ""
-        errors = _validate_submission_envelope(
-            body, require_outer=True, require_markdown_boundary=True
-        )
-        head = payload["pull_request"].get("head")
-        sha = head.get("sha") if isinstance(head, dict) else None
-        if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
-            return errors + ["pull-request head must identify an exact commit SHA"]
-        try:
-            # Validate the source head, never checkout's synthetic PR merge commit.
-            message = str(_git("show", "-s", "--format=%B", sha, "--"))
-        except (subprocess.CalledProcessError, OSError):
-            return errors + ["could not read pull-request head commit envelope"]
-        errors.extend(
-            f"pull-request head commit: {error}"
-            for error in _validate_submission_envelope(
-                _without_trailing_git_trailers(message),
-                require_outer=True,
-                require_markdown_boundary=False,
-            )
-        )
-        return errors
-    if payload.get("ref") == "refs/heads/main":
-        # The unchanged PR body was already validated before the protected merge.
-        # GitHub synthesizes squash-merge commit text and may omit that envelope.
-        return []
-    head_commit = payload.get("head_commit")
-    message = head_commit.get("message", "") if isinstance(head_commit, dict) else ""
-    return _validate_submission_envelope(
-        _without_trailing_git_trailers(message),
-        require_outer=True,
-        require_markdown_boundary=False,
+def trailers_attribute(values: list[str]) -> bool:
+    return bool(values) and all(
+        CONTRIBUTOR.fullmatch(value) is not None
+        and all(field.strip() for field in value.split("|"))
+        for value in values
     )
+
+
+def legacy_envelope_attributes(message: str) -> bool:
+    """Grandfather a pre-trailer commit: one matching BEGIN/END contribution pair in its message.
+
+    Branches opened before the trailer rule carry the envelope this repository
+    required until 2026-09-28. They are accepted as attributed so a base merge
+    does not turn them red; new commits still carry the trailer."""
+    identities: dict[tuple[str, str, str, str], set[str]] = {}
+    for match in TAG_PATTERN.finditer(message):
+        key = (match.group("contributor"), match.group("system"), match.group("date"), match.group("time"))
+        identities.setdefault(key, set()).add(match.group("boundary"))
+    return any(bounds == {"BEGIN", "END"} for bounds in identities.values())
+
+
+def message_attributed(message: str) -> bool:
+    """A commit is attributed by valid Contributed-by trailers, or, with none, a legacy envelope.
+
+    A present but malformed trailer decides the result; the envelope never rescues it."""
+    values = trailer_values(message)
+    if values:
+        return trailers_attribute(values)
+    return legacy_envelope_attributes(message)
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ).stdout.decode("utf-8", errors="strict")
+
+
+def validate_commits(base: str, head: str, default_branch_ref: str = "origin/main", *, exclude_default: bool = True) -> list[str]:
+    """Check new commits outside fetched default-branch history."""
+    head = _git("rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}").strip()
+    if base == ZERO_SHA:
+        revision_range = head  # New ref: include the root commit too.
+    else:
+        base = _git("rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}").strip()
+        revision_range = f"{base}..{head}"
+    try:
+        default_head = _git(
+            "rev-parse", "--verify", "--end-of-options", f"{default_branch_ref}^{{commit}}"
+        ).strip()
+    except subprocess.CalledProcessError:
+        return [
+            "setup error: default-branch ref unavailable; fetch the repository's "
+            "default branch and supply --default-branch-ref (default: origin/main)"
+        ]
+    errors = []
+    exclusions = ["--not", default_head] if exclude_default else []
+    for commit in _git("rev-list", revision_range, *exclusions).splitlines():
+        parents, committer, subject = _git(
+            "show", "-s", "--format=%P%n%cn <%ce>%n%s", commit
+        ).splitlines()
+        if (
+            len(parents.split()) == 2
+            and committer == "GitHub <noreply@github.com>"
+            and re.fullmatch(
+                r"Merge pull request #[0-9]+ from .+|"
+                r"Merge branch '[^']+' into .+|"  # GitHub's "Update branch" button
+                r"Merge #[0-9]+: reviewer [a-z][a-z0-9_-]* after merge-preflight \(CI [0-9]+\)",
+                subject,
+            )
+        ):
+            continue
+        trailers = _git(
+            "show", "-s", "--format=%(trailers:key=Contributed-by)", commit
+        ).splitlines()
+        values = [line.partition(":")[2].strip() for line in trailers if line.strip()]
+        if trailers_attribute(values):
+            continue
+        if not values and legacy_envelope_attributes(_git("show", "-s", "--format=%B", commit)):
+            continue  # pre-trailer commit carrying the envelope this repository then required
+        errors.append(f"{commit}: missing or malformed Contributed-by trailer")
+    return errors
+
+
+def validate_pr_body(body: str) -> list[str]:
+    """Require exactly one visible header, not a template, comment or code sample."""
+    headers = []
+    fence = None
+    comment = False
+    for line in body.splitlines():
+        if fence is not None:
+            marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", line)
+            if marker:
+                token = marker.group(1)
+                if token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip():
+                    fence = None
+            continue
+        # Comment-looking text inside a fence is literal. Outside fences,
+        # comments may span lines or sit next to a visible author header.
+        visible = ""
+        while line:
+            if comment:
+                _, end, line = line.partition("-->")
+                if not end:
+                    break
+                comment = False
+            else:
+                before, start, line = line.partition("<!--")
+                visible += before
+                if not start:
+                    break
+                comment = True
+        marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", visible)
+        if marker:
+            fence = marker.group(1)
+        elif visible.startswith("Sole author:"):
+            headers.append(visible)
+    if len(headers) == 1:
+        match = SOLE_AUTHOR.fullmatch(headers[0])
+        if match and all(value.strip() for value in match.groups() if value is not None):
+            if match.group(3) is None or all(part.strip() for part in match.group(3).split(",")):
+                return []
+    return ["PR body requires exactly one Sole author: <assistant> (<model>) header"]
+
+
+def _validate_github_event(path: Path) -> tuple[list[str], str | None]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("invalid event")
+    if "pull_request" in payload:
+        pr = payload["pull_request"]
+        if not isinstance(pr, dict):
+            raise ValueError("invalid pull request")
+        body = pr.get("body") or ""
+        if not isinstance(body, str):
+            raise ValueError("invalid body")
+        head = pr.get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        if not isinstance(sha, str) or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+            raise ValueError("pull-request head must identify an exact commit SHA")
+        return validate_pr_body(body), sha
+    return [], None  # Push events, including main, require commit trailers only.
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Validate contribution tags on the exact changed-file range."
-    )
+    parser = argparse.ArgumentParser(description="Validate commit trailers and PR authorship.")
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument("--default-branch-ref", default="origin/main")
     parser.add_argument("--github-event", type=Path)
     args = parser.parse_args()
-
-    base = _effective_base(args.base, args.head)
     try:
-        base_pairs = _base_tag_pairs(base)
-    except BaseTagLookupError as error:
-        # Fail closed: without the base identities the inherited-pair check
-        # cannot run, and the reason must stay visible.
+        errors = []
+        head = args.head
+        exclude_default = True
+        if args.github_event is not None:
+            errors, source_head = _validate_github_event(args.github_event)
+            payload = json.loads(args.github_event.read_text(encoding="utf-8"))
+            # The fetched main ref already contains a push head; subtracting it
+            # would validate no commits. PRs still exclude imported main history.
+            exclude_default = "pull_request" in payload or payload.get("ref") != "refs/heads/main"
+            if source_head is not None:
+                # Never select checkout's synthetic PR merge commit.
+                head = source_head
+        errors.extend(validate_commits(args.base, head, args.default_branch_ref, exclude_default=exclude_default))
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        # Never echo commit messages, event payloads or subprocess stderr.
+        print("ERROR: could not read the commit range or GitHub event", file=sys.stderr)
+        return 1
+    for error in errors:
         print(f"ERROR: {error}", file=sys.stderr)
-        return 1
-    errors: list[str] = []
-    envelope_only: list[str] = []
-    forbidden: list[str] = []
-    for status, old_path, path in changed_paths(base, args.head):
-        if status.startswith("D"):
-            continue
-        if _tree_mode(args.head, path) == GITLINK_MODE:
-            # Submodule pointers carry no taggable content of their own; the
-            # enclosing submission envelope records the change.
-            continue
-        policy = contribution_tag_policy(path)
-        try:
-            content = _content_at(args.head, path)
-        except (subprocess.CalledProcessError, UnicodeEncodeError, OSError):
-            # Report an unreadable path instead of aborting the whole check with
-            # a traceback that hides every other finding in the range.
-            errors.append(
-                f"{path}: contribution validator could not read this path at the head commit"
-            )
-            continue
-        if b"\0" in content:
-            forbidden.append(path)
-            continue
-        text = content.decode("utf-8", errors="replace")
-        if policy == "inline":
-            errors.extend(
-                validate_inline_contribution_tags(
-                    path,
-                    text,
-                    added_lines=_added_lines(base, args.head, path, old_path),
-                    base_pairs=base_pairs,
-                )
-            )
-        elif policy == "forbidden":
-            forbidden.append(path)
-            errors.extend(validate_inline_contribution_tags(path, text))
-        else:
-            envelope_only.append(path)
-
-    if args.github_event is not None:
-        errors.extend(_validate_github_event(args.github_event))
-
     if errors:
-        for error in errors:
-            print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    print(
-        "Contribution tags valid; "
-        f"envelope-only={len(envelope_only)}; inline-forbidden={len(forbidden)}."
-    )
+    print("Contribution attribution valid: commit trailers and applicable PR header.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Claude Code | claude-code/chief-programmer | 2026-08-22 | 00:50 UTC | END]]
 # [[Cursor Grok 4.6 | cursor-grok-4.6-high-fast | 2026-08-23 | 08:14 UTC | END]]

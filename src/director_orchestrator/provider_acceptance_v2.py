@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 08:24 UTC | BEGIN]]
 """Dormant v2 acceptance verification; no issuer, enrollment, journal or activation.
@@ -124,7 +125,7 @@ class ReviewContext:
             raise ProviderAcceptanceError("trusted material authorship required")
         for provider in self.material_author_providers:
             _text(provider)
-            if provider not in {"openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot"}:
+            if provider not in {"openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot", "zai"}:
                 raise ProviderAcceptanceError("unknown material-author provider family")
 
     def document(self) -> dict:
@@ -220,3 +221,4 @@ def verify_provider_acceptance(raw: bytes, *, expected: ReviewContext,
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 08:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

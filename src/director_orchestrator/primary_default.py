@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
@@ -279,6 +285,26 @@ def _digest(value: object) -> str:
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+PROVIDER_BRIDGE_REFUSED_BEFORE_EXECUTION = "provider_bridge_refused_before_execution"
+
+
+def bridge_refusal_no_run_hold(exc: BaseException):
+    """The existing proven no-run hold for a bridge refusal that ran nothing.
+
+    Only `HostBridgeRefusedBeforeExecution` qualifies: the Director's own
+    refusal before signing, or the bridge's signed refusal (first answer or
+    replay). The roster then settles the admitted attempt FAILED as refused
+    before I/O. Every other error, and any unsigned bridge answer, stays with
+    the roster's ordinary ambiguous or transient classification.
+    """
+    from .host_provider_bridge import HostBridgeRefusedBeforeExecution
+    from .primary_workload import ProvenNoRunHold
+
+    if not isinstance(exc, HostBridgeRefusedBeforeExecution):
+        raise TypeError("only an authenticated or pre-send bridge refusal proves a no-run")
+    return ProvenNoRunHold(PROVIDER_BRIDGE_REFUSED_BEFORE_EXECUTION)
 
 
 def _execute_three_attempt_roster(
@@ -591,6 +617,7 @@ _PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
     "perplexity": ProviderName.PERPLEXITY,
     "firecrawl": ProviderName.FIRECRAWL,
     "github-copilot": ProviderName.GITHUB_COPILOT,
+    "zai": ProviderName.ZAI,
 }
 _PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
     {"perplexity", "firecrawl"}
@@ -1397,11 +1424,26 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
         allocation_profile=record.intake.allocation_profile,
         team_mode=settings.langgraph_primary_antigravity_team_enabled)
     required = ((selected.research,) if selected.research else ()) + (selected.producer,)
+    # An owner-invited debate seats the Director and each invited member in one
+    # POSITION assignment apiece, dispatched like every other assignment. Each
+    # lane must be ready and admissible now; dispatch-time admission still decides.
+    from .primary_committee import committee_seat_members
+    from .primary_roster import PrimaryRosterHold
+    from .primary_workload import WorkloadAdmissionHold, admission_reason
+    invitation = record.intake.primary_committee_debate
+    seats = committee_seat_members(invitation) if invitation is not None else ()
+    for lane in seats:
+        if lane not in available:
+            raise PrimaryRosterHold("committee_member_unavailable")
+        reason = admission_reason(lane, (*history, *required, selected.reviewer),
+                                  allocation_profile=record.intake.allocation_profile)
+        if reason:
+            raise WorkloadAdmissionHold(reason)
     # The paid-off preview always declares a zero cost. A live wave must carry a
     # trusted positive per-lane limit derived from the configured task budget so
     # the packet, the dispatcher and the transport all enforce the same ceiling.
     try:
-        lane_budgets = _live_assignment_budgets(settings, (*required, selected.reviewer))
+        lane_budgets = _live_assignment_budgets(settings, (*required, *seats, selected.reviewer))
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
 
@@ -1461,6 +1503,33 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                 }
             )
         )
+    if seats:
+        from .models import DiscussionPhase
+        from .primary_committee import committee_position_objective
+        for lane in seats:
+            first_wave.append(work_template.model_copy(update={
+                "sequence": len(first_wave) + 1,
+                "agent": _PRIMARY_LANE_AGENT[lane],
+                "primary_provider_lane": lane,
+                "allocation_profile": record.intake.allocation_profile,
+                "kind": AssignmentKind.GENERAL,
+                "task": committee_position_objective(invitation),
+                "acceptance": [
+                    "Return one structured committee contribution for the invited question",
+                    "Report blockers and unresolved risks without external effects",
+                ],
+                "public_research_query": None,
+                "antigravity_directive": None,
+                "repository": repository,
+                "starting_ref": starting_ref,
+                "depends_on": [],
+                "requires_approval": False,
+                "allow_draft_pr": False,
+                "retry_limit": 3,
+                "estimated_cost_usd": lane_budgets[len(first_wave)],
+                "discussion_phase": DiscussionPhase.POSITION,
+                "discussion_round": 0,
+            }))
     review_lane = selected.reviewer
     review = review_template.model_copy(
         update={
@@ -1704,6 +1773,72 @@ def build_primary_packet_result_resolver(
     return packet_result
 
 
+def build_primary_committee_resolver(
+    *,
+    handle: PostgresCheckpointHandle,
+    services: "DefaultDryRunServices",
+    parallel: Any | None = None,
+) -> Callable[[HandlerContext], str | None]:
+    """Tally an invited debate from its seats' persisted results.
+
+    Returns None for a task without an invitation, else the digest binding the
+    votes and tally. Each seat's result is read from the same durable aggregate
+    the terminal review was resolved from, so a replay recomputes the same
+    tally from immutable artifacts and calls no model. Raises
+    CommitteeContributionInvalid when a seat cannot be counted.
+    """
+
+    from .primary_committee import CommitteeContributionInvalid, committee_seats, committee_tally
+
+    def committee(context: HandlerContext) -> str | None:
+        record = services._record(context.task_id)
+        if record.intake.primary_committee_debate is None:
+            return None
+        try:
+            dispatch = parallel if parallel is not None else PostgresParallelDispatch(
+                handle.claim_store
+            )
+            aggregate = dispatch.aggregate(context.task_id)
+        except Exception as exc:
+            raise CommitteeContributionInvalid("committee_position_unresolved") from exc
+        if not aggregate.terminal or aggregate.ambiguous_slot_count:
+            raise CommitteeContributionInvalid("committee_position_unresolved")
+        results: dict[int, Mapping[str, Any]] = {}
+        result_digests: dict[str, str] = {}
+        for seat in committee_seats(record):
+            assignment_id = services._packet_router._assignment_id(record, seat)
+            expected = aggregate.result_digests.get(assignment_id)
+            if aggregate.statuses.get(assignment_id) != "SUCCEEDED" or not expected:
+                # Left out: committee_tally names the missing seat's reason.
+                continue
+            artifact = handle.claim_store.read_result_packet_artifact(
+                task_id=context.task_id, assignment_id=assignment_id
+            )
+            if (
+                artifact is None
+                or artifact.document_digest != expected
+                or str(artifact.packet.get("assignment_id")) != assignment_id
+            ):
+                raise CommitteeContributionInvalid("committee_position_unresolved")
+            results[seat.sequence] = dict(artifact.packet)
+            result_digests[assignment_id] = expected
+        producer = next((item.primary_provider_lane for item in record.plan.assignments
+                         if item.kind is not AssignmentKind.INDEPENDENT_REVIEW
+                         and item.discussion_phase.value == "work"
+                         and item.primary_provider_lane not in _PRIMARY_PUBLIC_RESEARCH_LANES),
+                        None)
+        committee_record = committee_tally(record, results, producer_lane=producer)
+        return _digest({
+            "position_result_digests": result_digests,
+            "seated": list(committee_record.seated),
+            "not_seated": list(committee_record.not_seated),
+            "votes": [vote.model_dump(mode="json") for vote in committee_record.votes],
+            "tally": committee_record.tally.model_dump(mode="json"),
+        })
+
+    return committee
+
+
 def build_automatic_primary_live_dependencies(
     settings: Settings,
     handle: PostgresCheckpointHandle,
@@ -1741,6 +1876,10 @@ def build_automatic_primary_live_dependencies(
             or os.environ.get("GH_TOKEN", "").strip()
             or os.environ.get("GITHUB_TOKEN", "").strip()
         ),
+        # Every production readiness check, not merely a key: see
+        # Settings.zai_production_readiness.
+        "zai": settings.zai_native_config() is not None
+        or settings.zai_bridge_expectation() is not None,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -1772,6 +1911,8 @@ def build_automatic_primary_live_dependencies(
         ),
         host_bridge_challenge=bridge_challenge,
         host_bridge_attested_argv=settings.host_bridge_attested_argv(),
+        zai=settings.zai_native_config(),
+        zai_bridge=settings.zai_bridge_expectation(),
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -1810,6 +1951,8 @@ def build_automatic_primary_live_dependencies(
     packet_result = build_primary_packet_result_resolver(
         handle=handle, services=services
     )
+    from .primary_committee import CommitteeContributionInvalid
+    committee = build_primary_committee_resolver(handle=handle, services=services)
 
     def authenticated_result(context: HandlerContext) -> Mapping[str, Any] | None:
         binding = packet_result(context)
@@ -1835,16 +1978,28 @@ def build_automatic_primary_live_dependencies(
             and not packet.get("blockers")
             and not packet.get("requested_decisions")
         )
+        debate = {"evidence_digest": digest, "provider": context.producer_id}
+        reason_code = (
+            "authenticated_provider_evidence_recorded"
+            if passed
+            else "owner_decision_required"
+        )
+        if passed:
+            # An invited debate is tallied only over completed evidence; a seat
+            # that cannot be counted fails the task closed with its reason.
+            try:
+                committee_digest = committee(context)
+            except CommitteeContributionInvalid as exc:
+                passed, reason_code = False, exc.reason_code
+            else:
+                if committee_digest is not None:
+                    debate["committee_tally_digest"] = committee_digest
         return EvidenceDebateResult(
             digest,
-            _digest({"evidence_digest": digest, "provider": context.producer_id}),
+            _digest(debate),
             context.candidate_sha,
             passed=passed,
-            reason_code=(
-                "authenticated_provider_evidence_recorded"
-                if passed
-                else "owner_decision_required"
-            ),
+            reason_code=reason_code,
         )
 
     def acceptance_from_result(context: HandlerContext) -> AcceptanceResult:
@@ -4569,7 +4724,8 @@ class DefaultPrimaryActivation:
                                     deadline=selected.deadline)
                                 if lapsed is not None:
                                     raise WorkloadAdmissionHold(lapsed)
-                        from .host_provider_bridge import HostBridgeAttestationStale
+                        from .host_provider_bridge import (
+                            HostBridgeAttestationStale, HostBridgeRefusedBeforeExecution)
                         from .packet_routing import SmallTaskViewUnavailable
                         from .primary_workload import ProvenNoRunHold
                         try:
@@ -4613,6 +4769,8 @@ class DefaultPrimaryActivation:
                             # proven no-run as a stale attestation before the send.
                             raise ProvenNoRunHold(
                                 "small_task_bridge_attestation_stale") from exc
+                        except HostBridgeRefusedBeforeExecution as exc:
+                            raise bridge_refusal_no_run_hold(exc) from exc
                         except SmallTaskViewUnavailable as exc:
                             # Raised by the transport while building its
                             # payload, before any provider request: nothing
@@ -5197,3 +5355,9 @@ class DefaultPrimaryActivation:
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:52 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
 # OpenAI continuation repairs attribution only here; prior material from
 # Copilot branch head 510251c66a78251bd242e8f773a03c51bf65f99b is preserved.
@@ -62,7 +63,7 @@ roles:
     may_initiate_debate: false
     vote_grants_authority: false
   allocation:
-    profiles: { mixed: 5, engineering: 0, public_research: 15, enterprise: 5 }
+    profiles: { mixed: 4, engineering: 0, public_research: 12, enterprise: 4 }
     default_profile: "engineering"
     overall_effort_policy: "telemetry_only_no_separate_allocation"
     capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
@@ -207,7 +208,8 @@ sources:
   - document: "docs/langgraph-primary-operations.md"
     anchor: "Perplexity or Firecrawl contact under the frozen profile"
   - document: "docs/team-operating-charter.md"
-    anchor: "| Firecrawl | 5% | 0% | 15% | 5% |"
+    anchor: "| Firecrawl |"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

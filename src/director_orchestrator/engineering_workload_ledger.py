@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
@@ -28,6 +29,7 @@ from typing import Any
 from .allocation_profiles import (
     allocation_profile_digest, allocation_targets,
     historical_allocation_profile_digest, PRE_RETIREMENT_V3,
+    pre_zai_allocation_profile_digest,
 )
 from .workload_policy import (
     DirectProductionProvider, FailureKind, RetryRequest, Transport,
@@ -40,6 +42,8 @@ PRODUCT_BUCKETS = {
     "openai-codex": "openai", "claude-code": "claude", "cursor": "cursor",
     "xai-grok": "grok", "gemini-antigravity": "antigravity",
     "grok-bot": None,
+    # Z.ai GLM through the Claude Code executable: its own bucket, never claude.
+    "zai-glm": "zai",
 }
 KINDS = {"implementation", "review", "validation", "research", "coordination"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -181,7 +185,8 @@ class EngineeringWorkloadLedger:
             # Bind the current prospective identity for new admissions while still
             # authenticating rows recorded under the retired hard-tolerance identity
             # or an earlier pre-retirement profile revision, without rewriting them.
-            valid = {allocation_profile_digest(profile), historical_allocation_profile_digest(profile)}
+            valid = {allocation_profile_digest(profile), historical_allocation_profile_digest(profile),
+                     pre_zai_allocation_profile_digest(profile)}
             if profile in PRE_RETIREMENT_V3:
                 valid.add(PRE_RETIREMENT_V3[profile][0])
             if meta["canonical_digest"] not in valid:
@@ -659,3 +664,4 @@ def human_status(status: dict) -> str:
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

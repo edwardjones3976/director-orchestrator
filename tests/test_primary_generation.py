@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
@@ -144,6 +145,21 @@ class PrimaryGenerationTests(unittest.TestCase):
             require_generation(self.settings, self.identity, reserve=True)
         self.assertEqual(self.journal.read_bytes(), original)
 
+    def test_explicit_environment_and_backup_do_not_use_ambient_generation(self):
+        from director_orchestrator.completion_scorecard import _sqlite_snapshot
+        require_generation(self.settings, self.identity, reserve=True)
+        expected = dict(os.environ)
+        snapshot = _sqlite_snapshot(self.journal)
+        self.addCleanup(snapshot.close)
+        with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "0" * 64,
+                                     "DIRECTOR_RUNTIME_IMAGE_ID": "hostile"}):
+            self.assertEqual(require_generation(self.settings, self.identity,
+                environment=expected, journal_connection=snapshot), self.manifest)
+        self.assertEqual(self.manifest["deployment_configuration_sha256"], deployment_digest(self.settings))
+        with self.assertRaises(ActivationEvidenceError):
+            require_generation(self.settings, self.identity, environment=expected,
+                               journal_connection=snapshot, reserve=True)
+
     def test_missing_selection_and_mixed_inputs_fail_before_creation(self):
         variants = [replace(self.settings, provider_timeout_seconds=self.settings.provider_timeout_seconds + 1),
             replace(self.settings, langgraph_primary_acceptance_registry_sha256="f" * 64),
@@ -271,3 +287,4 @@ class PrimaryGenerationTests(unittest.TestCase):
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]

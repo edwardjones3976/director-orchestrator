@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:20 UTC | BEGIN]]
@@ -56,11 +57,14 @@ def utc(text: str) -> float:
 # project-profile.yaml created_at; decision-log.md D-018 (#280 pre-gate M1 spend)
 # and O-031 (M0 closed/M1 entered), recorded on PR #293. M1's conservative
 # budget window starts at project creation because unlabelled pre-gate calls
-# cannot be ruled out. Overlapping M0/M1 time is ambiguous for inference.
-# PLAN.md's 10-08 M1 date is a target, not a closing gate (O-022).
+# cannot be ruled out. D-M1-G (#294) closes M1; D-M2-8 (PR #340,
+# comment 5862172493) starts M2 before M1 closes. Valid purpose labels resolve
+# to their labelled milestone; legacy unlabelled time-window inference stays
+# unknown in overlapping intervals (M0/M1 and M1/M2).
 MILESTONE_WINDOWS = {
     ("homemade-llm", "M0"): (utc("2026-09-24T06:05:00Z"), utc("2026-09-26T03:15:00Z")),
-    ("homemade-llm", "M1"): (utc("2026-09-24T06:05:00Z"), None),
+    ("homemade-llm", "M1"): (utc("2026-09-24T06:05:00Z"), utc("2026-09-28T02:30:00Z")),
+    ("homemade-llm", "M2"): (utc("2026-09-28T01:34:11Z"), None),
 }
 
 # Ordered legacy inference rules. A rule identifies a project; a missing
@@ -309,6 +313,22 @@ def self_test() -> None:
         assert meter(root, 0, False, "homemade-llm M1", budget=bounded["upper_bound_usd"], unpriced_bound=1.0)["budget_status"] == "STOP"
         assert meter(root, time.time() + 60, project_only=False)["providers"] == {}
         assert meter(root, time.time() + 60, project_only=False, purpose_prefix="homemade-llm M1")["matched_receipts"] == 0
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        paid = root / "xai/20260928T013411Z.json"
+        paid.parent.mkdir()
+        paid.write_text(json.dumps({"purpose": "homemade-llm M2 packet-a: start", "usage": {"cost_in_usd_ticks": 5000000000}}), encoding="utf-8")
+        m2 = meter(root, 0, project_only=False, purpose_prefix="homemade-llm M2")
+        assert m2["window_start_utc"] == "2026-09-28T01:34:11Z" and m2["window_end_utc"] is None, m2
+        assert m2["matched_receipts"] == 1 and m2["buckets"]["labelled"] == {"xai": {"calls": 1, "usd": 0.5, "uncosted": 0}}, m2
+        unpriced = root / "xai/20260928T013412Z.json"
+        unpriced.write_text(json.dumps({"purpose": "homemade-llm M2 packet-b: unpriced"}), encoding="utf-8")
+        default = meter(root, 0, project_only=False, purpose_prefix="homemade-llm M2")
+        assert default["uncosted_receipts"] == 1 and default["upper_bound_usd"] is None and default["budget_status"] == "STOP", default
+        bounded = meter(root, 0, project_only=False, purpose_prefix="homemade-llm M2", unpriced_bound=1.0)
+        assert bounded["matched_receipts"] == 2 and bounded["buckets"]["labelled"]["xai"]["uncosted"] == 1, bounded
+        assert bounded["unpriced_bound_usd"] == 1.0 and bounded["upper_bound_usd"] == bounded["upper_known_usd"] + 1.0 == 1.5, bounded
+        assert bounded["budget_status"] == "OK", bounded
     print("spend_meter self-test: ok")
 
 
@@ -372,3 +392,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:39 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 02:32 UTC | END]]

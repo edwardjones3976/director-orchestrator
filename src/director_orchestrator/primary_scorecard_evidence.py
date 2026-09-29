@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
@@ -102,7 +104,7 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM {s}.director_primary_parallel_assignment WHERE status='AMBIGUOUS') AS ambiguous_assignments,
  (SELECT count(*) FROM p WHERE tc='RECONCILIATION_REQUIRED') AS tasks_requiring_reconciliation,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
-    WHERE p.settled AND x.status IN ('PENDING','ACTIVE','AMBIGUOUS') AND NOT EXISTS
+    WHERE p.settled AND x.status IN ('PENDING','ACTIVE','AMBIGUOUS','OWNER_DECISION_REQUIRED') AND NOT EXISTS
       (SELECT 1 FROM blocked b WHERE b.task_id=x.task_id AND b.assignment_id=x.assignment_id)) AS terminal_tasks_open_assignments,
  (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
     LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key AND t.task_id=e.task_id
@@ -1229,28 +1231,34 @@ def _global_task_evidence(connection, schema, usage_tables):
     return counts
 
 
-def consistency_report(settings, identity, *, tasks=()) -> dict:
+def consistency_report(settings, identity, *, tasks=(), connection=None, environment=None,
+                       local_artifact=None, authority_secrets=None) -> dict:
     """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
     import psycopg
     from psycopg.rows import dict_row
     from .langgraph_postgres import PostgresControlPlaneError, _require_schema, _result_packet_artifact_from_row
 
     schema = _require_schema(settings.langgraph_primary_postgres_schema)
+    environment = os.environ if environment is None else environment
+    artifact = Path if local_artifact is None else local_artifact
     tasks = list(tasks)
     adoption = None
     if settings.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
         from .primary_activation_evidence import load_pinned_owner_local_adoption
-        loaded = load_pinned_owner_local_adoption(settings.langgraph_primary_local_evidence_adoption_path,
+        loaded = load_pinned_owner_local_adoption(artifact(settings.langgraph_primary_local_evidence_adoption_path),
             expected_sha256=settings.langgraph_primary_local_evidence_adoption_sha256,
             owner_token=settings.langgraph_primary_owner_token)
         adoption = {key: loaded[key] for key in _ADOPTION_FIELDS}
-    connection = psycopg.connect(settings.langgraph_primary_postgres_dsn, connect_timeout=10, row_factory=dict_row,
+    owns_connection = connection is None
+    connection = connection or psycopg.connect(settings.langgraph_primary_postgres_dsn, connect_timeout=10, row_factory=dict_row,
         options="-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=5000")
     try:
         connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
         connection.read_only = True
         per_task = {}
         with connection.transaction():
+            connection.execute("SET LOCAL statement_timeout = '10s'")
+            connection.execute("SET LOCAL lock_timeout = '5s'")
             _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
             present = connection.execute(
@@ -1265,8 +1273,9 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 usage_tables = all(present.values())
                 spend, budgets, verifiers = [], [], None
                 if usage_tables:
-                    route, owner = (_secret(settings, "entitlement_route_verifier_secret_file"),
-                                    _secret(settings, "entitlement_owner_authority_secret_file"))
+                    route, owner = (authority_secrets if authority_secrets is not None else
+                                    (_secret(settings, "entitlement_route_verifier_secret_file"),
+                                     _secret(settings, "entitlement_owner_authority_secret_file")))
                     verifiers = {"route_verifier": route is not None, "owner_authority": owner is not None}
                     for r in connection.execute(_SPEND.format(s=schema), {"tasks": tasks}).fetchall():
                         row = _row(r)
@@ -1323,14 +1332,15 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                                          "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
                                                                for r in receipts if r["task_id"] == task_id]}
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
     return {"version": "director-primary-consistency/v1",
-            "generation": {"manifest_sha256": os.environ[_PIN],
+            "generation": {"manifest_sha256": environment[_PIN],
                            "acceptance_mode": settings.langgraph_primary_acceptance_mode,
                            "candidate_commit": identity.candidate_commit,
                            "candidate_tree": identity.candidate_tree, "adoption": adoption,
                            # require_generation verified the manifest against this image before any read.
-                           "image_id": os.environ.get("DIRECTOR_RUNTIME_IMAGE_ID")},
+                           "image_id": environment.get("DIRECTOR_RUNTIME_IMAGE_ID")},
             "captured_at": _plain(counts["captured_at"]),
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
             # None (over the row cap) is not a count: check 07 reads the snapshot as malformed, never as zero.
@@ -1463,7 +1473,19 @@ def _capture_product(provider, output: bytes, *, official_openai: bool = False, 
     model = envelope.get("model")
 
     def cli() -> str:
-        return cli_release_product(provider, executable_sha256, descriptor) or CLI_PRODUCTS[provider] + UNATTESTED
+        product = cli_release_product(provider, executable_sha256, descriptor)
+        if product:
+            return product
+        # Missing historical attestations remain unknown. An authenticated digest
+        # contradicting a well-formed pinned release is positive mismatch evidence.
+        releases = descriptor.get("releases", []) if isinstance(descriptor, dict) else []
+        if not isinstance(releases, list):
+            releases = []
+        pinned = [entry for entry in releases if isinstance(entry, dict) and entry.get("provider") == provider
+                  and cli_release_product(provider, entry.get("executable_sha256"), descriptor)]
+        if executable_sha256 is not None and pinned:
+            return CLI_PRODUCTS[provider] + "-digest-mismatch"
+        return CLI_PRODUCTS[provider] + UNATTESTED
 
     if provider == "openai":
         if envelope.get("object") == "response":
@@ -1517,7 +1539,8 @@ def _activation_recorded_at(dsn, schema, binding, digest, surface="runtime_adapt
     return _plain(row["recorded_at"])
 
 
-def activation_capture_report(settings, identity, manifest) -> dict:
+def activation_capture_report(settings, identity, manifest, *, verifier=None, environment=None,
+                              descriptor=None) -> dict:
     """Latest per-lane capture digests and expiry through a load-only store."""
     from .langgraph_postgres import open_provider_activation_store
     from .primary_activation_evidence import ActivationEvidenceError
@@ -1525,8 +1548,11 @@ def activation_capture_report(settings, identity, manifest) -> dict:
     from .primary_provider_evidence import _BoundedCaptureReader
     from .provider_validation import capture_verifier_from_environment
 
-    verifier = capture_verifier_from_environment(candidate=identity.candidate_commit,
-        tree=identity.candidate_tree, require_enabled=False)
+    explicit = environment is not None
+    environment = os.environ if environment is None else environment
+    if verifier is None and not explicit:
+        verifier = capture_verifier_from_environment(candidate=identity.candidate_commit,
+            tree=identity.candidate_tree, require_enabled=False)
     if verifier is None:
         raise ActivationEvidenceError("authenticated capture verification is unavailable")
     verifier.store = _BoundedCaptureReader(verifier.store.dsn)
@@ -1545,10 +1571,9 @@ def activation_capture_report(settings, identity, manifest) -> dict:
         route = getattr(verifier, "openai_responses_route", None)
         official = getattr(getattr(route, "transport", None), "api_url", None) == OFFICIAL_OPENAI_RESPONSES_URL
         lanes = service.capture_attestations(
-            classify=lambda provider, output: _capture_product(
+            classify_attested=lambda provider, output, executable_sha256: _capture_product(
                 provider, output, official_openai=official,
-                # No capture records its executable's digest yet (A2): every CLI capture is unattested until it does.
-                executable_sha256=None, descriptor=cli_release_descriptor()))
+                executable_sha256=executable_sha256, descriptor=descriptor if explicit else cli_release_descriptor()))
     bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
         # Both activation surfaces must classify as the same attested product (review 4111508065): a lane whose app
@@ -1563,7 +1588,7 @@ def activation_capture_report(settings, identity, manifest) -> dict:
                 each["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
                                                               identity.postgres_schema, bindings[provider],
                                                               each["evidence_digest"], name, identity=identity)
-    return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
+    return {"version": "director-activation-captures/v1", "generation_manifest_sha256": environment[_PIN],
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
             "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes,
             # The generation's required providers: the scorecard requires a lane for each, and no other.
@@ -1608,3 +1633,5 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]

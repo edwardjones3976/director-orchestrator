@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -60,6 +61,7 @@ class DirectorPacketResultConsumer:
         ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
         ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
         ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
+        ProviderName.ZAI: ProviderTransport.ZAI_CODING_CLI,
     }
 
     @staticmethod
@@ -293,3 +295,4 @@ class DirectorPacketResultConsumer:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

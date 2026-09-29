@@ -1,6 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 21:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
@@ -136,9 +138,12 @@ class ParallelRunnerTests(unittest.TestCase):
         from psycopg.conninfo import conninfo_to_dict
         original = dict(dbname="fixture", host="localhost", port="12345", user="fixture", sslmode="disable")
         from psycopg.conninfo import make_conninfo
-        for index in range(3):
-            rewritten = conninfo_to_dict(runner.shard_dsn(make_conninfo(**original), index))
-            self.assertEqual({**original, "dbname": f"director_test_s{index}"}, rewritten)
+        for tls in ({}, {"sslmode": "verify-full", "sslrootcert": "/fixture/ca.pem"}):
+            selected = {**original, **tls}
+            for index in range(3):
+                rewritten = conninfo_to_dict(runner.shard_dsn(make_conninfo(**selected), index))
+                # Only the database changes: every shard retains verified TLS and its CA.
+                self.assertEqual({**selected, "dbname": f"director_test_s{index}"}, rewritten)
 
     def test_database_cleanup_on_failure_and_partial_setup(self):
         import psycopg
@@ -345,6 +350,8 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:14 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 21:56 UTC | END]]

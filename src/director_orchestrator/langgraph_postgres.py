@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -1356,7 +1360,7 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
             task_id text NOT NULL,
             assignment_id text NOT NULL,
             provider_lane text NOT NULL CHECK (provider_lane IN
-                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot')),
+                ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot', 'zai')),
             reservation_digest text NOT NULL CHECK
                 (reservation_digest ~ '^sha256:[0-9a-f]{{64}}$'),
             fencing_generation bigint NOT NULL CHECK (fencing_generation >= 0),
@@ -1380,8 +1384,9 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         DO $migration$ BEGIN
             ALTER TABLE {schema}.director_primary_workload_assignment DROP CONSTRAINT IF EXISTS director_primary_workload_assignment_provider_lane_check;
             -- Preserve immutable historical rows; enforce the current roster on new writes.
+            -- The roster gained 'zai' with the owner's Z.ai production enrollment.
             ALTER TABLE {schema}.director_primary_workload_assignment ADD CONSTRAINT director_primary_workload_assignment_provider_lane_check CHECK
-                (provider_lane IN ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot')) NOT VALID;
+                (provider_lane IN ('openai', 'claude', 'cursor', 'antigravity', 'grok', 'perplexity', 'firecrawl', 'github-copilot', 'zai')) NOT VALID;
             IF EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
                 JOIN pg_namespace n ON n.oid=t.relnamespace
                 WHERE n.nspname='{schema}' AND t.relname='director_primary_workload_assignment'
@@ -2532,31 +2537,32 @@ class PostgresConditionalClaimStore:
                 return str(row["task_id"]), True
 
     def resolve_primary_slack_thread_binding(
-        self,
-        *,
-        channel_id: str,
-        thread_ts: str,
+        self, *, channel_id: str, thread_ts: str, deadline: float | None = None,
     ) -> tuple[str, ...]:
-        """Return every task whose persisted intake binding matches one thread."""
-
+        """Read at most two matches: zero, a unique task, or an ambiguous thread."""
         _require_id(channel_id, "channel_id")
         _require_id(thread_ts, "thread_ts")
+        deadline = monotonic() + 5.0 if deadline is None else deadline
         schema = self._schema
-        with self._pool.connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT task_id
-                    FROM {schema}.director_primary_task_projection
-                    WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
-                          = %(channel_id)s
-                      AND projection->'application'->'task_record'->'intake'->>'thread_ts'
-                          = %(thread_ts)s
-                    ORDER BY created_at, task_id
-                    """,
-                    {"channel_id": channel_id, "thread_ts": thread_ts},
-                )
-                rows = cursor.fetchall()
+        with bounded_connection(self._pool, deadline) as connection:
+            with connection.transaction():
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                bind_transaction_deadline(connection, deadline)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        SELECT task_id
+                        FROM {schema}.director_primary_task_projection
+                        WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
+                              = %(channel_id)s
+                          AND projection->'application'->'task_record'->'intake'->>'thread_ts'
+                              = %(thread_ts)s
+                        ORDER BY created_at, task_id LIMIT 2
+                        """,
+                        {"channel_id": channel_id, "thread_ts": thread_ts},
+                    )
+                    rows = cursor.fetchall()
+        require_deadline_remaining(deadline, "thread binding readback")
         return tuple(str(row["task_id"]) for row in rows)
 
     def record_primary_slack_status_receipt(
@@ -6008,6 +6014,79 @@ def open_provider_activation_store(dsn: str, *, schema: str,
         pool.close()
 
 
+
+@contextmanager
+def _open_postgres_readonly_evidence(dsn: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str, wall_seconds: float):
+    """Private factory shared by bounded readers; no store escapes their calls."""
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    if type(wall_seconds) not in {int, float} or not 0.1 <= wall_seconds <= 30:
+        raise ValueError("wall_seconds must be between 0.1 and 30 seconds")
+    deadline = monotonic() + float(wall_seconds)
+    schema = _require_schema(schema)
+    parsed = _parse_connection_target(dsn, conninfo_to_dict=conninfo_to_dict,
+                                     allow_insecure_local_transport=False)
+    if parsed.get("sslmode") != "verify-full":
+        raise PostgresCheckpointConfigurationError("qualification collection requires verified TLS")
+    if _storage_identity(parsed, schema=schema) != accepted_storage_identity:
+        raise PostgresCheckpointConfigurationError("qualification database target differs")
+    try:
+        uuid.UUID(accepted_instance_id)
+    except (TypeError, ValueError, AttributeError):
+        raise PostgresCheckpointConfigurationError("qualification database instance is invalid") from None
+    option = _search_path_option(schema)
+    timeout_ms = max(1, int(wall_seconds * 1000))
+    pool = ConnectionPool(conninfo=dsn, min_size=0, max_size=1, open=False,
+        configure=_configure_connection(schema, option,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id),
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row,
+            "connect_timeout": max(1, ceil(wall_seconds)),
+            "options": option + " -c default_transaction_read_only=on"
+                + f" -c statement_timeout={timeout_ms} -c lock_timeout={timeout_ms}"})
+    try:
+        pool.open(wait=False)
+        store = PostgresConditionalClaimStore(_pool=pool, _schema=schema,
+            storage_identity=accepted_storage_identity, database_instance_id=accepted_instance_id,
+            _store_provenance=_FACTORY_PROVENANCE)
+        yield store, deadline
+    finally:
+        pool.close()
+    require_deadline_remaining(deadline, "evidence factory completion")
+
+
+def read_postgres_qualification_evidence(dsn: str, task_id: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str,
+        wall_seconds: float = 5.0) -> dict[str, Any] | None:
+    """Return one guarded read-only snapshot; no DDL, graph, saver or writer authority."""
+    _require_id(task_id, "task_id")
+    with _open_postgres_readonly_evidence(dsn, schema=schema,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id, wall_seconds=wall_seconds) as (store, deadline):
+        remaining = require_deadline_remaining(deadline, "qualification factory")
+        if remaining < 0.1:
+            raise DeadlineExpired("qualification factory deadline expired before readback")
+        result = store.read_primary_qualification_evidence(task_id, wall_seconds=remaining)
+    return result
+
+
+def read_postgres_slack_thread_binding(dsn: str, *, channel_id: str, thread_ts: str,
+        schema: str, accepted_storage_identity: str, accepted_instance_id: str,
+        wall_seconds: float = 5.0) -> tuple[str, ...]:
+    """Return zero, one or two task identities through the same guarded reader factory."""
+    _require_id(channel_id, "channel_id")
+    _require_id(thread_ts, "thread_ts")
+    with _open_postgres_readonly_evidence(dsn, schema=schema,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id, wall_seconds=wall_seconds) as (store, deadline):
+        result = store.resolve_primary_slack_thread_binding(
+            channel_id=channel_id, thread_ts=thread_ts, deadline=deadline)
+    return result
+
+
 def open_postgres_control_plane(
     dsn: str,
     *,
@@ -6186,3 +6265,8 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:52 UTC | END]]

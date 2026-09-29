@@ -1,5 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
@@ -17,6 +20,7 @@ param(
     [ValidateRange(5, 900)][int]$TimeoutSeconds = 60,
     [ValidateRange(1, 86400)][int]$SlotWaitSeconds = 2700,
     [string]$Python = ".venv\Scripts\python.exe",
+    [switch]$Tls,
     [ValidateRange(1, 256)][int]$Parallel,
     [string[]]$TestNames = @()
 )
@@ -39,7 +43,70 @@ $databaseName = "director_test"
 $laneLabel = "director-orchestrator.postgres-test-lane"
 $dsnVariable = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 $containerVariable = "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER"
+$caVariable = "LANGGRAPH_RUNTIME_POSTGRES_TEST_CA"
+$script:tlsDirectory = $null
 $dsn = "postgresql://${databaseUser}@127.0.0.1:${HostPort}/${databaseName}?sslmode=disable"
+
+function New-LaneTls {
+    $script:tlsDirectory = Join-Path ([IO.Path]::GetTempPath()) ("director-test-tls-" + [Guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($script:tlsDirectory) | Out-Null
+    $pythonPath = $Python
+    if (-not [IO.Path]::IsPathRooted($pythonPath)) { $pythonPath = Join-Path $repoRoot $pythonPath }
+    # Code on stdin, directory in argv; no keys or certificates on stdout.
+    @'
+import datetime, ipaddress, pathlib, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+root = pathlib.Path(sys.argv[1])
+now = datetime.datetime.now(datetime.timezone.utc)
+ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'Disposable test lane CA')])
+name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'localhost')])
+def builder(subject, public_key):
+    return (x509.CertificateBuilder().subject_name(subject).issuer_name(ca_name)
+            .public_key(public_key).serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(minutes=5))
+            .not_valid_after(now + datetime.timedelta(days=1)))
+ca = builder(ca_name, ca_key.public_key()).add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True).sign(ca_key, hashes.SHA256())
+cert = (builder(name, key.public_key())
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName('localhost'), x509.IPAddress(ipaddress.ip_address('127.0.0.1'))]), critical=False)
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .sign(ca_key, hashes.SHA256()))
+(root / 'ca.crt').write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+(root / 'server.crt').write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+(root / 'server.key').write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+(root / 'server.key').chmod(0o600)
+'@ | & $pythonPath - $script:tlsDirectory
+    if ($LASTEXITCODE -ne 0) { throw "Disposable TLS certificate generation failed." }
+}
+
+function Read-LaneTls {
+    # Called only after the existing container passed Assert-LaneOwned.
+    # Docker Desktop can translate mount sources to VM paths. Retain the host
+    # spelling in a label so Stop in a fresh shell can clean the exact directory.
+    $encoded = & docker inspect --format '{{index .Config.Labels "director-orchestrator.test-lane-tls-directory"}}' $ContainerName
+    if ($LASTEXITCODE -ne 0 -or -not $encoded) { throw "Lane TLS directory inspection failed." }
+    $script:tlsDirectory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
+}
+
+function Remove-LaneTls {
+    if (-not $script:tlsDirectory) { return }
+    $target = [IO.Path]::GetFullPath($script:tlsDirectory)
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if ((Split-Path -Parent $target) -ne $tempRoot -or (Split-Path -Leaf $target) -notmatch '^director-test-tls-[0-9a-f]{32}$') {
+        throw "Refusing cleanup outside the disposable TLS directory."
+    }
+    if (Test-Path -LiteralPath $target) {
+        $item = Get-Item -LiteralPath $target
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked TLS directory." }
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+    $script:tlsDirectory = $null
+}
 
 function Assert-DockerReachable {
     & docker version --format '{{.Server.Version}}' | Out-Null
@@ -57,7 +124,7 @@ function Get-LaneContainer {
         if ($parts.Count -lt 3) { continue }
         if ($parts[0] -cne $ContainerName) { continue }
         $owned = (",$($parts[2])," -like "*,$laneLabel=true,*")
-        return @{ State = $parts[1]; Owned = $owned }
+        return @{ State = $parts[1]; Owned = $owned; Tls = (",$($parts[2])," -like '*,director-orchestrator.test-lane-tls=true,*') }
     }
     return $null
 }
@@ -97,13 +164,22 @@ function Wait-LaneReady {
 }
 
 function Export-LaneEnvironment {
+    if ($script:tlsDirectory) {
+        $caPath = Join-Path $script:tlsDirectory 'ca.crt'
+        if (-not (Test-Path -LiteralPath $caPath -PathType Leaf)) { throw "Lane CA is unavailable." }
+        $script:dsn = "postgresql://${databaseUser}@127.0.0.1:${HostPort}/${databaseName}?sslmode=verify-full&sslrootcert=$([Uri]::EscapeDataString($caPath))"
+        [Environment]::SetEnvironmentVariable($caVariable, $caPath, "Process")
+    } else {
+        [Environment]::SetEnvironmentVariable($caVariable, $null, "Process")
+    }
     [Environment]::SetEnvironmentVariable($dsnVariable, $dsn, "Process")
     [Environment]::SetEnvironmentVariable($containerVariable, $ContainerName, "Process")
-    Write-Host "`$env:$dsnVariable = `"$dsn`""
+    Write-Host "PostgreSQL test connection environment exported (values withheld)."
     Write-Host "`$env:$containerVariable = `"$ContainerName`""
 }
 
 function Clear-LaneEnvironment {
+    [Environment]::SetEnvironmentVariable($caVariable, $null, "Process")
     [Environment]::SetEnvironmentVariable($dsnVariable, $null, "Process")
     [Environment]::SetEnvironmentVariable($containerVariable, $null, "Process")
 }
@@ -126,17 +202,17 @@ function Get-LaneStateDirectory {
 
 function Get-SlotInventory {
     # One daemon snapshot includes reservations and their pre-created owners.
-    $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.Labels}}')
+    $rows = @(& docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}')
     if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
     foreach ($row in $rows) {
-        $parts = [string]$row -split '\|', 3
-        if ($parts.Count -ne 3) { throw "Invalid Docker slot inventory." }
+        $parts = [string]$row -split '\|', 4
+        if ($parts.Count -ne 4) { throw "Invalid Docker slot inventory." }
         $labels = @{}
-        foreach ($label in ($parts[2] -split ',')) {
+        foreach ($label in ($parts[3] -split ',')) {
             $pair = $label -split '=', 2
             if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
         }
-        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
+        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; State = $parts[2]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
     }
 }
 
@@ -167,7 +243,19 @@ function Enter-LaneSlot {
     do {
         $inventory = @(Get-SlotInventory)
         foreach ($slot in $inventory | Where-Object { $_.Owner -and $_.Name -match '^director-test-lane-slot-[1-9][0-9]*$' }) {
-            if (@($inventory | ForEach-Object { $_.Name }) -cnotcontains $slot.Owner) { Remove-SlotContainer $slot.Id }
+            $owner = @($inventory | Where-Object { $_.Name -ceq $slot.Owner })
+            if ($owner.Count -eq 0) { Remove-SlotContainer $slot.Id; continue }
+            # A managed lane runs for the whole of its job. One that has exited
+            # or died belongs to a job the daemon or runner already lost (for
+            # example a Docker Desktop outage, which skips the Stop step), so it
+            # can never release its slot: reclaim the slot and the dead lane.
+            # A lane still in the created state may be a neighbour between its
+            # create and start, and a lane this script did not create is never
+            # touched.
+            if ($owner[0].Lane -eq 'true' -and $owner[0].Managed -eq 'true' -and $owner[0].State -in @('exited', 'dead')) {
+                Remove-SlotContainer $slot.Id
+                Remove-SlotContainer $owner[0].Id
+            }
         }
         for ($number = 1; $number -le $limit; $number++) {
             # Daemon name uniqueness is atomic across Windows and WSL.
@@ -214,10 +302,20 @@ function Start-Lane {
     if ($publishers.Count -gt 0) {
         throw "Host port $HostPort is already published; choose another -HostPort or stop your own lane."
     }
-    # Create the owner first, but do not start PostgreSQL until admission.
-    & docker create --name $ContainerName --label "$laneLabel=true" --label "director-orchestrator.test-lane-managed=true" --publish ("127.0.0.1:" + $HostPort + ":5432") --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" $image | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be created." }
+    $created = $false
     try {
+        $tlsOptions = @()
+        $serverCommand = @()
+        if ($Tls) {
+            New-LaneTls
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:tlsDirectory))
+            $tlsOptions = @('--label', 'director-orchestrator.test-lane-tls=true', '--label', "director-orchestrator.test-lane-tls-directory=$encoded", '--mount', "type=bind,source=$script:tlsDirectory,target=/lane-tls,readonly", '--entrypoint', 'sh')
+            $serverCommand = @('-c', 'set -eu; mkdir -p /tmp/lane-tls; cp /lane-tls/server.crt /lane-tls/server.key /tmp/lane-tls/; chown -R postgres:postgres /tmp/lane-tls; chmod 0700 /tmp/lane-tls; chmod 0600 /tmp/lane-tls/server.key; exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/lane-tls/server.crt -c ssl_key_file=/tmp/lane-tls/server.key')
+        }
+        # Create the owner first, but do not start PostgreSQL until admission.
+        & docker create --name $ContainerName --label "$laneLabel=true" --label "director-orchestrator.test-lane-managed=true" --publish ("127.0.0.1:" + $HostPort + ":5432") --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" @tlsOptions $image @serverCommand | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be created." }
+        $created = $true
         Enter-LaneSlot
         & docker start $ContainerName | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be started." }
@@ -226,7 +324,12 @@ function Start-Lane {
         Write-Host "Disposable PostgreSQL lane is ready."
     }
     catch {
-        try { Remove-LaneContainer; Remove-LaneSlot }
+        try {
+            if ($created) { Remove-LaneContainer }
+            Remove-LaneTls
+            if ($created) { Remove-LaneSlot }
+            Clear-LaneEnvironment
+        }
         catch { Write-Warning "Could not verify lane cleanup; slot retained." }
         throw
     }
@@ -236,8 +339,10 @@ function Stop-Lane {
     $existing = Get-LaneContainer
     if ($null -ne $existing) {
         Assert-LaneOwned -Container $existing
+        if ($existing.Tls) { Read-LaneTls }
         Remove-LaneContainer
     }
+    Remove-LaneTls
     Remove-LaneSlot
     Clear-LaneEnvironment
     Write-Host "Disposable PostgreSQL lane was removed or confirmed absent."
@@ -255,7 +360,6 @@ if ($Action -eq "Status") {
     Write-Host "Owned by this script: $($existing.Owned)"
     Write-Host "Ready: $ready"
     Write-Host "Published: 127.0.0.1:$HostPort"
-    Write-Host "DSN: $dsn"
     return
 }
 if ($Action -eq "Dsn") {
@@ -263,6 +367,7 @@ if ($Action -eq "Dsn") {
     $existing = Get-LaneContainer
     if ($null -eq $existing) { throw "No container named '$ContainerName' exists; run -Action Start first." }
     Assert-LaneOwned -Container $existing
+    if ($existing.Tls) { Read-LaneTls }
     if (-not (Test-LaneReady)) { throw "The disposable PostgreSQL lane is not accepting connections." }
     Export-LaneEnvironment
     return
@@ -271,7 +376,7 @@ if ($Action -eq "Dsn") {
 # Test: start the lane, run unittest from the repository root with this
 # process's environment, always remove the lane and restore the environment.
 $originalProcessEnvironment = @{}
-foreach ($name in @("PYTHONPATH", "SQLITE_PATH", $dsnVariable, $containerVariable)) {
+foreach ($name in @("PYTHONPATH", "SQLITE_PATH", $dsnVariable, $containerVariable, $caVariable)) {
     $originalProcessEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
 Push-Location -LiteralPath $repoRoot
@@ -316,5 +421,8 @@ Write-Host "Unit tests passed against the disposable PostgreSQL lane; the contai
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | END]]
