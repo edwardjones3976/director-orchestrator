@@ -550,7 +550,12 @@ class GenerateCandidatesContextTests(GenerateCandidatesTests):
         self.args.refs_manifest = gen.manifest(self.refs)
         for name, leaked in leaks.items():
             with self.subTest(name=name):
-                self.write_input("p1", dict(self.item, context=[self.context_item(text=f"Note: {leaked}.")]))
+                excerpt = f"Note: {leaked}."
+                policy = self.root / "policy.md"
+                policy.write_text(excerpt, encoding="utf-8")
+                self.write_input("p1", dict(self.item, context=[self.context_item(
+                    kind="project_policy", text=excerpt, source_ref="policy.md",
+                    source_sha256=hashlib.sha256(policy.read_bytes()).hexdigest())]))
                 with self.assertRaisesRegex(ValueError, "overlaps scored field of p1"):
                     gen.run(self.args, self.transport)
                 self.transport.assert_not_called()

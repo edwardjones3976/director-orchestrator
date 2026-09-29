@@ -563,7 +563,7 @@ class BuildInputsContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, refs, out, context = self._layout(Path(tmp))
             item_id = self._held_out_task(root, refs)
-            excerpt = "Background: the mirror task runs nightly on the G drive and the owner wants the log kept."
+            excerpt = (root / "packets" / "ew-one.md").read_text(encoding="utf-8")
             (root / "policy.md").write_text("One writer per file.\n", encoding="utf-8")
             policy = _context_item(kind="project_policy", text="One writer per file.",
                                    source_ref="policy.md", source_sha256=hashlib.sha256(

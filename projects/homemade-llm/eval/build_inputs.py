@@ -270,14 +270,16 @@ def validate_context(
         meta = {}
     for index, item in enumerate(context):
         where = f"context[{index}]"
+        source_ref = item["source_ref"]
+        own_source = (item["kind"] == "assignment_packet"
+                      and source_ref == meta.get("source_file"))
         for ref_id in sorted(references):
+            if own_source and ref_id == item_id:
+                continue
             leak = _text_leak_match(references[ref_id], item["text"])
             if leak is not None:
                 errors.append(f"{where}: text overlaps scored field of {ref_id}: {leak}")
                 break
-        source_ref = item["source_ref"]
-        own_source = (item["kind"] == "assignment_packet"
-                      and source_ref == meta.get("source_file"))
         if _source_ref_forms(source_ref) & lineage_keys and not own_source:
             errors.append(f"{where}: source_ref resolves to a held-out item")
         relative = Path(source_ref)
