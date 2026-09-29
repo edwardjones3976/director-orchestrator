@@ -59,7 +59,7 @@ from .models import Assignment, ProviderName, ProviderRun
 from .packet_contracts import canonical_json_bytes, validate_packet
 from .packet_routing import AuthoritySnapshotResolver, PacketRoutingError
 from .providers import ProviderAdapter, ProviderDailySpendLedger
-from .store import TaskStore
+from .store import AcknowledgementPersistencePending, TaskStore
 from .usage import authoritative_reported_cost
 
 
@@ -541,14 +541,16 @@ class LegacyProviderPacketTransport:
             0.1, float(github_effect_timeout_seconds)
         )
 
-    def _assignment(self, packet: Mapping[str, Any], provider: ProviderName) -> Assignment:
+    def _assignment(self, packet: Mapping[str, Any], provider: ProviderName, record=None) -> Assignment:
         sequence_text = str(packet["assignment_id"]).rsplit("-", 1)[-1]
         if not sequence_text.isdigit():
             raise ValueError("packet assignment identity lacks a numeric sequence")
         sequence = int(sequence_text)
-        record = self.task_store.get(str(packet["task_id"]))
+        record = record if record is not None else self.task_store.get(str(packet["task_id"]))
         if record is None or record.plan is None:
             raise ValueError("packet task plan is unavailable")
+        if int(str(packet["idempotency_key"]).rsplit(":", 3)[1]) != record.plan_generation:
+            raise ValueError("packet plan generation is stale")
         assignment = next(
             (item for item in record.plan.assignments if item.sequence == sequence),
             None,
@@ -568,15 +570,28 @@ class LegacyProviderPacketTransport:
         context: ProviderAdapterContext,
         assignment: Assignment,
         run: ProviderRun,
+        *, record=None, ledger=None,
     ) -> None:
-        record = self.task_store.get(str(packet["task_id"]))
+        # send() supplies the snapshot and ledger opened BEFORE provider I/O.
+        ledger = ledger if ledger is not None else ProviderDailySpendLedger(self.task_store.path)
         if record is None:
-            raise RuntimeError("Claude callback task record is unavailable")
-        # The immutable packet captures dispatch generation before provider I/O.
-        # Owner reset clears the active plan before a replacement increments it.
+            record, _ = self.task_store.read_spend_acknowledgement(str(packet["task_id"]), ledger)
+        if record is None:
+            raise AcknowledgementPersistencePending("Claude callback task record is unavailable")
         generation = int(str(packet["idempotency_key"]).rsplit(":", 3)[1])
-        if record.plan is None or generation != record.plan_generation:
-            raise RuntimeError("Claude acknowledgement belongs to an inactive plan generation")
+        failed_keys = {item.effect_key for item in record.task_effect_ledger
+                       if item.kind == "provider_observation" and item.outcome == "failed_pre_submit"}
+        planned = next((item for item in record.plan.assignments
+                        if item.sequence == assignment.sequence), None) if record.plan else None
+        reserved_assignment = assignment.model_copy(update={"starting_ref": planned.starting_ref}) if planned else assignment
+        intents = [item for item in record.task_effect_ledger
+                   if item.kind == "provider_intent" and item.phase == "dispatch"
+                   and item.provider == run.provider and item.assignment_sequence == assignment.sequence
+                   and item.plan_generation == generation and item.effect_key not in failed_keys
+                   and item.assignment_digest == assignment_approval_digest(reserved_assignment)]
+        if len(intents) > 1:
+            raise AcknowledgementPersistencePending("Claude acknowledgement has conflicting dispatch intents")
+        intent = intents[0] if intents else None
         run.plan_generation = generation
         run.assignment_sequence = assignment.sequence
         run.interaction_id = str(packet["correlation"]["correlation_id"])
@@ -598,7 +613,7 @@ class LegacyProviderPacketTransport:
         event = start_interaction(
             task_id=record.task_id,
             interaction_id=run.interaction_id,
-            plan_generation=record.plan_generation,
+            plan_generation=generation,
             assignment_sequence=assignment.sequence,
             provider=assignment.agent.value,
             phase=ProviderInteractionPhase.DISPATCH,
@@ -631,7 +646,21 @@ class LegacyProviderPacketTransport:
         if any(existing.run_id == run.run_id for existing in record.provider_runs):
             raise RuntimeError("Claude provider run identity is already recorded")
         record.provider_runs.append(run)
-        self.task_store.save(record)
+        cost = authoritative_reported_cost(run.provider, run.raw)
+        evidence = {
+            "provider": run.provider.value, "run_id": run.run_id, "cost": cost,
+            # Claude's reservation is the immutable task effect, not a supplemental
+            # daily-spend row. Unknown price remains unknown after acknowledgement.
+            "pending": False,
+            "phase": intent.phase if intent else "dispatch",
+            "assignment_sequence": intent.assignment_sequence if intent else assignment.sequence,
+            "assignment_digest": intent.assignment_digest if intent else None,
+            "plan_generation": generation,
+        }
+        current = self.task_store.save_spend_acknowledgement(
+            record, intent.effect_key if intent else None, run, evidence, ledger)
+        if not current:
+            raise RuntimeError("Claude acknowledgement belongs to an inactive plan generation")
 
     async def _wait(self, packet: Mapping[str, Any], run: ProviderRun, deadline: float) -> ProviderRun:
         if run.status == "WAITING_CALLBACK":
@@ -1219,14 +1248,17 @@ class LegacyProviderPacketTransport:
     ) -> Mapping[str, Any]:
         packet = validate_packet("work", json.loads(work_packet_json.decode("utf-8")))
         provider = self.adapter.name
-        assignment = self._assignment(packet, provider)
+        snapshot = self.task_store.get(str(packet["task_id"]))
+        assignment = self._assignment(packet, provider, snapshot)
+        ledger = ProviderDailySpendLedger(self.task_store.path) if provider == ProviderName.CLAUDE else None
         handoff = self._provider_handoff(packet)
 
         async def execute() -> ProviderRun:
             run = await self.adapter.dispatch(assignment, context=handoff)
             run.plan_generation = int(str(packet["idempotency_key"]).rsplit(":", 3)[1])
             if provider == ProviderName.CLAUDE:
-                self._record_claude_dispatch(packet, context, assignment, run)
+                self._record_claude_dispatch(packet, context, assignment, run,
+                                             record=snapshot, ledger=ledger)
             return await self._wait(
                 packet, run, time.monotonic() + context.timeout_seconds
             )

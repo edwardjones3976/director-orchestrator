@@ -377,6 +377,151 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovered.raw["packet_result_digest"], document_digest(result))
         self.assertEqual(transport.sends, 1)
 
+    async def test_top_level_packet_ack_read_failure_and_public_restart_reconciliation(self):
+        import httpx
+        import director_orchestrator.main as main
+
+        for exhausted in (False, True):
+            with self.subTest(exhausted=exhausted), tempfile.TemporaryDirectory() as directory:
+                result = copy.deepcopy(self.result)
+                result["provider"] = "gemini"
+                transport = RecordingTransport(result)
+                router = StubPacketTaskRouter(self.work, PacketBoundaryAdapter("gemini", transport))
+                settings = self._settings(
+                    sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                    langgraph_runtime_checkpoint_path=str(Path(directory) / "runtime.sqlite3"),
+                    langgraph_runtime_ledger_path=str(Path(directory) / "ledger.sqlite3"),
+                    langgraph_runtime_enabled=True, langgraph_runtime_live_dispatch_enabled=True,
+                    langgraph_runtime_task_writer_enabled=True, openai_api_key="fixture-only",
+                    gemini_daily_budget_usd=1.0, gemini_usage_probe_cost_ceiling_usd=0.01,
+                    shared_secret="fixture-auth", slack_owner_user_id="U123")
+                activation = RuntimeActivation(settings, packet_task_router=router)
+                self.addCleanup(activation.close)
+                engine, store = self._engine(settings, activation)
+                record, assignment = self._record(agent=ProviderName.GEMINI)
+                record.intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+                store.create(record)
+                engine._publish_delegation = AsyncMock(return_value=True)
+                engine._status_post = AsyncMock()
+                get = store.get
+                failures = 0
+
+                def fail_after_send(*args, **kwargs):
+                    nonlocal failures
+                    if transport.sends and (exhausted or failures == 0):
+                        failures += 1
+                        raise sqlite3.OperationalError("database is locked")
+                    return get(*args, **kwargs)
+
+                with patch.object(store, "get", side_effect=fail_after_send), patch(
+                    "director_orchestrator.engine.execution_policy_errors", return_value=[]
+                ):
+                    await engine.run(record.task_id)
+                self.assertEqual(transport.sends, 1)
+                durable = store.get(record.task_id)
+                self.assertNotEqual(durable.status, TaskStatus.FAILED)
+                self.assertEqual(failures, 2 if exhausted else 1)
+                intent = next(item for item in durable.task_effect_ledger if item.kind == "provider_intent")
+                restarted_store = TaskStore(store.path)
+                restarted = OrchestrationEngine(settings, restarted_store, runtime_activation=activation)
+                restarted._status_post = AsyncMock()
+                restarted._publish_delegation = AsyncMock(return_value=True)
+                if exhausted:
+                    self.assertEqual(durable.status, TaskStatus.RUNNING)
+                    self.assertEqual(durable.provider_runs, [])
+                    self.assertEqual(restarted.provider_spend.settlements(record.task_id), {})
+                    resolution = dict(owner_user_id="U123", assignment_sequence=assignment.sequence,
+                                      resolution="created", run_id=result["run_reference"],
+                                      note="Owner checked the created provider request")
+                    url = f"/v1/tasks/{record.task_id}/dispatch-reconciliation"
+                    with patch.object(main, "settings", settings), patch.object(main, "store", restarted_store), patch.object(
+                        main, "engine", restarted
+                    ), patch.object(main, "primary_default_activation", None), patch.object(
+                        restarted, "run", new=AsyncMock()
+                    ) as queued:
+                        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),
+                                                     base_url="http://fixture") as client:
+                            denied = await client.post(url, json=resolution)
+                            self.assertEqual(denied.status_code, 401)
+                            headers = {"Authorization": "Bearer fixture-auth"}
+                            live = await client.post(url, json=resolution, headers=headers)
+                            self.assertEqual(live.status_code, 409)
+                            expired = intent.recorded_at.timestamp() + max(180, settings.provider_timeout_seconds) + 61
+                            with patch("director_orchestrator.engine.time.time", return_value=expired):
+                                accepted = await client.post(url, json=resolution, headers=headers)
+                            self.assertEqual(accepted.status_code, 200, accepted.text)
+                        queued.assert_awaited_once()
+                else:
+                    held = restarted.provider_spend.settlements(record.task_id)[intent.effect_key]
+                    self.assertEqual(held["result_packet_digest"], document_digest(result))
+                    self.assertEqual(held["plan_generation"], record.plan_generation)
+                    self.assertEqual(durable.provider_runs[-1].result, result["outcome"])
+                recovered = restarted_store.get(record.task_id)
+                self.assertTrue(restarted._retry_spend_settlements(recovered))
+                # The runtime reads back its completed result; it never calls send again.
+                await restarted._route_live_dispatch(recovered, assignment)
+                self.assertEqual(transport.sends, 1)
+                self.assertNotEqual(restarted_store.get(record.task_id).status, TaskStatus.FAILED)
+                activation.close()
+
+    async def test_top_level_claude_ack_write_exhaustion_retains_runtime_reconciliation(self):
+        from director_orchestrator.packet_routing import DirectorPacketTaskRouter
+        from director_orchestrator.packet_transports import LegacyProviderPacketTransport
+        from tests.test_packet_transports import ScriptedSnapshotResolver
+
+        settings = self._settings(
+            langgraph_runtime_enabled=True, langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True, openai_api_key="fixture-only")
+        store = TaskStore(settings.sqlite_path)
+        record, assignment = self._record()
+        record.intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+        store.create(record)
+        provider = AsyncMock()
+        provider.name = ProviderName.CLAUDE
+        provider.dispatch.return_value = ProviderRun(provider=ProviderName.CLAUDE,
+                                                     run_id="uncommitted-claude-ack", status="WAITING_CALLBACK")
+        transport = LegacyProviderPacketTransport(provider, task_store=store, poll_seconds=1)
+        router = DirectorPacketTaskRouter(
+            authority_snapshots=ScriptedSnapshotResolver(str(self.root)),
+            boundary_adapters={"claude": PacketBoundaryAdapter("claude", transport)},
+            writer_owner_id=settings.langgraph_runtime_writer_owner_id,
+            writer_secret=settings.langgraph_runtime_writer_secret, timeout_seconds=30)
+        activation = RuntimeActivation(settings, packet_task_router=router)
+        self.addCleanup(activation.close)
+        engine = OrchestrationEngine(settings, store, runtime_activation=activation)
+        engine._publish_delegation = AsyncMock(return_value=True)
+        engine._status_post = AsyncMock()
+        save = store.save
+        failures = 0
+
+        def fail_ack(candidate, **kwargs):
+            nonlocal failures
+            if kwargs.get("spend_settlement"):
+                failures += 1
+                raise sqlite3.OperationalError("database is locked")
+            return save(candidate, **kwargs)
+
+        with patch.object(store, "save", side_effect=fail_ack), patch(
+            "director_orchestrator.engine.execution_policy_errors", return_value=[]
+        ):
+            await engine.run(record.task_id)
+        provider.dispatch.assert_awaited_once()
+        self.assertEqual(failures, 2)
+        durable = store.get(record.task_id)
+        self.assertEqual(durable.status, TaskStatus.RUNNING)
+        self.assertEqual(durable.provider_runs, [])
+        self.assertEqual(engine.provider_spend.settlements(record.task_id), {})
+        with closing(sqlite3.connect(self.ledger_path)) as connection:
+            status, code = connection.execute("SELECT status, error_code FROM runtime_dispatch_ledger").fetchone()
+        self.assertEqual((status, code), ("RECONCILIATION_REQUIRED", "AcknowledgementPersistencePending"))
+        restarted = OrchestrationEngine(settings, TaskStore(store.path), runtime_activation=activation)
+        restarted._publish_delegation = AsyncMock(return_value=True)
+        restarted._status_post = AsyncMock()
+        await restarted._route_live_dispatch(restarted.store.get(record.task_id), assignment)
+        provider.dispatch.assert_awaited_once()
+        provider.poll.assert_not_awaited()
+        self.assertNotEqual(restarted.store.get(record.task_id).status, TaskStatus.FAILED)
+
     async def test_missing_packet_authority_fails_closed_without_legacy_dispatch(
         self,
     ) -> None:

@@ -86,7 +86,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import errno
 import hashlib
 import hmac
 import json
@@ -204,6 +203,7 @@ from .langgraph_runtime import (
 from .packet_contracts import document_digest
 from .scheduling import SchedulingError, dependency_ready_decision
 from .store import (
+    AcknowledgementPersistencePending,
     PrivacyCleanupPending,
     StaleTaskWrite,
     TaskStore,
@@ -324,10 +324,6 @@ _ANTIGRAVITY_TYPED_KINDS = frozenset(
         AssignmentKind.ABSTRACT_IDEATION,
     }
 )
-
-
-class AcknowledgementPersistencePending(RuntimeError):
-    """Paid response could not be committed; durable intent remains AMBIGUOUS."""
 
 
 class ProviderUnavailableError(ProviderError):
@@ -1138,26 +1134,31 @@ class OrchestrationEngine:
         if plan_generation is None:
             plan_generation = record.plan_generation
         snapshot_runs = record.provider_runs
-        latest = self.store.get(record.task_id) or record
+        latest, journal = self.store.read_spend_acknowledgement(record.task_id, self.provider_spend)
+        latest = latest or record
         generation_current = (
             latest.plan is not None and plan_generation == latest.plan_generation)
         if self.provider_spend is None or assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
             return generation_current
         if unsent:
             return self._charge_spend(assignment.agent, effect_key, 0.0)
-        if latest is not None and latest._store_version != record._store_version:
+        # Resolve the known response before replacing the dispatch snapshot.
+        packet = getattr(outcome, "result_packet", None)
+        run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
+        run = next((item for item in reversed(latest.provider_runs)
+                    if run_id and item.run_id == run_id and item.provider == assignment.agent
+                    and item.plan_generation in (None, plan_generation)
+                    and item.assignment_sequence in (None, assignment.sequence)), None)
+        if run is None:
+            run = next((item for item in reversed(snapshot_runs)
+                        if run_id and item.run_id == run_id and item.provider == assignment.agent
+                        and item.plan_generation in (None, plan_generation)
+                        and item.assignment_sequence in (None, assignment.sequence)), None)
+        cost = authoritative_reported_cost(assignment.agent, run.raw) if run is not None else None
+        if latest._store_version != record._store_version:
             for field_name in type(record).model_fields:
                 setattr(record, field_name, copy.deepcopy(getattr(latest, field_name)))
             record._store_version = latest._store_version
-        packet = getattr(outcome, "result_packet", None)
-        run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
-        latest = self.store.get(record.task_id) or record
-        run = next((item for item in reversed(latest.provider_runs)
-                    if run_id and item.run_id == run_id and item.provider == assignment.agent), None)
-        if run is None:
-            run = next((item for item in reversed(snapshot_runs)
-                        if run_id and item.run_id == run_id and item.provider == assignment.agent), None)
-        cost = authoritative_reported_cost(assignment.agent, run.raw) if run is not None else None
         packet_only = run is None and bool(run_id)
         if run is None and run_id:
             run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
@@ -1166,8 +1167,9 @@ class OrchestrationEngine:
         if run is not None:
             if plan_generation is not None:
                 run = run.model_copy(update={"plan_generation": plan_generation})
-            held = self._spend_settlements(record, run).get(effect_key)
+            held = journal.get(effect_key)
             if (generation_current and held and not held["pending"] and held["cost"] == cost
+                    and held["provider"] == run.provider.value and held["run_id"] == run.run_id
                     and held.get("plan_generation") == record.plan_generation
                     and held.get("result_packet_digest") == document_digest(packet)):
                 return True
@@ -1388,6 +1390,7 @@ class OrchestrationEngine:
             return False
         packet_outcome = None
         provably_unsent = False
+        acknowledgement_pending = False
         packet_generation = record.plan_generation
         try:
             outcome = await asyncio.to_thread(
@@ -1399,6 +1402,9 @@ class OrchestrationEngine:
                 writer_token=writer_token,
             )
             packet_outcome = outcome
+        except AcknowledgementPersistencePending:
+            acknowledgement_pending = True
+            raise
         except Exception as exc:
             # An exception escaping `run_packet` can occur on either side of its
             # durable runtime claim. Close the exact runtime key before calling it
@@ -1444,9 +1450,10 @@ class OrchestrationEngine:
         finally:
             # Review 4112697677: every exit after the packet ran settles its reservation (a later readback that
             # reconciles a result raises it to the actual charge).
-            settlement_ok = self._settle_packet_spend(
-                record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent,
-                plan_generation=packet_generation)
+            if not acknowledgement_pending:
+                settlement_ok = self._settle_packet_spend(
+                    record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent,
+                    plan_generation=packet_generation)
         if not settlement_ok:
             if workload_reservation is not None:
                 await self._finalize_workload_dispatch(
@@ -5586,7 +5593,7 @@ class OrchestrationEngine:
         """Persist the owner resolution before settling or closing its effect."""
         if self.provider_spend is not None:
             for key, held in self.provider_spend.settlements(record.task_id).items():
-                if held["pending"] and any(
+                if (held["pending"] or held["provider"] == ProviderName.CLAUDE.value) and any(
                     item.kind == "provider_intent" and item.effect_key == key
                     and item.assignment_sequence == resolution.assignment_sequence
                     and item.plan_generation == record.plan_generation
@@ -5789,13 +5796,19 @@ class OrchestrationEngine:
                                        result_packet=None, packet_only: bool = False) -> bool:
         if self.provider_spend is None or run.provider not in ProviderDailySpendLedger._SUPPORTED:
             return True
+        if (not isinstance(self.store, TaskStore)
+                or self.store.path != self.provider_spend.path):
+            raise AcknowledgementPersistencePending("Atomic acknowledgement requires the same SQLite task store")
         # Dispatch-stamped runs survive reloads; direct callers still hold the
         # dispatch snapshot. Intent presence never decides content eligibility.
         intent = next((item for item in record.task_effect_ledger
                        if item.kind == "provider_intent" and item.effect_key == effect_key), None)
         generation = run.plan_generation
         if generation is None:
-            generation = self._spend_settlements(record, run).get(effect_key, {}).get("plan_generation")
+            _, journal = self.store.read_spend_acknowledgement(record.task_id, self.provider_spend)
+            held = journal.get(effect_key, {})
+            if held.get("provider") == run.provider.value and held.get("run_id") == run.run_id:
+                generation = held.get("plan_generation")
         if generation is None:
             generation = record.plan_generation
         run = run.model_copy(update={"plan_generation": generation})
@@ -5812,9 +5825,6 @@ class OrchestrationEngine:
         # One primary persistence attempt and one recovery, never provider I/O.
         # Exhaustion leaves only the durable pre-response intent. Do not
         # let the outer handler turn that paid request into a FAILED task.
-        if (not isinstance(self.store, TaskStore)
-                or self.store.path != self.provider_spend.path):
-            raise AcknowledgementPersistencePending("Atomic acknowledgement requires the same SQLite task store")
         assignment = self._spend_assignment_for_intent(record, intent)
         if assignment is not None and not any(item.kind == "provider_observation" and item.effect_key == effect_key
                                               for item in record.task_effect_ledger):
@@ -5826,65 +5836,8 @@ class OrchestrationEngine:
             record.provider_runs.append(run.model_copy(deep=True))
         else:
             record.provider_runs[index] = run.model_copy(deep=True)
-        preserved = record.model_copy(deep=True)
-        candidate = record
-        deadline = time.monotonic() + 2.0
-        for attempt in range(2):
-            if time.monotonic() >= deadline:
-                break
-            try:
-                latest = self.store.get(record.task_id, timeout=0.25)
-                if latest is None or latest.plan is None or generation != latest.plan_generation:
-                    # Missing intent is not a reset. A captured generation mismatch
-                    # permits only content-free accounting, including on CAS retry.
-                    self.provider_spend.save_settlement(record.task_id, effect_key, evidence, timeout=0.25)
-                    if latest is not None:
-                        for field in type(record).model_fields:
-                            setattr(record, field, copy.deepcopy(getattr(latest, field)))
-                        record._store_version = latest._store_version
-                    return False
-                if attempt:
-                    candidate = latest
-                    for field in ("task_effect_ledger", "provider_interaction_ledger", "provider_contact_attempts"):
-                        current = getattr(candidate, field)
-                        current.extend(copy.deepcopy(item) for item in getattr(preserved, field) if item not in current)
-                    current = next((item for item in candidate.provider_runs
-                                    if item.provider == run.provider and item.run_id == run.run_id), None)
-                    if current is None:
-                        candidate.provider_runs.append(run.model_copy(deep=True))
-                    else:
-                        if current.interaction_id not in (None, run.interaction_id):
-                            break  # Conflicting authenticated bindings need reconciliation.
-                        if not current.interaction_id:
-                            current.interaction_id = run.interaction_id
-                        if not current.result and run.result:
-                            current.result, current.status = run.result, run.status
-                        current.raw = {**run.raw, **current.raw}
-                    candidate.revision_count = max(candidate.revision_count, preserved.revision_count)
-                if time.monotonic() >= deadline:
-                    break
-                self.store.save(candidate, spend_settlement=(effect_key, evidence))
-            except StaleTaskWrite:
-                pass  # Reload and merge the current record on the recovery attempt.
-            except (sqlite3.OperationalError, OSError) as exc:
-                code = getattr(exc, "sqlite_errorcode", 0) & 0xff
-                temporary = (code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR}
-                             or getattr(exc, "errno", None) in {errno.EIO, errno.EAGAIN, errno.EBUSY, errno.EINTR}
-                             or getattr(exc, "winerror", None) in {32, 33}
-                             or str(exc) in {"database is locked", "database table is locked", "Task store is busy"})
-                if not temporary:
-                    break
-                if attempt == 0 and time.monotonic() + 0.1 < deadline:
-                    time.sleep(0.1)
-            except Exception:
-                # A non-transient persistence refusal must also retain the intent.
-                break
-            else:
-                for field in type(record).model_fields:
-                    setattr(record, field, copy.deepcopy(getattr(candidate, field)))
-                record._store_version = candidate._store_version
-                return True
-        raise AcknowledgementPersistencePending("Acknowledgement persistence exhausted; reconcile the durable intent")
+        return self.store.save_spend_acknowledgement(
+            record, effect_key, run, evidence, self.provider_spend)
 
     def _save_spend_hold(self, record: TaskRecord) -> bool:
         """Retry a stale hold write by merging evidence into a freshly read record."""
@@ -5955,6 +5908,11 @@ class OrchestrationEngine:
                 if any(held.get(name, getattr(intent, name)) != getattr(intent, name)
                        for name in ("phase", "assignment_sequence", "assignment_digest", "plan_generation")):
                     return False
+                if intent.provider == ProviderName.CLAUDE and not held["pending"]:
+                    # Claude is accounted by its immutable task reservation. The
+                    # journal proves created identity, never a price or a result.
+                    # Do not route it into supplemental daily-spend reconciliation.
+                    continue
                 assignment = self._spend_assignment_for_intent(record, intent)
                 if assignment is None or intent.plan_generation != record.plan_generation:
                     # Privacy reset: settle the old charge, never restore its run.
