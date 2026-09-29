@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-29 | 07:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | BEGIN]]
@@ -57,6 +58,12 @@ class ZaiTrialTests(unittest.TestCase):
         self.kw = dict(executable=Path(sys.executable), env_file=self.env,
                        journal=self.root / "journal", model="glm-5.3-flash", lite_verified=True)
         self.work, self.context = fixture()
+        # TRIAL_END is 2026-09-29 07:00 UTC. Pin the clock so these cases stay
+        # before it after that instant; the expiry test replaces this clock.
+        clock = patch("director_orchestrator.zai_trial.datetime")
+        started = clock.start()
+        started.now.return_value = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
+        self.addCleanup(clock.stop)
 
     def native(self):
         return (0, json.dumps({"session_id": "trial-1", "subtype": "success",
@@ -360,3 +367,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 07:07 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | END]]
+# [[Cursor | Auto | 2026-09-29 | 07:12 UTC | END]]
