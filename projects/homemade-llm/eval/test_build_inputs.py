@@ -692,6 +692,19 @@ class BuildInputsContextTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("lacks assignment-time provenance", errors.getvalue())
             self.assertFalse(out.exists())
+            policy = root / "policy.md"
+            policy.write_bytes(b"A neutral policy excerpt.\n")
+            (context / "pr-103.context.json").write_text(json.dumps([
+                _context_item(kind="project_policy", text="A neutral policy excerpt.",
+                              source_ref="policy.md",
+                              source_sha256=hashlib.sha256(policy.read_bytes()).hexdigest())
+            ]), encoding="utf-8")
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                code = build_inputs.build(["--set", "b", "--refs", str(refs),
+                                           "--out", str(out), "--context", str(context)])
+            self.assertEqual(code, 1)
+            self.assertIn("no verified assignment-time source", errors.getvalue())
 
     def test_missing_empty_or_malformed_context_is_refused(self):
         cases = {

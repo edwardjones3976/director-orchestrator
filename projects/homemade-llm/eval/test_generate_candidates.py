@@ -583,6 +583,13 @@ class GenerateCandidatesContextTests(GenerateCandidatesTests):
                     gen.run(self.args, self.transport)
                 self.transport.assert_not_called()
 
+    def test_reconstructed_pr_has_no_verified_task_time_source(self):
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_pr": 103, "source_title": "Fixture PR"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no verified assignment-time source"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+
     def test_malformed_context_and_mixed_contracts_stop_before_any_request(self):
         cases = {
             "empty context": (dict(self.item, context=[]), "at least one"),

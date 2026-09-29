@@ -306,6 +306,8 @@ def validate_context(
                 else:
                     if " ".join(item["text"].split()) not in " ".join(source_text.split()):
                         errors.append(f"{where}: text is not an excerpt of source_ref")
+    if meta.get("source_pr") and not meta.get("source_file"):
+        errors.append("context has no verified assignment-time source for this PR")
     return errors
 
 
