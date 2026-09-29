@@ -269,25 +269,27 @@ def validate_context(
     held_out_digests: dict[str, set[str]],
     *,
     source_root: Path | None = None,
+    allow_held_out_source: bool = True,
 ) -> list[str]:
     """Every reason a context array may not be written, as messages; empty means accepted.
 
     Shape follows ``input.context`` of the row schema. Only the item's own
     frozen assignment source may be cited from held-out lineage. Every citation
     must resolve to bytes with the stated hash and contain its excerpt.
+    Training callers disable the own-source exception with allow_held_out_source=False.
     """
     errors = list(prompt_template.context_shape_errors(context))
     if errors:
         return errors
     source_root = (source_root or refs_dir.parent).resolve()
     meta_path = refs_dir / "metadata" / f"{item_id}.meta.json"
-    meta = _load_json(meta_path) if meta_path.is_file() else {}
+    meta = _load_json(meta_path) if allow_held_out_source and meta_path.is_file() else {}
     if not isinstance(meta, dict):
         meta = {}
     for index, item in enumerate(context):
         where = f"context[{index}]"
         source_ref = item["source_ref"]
-        own_source = (item["kind"] == "assignment_packet"
+        own_source = (allow_held_out_source and item["kind"] == "assignment_packet"
                       and source_ref == meta.get("source_file"))
         for ref_id in sorted(references):
             if own_source and ref_id == item_id:

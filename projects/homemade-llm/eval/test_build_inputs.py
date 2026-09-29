@@ -101,6 +101,23 @@ class BuildInputsTests(unittest.TestCase):
             )
             self.assertTrue(any("relative source path" in error for error in errors))
 
+    def test_training_mode_disables_the_frozen_own_source_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, _out = self._layout(Path(tmp))
+            text = "alpha beta gamma delta epsilon zeta eta theta iota"
+            source = root / "assignment.md"
+            source.write_bytes(text.encode("utf-8"))
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            (refs / "metadata" / "p1.meta.json").write_text(json.dumps({
+                "source_file": "assignment.md", "source_sha256": digest}), encoding="utf-8")
+            context = [{"kind": "assignment_packet", "text": text,
+                        "source_ref": "assignment.md", "source_sha256": digest}]
+            args = (context, {"p1": _minimal_ref(constraints=[text])},
+                    {"assignment.md"}, refs, "p1", {digest: {"p1"}})
+            self.assertEqual(build_inputs.validate_context(*args), [])
+            errors = build_inputs.validate_context(*args, allow_held_out_source=False)
+            self.assertTrue(any("held-out" in error for error in errors))
+
     def test_source_file_rejects_absolute_and_parent_escape(self):
         for source_kind in ("absolute_inside", "absolute_outside", "parent_escape"):
             with self.subTest(source_kind=source_kind), tempfile.TemporaryDirectory() as tmp:

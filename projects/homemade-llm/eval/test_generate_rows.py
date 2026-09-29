@@ -27,6 +27,9 @@ TARGET = {
 }
 
 ASSIGNMENT_EXCERPT = "Both secrets are accepted for one hour after rotation."
+ASSIGNMENT_OBJECTIVE = "Rotate the webhook signing secret for the Slack gateway without dropping in-flight callbacks."
+ASSIGNMENT_TITLE = "Webhook secret rotation with overlap window"
+ASSIGNMENT_BODY = f"# {ASSIGNMENT_TITLE}\n\n{ASSIGNMENT_OBJECTIVE}\n\n{ASSIGNMENT_EXCERPT}\n"
 ISSUE_CREATED_AT = "2026-09-27T10:00:00Z"
 FIRST_COMMIT_AT = "2026-09-28T12:00:00Z"
 
@@ -35,9 +38,7 @@ def install_pre_work_assignment(root: Path) -> tuple[str, str, dict]:
     """Write assignment bytes; GitHub chronology is mocked in this offline test."""
     assignment_path = root / "assignments" / "wo-77.md"
     assignment_path.parent.mkdir(parents=True, exist_ok=True)
-    assignment_path.write_bytes(
-        f"# Webhook secret rotation\n\n{ASSIGNMENT_EXCERPT}\n".encode("utf-8")
-    )
+    assignment_path.write_bytes(ASSIGNMENT_BODY.encode("utf-8"))
     source_ref = "assignments/wo-77.md"
     source_sha256 = hashlib.sha256(assignment_path.read_bytes()).hexdigest()
     provenance = {"github_issue": 77, "first_work_pr": 88}
@@ -53,9 +54,9 @@ def scenario(group: str = "seed-001", root: Path | None = None, **overrides) -> 
         "split": "train",
         "source_provenance": provenance,
         "input": {
-            "objective": "Rotate the webhook signing secret for the Slack gateway without dropping in-flight callbacks.",
+            "objective": ASSIGNMENT_OBJECTIVE,
             "repository": "edwardjones3976/director-orchestrator",
-            "title": "Webhook secret rotation with overlap window",
+            "title": ASSIGNMENT_TITLE,
             "context": [{
                 "kind": "assignment_packet",
                 "text": ASSIGNMENT_EXCERPT,
@@ -78,9 +79,9 @@ class GenerateRowsTests(unittest.TestCase):
         self.calls: list[str] = []
         self.github_record = {
             "issue": {
-                "createdAt": ISSUE_CREATED_AT, "lastEditedAt": None,
+                "createdAt": ISSUE_CREATED_AT, "lastEditedAt": None, "title": ASSIGNMENT_TITLE,
                 "userContentEdits": {"totalCount": 0},
-                "body": "# Webhook secret rotation\n\n" + ASSIGNMENT_EXCERPT + "\n",
+                "body": ASSIGNMENT_BODY,
                 "timelineItems": {"pageInfo": {"hasNextPage": False}, "nodes": [
                     {"source": {"__typename": "PullRequest", "number": 66,
                                 "body": "Discussion of #77; not a work claim", "createdAt": "2026-09-26T12:00:00Z",
@@ -96,6 +97,11 @@ class GenerateRowsTests(unittest.TestCase):
                 ]},
             },
         }
+        for event in self.github_record["issue"]["timelineItems"]["nodes"]:
+            pr = event["source"]
+            pr.update(repository={"nameWithOwner": "edwardjones3976/director-orchestrator"},
+                      lastEditedAt=None, userContentEdits={"totalCount": 0},
+                      closingIssuesReferences={"pageInfo": {"hasNextPage": False}, "nodes": []})
         mocked = patch.object(generate_rows, "github_chronology", return_value=self.github_record)
         mocked.start()
         self.addCleanup(mocked.stop)
@@ -268,6 +274,9 @@ class GenerateRowsTests(unittest.TestCase):
     def test_earlier_linked_work_claim_is_refused(self):
         self.github_record["issue"]["timelineItems"]["nodes"].append({"source": {
             "__typename": "PullRequest", "number": 55, "body": "Issue: #77\n",
+            "repository": {"nameWithOwner": "edwardjones3976/director-orchestrator"},
+            "lastEditedAt": None, "userContentEdits": {"totalCount": 0},
+            "closingIssuesReferences": {"pageInfo": {"hasNextPage": False}, "nodes": []},
             "createdAt": "2026-09-27T12:00:00Z",
             "commits": {"pageInfo": {"hasNextPage": False}, "nodes": [
                 {"commit": {"committedDate": "2026-09-27T11:00:00Z"}},
@@ -288,6 +297,71 @@ class GenerateRowsTests(unittest.TestCase):
 
     def test_incomplete_cross_references_are_refused(self):
         self.github_record["issue"]["timelineItems"]["pageInfo"]["hasNextPage"] = True
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+    def test_training_cannot_claim_a_held_out_own_source(self):
+        row = self.default_scenario()
+        held_out_id = generate_rows.build_inputs._reference_ids(self.set_a)[0]
+        row["source_group"] = held_out_id
+        meta = self.set_a / "metadata" / f"{held_out_id}.meta.json"
+        meta.parent.mkdir(exist_ok=True)
+        context = row["input"]["context"][0]
+        meta.write_text(json.dumps({"source_file": context["source_ref"],
+                                   "source_sha256": context["source_sha256"]}), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.generate([row])
+        self.assertEqual(self.calls, [])
+
+    def test_objective_and_title_must_come_from_the_assignment(self):
+        invalid = "A reconstructed completion report absent from the original assignment"
+        for field, value in (("objective", invalid), ("objective", ""),
+                             ("objective", None), ("title", invalid)):
+            with self.subTest(field=field, value=value):
+                row = self.default_scenario()
+                row["input"][field] = value
+                with self.assertRaises(SystemExit):
+                    self.generate([row])
+                self.assertEqual(self.calls, [])
+
+    def test_standard_closing_claim_cannot_hide_earlier_work(self):
+        earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        for keyword in ("Fixes", "Closes", "Resolves", "FIXED:", "close", "resolved"):
+            with self.subTest(keyword=keyword):
+                earlier["body"] = f"{keyword} #77"
+                # A PR targeting another branch may not have GitHub closing links.
+                earlier["closingIssuesReferences"]["nodes"] = []
+                with self.assertRaises(SystemExit):
+                    self.generate([self.default_scenario()])
+                self.assertEqual(self.calls, [])
+
+    def test_manually_linked_issue_cannot_hide_earlier_work(self):
+        earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier["closingIssuesReferences"]["nodes"] = [{
+            "number": 77, "repository": {"nameWithOwner": "edwardjones3976/director-orchestrator"}}]
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+    def test_edited_out_work_claim_is_ambiguous_and_refused(self):
+        earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier["lastEditedAt"] = "2026-09-28T13:00:00Z"
+        earlier["userContentEdits"]["totalCount"] = 1
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+    def test_foreign_repository_pr_number_cannot_bind_the_work(self):
+        work = self.github_record["issue"]["timelineItems"]["nodes"][1]["source"]
+        work["repository"]["nameWithOwner"] = "someone-else/unrelated"
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+
+    def test_renamed_issue_title_is_not_immutable_input(self):
+        self.github_record["issue"]["timelineItems"]["nodes"].append({
+            "__typename": "RenamedTitleEvent"})
         with self.assertRaises(SystemExit):
             self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])

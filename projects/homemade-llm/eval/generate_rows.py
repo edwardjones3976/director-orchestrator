@@ -71,10 +71,12 @@ GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 GITHUB_CHRONOLOGY_QUERY = (
     "query($owner:String!,$repo:String!,$issue:Int!){"
     "repository(owner:$owner,name:$repo){"
-    "issue(number:$issue){createdAt lastEditedAt body userContentEdits(first:1){totalCount}"
-    "timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT]){pageInfo{hasNextPage}"
-    "nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{"
-    "number body createdAt commits(first:100){pageInfo{hasNextPage}"
+    "issue(number:$issue){title createdAt lastEditedAt body userContentEdits(first:1){totalCount}"
+    "timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT,RENAMED_TITLE_EVENT]){pageInfo{hasNextPage}"
+    "nodes{__typename ... on CrossReferencedEvent{source{__typename ... on PullRequest{"
+    "number body createdAt lastEditedAt repository{nameWithOwner} userContentEdits(first:1){totalCount}"
+    "closingIssuesReferences(first:100){pageInfo{hasNextPage} nodes{number repository{nameWithOwner}}}"
+    "commits(first:100){pageInfo{hasNextPage}"
     "nodes{commit{committedDate}}}}}}}}}}}"
 )
 
@@ -139,6 +141,8 @@ def validate_scenario_source_provenance(
     label: str,
 ) -> None:
     references, lineage_keys, held_out_digests = _held_out_guard(set_a, set_b)
+    if build_inputs._source_ref_forms(str(scenario["source_group"])) & lineage_keys:
+        fail(f"{label}: source_group identifies a held-out task")
     problems = build_inputs.validate_context(
         scenario["input"]["context"],
         references,
@@ -147,6 +151,7 @@ def validate_scenario_source_provenance(
         str(scenario["source_group"]),
         held_out_digests,
         source_root=source_root,
+        allow_held_out_source=False,
     )
     if problems:
         fail(f"{label}: {problems[0]}")
@@ -200,15 +205,44 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
     if (issue.get("lastEditedAt") is not None
             or (issue.get("userContentEdits") or {}).get("totalCount") != 0):
         fail(f"{label}: GitHub assignment issue was edited")
+    body = issue.get("body")
+    if not isinstance(body, str) or not isinstance(issue.get("title"), str):
+        fail(f"{label}: GitHub issue has no verifiable title/body")
+    if scenario["input"]["title"] != issue["title"]:
+        fail(f"{label}: input title differs from the assignment issue title")
+    objective = scenario["input"].get("objective")
+    if (not isinstance(objective, str) or not objective.strip()
+            or " ".join(objective.split()) not in " ".join(body.split())):
+        fail(f"{label}: input objective is not an excerpt of the assignment")
     timeline = issue.get("timelineItems") or {}
     if (timeline.get("pageInfo") or {}).get("hasNextPage") is not False:
         fail(f"{label}: GitHub cross-reference history is incomplete")
     linked: list[tuple[datetime, int]] = []
     for event in timeline.get("nodes") or []:
+        if (event or {}).get("__typename") == "RenamedTitleEvent":
+            fail(f"{label}: GitHub assignment issue title was renamed")
         pr = (event or {}).get("source") or {}
         if pr.get("__typename") != "PullRequest":
             continue
-        if re.search(rf"(?m)^Issue:\s*#{block['github_issue']}\b", pr.get("body") or "") is None:
+        source_repo = (pr.get("repository") or {}).get("nameWithOwner")
+        if not isinstance(source_repo, str):
+            fail(f"{label}: linked PR repository is unverified")
+        if source_repo.casefold() != repository.casefold():
+            continue
+        closing = pr.get("closingIssuesReferences") or {}
+        if (closing.get("pageInfo") or {}).get("hasNextPage") is not False:
+            fail(f"{label}: linked PR closing-issue history is incomplete")
+        issue_ref = rf"(?:{re.escape(repository)})?#{block['github_issue']}\b"
+        claimed = (re.search(rf"(?im)^Issue:\s*{issue_ref}", pr.get("body") or "") is not None
+                   or re.search(rf"\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s*:?\s*{issue_ref}",
+                                pr.get("body") or "", re.I) is not None
+                   or any(node.get("number") == block["github_issue"]
+                          and (node.get("repository") or {}).get("nameWithOwner", "").casefold() == repository.casefold()
+                          for node in closing.get("nodes") or []))
+        if not claimed:
+            if (pr.get("lastEditedAt") is not None
+                    or (pr.get("userContentEdits") or {}).get("totalCount") != 0):
+                fail(f"{label}: edited linked PR may hide an earlier work claim")
             continue  # A discussion cross-reference is not a work claim.
         commits = pr.get("commits") or {}
         if (commits.get("pageInfo") or {}).get("hasNextPage") is not False or not commits.get("nodes"):
@@ -220,9 +254,6 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
             or created >= min(time for time, _ in linked)
             or block["first_work_pr"] != min(linked)[1]):
         fail(f"{label}: first_work_pr is not the earliest linked GitHub work")
-    body = issue.get("body")
-    if not isinstance(body, str):
-        fail(f"{label}: GitHub issue has no verifiable body")
     for item in source_items:
         source = (source_root / item["source_ref"]).resolve()
         if source.read_bytes() != body.encode("utf-8"):
