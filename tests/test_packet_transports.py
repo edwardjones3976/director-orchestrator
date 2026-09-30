@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -1110,7 +1111,10 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
             )
 
     def test_claude_acknowledgement_rejects_reset_before_first_write(self) -> None:
-        from director_orchestrator.approvals import reset_for_owner_clarification
+        from director_orchestrator.approvals import reserve_provider_effect, reset_for_owner_clarification, StaleApproval
+        from director_orchestrator.engine import OrchestrationEngine
+        from director_orchestrator.models import AmbiguousDispatchResolution
+        from director_orchestrator.providers import ProviderDailySpendLedger
 
         for replacement in (False, True):
             with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as root:
@@ -1118,23 +1122,140 @@ class LegacyProviderPacketTransportTests(unittest.TestCase):
                 record, packet = self._packet(root, store, ProviderName.CLAUDE)
                 assignment = record.plan.assignments[0]
                 plan = record.plan.model_copy(deep=True)
-                transport = LegacyProviderPacketTransport(
-                    CapturingProvider(ProviderName.CLAUDE), task_store=store, poll_seconds=1)
-                reset_for_owner_clarification(record)
-                if replacement:
-                    record.plan = plan
-                    record.plan_generation += 1
+                key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
                 store.save(record)
-                run = ProviderRun(provider=ProviderName.CLAUDE, run_id="stale-claude",
-                                  status="WAITING_CALLBACK", result="erased-claude-content")
-                with patch.object(store, "save", wraps=store.save) as save:
-                    with self.assertRaisesRegex(RuntimeError, "inactive plan generation"):
-                        transport._record_claude_dispatch(
-                            packet, self._context(record, packet), assignment, run)
-                    save.assert_not_called()
+                ledger = ProviderDailySpendLedger(store.path)
+                dispatches = []
+
+                async def reset_during_dispatch(*args, **kwargs):
+                    dispatches.append(True)
+                    current = store.get(record.task_id)
+                    reset_for_owner_clarification(current)
+                    if replacement:
+                        current.plan = plan
+                        current.plan_generation += 1
+                    store.save(current)
+                    return ProviderRun(provider=ProviderName.CLAUDE, run_id="stale-claude",
+                                       status="WAITING_CALLBACK", result="erased-claude-content",
+                                       raw={"payload": "erased-claude-content", "usage": {"cost": 0}})
+
+                provider = CapturingProvider(ProviderName.CLAUDE)
+                provider.dispatch = reset_during_dispatch
+                transport = LegacyProviderPacketTransport(
+                    provider, task_store=store, poll_seconds=1)
+                with self.assertRaisesRegex(RuntimeError, "inactive plan generation"):
+                    transport.send(canonical_json_bytes(packet), context=self._context(record, packet))
                 current = store.get(record.task_id)
                 self.assertEqual(current.provider_runs, [])
+                self.assertEqual(current.provider_contact_attempts, [])
+                self.assertEqual(current.provider_interaction_ledger, [])
+                self.assertEqual(current.plan, plan if replacement else None)
                 self.assertNotIn("erased-claude-content", current.model_dump_json())
+                journal = ledger.settlements(record.task_id)
+                self.assertNotIn("erased-claude-content", json.dumps(journal))
+                held = journal[key]
+                self.assertEqual(held["run_id"], "stale-claude")
+                self.assertEqual(held["plan_generation"], record.plan_generation)
+                self.assertIsNone(held["cost"])  # Claude has no authoritative native price here.
+                self.assertFalse(held["pending"])
+                settings = replace(Settings(), sqlite_path=store.path)
+                restarted = OrchestrationEngine(settings, TaskStore(store.path))
+                self.assertTrue(restarted._retry_spend_settlements(restarted.store.get(record.task_id)))
+                self.assertNotIn(ProviderName.CLAUDE, ProviderDailySpendLedger._SUPPORTED)
+                self.assertEqual(current.cumulative_estimated_cost_usd, 0.2)
+                self.assertFalse(any(item.effect_key == key and item.outcome == "failed_pre_submit"
+                                     for item in current.task_effect_ledger))
+                if not replacement:
+                    resolution = dict(owner_user_id=current.intake.user_id, assignment_sequence=assignment.sequence,
+                                      note="Owner reconciled the original created request")
+                    with self.assertRaisesRegex(StaleApproval, "acknowledged provider run"):
+                        restarted.apply_dispatch_reconciliation(current, AmbiguousDispatchResolution(
+                            **resolution, resolution="not_created"))
+                    restarted.apply_dispatch_reconciliation(current, AmbiguousDispatchResolution(
+                        **resolution, resolution="created", run_id="stale-claude"))
+                    self.assertEqual(current.provider_runs, [])
+                    self.assertEqual(current.provider_contact_attempts, [])
+                with self.assertRaises(ValueError):
+                    transport.send(canonical_json_bytes(packet), context=self._context(record, packet))
+                self.assertEqual(len(dispatches), 1)
+
+    def test_claude_send_acknowledgement_storage_failure_recovery(self) -> None:
+        from director_orchestrator.approvals import reserve_provider_effect, reset_for_owner_clarification
+        from director_orchestrator.engine import OrchestrationEngine
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import AcknowledgementPersistencePending
+
+        for reset in (False, True):
+            for boundary in ("read", "write"):
+                for exhausted in (False, True):
+                    with self.subTest(reset=reset, boundary=boundary, exhausted=exhausted), tempfile.TemporaryDirectory() as root:
+                        store = TaskStore(str(Path(root) / "tasks.sqlite3"))
+                        record, packet = self._packet(root, store, ProviderName.CLAUDE)
+                        assignment = record.plan.assignments[0]
+                        key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                        store.save(record)
+                        ledger = ProviderDailySpendLedger(store.path)
+                        provider = CapturingProvider(ProviderName.CLAUDE)
+                        sent = False
+                        failures = 0
+
+                        async def dispatch(*args, **kwargs):
+                            nonlocal sent
+                            if reset:
+                                current = store.get(record.task_id)
+                                reset_for_owner_clarification(current)
+                                store.save(current)
+                            sent = True
+                            return ProviderRun(provider=ProviderName.CLAUDE, run_id="ack-storage-run",
+                                               status="FINISHED", result="private-response-marker")
+
+                        provider.dispatch = dispatch
+                        transport = LegacyProviderPacketTransport(provider, task_store=store, poll_seconds=1)
+                        target, method = ((store, "get") if boundary == "read" else
+                                          (ledger, "save_settlement") if reset else (store, "save"))
+                        original = getattr(target, method)
+
+                        def fault(*args, **kwargs):
+                            nonlocal failures
+                            if sent and (exhausted or failures == 0):
+                                failures += 1
+                                raise sqlite3.OperationalError("database is locked")
+                            return original(*args, **kwargs)
+
+                        with patch("director_orchestrator.packet_transports.ProviderDailySpendLedger", return_value=ledger), patch.object(
+                            target, method, side_effect=fault
+                        ), patch.object(transport, "_result", return_value={}) as result:
+                            if exhausted:
+                                with self.assertRaises(AcknowledgementPersistencePending):
+                                    transport.send(canonical_json_bytes(packet), context=self._context(record, packet))
+                                result.assert_not_called()
+                            elif reset:
+                                with self.assertRaisesRegex(RuntimeError, "inactive plan generation"):
+                                    transport.send(canonical_json_bytes(packet), context=self._context(record, packet))
+                                result.assert_not_called()
+                            else:
+                                self.assertEqual(transport.send(canonical_json_bytes(packet),
+                                                                context=self._context(record, packet)), {})
+                        self.assertTrue(sent)
+                        self.assertEqual(failures, 2 if exhausted else 1)
+                        restarted = OrchestrationEngine(replace(Settings(), sqlite_path=store.path), TaskStore(store.path))
+                        current = restarted.store.get(record.task_id)
+                        self.assertNotEqual(current.status, TaskStatus.FAILED)
+                        if exhausted:
+                            self.assertEqual(ledger.settlements(record.task_id), {})
+                            self.assertEqual(current.provider_runs, [])
+                            self.assertTrue(any(item.effect_key == key for item in current.task_effect_ledger))
+                        else:
+                            self.assertTrue(restarted._retry_spend_settlements(current))
+                            held = ledger.settlements(record.task_id)[key]
+                            self.assertFalse(held["pending"])
+                            self.assertIsNone(held["cost"])
+                            self.assertEqual(current.cumulative_estimated_cost_usd, 0.2)
+                        if reset:
+                            self.assertEqual(current.provider_runs, [])
+                            self.assertEqual(current.provider_contact_attempts, [])
+                            self.assertNotIn("private-response-marker", current.model_dump_json())
+                        self.assertNotIn("private-response-marker", json.dumps(ledger.settlements(record.task_id)))
 
     def test_claude_initial_response_effects_never_become_terminal_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as root:

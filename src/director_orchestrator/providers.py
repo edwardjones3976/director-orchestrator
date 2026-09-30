@@ -228,8 +228,8 @@ class ProviderDailySpendLedger:
                 changed = True
         return changed
 
-    def settlements(self, task_id: str) -> dict[str, dict]:
-        with self._connect() as connection:
+    def settlements(self, task_id: str, *, timeout: float = 30) -> dict[str, dict]:
+        with self._connect(timeout=timeout) as connection:
             return {str(key): json.loads(evidence) for key, evidence in connection.execute(
                 "SELECT effect_key, evidence FROM engine_spend_settlements WHERE task_id = ?", (task_id,)
             )}

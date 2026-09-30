@@ -96,6 +96,52 @@ def _key(label: str) -> str:
 
 
 class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
+    def test_packet_acknowledgement_read_failures_preserve_snapshot(self):
+        from director_orchestrator.approvals import reserve_provider_effect
+        from director_orchestrator.engine import AcknowledgementPersistencePending
+
+        for boundary in ("task", "journal"):
+            for exhausted in (False, True):
+                with self.subTest(boundary=boundary, exhausted=exhausted), tempfile.TemporaryDirectory() as directory:
+                    settings, store, record, assignment = self._world(directory)
+                    engine = OrchestrationEngine(settings, store)
+                    key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                    engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                    store.save(record)
+                    record.provider_runs.append(ProviderRun(
+                        provider=assignment.agent, assignment_sequence=assignment.sequence,
+                        run_id="read-failure-run", status="completed", result="retained result",
+                        raw={"usage": {"cost": 0.25}}, plan_generation=record.plan_generation))
+                    outcome = SimpleNamespace(result_packet={"run_reference": "read-failure-run", "outcome": "retained result"})
+                    target, method = (store, "get") if boundary == "task" else (engine.provider_spend, "settlements")
+                    original = getattr(target, method)
+                    failures = 0
+
+                    def fail_read(*args, **kwargs):
+                        nonlocal failures
+                        if exhausted or failures == 0:
+                            failures += 1
+                            raise sqlite3.OperationalError("database is locked")
+                        return original(*args, **kwargs)
+
+                    with patch.object(target, method, side_effect=fail_read):
+                        if exhausted:
+                            with self.assertRaises(AcknowledgementPersistencePending):
+                                engine._settle_packet_spend(record, assignment, key, outcome)
+                        else:
+                            self.assertTrue(engine._settle_packet_spend(record, assignment, key, outcome))
+                    restarted = OrchestrationEngine(settings, TaskStore(store.path))
+                    durable = restarted.store.get(record.task_id)
+                    self.assertNotEqual(durable.status, TaskStatus.FAILED)
+                    if exhausted:
+                        self.assertEqual(failures, 2)
+                        self.assertEqual(durable.provider_runs, [])
+                        self.assertEqual(restarted.provider_spend.settlements(record.task_id), {})
+                    else:
+                        self.assertEqual(durable.provider_runs[-1].result, "retained result")
+                        self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 0.25))
+                        self.assertTrue(restarted._retry_spend_settlements(durable))
+
     def test_intent_free_acknowledgement_uses_captured_generation(self):
         from director_orchestrator.approvals import reset_for_owner_clarification
 
@@ -324,7 +370,8 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             engine = OrchestrationEngine(settings, store)
             key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
             store.save(record)
-            run = ProviderRun(provider=assignment.agent, run_id="deadline-run", status="completed", result="answer")
+            run = ProviderRun(provider=assignment.agent, run_id="deadline-run", status="completed", result="answer",
+                              plan_generation=record.plan_generation)
             with patch.object(store, "save", side_effect=sqlite3.OperationalError("database is locked")) as save, patch(
                 "director_orchestrator.engine.time.monotonic", side_effect=[0, 0, 0, 3, 3]
             ):
