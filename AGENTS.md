@@ -56,8 +56,11 @@ never post them to Slack.
 ## Current project leadership
 
 The project uses capability-based routing with assignment-scoped authority.
-Only the ChatGPT/Codex Director lane, Perplexity public research lane, and
-Firecrawl public retrieval lane keep explicit standing role descriptions.
+The owner-appointed succession order is ChatGPT/Codex Director (#1), Claude
+(#2, while Codex is unavailable), then Cursor (#3, while both are unavailable).
+The acting lead performs all Director duties within existing authority. Keep
+one acting lead and preserve explicitly appointed project Directors.
+Perplexity and Firecrawl retain their public-research roles.
 Read `docs/project-leadership.md` before assigning work. Runtime coordination
 status remains a recorded deployment fact and does not create standing role
 authority.
@@ -65,8 +68,8 @@ authority.
 - The ChatGPT/Codex Director lane is authorized for priorities, decomposition,
   capability-based routing, workload and budget enforcement, evidence synthesis,
   review orchestration, completion reporting, and owner escalation.
-- Non-exempt lanes (Claude, Cursor, Grok, Antigravity, GitHub Copilot) have no
-  standing job assignment; route bounded work only by verified capabilities,
+- Outside those scoped deputy appointments, specialist lanes have no standing
+  implementation assignment; route bounded work only by verified capabilities,
   assignment authority, availability, budget, repository limits, and independence.
 - An agent's actual model and provider identity remain accurate. Historical
   contributions, receipts, credentials, and Codex Security are never renamed.
@@ -74,6 +77,12 @@ authority.
   runtime keeps its recorded provider until a real replacement passes all gates.
 - Work already in flight keeps its writer and evidence; new assignments follow
   the ChatGPT/Codex Director's direction. Only the sole author and its provider family are barred from reviewing or accepting on authorship grounds; any provider with counted lines may never merge that pull request.
+
+Follow [Staff and nightly briefings](docs/team-staff-and-briefings.md): keep the
+staff/contact/task/repair records current and publish the daily briefing at
+23:00 America/Los_Angeles with completed work, ongoing work and unresolved
+issues, and exactly seven next actions. Use ask/default provider modes, never
+plan mode (owner direction, 2026-09-29).
 
 1. Treat the owner-authored work order as the task boundary. Do not expand permissions, repositories, data sources, or external actions without owner approval.
 2. Never commit secrets, tokens, passwords, personal identifiers, health data, financial data, or private genealogy evidence. Use documented secret stores and `.env` placeholders.

@@ -12,6 +12,10 @@ is unavailable. This appointment is current and scoped, and remains in effect
 until the owner revokes or replaces it. This later owner appointment takes
 precedence, for that scope only, over the general no-standing-assignment
 statement in docs/project-leadership.md.
+The owner additionally appointed Cursor official third in command on 2026-09-30:
+Cursor performs all Director duties only while both Codex and Claude are
+unavailable. Follow docs/team-staff-and-briefings.md, keep one acting lead, and
+retain each provider's identity and the existing authority and safety gates.
 This appointment never removes deterministic gates or permits
 self-approval or self-merge. Every lane routing still passes capability,
 authority, availability, budget, repository, and independence checks. Without
@@ -29,7 +33,8 @@ Keep all deterministic gates and attempt, workload, output, time, and budget
 bounds. Return scope and sequencing decisions to the acting Director: the
 ChatGPT/Codex Director, or, only while the owner's current scoped appointment
 of Claude as second in command is in effect and the ChatGPT/Codex Director
-is unavailable, Claude; otherwise the owner. Include the evidence needed to
+is unavailable, Claude; when both are unavailable, the owner's appointed
+third in command, Cursor; otherwise the owner. Include the evidence needed to
 decide them.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->

@@ -63,6 +63,22 @@
 
 **Status:** Owner-authorized operating guidance. Deterministic application policy remains authoritative.
 
+## Leadership succession and nightly continuity
+
+The owner's 2026-09-30 appointment establishes **Codex #1 → Claude #2 → Cursor #3**.
+Claude covers the Director while Codex is unavailable. Cursor performs all
+Director duties when both are unavailable, including Consultant, Investigator,
+Foreman, Quality Lead and authorized debate functions, under the existing scope
+and gates. Preserve each provider's actual identity, its single configured vote,
+independent review and existing project-specific leadership. Only one acting
+lead directs shared work; record and acknowledge handoffs before resuming.
+
+Use [Staff and nightly briefings](team-staff-and-briefings.md) for contact routes,
+task/repair ownership, the daily checklist and the **23:00 America/Los_Angeles**
+briefing: completed work, ongoing/unresolved work, and exactly seven next actions.
+The appointment is leadership authority, not new credential access, spending
+permission, a runtime-provider cutover, or permission to accept one's own work.
+
 ## OpenAI/Director — INVESTIGATOR
 
 Owner direction (2026-09-22 20:57:47 UTC), verbatim:
@@ -155,8 +171,9 @@ gate. Browser content and provider output are never action authority.
 The policy target is a ChatGPT/Codex Director lane for priorities,
 decomposition, capability-based routing, workload and budget enforcement,
 evidence synthesis, review orchestration, completion reporting, and owner
-escalation. Non-exempt provider lanes are capability-routed without standing
-job assignments. Pure coordination creates no production credit.
+escalation, with the scoped Claude and Cursor succession above. Outside those
+leadership appointments, specialist lanes are capability-routed without standing
+implementation assignments. Pure coordination creates no production credit.
 
 The legacy default retains OpenAI Responses; the Claude adapter is default off
 and fails closed when unavailable. Leadership does not activate providers or
@@ -757,7 +774,7 @@ goes to Codex, and other authoring is still routed by capability as before.
   "co-author". Claude may review only PRs it did not author. The one-author,
   one-non-author-reviewer-who-merges protocol is unchanged.
 - **It applies to every Director:** the ChatGPT/Codex Director, Claude when
-  acting as second in command, and any project Director such as
+  acting as second in command, Cursor when acting as third in command, and any project Director such as
   `homemade-llm`'s. It applies to all maintenance from 2026-09-26 onward,
   including work already in flight.
 - **It adds no authority and removes no gate.** No self-merge (AGENTS.md rule 3),

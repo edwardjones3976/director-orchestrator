@@ -83,7 +83,8 @@ class ActiveDocumentationTests(unittest.TestCase):
             "Return scope and sequencing decisions to the acting Director: the "
             "ChatGPT/Codex Director, or, only while the owner's current scoped appointment "
             "of Claude as second in command is in effect and the ChatGPT/Codex Director "
-            "is unavailable, Claude; otherwise the owner.",
+            "is unavailable, Claude; when both are unavailable, the owner's appointed "
+            "third in command, Cursor; otherwise the owner.",
             text,
         )
 
