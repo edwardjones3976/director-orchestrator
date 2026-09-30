@@ -1,3 +1,4 @@
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 03:04 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]]
@@ -878,13 +879,20 @@ class GitAttributionTests(unittest.TestCase):
 
     def test_pr_headers(self):
         header = "Sole author: OpenAI Codex (GPT-6)"
-        for body in (header, header + "; assistance: tool-a, tool-b", "Summary\n\n" + header):
+        for body in (
+            header,
+            header + "; assistance: tool-a, tool-b",
+            "Summary\n\n" + header,
+            f"**{header}**",
+            f"**{header}; assistance: tool-a, tool-b**",
+        ):
             self.assertEqual(self.checker.validate_pr_body(body), [])
         for body in ("", "Sole author: Codex", "Sole author:  (GPT-6)",
                      "Sole author: Codex ( )", "Sole author: <assistant> (<model>)",
                      header + "\n" + header, header + "; assistance: ",
                      header + "; assistance: one, ", "<!--\n" + header + "\n-->",
-                     "```text\n" + header + "\n```", "> " + header, "    " + header):
+                     "```text\n" + header + "\n```", "> " + header, "    " + header,
+                     f"**{header}", f"{header}**", f"{header}\n**{header}**"):
             with self.subTest(body=body):
                 self.assertTrue(self.checker.validate_pr_body(body))
 
@@ -1047,3 +1055,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 03:04 UTC | END]]
