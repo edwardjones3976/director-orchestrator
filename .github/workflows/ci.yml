@@ -62,10 +62,10 @@ jobs:
       mode: ${{ steps.plan.outputs.mode }}
       suite: ${{ steps.plan.outputs.suite }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: runner.environment == 'self-hosted'
         with:
           python-version: "3.12"
@@ -81,10 +81,10 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - id: classify
@@ -108,11 +108,11 @@ jobs:
       BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       # Self-hosted Linux has no bare `python`; ubuntu-latest does.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: runner.environment == 'self-hosted'
         with:
           python-version: "3.12"
@@ -151,7 +151,7 @@ jobs:
       GIT_CONFIG_KEY_0: core.longpaths
       GIT_CONFIG_VALUE_0: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Parse PowerShell scripts
         if: runner.os == 'Windows' && (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
         shell: powershell
@@ -171,7 +171,7 @@ jobs:
           }
       # On self-hosted Windows, setup-python's installer writes HKLM, which
       # needs admin; the Windows step below uses the host interpreter instead.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: runner.environment == 'github-hosted' || runner.os == 'Linux'
         with:
           python-version: "3.12"
@@ -199,10 +199,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
           Join-Path $venv 'Scripts' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       # Hosted images ship Node.js; the n8n status-code tests need it.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: runner.environment == 'self-hosted' && (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
         with:
           node-version: "20"
+          package-manager-cache: false
       # Hosted Ubuntu ships PowerShell 7; the self-hosted WSL runner has no
       # passwordless sudo, so install a pinned, hash-verified release into the
       # tool cache instead.
@@ -407,7 +408,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}
         run: |
           echo "docs-only: Compose and container build not applicable; succeeded as a no-op"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
       # The owner's host runs live Director stacks; a per-run project name keeps
       # the build from retagging any stack's image.
@@ -447,7 +448,7 @@ jobs:
     name: Secret hygiene
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Assert no secret-bearing files are committed
@@ -498,9 +499,9 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}
         run: |
           echo "docs-only: Cross-process recovery probe not applicable; succeeded as a no-op"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true') && (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
         with:
           python-version: "3.12"
