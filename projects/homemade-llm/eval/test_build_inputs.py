@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-30 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
@@ -645,6 +646,60 @@ class BuildInputsContextTests(unittest.TestCase):
             self.assertIsNone(run["context_dir"])
             self.assertIsNone(run["context_manifest"])
 
+    def test_verified_own_sources_may_share_policy_text(self):
+        shared = "keepers share one written rule and do not export the sealed packet"
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            for relative in ("packets/ew-one.md", "packets/p2.md"):
+                path = root / relative
+                path.write_text(path.read_text(encoding="utf-8") + shared + "\n", encoding="utf-8")
+            other_only = "violet lanterns mark the other task and never the first"
+            for name, relative, scored in (
+                (item_id, "packets/ew-one.md", [shared, "alpha beta gamma delta epsilon zeta eta theta iota"]),
+                ("p2", "packets/p2.md", [shared, other_only]),
+            ):
+                source = root / relative
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                (refs / "metadata" / f"{name}.meta.json").write_text(json.dumps({
+                    "source_file": relative, "source_sha256": digest,
+                }), encoding="utf-8")
+                (refs / f"{name}.json").write_text(
+                    json.dumps(_minimal_ref(name, constraints=scored)), encoding="utf-8")
+                (context / f"{name}.context.json").write_text(json.dumps([
+                    _context_item(text=shared, source_ref=relative, source_sha256=digest),
+                ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 0, stderr)
+            shutil.rmtree(out)
+            (root / "inputs.build.json").unlink()
+            other = json.loads((context / "p2.context.json").read_text(encoding="utf-8"))[0]
+            (context / f"{item_id}.context.json").write_text(json.dumps([other]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 1)
+            self.assertIn("resolves to a held-out item", stderr)
+            own = root / "packets" / "ew-one.md"
+            own_digest = hashlib.sha256(own.read_bytes()).hexdigest()
+            forged = _context_item(
+                text=other_only,
+                source_ref="packets/ew-one.md", source_sha256=own_digest,
+            )
+            (context / f"{item_id}.context.json").write_text(json.dumps([forged]), encoding="utf-8")
+            (context / "p2.context.json").write_text(json.dumps([
+                _context_item(text="# Second Packet", source_ref="packets/p2.md",
+                              source_sha256=hashlib.sha256((root / "packets" / "p2.md").read_bytes()).hexdigest()),
+            ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 1)
+            self.assertIn("overlaps scored field", stderr)
+            self.assertIn("not an excerpt", stderr)
+            (context / f"{item_id}.context.json").write_text(json.dumps([
+                _context_item(text=shared, source_ref="packets/ew-one.md", source_sha256="0" * 64),
+            ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 1)
+            self.assertIn("does not match source bytes", stderr)
+
     def test_context_whose_source_ref_resolves_to_a_held_out_item_is_refused(self):
         refusals = {
             "own id": "ew-one",
@@ -797,3 +852,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | END]]
+# [[Cursor | Auto | 2026-09-30 | 02:20 UTC | END]]
