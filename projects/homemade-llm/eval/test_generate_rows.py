@@ -949,6 +949,175 @@ class LicensedSpecificationTests(unittest.TestCase):
         self.assertFalse(options["receipts_dir"].exists())
 
 
+class LearnyounodeAdmissionTests(unittest.TestCase):
+    """Offline, test-only captures stand in for the closed reviewed source batch."""
+
+    blob = staticmethod(LicensedSpecificationTests.blob)
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.set_a, self.set_b = write_sets(self.root)
+        self.out = self.root / "rows.jsonl"
+        self.review_root = self.root / "reviews"
+        (self.review_root / "xai").mkdir(parents=True)
+        self.commit = generate_rows.LEARNYOUNODE_COMMIT
+        self.repository = generate_rows.LEARNYOUNODE_REPOSITORY
+        self.verification = "4. **Verify that your solution to the lesson is correct** by running `learnyounode verify program.js`."
+        self.source_bytes = {
+            "README.md": ("Generic workshop instructions.\n" + self.verification + "\nOther material not admitted as context.\n").encode(),
+            "LICENSE.md": b"MIT test-only source license",
+        }
+        for slug in sorted(generate_rows.LEARNYOUNODE_SOURCES):
+            self.source_bytes[slug + ".problem.md"] = f"Complete the {slug} exercise.\nCheck with {{appname}} verify {slug}.js.\n".encode()
+        self.manifest = []
+        self.tree = []
+        for ref, raw in self.source_bytes.items():
+            path = ref if ref in ("README.md", "LICENSE.md") else f"exercises/{ref.removesuffix('.problem.md')}/problem.md"
+            (self.root / ref).write_bytes(raw)
+            self.manifest.append({"source_id": f"{self.repository}/{self.commit}/{path}",
+                "source_repository": self.repository, "source_commit": self.commit,
+                "source_tree": "b" * 40, "path": path, "source_ref": ref,
+                "source_url": f"https://github.com/{self.repository}/blob/{self.commit}/{path}",
+                "source_sha256": hashlib.sha256(raw).hexdigest(), "source_git_blob": self.blob(raw),
+                "license": "MIT", "license_sha256": hashlib.sha256(self.source_bytes["LICENSE.md"]).hexdigest(),
+                "upstream_commit_time": "2020-06-19T15:49:14Z", "captured_at": "2026-09-27T11:00:00.123456+00:00",
+                "source_kind": "independently_licensed_specification", "destination": "training_candidates_only",
+                "targets_generated": 0})
+            self.tree.append({"path": path, "sha": self.blob(raw), "mode": "100644", "type": "blob", "size": len(raw)})
+        api = f"https://api.github.com/repos/{self.repository}"
+        self.commit_record = {"sha": self.commit, "url": f"{api}/commits/{self.commit}", "commit": {
+            "committer": {"date": "2020-06-19T15:49:14Z"}, "tree": {"sha": "b" * 40, "url": f"{api}/git/trees/{'b' * 40}"}}}
+        self.tree_record = {"sha": self.commit, "url": f"{api}/git/trees/{self.commit}", "truncated": False, "tree": self.tree}
+        self.admission = {"source_facts_verdict": "ACCEPT_FOR_SOURCE_FACTS", "pinned_commit": self.commit,
+            "suitable": sorted(generate_rows.LEARNYOUNODE_SOURCES), "targets_generated": 0, "targets_accepted": 0,
+            "admitted_at": "2026-09-27T11:20:00Z", "response_id": "independent-response", "review_receipt_ref": "xai/review.json"}
+        self.receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
+            "response_status": "completed", "response_id": "independent-response"}
+        self.pins = patch.dict(generate_rows.LEARNYOUNODE_ADMISSIONS, {}, clear=True)
+        self.pins.start()
+        self.addCleanup(self.pins.stop)
+        self.write_evidence()
+
+    def write_evidence(self):
+        manifest = "".join(json.dumps(entry) + "\n" for entry in self.manifest).encode()
+        commit = json.dumps(self.commit_record).encode()
+        tree = json.dumps(self.tree_record).encode()
+        self.admission["manifest_sha256"] = hashlib.sha256(manifest).hexdigest()
+        answer = "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS** " + self.admission["manifest_sha256"] + " " + self.commit
+        self.admission["review_answer"] = answer
+        self.receipt["answer"] = answer
+        receipt = json.dumps(self.receipt).encode()
+        self.admission["review_receipt_sha256"] = hashlib.sha256(receipt).hexdigest()
+        admission = json.dumps(self.admission).encode()
+        for name, raw in (("manifest.jsonl", manifest), ("commit.json", commit), ("tree.json", tree), ("admission.json", admission)):
+            (self.root / name).write_bytes(raw)
+        (self.review_root / "xai/review.json").write_bytes(receipt)
+        self.digest = hashlib.sha256(admission).hexdigest()
+        generate_rows.LEARNYOUNODE_ADMISSIONS[self.digest] = (
+            self.admission["manifest_sha256"], hashlib.sha256(commit).hexdigest(),
+            hashlib.sha256(tree).hexdigest(), self.admission["review_receipt_sha256"])
+
+    def scenario(self, slug="baby_steps"):
+        entry = next(item for item in self.manifest if item["path"] == f"exercises/{slug}/problem.md")
+        readme = next(item for item in self.manifest if item["path"] == "README.md")
+        return {"source_group": f"licensed/{self.repository}/{slug}", "split": "train",
+            "source_provenance": {"kind": "licensed_specification", "source_id": entry["source_id"],
+                "admission_ref": "admission.json", "admission_sha256": self.digest,
+                "manifest_ref": "manifest.jsonl", "official_capture_ref": "commit.json", "official_tree_ref": "tree.json",
+                "license_ref": "LICENSE.md", "admitted_at": self.admission["admitted_at"]},
+            "input": {"repository": self.repository, "title": slug, "objective": f"Complete the {slug} exercise.",
+                "context": [{"kind": "assignment_packet", "source_ref": entry["source_ref"],
+                    "source_sha256": entry["source_sha256"], "text": self.source_bytes[entry["source_ref"]].decode()},
+                    {"kind": "assignment_packet", "source_ref": "README.md", "source_sha256": readme["source_sha256"],
+                     "text": self.verification}]}}
+
+    def generate(self, rows=None, **kwargs):
+        return generate_rows.generate(rows or [self.scenario()], provider=kwargs.pop("provider", "local_model"),
+            set_a=self.set_a, set_b=self.set_b, out=self.out, source_root=self.root,
+            source_review_receipts_root=self.review_root, terms_verified_at=UTC, generated_at=UTC,
+            dry_run=kwargs.pop("dry_run", True), **kwargs)
+
+    def test_all_three_sources_validate_without_probe_transport_receipts_or_rows(self):
+        rows = [self.scenario(slug) for slug in sorted(generate_rows.LEARNYOUNODE_SOURCES)]
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate(rows), {"dry_run": True, "rows": 0, "receipts": 0})
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_tampered_evidence_fails_before_probe(self):
+        files = [self.root / name for name in ("manifest.jsonl", "admission.json", "commit.json", "tree.json",
+            "README.md", "LICENSE.md", "baby_steps.problem.md")]
+        files.append(self.review_root / "xai/review.json")
+        with patch.object(generate_rows, "prepare_local_model") as probe:
+            for path in files:
+                raw = path.read_bytes()
+                path.write_bytes(raw + b"tampered")
+                with self.subTest(path=path.name), self.assertRaises(SystemExit):
+                    self.generate(dry_run=False)
+                path.write_bytes(raw)
+            probe.assert_not_called()
+
+    def test_no_fabricated_admission_or_cloud_target_route(self):
+        row = self.scenario()
+        row["source_provenance"]["admission_sha256"] = "0" * 64
+        with self.assertRaises(SystemExit):
+            self.generate([row])
+        with self.assertRaises(SystemExit):
+            self.generate(provider="openai")
+
+    def test_unsupported_sources_context_and_groups_fail_closed(self):
+        for key, value in (("source_id", f"{self.repository}/{self.commit}/README.md"),
+                           ("official_tree_ref", "../tree.json"), ("admitted_at", "2099-01-01T00:00:00Z")):
+            row = self.scenario()
+            row["source_provenance"][key] = value
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.generate([row])
+        for change in ("README", "placeholder", "version_group", "heldout", "split"):
+            row = self.scenario()
+            if change == "README":
+                row["input"]["context"][1]["text"] = self.source_bytes["README.md"].decode()
+            elif change == "placeholder":
+                row["input"]["context"][0]["text"] = row["input"]["context"][0]["text"].replace("{appname}", "learnyounode")
+            elif change == "version_group":
+                row["source_group"] += "/" + self.commit
+            elif change == "heldout":
+                row["source_group"] = "ew-alpha"
+            else:
+                row["split"] = "evaluation"
+            with self.subTest(change=change), self.assertRaises(SystemExit):
+                self.generate([row])
+        train, dev = self.scenario(), self.scenario()
+        dev["split"] = "dev"
+        with self.assertRaises(SystemExit):
+            self.generate([train, dev])
+
+    def test_bad_chronology_review_identity_and_tree_fail_even_with_fixture_pins(self):
+        original_time = self.manifest[0]["captured_at"]
+        for value in ("2019-01-01T00:00:00Z", "2026-09-27T11:30:00Z", "2026-09-27T11:00:00+01:00"):
+            for entry in self.manifest:
+                entry["captured_at"] = value
+            self.write_evidence()
+            with self.subTest(capture=value), self.assertRaises(SystemExit):
+                self.generate()
+        for entry in self.manifest:
+            entry["captured_at"] = original_time
+        self.receipt["response_id"] = "unbound-response"
+        self.write_evidence()
+        with self.assertRaises(SystemExit):
+            self.generate()
+        self.receipt["response_id"] = self.admission["response_id"]
+        self.tree[0]["sha"] = "0" * 40
+        self.write_evidence()
+        with self.assertRaises(SystemExit):
+            self.generate()
+
+
 class GitHubLookupTests(unittest.TestCase):
     def test_query_reads_cross_references_and_handles_graphql_errors(self):
         response = {"data": {"repository": {"issue": {"createdAt": ISSUE_CREATED_AT}}}}

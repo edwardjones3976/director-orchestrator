@@ -91,6 +91,18 @@ LICENSED_SPECIFICATION_ADMISSIONS = {
     ),
 }
 LICENSED_SPECIFICATION_REPOSITORY = "exercism/problem-specifications"
+# One independently reviewed learnyounode batch; not a general source registry.
+LEARNYOUNODE_ADMISSIONS = {
+    "71ce7054a96946bfc22501943e2d87beb27f6d1c320a7957d6e7a560568bbedf": (
+        "d5ca6fcde9195ca598104438a74e2ca327de5be63dab58a14097234aa8acf657",
+        "526d2290c70599bd432254b8eb1da50dfc6d05dbe617e090b6ac9101253ac838",
+        "c122fd7f53515900193f1f622da505487dc9fcee93ae77c297025bb5f10ceaf4",
+        "f2a436e94cd41192f72cb18e1ce155ca5f2de97ce0d8b7d266f8186b146014dd",
+    ),
+}
+LEARNYOUNODE_REPOSITORY = "workshopper/learnyounode"
+LEARNYOUNODE_COMMIT = "6b8b8f16fcfbfc201f1ee3df2dc554d4ec3fc393"
+LEARNYOUNODE_SOURCES = frozenset({"baby_steps", "filtered_ls", "my_first_async_io"})
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
@@ -329,16 +341,23 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
     """Bind a reviewed public description to its official capture and license."""
     block = scenario["source_provenance"]
     digest = block.get("admission_sha256")
+    learnyounode = isinstance(digest, str) and digest in LEARNYOUNODE_ADMISSIONS
     pins = LICENSED_SPECIFICATION_ADMISSIONS.get(digest) if isinstance(digest, str) else None
-    if pins is None:
+    if pins is None and not learnyounode:
         fail(f"{label}: licensed specification has no independently admitted digest")
-    manifest_hash, official_hash, review_hash, row_pilot = pins
+    if learnyounode:
+        manifest_hash, official_hash, tree_hash, review_hash = LEARNYOUNODE_ADMISSIONS[digest]
+        row_pilot = LEARNYOUNODE_SOURCES
+    else:
+        manifest_hash, official_hash, review_hash, row_pilot = pins
     admission_raw = _source_artifact(source_root, block.get("admission_ref"), label)
     manifest_raw = _source_artifact(source_root, block.get("manifest_ref"), label)
     official_raw = _source_artifact(source_root, block.get("official_capture_ref"), label)
+    tree_raw = _source_artifact(source_root, block.get("official_tree_ref"), label) if learnyounode else None
     if (hashlib.sha256(admission_raw).hexdigest() != block["admission_sha256"]
             or hashlib.sha256(manifest_raw).hexdigest() != manifest_hash
-            or hashlib.sha256(official_raw).hexdigest() != official_hash):
+            or hashlib.sha256(official_raw).hexdigest() != official_hash
+            or (learnyounode and hashlib.sha256(tree_raw).hexdigest() != tree_hash)):
         fail(f"{label}: licensed source admission/capture bytes changed")
     try:
         admission = local_transport.strict_json(admission_raw)
@@ -350,21 +369,29 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         entry = records[0]
         repository, commit = entry["source_repository"], entry["source_commit"]
         slug = entry["path"].split("/")[1]
-        if (repository != LICENSED_SPECIFICATION_REPOSITORY
+        if learnyounode:
+            if (commit != LEARNYOUNODE_COMMIT or admission["pinned_commit"] != commit
+                    or admission["source_facts_verdict"] != "ACCEPT_FOR_SOURCE_FACTS"
+                    or admission["targets_generated"] != 0
+                    or slug not in admission["suitable"]):
+                fail(f"{label}: learnyounode source is outside the admitted three-source batch")
+        elif (admission["source_admission"] != "ACCEPT_FOR_SOURCE_FACTS"
+              or admission["official_capture_sha256"] != official_hash
+              or slug not in admission["pilot_suitable"] or slug in admission["pilot_hold"]):
+            fail(f"{label}: licensed source is outside the admitted synthetic pilot")
+        if (repository != (LEARNYOUNODE_REPOSITORY if learnyounode else LICENSED_SPECIFICATION_REPOSITORY)
                 or re.fullmatch(r"[0-9a-f]{40}", commit) is None
-                or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
-                or entry["path"] != f"exercises/{slug}/description.md"
-                or entry["source_id"] != f"exercism/{commit}/{slug}"
+                or re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*" if learnyounode else r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
+                or entry["path"] != f"exercises/{slug}/{'problem.md' if learnyounode else 'description.md'}"
+                or entry["source_id"] != (f"{repository}/{commit}/{entry['path']}" if learnyounode else f"exercism/{commit}/{slug}")
                 or entry["source_url"] != f"https://github.com/{repository}/blob/{commit}/{entry['path']}"
                 or entry["destination"] != "training_candidates_only"
                 or entry["source_kind"] != "independently_licensed_specification"
                 or entry["license"] != "MIT" or entry["targets_generated"] != 0
-                or admission["source_admission"] != "ACCEPT_FOR_SOURCE_FACTS"
                 or admission["manifest_sha256"] != manifest_hash
-                or admission["official_capture_sha256"] != official_hash
                 or admission["review_receipt_sha256"] != review_hash
                 or admission["targets_accepted"] != 0
-                or slug not in row_pilot or slug not in admission["pilot_suitable"] or slug in admission["pilot_hold"]
+                or slug not in row_pilot
                 or block.get("admitted_at") != admission["admitted_at"]):
             fail(f"{label}: licensed source is outside the admitted synthetic pilot")
         receipt_raw = _source_artifact(
@@ -376,12 +403,12 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 or receipt["http_status"] != 200 or receipt["response_status"] != "completed"
                 or not receipt["response_id"] or receipt["response_id"] != admission["response_id"]
                 or receipt["answer"] != admission["review_answer"]
-                or not receipt["answer"].startswith("**ACCEPT_FOR_SOURCE_FACTS**")
+                or not receipt["answer"].startswith("**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if learnyounode else "**ACCEPT_FOR_SOURCE_FACTS**")
                 or manifest_hash not in receipt["answer"] or commit not in receipt["answer"]):
             fail(f"{label}: independent source review has no bound ACCEPT")
         api = f"https://api.github.com/repos/{repository}"
-        upstream = official["official_commit"]
-        tree = official["official_tree"]
+        upstream = official if learnyounode else official["official_commit"]
+        tree = local_transport.strict_json(tree_raw) if learnyounode else official["official_tree"]
         if (upstream["sha"] != commit or upstream["url"] != f"{api}/commits/{commit}"
                 or tree["url"] != f"{api}/git/trees/{commit}" or tree["sha"] != commit
                 or tree["truncated"] is not False
@@ -391,10 +418,12 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 or upstream["commit"]["tree"]["url"] != f"{api}/git/trees/{upstream['commit']['tree']['sha']}"
                 or upstream["commit"]["committer"]["date"] != entry["upstream_commit_time"]):
             fail(f"{label}: official commit/tree capture does not bind this source")
+        if learnyounode and entry["source_tree"] != upstream["commit"]["tree"]["sha"]:
+            fail(f"{label}: learnyounode canonical tree does not match its manifest")
         source_raw = _source_artifact(source_root, entry["source_ref"], label)
         license_raw = _source_artifact(source_root, block.get("license_ref", "LICENSE"), label)
         for path, raw, expected_blob in ((entry["path"], source_raw, entry["source_git_blob"]),
-                                          ("LICENSE", license_raw, None)):
+                                          ("LICENSE.md" if learnyounode else "LICENSE", license_raw, None)):
             blobs = [item for item in tree["tree"] if item["path"] == path]
             blob_hash = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
             if (len(blobs) != 1 or blobs[0]["type"] != "blob" or blobs[0]["mode"] != "100644"
@@ -405,17 +434,42 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 or hashlib.sha256(license_raw).hexdigest() != entry["license_sha256"]):
             fail(f"{label}: licensed description/license bytes changed")
         started = _source_utc(local_transport.utc_now(), label)
-        captured = _source_utc(entry["captured_at"], label)
+        # This closed capture records UTC as +00:00; other offsets stay invalid.
+        capture_time = entry["captured_at"]
+        if learnyounode and isinstance(capture_time, str) and capture_time.endswith("+00:00"):
+            capture_time = capture_time[:-6] + "Z"
+        captured = _source_utc(capture_time, label)
         admitted = _source_utc(admission["admitted_at"], label)
         historical = _source_utc(entry["upstream_commit_time"], label)
-        if not (historical < _source_utc("2020-01-01T00:00:00Z", label)
-                and historical < captured < _source_utc(official["observed_at"], label) < admitted < started):
+        if not (historical < captured < admitted < started
+                and (learnyounode or (historical < _source_utc("2020-01-01T00:00:00Z", label)
+                     and captured < _source_utc(official["observed_at"], label) < admitted))):
             fail(f"{label}: upstream/capture/admission/generation chronology is invalid")
         context = scenario["input"]["context"]
+        if learnyounode:
+            readme_records = [item for item in manifest if item["path"] == "README.md"]
+            if len(readme_records) != 1:
+                fail(f"{label}: admitted README is missing or ambiguous")
+            readme = readme_records[0]
+            readme_raw = _source_artifact(source_root, readme["source_ref"], label)
+            readme_blobs = [item for item in tree["tree"] if item["path"] == "README.md"]
+            readme_blob = hashlib.sha1(b"blob " + str(len(readme_raw)).encode("ascii") + b"\0" + readme_raw).hexdigest()
+            verification = [line for line in readme_raw.decode("utf-8").splitlines()
+                            if line.startswith("4. **Verify that your solution to the lesson is correct**")]
+            if (hashlib.sha256(readme_raw).hexdigest() != readme["source_sha256"]
+                    or len(readme_blobs) != 1 or readme_blobs[0]["type"] != "blob"
+                    or readme_blobs[0]["mode"] != "100644" or readme_blobs[0]["size"] != len(readme_raw)
+                    or readme_blobs[0]["sha"] != readme_blob or readme["source_git_blob"] != readme_blob
+                    or len(verification) != 1 or len(context) != 2
+                    or context[1]["kind"] != "assignment_packet"
+                    or context[1]["source_ref"] != readme["source_ref"]
+                    or context[1]["source_sha256"] != readme["source_sha256"]
+                    or context[1]["text"] != verification[0]):
+                fail(f"{label}: input lacks the exact reviewed README verification passage")
         if (scenario["split"] not in ("train", "dev")
                 or scenario["source_group"] != f"licensed/{repository}/{slug}"
                 or scenario["input"]["repository"] != repository or scenario["input"]["title"] != slug
-                or len(context) != 1 or context[0]["kind"] != "assignment_packet"
+                or len(context) != (2 if learnyounode else 1) or context[0]["kind"] != "assignment_packet"
                 or context[0]["source_ref"] != entry["source_ref"]
                 or context[0]["source_sha256"] != entry["source_sha256"]
                 or context[0]["text"] != source_raw.decode("utf-8")
