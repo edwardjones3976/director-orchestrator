@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | BEGIN]]
 """DIRECTOR prompt template: one rendering of the task input for evaluation and training.
 
 Packet M2-C1 (workstream-plan-m2.md, decision D-M2-10) revises the task input the
@@ -59,7 +60,16 @@ SYSTEM_PROMPT_CONTEXT = (
     "by the source, never invented test, log or file names; "
     "non_goals are explicitly excluded scope, with an empty list if none is stated. "
     "Do not put required behaviour into non_goals. Leave unsupported fields empty "
-    "where the schema permits; never manufacture facts to fill a required field."
+    "where the schema permits; never manufacture facts to fill a required field. "
+    "Read every source clause before writing the response. Include each distinct "
+    "explicit obligation in the appropriate field, preserving its qualifiers, "
+    "conditions, numeric bounds, positional meaning and named artifacts. "
+    "Do not replace several obligations with a broad summary. Use precise source "
+    "wording instead of a lossy paraphrase. Input assumptions belong in constraints, "
+    "not new output behaviours. Treat advisory hints as optional unless the source "
+    "makes them mandatory. Before emitting JSON, check that no explicit obligation "
+    "was omitted and every included item is source-supported. Do not emit this "
+    "check or any extra fields."
 )
 
 
@@ -155,3 +165,4 @@ def render_messages(item: dict[str, Any], target: dict[str, Any] | None = None) 
     if target is not None:
         messages.append({"role": "assistant", "content": render_target(target)})
     return messages
+# [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | END]]
