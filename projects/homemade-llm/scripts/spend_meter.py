@@ -11,8 +11,8 @@ Totals the costs that the provider-dispatch wrapper already records in its recei
 only reads them. (--self-test writes fixtures to a temporary directory it deletes.)
 
 --project counts only receipts filed under this project's worktree folders (Grok CLI).
-xAI and Perplexity receipts carry no project, so in --project mode they are reported
-under "unattributed" rather than silently dropped or wrongly claimed.
+Provider-level receipt folders are not scoped by worktree name, so in --project
+mode they are reported under "unattributed"; use --purpose-prefix for labels.
 --purpose-prefix filters paid receipts by their top-level purpose. Receipts with
 no valid label are split into inferred and unknown buckets. Unknown costs count
 against the milestone's conservative USD 25 upper bound, including with --project.
@@ -28,6 +28,8 @@ Costs recorded in receipts:
     Grok CLI        <worktree>/grok-*.out.json   total_cost_usd
     xAI API         xai/*.json                   usage.cost_in_usd_ticks / 1e10
     Perplexity ask  perplexity/*.json            response.usage.cost.total_cost
+    Z.ai           zai/*.json                   total_cost_usd (reported telemetry)
+    Anthropic      anthropic/*.json             cost_usd (computed by dispatch)
 Calls with no recorded cost (Perplexity search, a failed ask) are counted under
 "uncosted" so the baseline never pretends they were free.
 """
@@ -136,12 +138,14 @@ def receipt_cost(path: Path, data: dict) -> tuple[str, float | None] | None:
         usage = response.get("usage") if isinstance(response, dict) else None
         cost = usage.get("cost") if isinstance(usage, dict) else None
         return "perplexity", safe_usd(cost.get("total_cost") if isinstance(cost, dict) else None)
+    if parent in ("zai", "anthropic"):
+        return parent, safe_usd(data.get("total_cost_usd" if parent == "zai" else "cost_usd"))
     if path.name.startswith("grok-") and path.name.endswith(".out.json"):
         return "grok-cli", safe_usd(data.get("total_cost_usd"))
     return None
 
 
-UNATTRIBUTED = ("xai", "perplexity")  # provider-level receipt folders with no project field
+UNATTRIBUTED = ("xai", "perplexity", "zai", "anthropic")  # folders not scoped by worktree
 
 
 def meter(root: Path, since: float, project_only: bool, purpose_prefix: str | None = None,
@@ -329,6 +333,29 @@ def self_test() -> None:
         assert bounded["matched_receipts"] == 2 and bounded["buckets"]["labelled"]["xai"]["uncosted"] == 1, bounded
         assert bounded["unpriced_bound_usd"] == 1.0 and bounded["upper_bound_usd"] == bounded["upper_known_usd"] + 1.0 == 1.5, bounded
         assert bounded["budget_status"] == "OK", bounded
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for provider, field, amount in (("zai", "total_cost_usd", 1.5), ("anthropic", "cost_usd", 0.2)):
+            paid = root / provider / "20260930T022719Z.json"
+            paid.parent.mkdir()
+            body = {"purpose": "homemade-llm M2 packet-a: review", field: amount}
+            paid.write_text(json.dumps(body), encoding="utf-8")
+            assert receipt_cost(paid, body) == (provider, amount)
+            for bad_cost in (None, -1, True, float("inf"), float("nan"), "0.1"):
+                assert receipt_cost(paid, {field: bad_cost}) == (provider, None)
+        report = meter(root, 0, False, "homemade-llm M2")
+        assert report["matched_receipts"] == 2 and report["lower_bound_usd"] == report["upper_bound_usd"] == 1.7, report
+        assert report["buckets"]["labelled"] == {
+            "zai": {"calls": 1, "usd": 1.5, "uncosted": 0},
+            "anthropic": {"calls": 1, "usd": 0.2, "uncosted": 0},
+        }, report
+        assert meter(root, 0, True)["unattributed"] == report["buckets"]["labelled"]
+        (root / "zai/20260930T022720Z.json").write_text("{", encoding="utf-8")
+        (root / "anthropic/20260930T022720Z.json").write_text(json.dumps({"purpose": "homemade-llm M2 packet-b: unpriced"}), encoding="utf-8")
+        default = meter(root, 0, False, "homemade-llm M2")
+        assert default["uncosted_receipts"] == 2 and default["upper_bound_usd"] is None and default["budget_status"] == "STOP", default
+        bounded = meter(root, 0, False, "homemade-llm M2", budget=1.8, unpriced_bound=0.1)
+        assert bounded["lower_bound_usd"] == 1.7 and bounded["upper_bound_usd"] == 1.9 and bounded["budget_status"] == "STOP", bounded
     print("spend_meter self-test: ok")
 
 
@@ -381,7 +408,7 @@ def main() -> int:
         print(f"  {name:<11} {row['calls']:>4} calls  USD {row['usd']:>8.4f}  uncosted {row['uncosted']}")
     print(f"  {'total':<11} {'':>10}  USD {report['total_usd']:>8.4f}")
     for name, row in report.get("unattributed", {}).items():
-        print(f"  unattributed {name}: {row['calls']} calls, USD {row['usd']:.4f} (receipts carry no project)")
+        print(f"  unattributed {name}: {row['calls']} calls, USD {row['usd']:.4f} (provider-level receipt folder)")
     return 0
 
 
