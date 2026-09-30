@@ -1,3 +1,4 @@
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 03:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | BEGIN]]
@@ -168,8 +169,11 @@ def validate_pr_body(body: str) -> list[str]:
         marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", visible)
         if marker:
             fence = marker.group(1)
-        elif visible.startswith("Sole author:"):
-            headers.append(visible)
+        else:
+            if visible.startswith("**") and visible.endswith("**"):
+                visible = visible[2:-2]
+            if visible.startswith("Sole author:"):
+                headers.append(visible)
     if len(headers) == 1:
         match = SOLE_AUTHOR.fullmatch(headers[0])
         if match and all(value.strip() for value in match.groups() if value is not None):
@@ -246,3 +250,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-04 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 18:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 03:04 UTC | END]]
