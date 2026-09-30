@@ -11,7 +11,11 @@ stops the run before ``--out`` is created.
     python projects/homemade-llm/eval/generate_rows.py --dry-run \\
         --scenarios scenarios.jsonl --provider anthropic_api \\
         --set-a set-a/refs --set-b set-b/refs --out rows.jsonl \\
-        --terms-verified-at 2026-09-28T20:00:00Z
+        --source-root path/to/dataset --terms-verified-at 2026-09-28T20:00:00Z
+
+Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and
+GitHub issue/linked-PR chronology before a dry run or provider call.
+Other source types fail closed until they have an independent chronology route.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,6 +34,7 @@ import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
+import build_inputs  # noqa: E402
 import prompt_template  # noqa: E402
 import validate_rows  # noqa: E402
 
@@ -61,6 +67,19 @@ DISPATCH_PY = Path.home() / ".claude" / "skills" / "provider-dispatch" / "dispat
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
+GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+GITHUB_CHRONOLOGY_QUERY = (
+    "query($owner:String!,$repo:String!,$issue:Int!){"
+    "repository(owner:$owner,name:$repo){"
+    "issue(number:$issue){title createdAt lastEditedAt body userContentEdits(first:1){totalCount}"
+    "timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT,RENAMED_TITLE_EVENT]){pageInfo{hasNextPage}"
+    "nodes{__typename ... on CrossReferencedEvent{source{__typename ... on PullRequest{"
+    "number body createdAt lastEditedAt repository{nameWithOwner} userContentEdits(first:1){totalCount}"
+    "closingIssuesReferences(first:100){pageInfo{hasNextPage} nodes{number repository{nameWithOwner}}}"
+    "commits(first:100){pageInfo{hasNextPage}"
+    "nodes{commit{authoredDate committedDate}}}}}}}}}}}"
+)
+
 
 class DispatchResult:
     """One completed provider call. ``model`` is the name the receipt records."""
@@ -74,6 +93,209 @@ class DispatchResult:
 def fail(message: str) -> None:
     print(message, file=sys.stderr)
     raise SystemExit(2)
+
+
+def infer_source_root(set_a: Path, set_b: Path, explicit: Path | None) -> Path:
+    if explicit is not None:
+        root = explicit.resolve()
+        if not root.is_dir():
+            fail(f"source-root is not a directory: {root}")
+        return root
+    if set_a.name != "refs" or set_b.name != "refs":
+        fail("set-a and set-b must be refs directories, or pass --source-root")
+    if not (set_a.parent.name.startswith("set-") and set_b.parent.name.startswith("set-")):
+        fail("could not infer --source-root from set paths; pass it explicitly")
+    if set_a.parent.parent != set_b.parent.parent:
+        fail("set-a and set-b do not share a dataset root; pass --source-root")
+    return set_a.parent.parent.resolve()
+
+
+def _load_references(refs_dir: Path) -> dict[str, dict[str, Any]]:
+    references: dict[str, dict[str, Any]] = {}
+    for item_id in build_inputs._reference_ids(refs_dir):
+        payload = json.loads((refs_dir / f"{item_id}.json").read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            references[item_id] = payload
+    return references
+
+
+def _held_out_guard(set_a: Path, set_b: Path) -> tuple[dict[str, dict[str, Any]], set[str], dict[str, set[str]]]:
+    references = _load_references(set_a)
+    second = _load_references(set_b)
+    if overlap := references.keys() & second.keys():
+        fail(f"duplicate held-out reference IDs across sets: {', '.join(sorted(overlap))}")
+    references.update(second)
+    lineage: set[str] = set()
+    digests: dict[str, set[str]] = {}
+    for refs_dir in (set_a, set_b):
+        item_ids = build_inputs._reference_ids(refs_dir)
+        lineage |= build_inputs.lineage_keys(refs_dir, item_ids)
+        for digest, owners in build_inputs.source_digests(refs_dir, item_ids).items():
+            digests.setdefault(digest, set()).update(owners)
+    return references, lineage, digests
+
+
+def validate_scenario_source_provenance(
+    scenario: dict[str, Any],
+    *,
+    source_root: Path,
+    set_a: Path,
+    set_b: Path,
+    label: str,
+) -> None:
+    references, lineage_keys, held_out_digests = _held_out_guard(set_a, set_b)
+    if build_inputs._source_ref_forms(str(scenario["source_group"])) & lineage_keys:
+        fail(f"{label}: source_group identifies a held-out task")
+    problems = build_inputs.validate_context(
+        scenario["input"]["context"],
+        references,
+        lineage_keys,
+        set_a,
+        str(scenario["source_group"]),
+        held_out_digests,
+        source_root=source_root,
+        allow_held_out_source=False,
+    )
+    if problems:
+        fail(f"{label}: {problems[0]}")
+
+
+def github_chronology(repository: str, issue: int) -> dict[str, Any]:
+    owner, repo = repository.split("/", 1)
+    try:
+        result = subprocess.run(
+            ["gh", "api", "graphql", "-f", f"query={GITHUB_CHRONOLOGY_QUERY}",
+             "-F", f"owner={owner}", "-F", f"repo={repo}",
+             "-F", f"issue={issue}"],
+            capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
+        )
+        record = json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        fail("GitHub chronology lookup failed")
+    if (result.returncode != 0 or not isinstance(record, dict) or record.get("errors")
+            or not isinstance(record.get("data"), dict)):
+        fail("GitHub chronology lookup failed")
+    return record["data"].get("repository") or {}
+
+
+def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str) -> None:
+    block = scenario.get("source_provenance")
+    repository = scenario["input"]["repository"]
+    if (not isinstance(block, dict) or not isinstance(repository, str)
+            or GITHUB_REPOSITORY.fullmatch(repository) is None
+            or type(block.get("github_issue")) is not int
+            or type(block.get("first_work_pr")) is not int
+            or min(block["github_issue"], block["first_work_pr"]) < 1):
+        fail(f"{label}: an unverified source needs github_issue and first_work_pr")
+    canonical_group = f"github/{repository.casefold()}/issues/{block['github_issue']}"
+    if scenario["source_group"] != canonical_group:
+        fail(f"{label}: source_group must equal verified issue group {canonical_group}")
+    source_items = [item for item in scenario["input"]["context"]
+                    if item["kind"] == "assignment_packet"]
+    if not source_items or len(source_items) != len(scenario["input"]["context"]):
+        fail(f"{label}: this chronology route supports assignment issue context only")
+    record = github_chronology(repository, block["github_issue"])
+    issue = record.get("issue") if isinstance(record, dict) else None
+    if not isinstance(issue, dict):
+        fail(f"{label}: GitHub assignment issue is missing")
+
+    def utc(value: Any) -> datetime:
+        if not isinstance(value, str) or UTC_PATTERN.fullmatch(value) is None:
+            fail(f"{label}: GitHub chronology timestamp is missing")
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            fail(f"{label}: GitHub chronology timestamp is invalid")
+
+    created = utc(issue.get("createdAt"))
+    if (issue.get("lastEditedAt") is not None
+            or (issue.get("userContentEdits") or {}).get("totalCount") != 0):
+        fail(f"{label}: GitHub assignment issue was edited")
+    body = issue.get("body")
+    if not isinstance(body, str) or not isinstance(issue.get("title"), str):
+        fail(f"{label}: GitHub issue has no verifiable title/body")
+    if scenario["input"]["title"] != issue["title"]:
+        fail(f"{label}: input title differs from the assignment issue title")
+    objective = scenario["input"].get("objective")
+    if (not isinstance(objective, str) or not objective.strip()
+            or " ".join(objective.split()) not in " ".join(body.split())):
+        fail(f"{label}: input objective is not an excerpt of the assignment")
+    timeline = issue.get("timelineItems") or {}
+    if (timeline.get("pageInfo") or {}).get("hasNextPage") is not False:
+        fail(f"{label}: GitHub cross-reference history is incomplete")
+    linked: list[tuple[datetime, int]] = []
+    for event in timeline.get("nodes") or []:
+        if (event or {}).get("__typename") == "RenamedTitleEvent":
+            fail(f"{label}: GitHub assignment issue title was renamed")
+        pr = (event or {}).get("source") or {}
+        if pr.get("__typename") != "PullRequest":
+            continue
+        source_repo = (pr.get("repository") or {}).get("nameWithOwner")
+        if not isinstance(source_repo, str):
+            fail(f"{label}: linked PR repository is unverified")
+        if source_repo.casefold() != repository.casefold():
+            continue
+        closing = pr.get("closingIssuesReferences") or {}
+        if (closing.get("pageInfo") or {}).get("hasNextPage") is not False:
+            fail(f"{label}: linked PR closing-issue history is incomplete")
+        issue_ref = (rf"(?:(?:{re.escape(repository)})?#|GH-|"
+                     rf"https?://github\.com/{re.escape(repository)}/issues/){block['github_issue']}\b")
+        closing_claim = r"\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\b\s*:?\s*"
+        claimed = (re.search(rf"(?im)^Issue:\s*{issue_ref}", pr.get("body") or "") is not None
+                   or re.search(closing_claim + issue_ref,
+                                pr.get("body") or "", re.I) is not None
+                   or any(node.get("number") == block["github_issue"]
+                          and (node.get("repository") or {}).get("nameWithOwner", "").casefold() == repository.casefold()
+                          for node in closing.get("nodes") or []))
+        if not claimed:
+            # Refuse ambiguous claims instead of guessing at Markdown/link syntax.
+            if re.search(rf"(?im)^Issue:|{closing_claim}", pr.get("body") or ""):
+                fail(f"{label}: linked PR has an unbound work claim")
+            if (pr.get("lastEditedAt") is not None
+                    or (pr.get("userContentEdits") or {}).get("totalCount") != 0):
+                fail(f"{label}: edited linked PR may hide an earlier work claim")
+            continue  # A discussion cross-reference is not a work claim.
+        commits = pr.get("commits") or {}
+        if (commits.get("pageInfo") or {}).get("hasNextPage") is not False or not commits.get("nodes"):
+            fail(f"{label}: linked PR commit history is incomplete")
+        # Dates are editable Git metadata; independent source admission is still required.
+        dates = [utc((node.get("commit") or {}).get(field))
+                 for node in commits["nodes"] for field in ("authoredDate", "committedDate")]
+        linked.append((min(utc(pr.get("createdAt")), *dates), pr["number"]))
+    if (not linked or block["first_work_pr"] not in [number for _, number in linked]
+            or created >= min(time for time, _ in linked)
+            or block["first_work_pr"] != min(linked)[1]):
+        fail(f"{label}: first_work_pr is not the earliest linked GitHub work")
+    for item in source_items:
+        source = (source_root / item["source_ref"]).resolve()
+        if source.read_bytes() != body.encode("utf-8"):
+            fail(f"{label}: captured source bytes differ from GitHub issue body")
+
+
+def validate_scenarios_for_dispatch(
+    scenarios: list[dict[str, Any]],
+    *,
+    source_root: Path,
+    set_a: Path,
+    set_b: Path,
+    sets: list[validate_rows.HeldOutSet],
+) -> None:
+    group_splits: dict[str, str] = {}
+    for index, scenario in enumerate(scenarios, start=1):
+        label = f"scenario {index} ({scenario.get('source_group', '?')})"
+        validate_scenario_source_provenance(
+            scenario, source_root=source_root, set_a=set_a, set_b=set_b, label=label,
+        )
+        reasons, overlap, nearest = validate_rows.leak_wall(
+            {"input": scenario["input"], "target": {}, "source_group": scenario["source_group"]}, sets,
+        )
+        if reasons or overlap >= validate_rows.DEFAULT_THRESHOLD - validate_rows.DEFAULT_QUARANTINE_BAND:
+            fail(f"{label}: held-out input leak before dispatch: {reasons or nearest}")
+        validate_chronology(scenario, source_root, label)
+        group, split = scenario["source_group"], scenario["split"]
+        if group in group_splits and group_splits[group] != split:
+            fail(f"{label}: one verified issue group cannot straddle train and dev")
+        group_splits[group] = split
 
 
 def _strings(value: Any) -> list[str]:
@@ -339,6 +561,7 @@ def generate(
     dry_run: bool,
     dispatch: Dispatch | None = None,
     scrub: Scrub | None = None,
+    source_root: Path | None = None,
     timeout: int = 120,
     max_output: int = 1024,
     worktree: Path | None = None,
@@ -355,6 +578,8 @@ def generate(
         fail(str(exc))
     if out.exists():
         fail(f"refusing existing --out: {out}")
+    root = infer_source_root(set_a, set_b, source_root)
+    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets)
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
     caller = dispatch or (lambda name, packet, purpose: live_dispatch(
@@ -419,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-output", type=int, default=1024)
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--worktree", type=Path, default=None)
+    parser.add_argument("--source-root", type=Path, default=None, dest="source_root")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     generated_at = args.generated_at or args.terms_verified_at
@@ -427,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:
         report = generate(
             scenarios, provider=args.provider, set_a=args.set_a, set_b=args.set_b, out=args.out,
             terms_verified_at=args.terms_verified_at, generated_at=generated_at, dry_run=args.dry_run,
+            source_root=args.source_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
         )
     except SystemExit as exc:
