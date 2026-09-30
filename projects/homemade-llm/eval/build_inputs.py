@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-30 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
@@ -19,7 +20,9 @@ Input contracts. Without ``--context`` an input carries ``id``, ``objective``,
 ``input.context`` in ``schemas/director-data-v1-row.schema.json``. A context
 item is refused, and no input is written, unless its citation resolves to
 matching source bytes containing the excerpt. The item's own frozen assignment
-source is allowed; another held-out item's source and scored target text are not.
+source is allowed once its path, metadata hash, file hash, and excerpt all match,
+including policy text that another task's reference also scores. Another held-out
+item's source is not allowed, and a matching filename alone does not admit it.
 """
 from __future__ import annotations
 
@@ -260,6 +263,50 @@ def source_digests(refs_dir: Path, item_ids: list[str]) -> dict[str, set[str]]:
     return owners
 
 
+def _verified_own_assignment(
+    item: dict[str, Any],
+    meta: dict[str, Any],
+    source_root: Path,
+    where: str,
+    candidate_own: bool,
+    held_out_digests: dict[str, set[str]],
+) -> tuple[bool, list[str]]:
+    """Confirm an own-source citation against bytes. A matching path is not enough."""
+    errors: list[str] = []
+    source_ref = item["source_ref"]
+    relative = Path(source_ref)
+    if (relative.is_absolute() or relative.drive or "\\" in source_ref
+            or any(part in (".", "..") for part in relative.parts)):
+        return False, [f"{where}: source_ref must be a relative source path"]
+    source_path = (source_root / relative).resolve()
+    if not source_path.is_relative_to(source_root) or not source_path.is_file():
+        return False, [f"{where}: source_ref does not resolve to a source file"]
+    forbidden = _forbidden_assignment_source(source_ref, source_path, source_root)
+    if forbidden:
+        return False, [f"{where}: {forbidden}"]
+    raw = source_path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    hash_matches = digest == item["source_sha256"]
+    if not hash_matches:
+        errors.append(f"{where}: source_sha256 does not match source bytes")
+    meta_matches = digest == meta.get("source_sha256")
+    if candidate_own and not meta_matches:
+        errors.append(f"{where}: source_sha256 does not match reference metadata")
+    if held_out_digests.get(digest) and not candidate_own:
+        errors.append(f"{where}: source bytes belong to a held-out item")
+    try:
+        source_text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        errors.append(f"{where}: source file is not UTF-8 text")
+        excerpt_matches = False
+    else:
+        excerpt_matches = " ".join(item["text"].split()) in " ".join(source_text.split())
+        if not excerpt_matches:
+            errors.append(f"{where}: text is not an excerpt of source_ref")
+    verified = candidate_own and hash_matches and meta_matches and excerpt_matches and not errors
+    return verified, errors
+
+
 def validate_context(
     context: Any,
     references: dict[str, dict[str, Any]],
@@ -289,45 +336,20 @@ def validate_context(
     for index, item in enumerate(context):
         where = f"context[{index}]"
         source_ref = item["source_ref"]
-        own_source = (allow_held_out_source and item["kind"] == "assignment_packet"
-                      and source_ref == meta.get("source_file"))
-        for ref_id in sorted(references):
-            if own_source and ref_id == item_id:
-                continue
-            leak = _text_leak_match(references[ref_id], item["text"])
-            if leak is not None:
-                errors.append(f"{where}: text overlaps scored field of {ref_id}: {leak}")
-                break
-        if _source_ref_forms(source_ref) & lineage_keys and not own_source:
+        candidate_own = (allow_held_out_source and item["kind"] == "assignment_packet"
+                         and source_ref == meta.get("source_file"))
+        verified_own, citation_errors = _verified_own_assignment(
+            item, meta, source_root, where, candidate_own, held_out_digests,
+        )
+        if not verified_own:
+            for ref_id in sorted(references):
+                leak = _text_leak_match(references[ref_id], item["text"])
+                if leak is not None:
+                    errors.append(f"{where}: text overlaps scored field of {ref_id}: {leak}")
+                    break
+        if _source_ref_forms(source_ref) & lineage_keys and not candidate_own:
             errors.append(f"{where}: source_ref resolves to a held-out item")
-        relative = Path(source_ref)
-        if (relative.is_absolute() or relative.drive or "\\" in source_ref
-                or any(part in (".", "..") for part in relative.parts)):
-            errors.append(f"{where}: source_ref must be a relative source path")
-        else:
-            source_path = (source_root / relative).resolve()
-            if not source_path.is_relative_to(source_root) or not source_path.is_file():
-                errors.append(f"{where}: source_ref does not resolve to a source file")
-            else:
-                forbidden = _forbidden_assignment_source(source_ref, source_path, source_root)
-                if forbidden:
-                    errors.append(f"{where}: {forbidden}")
-                    continue
-                raw = source_path.read_bytes()
-                digest = hashlib.sha256(raw).hexdigest()
-                if digest != item["source_sha256"]:
-                    errors.append(f"{where}: source_sha256 does not match source bytes")
-                if own_source and digest != meta.get("source_sha256"):
-                    errors.append(f"{where}: source_sha256 does not match reference metadata")
-                if held_out_digests.get(digest) and not own_source:
-                    errors.append(f"{where}: source bytes belong to a held-out item")
-                try:
-                    source_text = raw.decode("utf-8")
-                except UnicodeDecodeError:
-                    errors.append(f"{where}: source file is not UTF-8 text")
-                else:
-                    if " ".join(item["text"].split()) not in " ".join(source_text.split()):
-                        errors.append(f"{where}: text is not an excerpt of source_ref")
+        errors.extend(citation_errors)
     if meta.get("source_pr") and not meta.get("source_file"):
         errors.append("context has no verified assignment-time source for this PR")
     return errors
@@ -546,3 +568,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | END]]
+# [[Cursor | Auto | 2026-09-30 | 02:20 UTC | END]]
