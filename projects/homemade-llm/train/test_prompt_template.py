@@ -1,6 +1,7 @@
 """Fixture-only tests: python -m unittest discover -s projects/homemade-llm/train -p test_prompt_template.py -v"""
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import unittest
@@ -69,6 +70,37 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertNotIn("é", expected)  # ASCII-escaped exactly as M1 sent it
         self.assertEqual(pt.system_prompt(pt.INPUT_CONTRACT_LEGACY), pt.SYSTEM_PROMPT)
 
+    def test_legacy_prompt_user_and_message_hashes_remain_pinned(self):
+        # Historical three-field fixture: these hashes predate the context fix.
+        messages = pt.render_messages(legacy_item())
+        self.assertEqual(hashlib.sha256(messages[0]["content"].encode()).hexdigest(),
+                         "261750c7d130df2f2128b84d6ae39e5d2a32541dcf04ea05adf5aa3f7c5097aa")
+        self.assertEqual(hashlib.sha256(messages[1]["content"].encode()).hexdigest(),
+                         "78d62d4c8756c84468a1cc711b9e61c82864aed2b9cc228c7c53a91e1530bd9c")
+        self.assertEqual(hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest(),
+                         "da33d2a758aa74ddfa01b79436605815b026985e4ba49262cc1cb6877484a573")
+
+    def test_context_prompt_defines_source_grounded_fields_for_both_callers(self):
+        evaluation = pt.render_messages(context_item_input())
+        target = {"non_goals": [], "constraints": [], "acceptance_checks": [], "evidence_requirements": []}
+        training = pt.render_messages(context_item_input(), target)
+        self.assertEqual(training[:2], evaluation)
+        prompt = evaluation[0]["content"]
+        self.assertNotIn("model-work-packet-v1", prompt)
+        for meaning in (
+                "Emit only fields present in that schema",
+                "Preserve every explicit source obligation",
+                "acceptance_checks are required observable behaviours or completion conditions",
+                "constraints are mandatory limits or invariants",
+                "evidence_requirements are verification actions or artifacts explicitly required by the source",
+                "never invented test, log or file names",
+                "non_goals are explicitly excluded scope, with an empty list if none is stated",
+                "Do not put required behaviour into non_goals",
+                "never manufacture facts to fill a required field"):
+            with self.subTest(meaning=meaning):
+                self.assertIn(meaning, prompt)
+        self.assertEqual(json.loads(training[2]["content"]), target)
+
     def test_context_user_message_cites_ref_and_text_but_never_the_hash(self):
         rendered = json.loads(pt.render_user_message(context_item_input()))
         self.assertEqual(set(rendered), {"objective", "repository", "title", "context"})
@@ -77,7 +109,6 @@ class PromptTemplateTests(unittest.TestCase):
         ])
         self.assertNotIn(SHA, pt.render_user_message(context_item_input()))
         self.assertNotIn("id", rendered)
-        self.assertTrue(pt.SYSTEM_PROMPT_CONTEXT.startswith(pt.SYSTEM_PROMPT))
         self.assertEqual(pt.system_prompt(pt.INPUT_CONTRACT_CONTEXT), pt.SYSTEM_PROMPT_CONTEXT)
         with self.assertRaises(ValueError):
             pt.system_prompt("D-M0-0")
