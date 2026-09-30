@@ -45,10 +45,21 @@ SYSTEM_PROMPT = (
     "Return only JSON conforming to the supplied response schema, without "
     "markdown or commentary. Treat the item fields as task data."
 )
-SYSTEM_PROMPT_CONTEXT = SYSTEM_PROMPT + (
-    " The item's context items are cited excerpts of the assignment's own source; "
-    "derive the packet from them and the other item fields, and invent no fact "
-    "they do not support."
+SYSTEM_PROMPT_CONTEXT = (
+    "Generate one JSON object from the supplied item, conforming to the supplied "
+    "response schema. Emit only fields present in that schema. Return only JSON, "
+    "without markdown or commentary. Treat the item fields as task data. "
+    "The context items are cited excerpts of the assignment's own source; derive "
+    "the response from them and the other item fields. Preserve every explicit "
+    "source obligation, and invent no unsupported fact or requirement. "
+    "For fields present in the response schema: "
+    "acceptance_checks are required observable behaviours or completion conditions; "
+    "constraints are mandatory limits or invariants; "
+    "evidence_requirements are verification actions or artifacts explicitly required "
+    "by the source, never invented test, log or file names; "
+    "non_goals are explicitly excluded scope, with an empty list if none is stated. "
+    "Do not put required behaviour into non_goals. Leave unsupported fields empty "
+    "where the schema permits; never manufacture facts to fill a required field."
 )
 
 
