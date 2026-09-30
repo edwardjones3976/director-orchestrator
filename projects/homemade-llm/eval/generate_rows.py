@@ -238,14 +238,19 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
         closing = pr.get("closingIssuesReferences") or {}
         if (closing.get("pageInfo") or {}).get("hasNextPage") is not False:
             fail(f"{label}: linked PR closing-issue history is incomplete")
-        issue_ref = rf"(?:{re.escape(repository)})?#{block['github_issue']}\b"
+        issue_ref = (rf"(?:(?:{re.escape(repository)})?#|GH-|"
+                     rf"https?://github\.com/{re.escape(repository)}/issues/){block['github_issue']}\b")
+        closing_claim = r"\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\b\s*:?\s*"
         claimed = (re.search(rf"(?im)^Issue:\s*{issue_ref}", pr.get("body") or "") is not None
-                   or re.search(rf"\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s*:?\s*{issue_ref}",
+                   or re.search(closing_claim + issue_ref,
                                 pr.get("body") or "", re.I) is not None
                    or any(node.get("number") == block["github_issue"]
                           and (node.get("repository") or {}).get("nameWithOwner", "").casefold() == repository.casefold()
                           for node in closing.get("nodes") or []))
         if not claimed:
+            # Refuse ambiguous claims instead of guessing at Markdown/link syntax.
+            if re.search(rf"(?im)^Issue:|{closing_claim}", pr.get("body") or ""):
+                fail(f"{label}: linked PR has an unbound work claim")
             if (pr.get("lastEditedAt") is not None
                     or (pr.get("userContentEdits") or {}).get("totalCount") != 0):
                 fail(f"{label}: edited linked PR may hide an earlier work claim")

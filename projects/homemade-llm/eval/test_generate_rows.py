@@ -414,6 +414,31 @@ class GenerateRowsTests(unittest.TestCase):
             self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])
 
+    def test_url_and_unbound_closing_claims_cannot_hide_earlier_work(self):
+        earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        claims = ("Fixes https://github.com/edwardjones3976/director-orchestrator/issues/77",
+                  "Issue: https://github.com/edwardjones3976/director-orchestrator/issues/77",
+                  "Fixes GH-77", "Fixes [assignment](https://github.com/edwardjones3976/director-orchestrator/issues/77)",
+                  "Issue: [assignment](https://github.com/edwardjones3976/director-orchestrator/issues/77)")
+        for index, claim in enumerate(claims):
+            with self.subTest(claim=claim):
+                self.calls.clear()
+                self.out = self.root / f"claim-{index}.jsonl"
+                earlier["body"] = claim
+                with self.assertRaises(SystemExit):
+                    self.generate([self.default_scenario()])
+                self.assertEqual(self.calls, [])
+                self.assertFalse(self.out.exists())
+
+    def test_documented_reference_forms_bind_the_first_work(self):
+        work = self.github_record["issue"]["timelineItems"]["nodes"][1]["source"]
+        for ref in ("#77", "edwardjones3976/director-orchestrator#77", "GH-77",
+                    "https://github.com/edwardjones3976/director-orchestrator/issues/77"):
+            with self.subTest(ref=ref):
+                work["body"] = f"FIXES: {ref}"
+                self.assertTrue(self.generate([self.default_scenario()], dry_run=True)["dry_run"])
+                self.assertEqual(self.calls, [])
+
     def test_edited_out_work_claim_is_ambiguous_and_refused(self):
         earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
         earlier["lastEditedAt"] = "2026-09-28T13:00:00Z"
