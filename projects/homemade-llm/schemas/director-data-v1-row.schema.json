@@ -57,20 +57,22 @@
         "openai",
         "gemini_api",
         "cursor",
+        "local_model",
         "owner",
         "repository_history"
       ],
-      "description": "Only competing-only-clause providers, the owner, or repository history may appear (O-026). Excluded-tier providers (Z.ai, xAI, Google consumer Gemini, Antigravity) are not valid values by construction. Perplexity is withheld from this enum: the 2026-09-28 official-source recheck (PR #294 comment 5861548635) could not confirm a customer training grant in its API terms, so its output is research-only until the owner records a clearer grant; re-adding it needs a new owner decision."
+      "description": "Cloud tiers grant no dispatch authority; refreshed M2 terms can still hold their use. local_model is an owner-approved open-weight inference source, never a cloud identity or owner content. Excluded-tier providers and Perplexity remain invalid training sources."
     },
     "source_model": {
       "type": "string",
       "minLength": 1,
-      "description": "Model label as recorded in the dispatch receipt for provider rows (never a guessed name), and exactly 'n/a' for owner and repository_history rows; both directions are enforced by the allOf rules."
+      "description": "Receipt-recorded model for cloud rows; canonical repository@40hex revision for local_model, bound to verified conversion, license and loaded GGUF bytes. Exactly n/a for owner and repository_history rows."
     },
     "terms_tier": {
       "type": "string",
       "enum": [
         "competing_only_clause",
+        "open_weight_license",
         "owner_content",
         "repository_history"
       ],
@@ -79,7 +81,7 @@
     "terms_verified_at": {
       "type": "string",
       "format": "date-time",
-      "description": "UTC time the provider's training-data clause was last re-read (O-026 requires re-verification before the first M2 training run). Required whenever source_provider names a provider; enforced by the allOf rule below. Must be an explicit UTC timestamp (YYYY-MM-DDTHH:MM:SS[.ffffff]Z); the pattern is enforced because validators do not check format by default.",
+      "description": "Actual UTC verification time of the provider training-data clause or admitted local model license. Required for cloud and local model rows. A timestamp or schema pass grants no source rights.",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
     },
     "generated_at": {
@@ -94,6 +96,11 @@
       "maxLength": 512,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*(/[A-Za-z0-9._@+-]+)*$",
       "description": "Relative path of the provider-dispatch receipt (forward slashes only), the assignment ledger key, or the owner-seed SHA-256 reference. The pattern forbids absolute host paths (no leading slash, no drive letter, no backslash) and never carries a raw seed."
+    },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Required on local_model rows: digest of the exact completed inference receipt binding source, conversion, license, GGUF, loaded alias, prompt, schema and response."
     },
     "source_group": {
       "type": "string",
@@ -411,6 +418,21 @@
     }
   },
   "allOf": [
+    {
+      "if": {"properties": {"source_provider": {"const": "local_model"}}},
+      "then": {
+        "required": ["terms_verified_at", "receipt_sha256"],
+        "properties": {
+          "terms_tier": {"const": "open_weight_license"},
+          "source_kind": {"enum": ["provider_exemplar", "provider_critique_repair"]},
+          "source_model": {"pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"terms_tier": {"const": "open_weight_license"}}},
+      "then": {"properties": {"source_provider": {"const": "local_model"}}}
+    },
     {
       "if": {
         "properties": {
