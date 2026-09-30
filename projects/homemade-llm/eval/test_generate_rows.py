@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate_rows  # noqa: E402
 import validate_rows  # noqa: E402
 from test_validate_rows import UTC, write_sets  # noqa: E402
+from test_generate_candidates import gguf_fixture  # noqa: E402
 
 TARGET = {
     "non_goals": ["do not change the Slack app manifest or add a second signing key"],
@@ -474,6 +475,207 @@ class GenerateRowsTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])
+
+    def local_options(self, response: dict | None = None) -> dict:
+        model = next(iter(generate_rows.LOCAL_MODELS))
+        model_dir = self.root / "models"
+        model_dir.mkdir()
+        gguf = model_dir / "qwen.gguf"
+        gguf.write_bytes(gguf_fixture())
+        license_file = self.root / "LICENSE"
+        license_file.write_text("Test-only license bytes", encoding="utf-8")
+        gguf_hash = hashlib.sha256(gguf.read_bytes()).hexdigest()
+        license_hash = hashlib.sha256(license_file.read_bytes()).hexdigest()
+        repo, revision = model.split("@")
+        conversion = self.root / "conversion.json"
+        conversion.write_text(json.dumps({"status": "complete", "repo": repo, "revision": revision,
+            "gguf": [{"path": str(gguf), "quant": "Q4_K_M", "bytes": gguf.stat().st_size,
+                      "sha256": gguf_hash}]}), encoding="utf-8")
+        models = patch.dict(generate_rows.LOCAL_MODELS, {model: (gguf_hash, license_hash)})
+        models.start()
+        self.addCleanup(models.stop)
+        binding = patch.object(generate_rows.local_transport, "loaded_model_binding", return_value={
+            "identifier": "qwen-local", "model_key": "qwen-catalog", "sha256": gguf_hash,
+            "catalog_path": str(gguf)})
+        self.local_probe = binding.start()
+        self.addCleanup(binding.stop)
+        http = patch.object(generate_rows.local_transport, "http_json", return_value=response or {
+            "id": "local-response-1", "model": "qwen-local", "usage": {"completion_tokens": 40},
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(TARGET)}}]})
+        self.local_http = http.start()
+        self.addCleanup(http.stop)
+        return {"model": "qwen-local", "model_gguf": gguf, "conversion_receipt": conversion,
+                "license_file": license_file, "base_url": "http://127.0.0.1:1234/v1",
+                "lms_models_dir": model_dir, "receipts_dir": self.root / "receipts" / "local-model"}
+
+    def generate_local(self, options: dict, row: dict | None = None, **kwargs):
+        return generate_rows.generate([row or self.default_scenario()], provider="local_model",
+            set_a=self.set_a, set_b=self.set_b, out=self.out, terms_verified_at=UTC,
+            generated_at=UTC, source_root=self.root, dry_run=kwargs.pop("dry_run", False),
+            scrub=lambda folder: "reports/test-scan.json", local_options=options, **kwargs)
+
+    def test_local_row_receipt_model_and_request_bindings(self):
+        options = self.local_options()
+        report = self.generate_local(options)
+        self.assertEqual(report, {"dry_run": False, "rows": 1, "receipts": 1})
+        self.local_http.assert_called_once()
+        body = self.local_http.call_args.args[2]
+        self.assertEqual((body["temperature"], body["n"]), (0, 1))
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        schema = body["response_format"]["json_schema"]["schema"]
+        self.assertEqual(set(schema["properties"]), set(TARGET))
+        self.assertEqual(schema["properties"]["acceptance_checks"]["minItems"], 1)
+        row = json.loads(self.out.read_text(encoding="utf-8"))
+        self.assertEqual(row["source_model"], next(iter(generate_rows.LOCAL_MODELS)))
+        self.assertEqual(row["terms_tier"], "open_weight_license")
+        receipt_path = self.root / row["receipt_ref"]
+        self.assertEqual(row["receipt_sha256"], hashlib.sha256(receipt_path.read_bytes()).hexdigest())
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual((receipt["model"], receipt["input"], receipt["target"]),
+                         (row["source_model"], row["input"], row["target"]))
+        self.assertEqual(receipt["api_cost_usd"], 0)
+        self.assertEqual(receipt["response_id"], "local-response-1")
+
+    def test_local_dry_run_never_probes_or_writes(self):
+        options = self.local_options()
+        options["base_url"] = "https://remote.invalid/v1"
+        self.assertTrue(self.generate_local(options, dry_run=True)["dry_run"])
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+        self.assertFalse(options["receipts_dir"].exists())
+        self.assertFalse(self.out.exists())
+
+    def test_local_source_gate_and_remote_endpoint_precede_inference(self):
+        options = self.local_options()
+        row = self.default_scenario()
+        row.pop("source_provenance")
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, row)
+        for url in ("https://remote.invalid/v1", "http://127.0.0.1:1235/v1",
+                    "http://user:secret@127.0.0.1:1234/v1", "http://127.0.0.1:1234/v1?q=1",
+                    "http://127.0.0.1:bad/v1"):
+            options["base_url"] = url
+            with self.subTest(url=url), self.assertRaises(SystemExit):
+                self.generate_local(options)
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+
+    def test_local_missing_options_fail_without_a_probe(self):
+        options = self.local_options()
+        for invalid in ({}, dict(options, receipts_dir=None), dict(options, model=None),
+                        {"receipts_dir": options["receipts_dir"]}):
+            with self.subTest(options=invalid), self.assertRaises(SystemExit):
+                self.generate_local(invalid)
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+
+    def test_local_wrong_conversion_license_and_gguf_send_no_request(self):
+        options = self.local_options()
+        original = options["conversion_receipt"].read_bytes()
+        for key, value in (("status", "partial"), ("revision", "0" * 40), ("repo", "wrong/repo")):
+            conversion = json.loads(original)
+            conversion[key] = value
+            options["conversion_receipt"].write_text(json.dumps(conversion), encoding="utf-8")
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.generate_local(options)
+        options["conversion_receipt"].write_bytes(original)
+        license_bytes = options["license_file"].read_bytes()
+        options["license_file"].write_text("Wrong license", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            self.generate_local(options)
+        options["license_file"].write_bytes(license_bytes)
+        with options["model_gguf"].open("ab") as handle:
+            handle.write(b"changed")
+        with self.assertRaises(SystemExit):
+            self.generate_local(options)
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+
+    def test_local_bad_completions_leave_failure_receipt_and_never_retry(self):
+        options = self.local_options()
+        for index, message in enumerate((
+                {"content": json.dumps(TARGET), "reasoning_content": "hidden"},
+                {"content": json.dumps(dict(TARGET, extra=[]))},
+                {"content": '{"constraints": [], "constraints": []}'},
+                {"content": json.dumps(dict(TARGET, acceptance_checks=[]))},
+                {"content": "<think>hidden</think>" + json.dumps(TARGET)})):
+            response = {"model": "qwen-local", "choices": [{"finish_reason": "stop", "message": message}]}
+            self.local_http.return_value = response
+            self.local_http.reset_mock()
+            with self.subTest(index=index), self.assertRaises(SystemExit):
+                self.generate_local(options)
+            self.local_http.assert_called_once()
+            self.assertFalse(self.out.exists())
+        self.local_http.return_value = {"model": "qwen-local", "choices": [{"finish_reason": "length", "message": {"content": json.dumps(TARGET)}}]}
+        with self.assertRaises(SystemExit):
+            self.generate_local(options)
+        self.local_http.side_effect = TimeoutError("one request")
+        self.local_http.reset_mock()
+        with self.assertRaises(SystemExit):
+            self.generate_local(options)
+        self.local_http.assert_called_once()
+        receipts = list(options["receipts_dir"].glob("*.json"))
+        self.assertEqual(len(receipts), 7)
+        self.assertTrue(all(json.loads(path.read_text())["status"] == "failed" for path in receipts))
+
+    def test_local_missing_receipt_is_not_a_valid_row(self):
+        row = self.default_scenario()
+        caller = lambda *args: generate_rows.DispatchResult(json.dumps(TARGET), self.root / "receipts/local/absent.json",
+                                                           next(iter(generate_rows.LOCAL_MODELS)))
+        with self.assertRaises(SystemExit):
+            self.generate_local({}, row, dispatch=caller)
+        self.assertFalse(self.out.exists())
+
+    def test_local_receipt_collision_preserves_bytes_and_sends_nothing(self):
+        options = self.local_options()
+        options["receipts_dir"].mkdir(parents=True)
+        collision = options["receipts_dir"] / "local-20260928T200000Z-existing.json"
+        collision.write_bytes(b"original receipt")
+        with patch.object(generate_rows.local_transport, "utc_now", return_value=UTC), \
+                patch.object(generate_rows.secrets, "token_hex", return_value="existing"):
+            with self.assertRaises(SystemExit):
+                self.generate_local(options)
+        self.assertEqual(collision.read_bytes(), b"original receipt")
+        self.local_http.assert_not_called()
+
+    def test_local_nonzero_reasoning_tokens_are_refused(self):
+        options = self.local_options({"model": "qwen-local", "usage": {"completion_tokens_details": {"reasoning_tokens": 1}},
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(TARGET)}}]})
+        with self.assertRaises(SystemExit):
+            self.generate_local(options)
+        self.local_http.assert_called_once()
+        self.assertFalse(self.out.exists())
+
+    def test_local_response_model_must_match_verified_binding(self):
+        options = self.local_options({"model": "different-local-model", "choices": [
+            {"finish_reason": "stop", "message": {"content": json.dumps(TARGET)}}]})
+        with self.assertRaises(SystemExit):
+            self.generate_local(options)
+        self.local_http.assert_called_once()
+        self.assertFalse(self.out.exists())
+
+    def test_local_oversized_packet_stops_before_model_probe(self):
+        options = self.local_options()
+        row = self.default_scenario()
+        row["input"]["context"][0]["text"] = "unique_context " * 2000
+        body = ASSIGNMENT_BODY + row["input"]["context"][0]["text"]
+        source = self.root / row["input"]["context"][0]["source_ref"]
+        source.write_text(body, encoding="utf-8", newline="\n")
+        row["input"]["context"][0]["source_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        self.github_record["issue"]["body"] = body
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, row)
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+
+    def test_cloud_live_cli_route_stays_held(self):
+        with patch.object(generate_rows, "live_dispatch") as call:
+            with self.assertRaises(SystemExit):
+                generate_rows.generate([self.default_scenario()], provider="openai", set_a=self.set_a,
+                    set_b=self.set_b, out=self.out, terms_verified_at=UTC, generated_at=UTC,
+                    source_root=self.root, dry_run=False)
+            call.assert_not_called()
+        self.assertFalse(self.out.exists())
 
 
 class GitHubLookupTests(unittest.TestCase):

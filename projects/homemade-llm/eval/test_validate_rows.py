@@ -276,6 +276,32 @@ class ValidateRowsTests(unittest.TestCase):
         code, report, stderr = self.run_validator([history])
         self.assertEqual(code, 0, stderr)
 
+    def test_local_provenance_pairing_is_closed_in_both_directions(self):
+        local = {"source_provider": "local_model", "terms_tier": "open_weight_license",
+                 "source_model": "Qwen/Qwen3-14B@" + "a" * 40, "receipt_sha256": SHA}
+        row = self.row(**local)
+        code, report, stderr = self.run_validator([row])
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(report["n_accepted"], 1)
+        cases = [{"source_provider": provider} for provider in
+                 ("openai", "cursor", "anthropic_api", "owner", "repository_history")]
+        cases += [{"terms_tier": tier} for tier in
+                  ("competing_only_clause", "owner_content", "repository_history")]
+        cases += [{"source_kind": kind} for kind in ("owner_seed", "real_history")]
+        cases += [{"source_model": value} for value in ("n/a", "qwen-local", "Qwen/Qwen3-14B@main")]
+        for override in cases:
+            with self.subTest(override=override):
+                code, report, _ = self.run_validator([self.row(**(local | override))])
+                self.assertEqual(code, 1)
+                self.assertEqual(report["n_accepted"], 0)
+        for key in ("terms_verified_at", "receipt_sha256"):
+            row = self.row(**local)
+            row.pop(key)
+            with self.subTest(missing=key):
+                code, report, _ = self.run_validator([row])
+                self.assertEqual(code, 1)
+                self.assertEqual(report["n_accepted"], 0)
+
     def test_source_group_on_both_sides_rejects_the_group(self):
         rows = [self.row(), self.row(split="dev", input={"title": "Second row of the same seed"}),
                 self.row(source_group="lone-group", split="dev", input={"title": "Lone row"})]

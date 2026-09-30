@@ -1,15 +1,15 @@
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
-"""M2-G1 exemplar harness: one bounded competing-only dispatch per scenario.
+"""M2-G1 exemplar harness: one bounded, admitted local dispatch per scenario.
 
-A dry run checks the scenarios and the held-out folders, then writes nothing
-and calls no provider. A live run calls ``dispatch.py`` once per scenario,
-reads the model name from that call's receipt, and writes schema-valid rows
-only when every scenario clears the leak wall and the scrub check. Any error
-stops the run before ``--out`` is created.
+A dry run checks source chronology and the held-out folders, then writes
+nothing and makes no inference call or model probe. GitHub chronology still
+uses its existing read-only network lookup. A live CLI run uses only an admitted,
+artifact-bound local model; cloud training-target dispatch remains held by the
+M2 terms gate. Rows publish only after the leak wall, schema and scrub pass.
 
     python projects/homemade-llm/eval/generate_rows.py --dry-run \\
-        --scenarios scenarios.jsonl --provider anthropic_api \\
+        --scenarios scenarios.jsonl --provider local_model \\
         --set-a set-a/refs --set-b set-b/refs --out rows.jsonl \\
         --source-root path/to/dataset --terms-verified-at 2026-09-28T20:00:00Z
 
@@ -28,13 +28,16 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
+import secrets
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
 import build_inputs  # noqa: E402
+import generate_candidates as local_transport  # noqa: E402
 import prompt_template  # noqa: E402
 import validate_rows  # noqa: E402
 
@@ -48,6 +51,17 @@ COMPETING_PROVIDERS = {
     "anthropic_api": "anthropic",
     "openai": "codex",
     "cursor": "cursor",
+}
+# Owner-approved local routes; hashes bind the verified conversion and license bytes.
+LOCAL_MODELS = {
+    "Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18": (
+        "af16f12d22ebc467e758e0928f9e32f22943b4d211e2cc950cf90b789e7ec023",
+        "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+    ),
+    "microsoft/phi-4@2db69c1c3e91a05d2c64a3185acfbaf36f744e25": (
+        "000c3c3524b52ab2f6b770d333c3938b7f87b672bb4a5a614e06487e4774fbed",
+        "c49419617a6070bcb197cfe272f7007fdec3e790dbb529cb995473bd69c0bd51",
+    ),
 }
 SECRET_MARKERS = ("_KEY=", "_TOKEN=", "_SECRET=", "DSN=", "PASSWORD=", "xoxb-", "xapp-")
 UTC_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$")
@@ -482,6 +496,172 @@ def _schema_validator() -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(schema)
 
 
+def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Path,
+                        license_file: Path, base_url: str, lms_models_dir: Path,
+                        timeout: int) -> dict[str, Any]:
+    """Verify the admitted model artifacts before probing the local loaded alias."""
+    if (not isinstance(model, str) or not model.strip()
+            or any(not isinstance(path, Path) for path in
+                   (model_gguf, conversion_receipt, license_file, lms_models_dir))):
+        fail("local_model requires model, model-gguf, conversion-receipt and license-file")
+    try:
+        url = urlsplit(base_url)
+        allowed_url = (url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"}
+                       and url.port == 1234 and url.path.rstrip("/") == "/v1"
+                       and not (url.username or url.password or url.query or url.fragment))
+    except ValueError:
+        allowed_url = False
+    if not allowed_url:
+        fail("local_model requires the loopback LM Studio endpoint on port 1234")
+    try:
+        if conversion_receipt.stat().st_size > 1024 * 1024 or license_file.stat().st_size > 1024 * 1024:
+            fail("local conversion or license evidence exceeds 1 MiB")
+        conversion_bytes = conversion_receipt.read_bytes()
+        conversion = local_transport.strict_json(conversion_bytes)
+        if (not isinstance(conversion, dict) or not isinstance(conversion.get("gguf"), list)
+                or any(not isinstance(item, dict) for item in conversion["gguf"])):
+            fail("local conversion receipt is malformed")
+        identity = f"{conversion['repo']}@{conversion['revision']}"
+        if conversion.get("status") != "complete" or identity not in LOCAL_MODELS:
+            fail("conversion receipt does not identify an approved complete local model")
+        gguf_hash, license_hash = LOCAL_MODELS[identity]
+        gguf = local_transport.model_gguf_record(model_gguf)
+        matches = [item for item in conversion["gguf"]
+                   if item.get("sha256") == gguf_hash and item.get("quant") == "Q4_K_M"
+                   and item.get("bytes") == gguf["model_gguf_bytes"]
+                   and Path(item["path"]).resolve() == model_gguf.resolve()]
+        if gguf["model_gguf_sha256"] != gguf_hash or len(matches) != 1:
+            fail("GGUF bytes do not match the pinned conversion receipt")
+        if local_transport.sha256(license_file.read_bytes()) != license_hash:
+            fail("license bytes do not match the admitted model license")
+        args = argparse.Namespace(base_url=base_url, model=model,
+                                  lms_models_dir=lms_models_dir, item_timeout=timeout)
+        binding = local_transport.loaded_model_binding(args, gguf)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        fail(f"local model verification failed: {type(exc).__name__}: {exc}")
+    return {"model": identity, "alias": model, "base_url": base_url.rstrip("/"),
+            "conversion_receipt": str(conversion_receipt.resolve()),
+            "conversion_receipt_sha256": local_transport.sha256(conversion_bytes),
+            "license_file": str(license_file.resolve()), "license_sha256": license_hash,
+            "loaded_model_binding": binding, **gguf}
+
+
+def local_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, Any], *,
+                   receipts_dir: Path, verified_at: str, timeout: int,
+                   max_output: int) -> DispatchResult:
+    """One local request; persist success or failure without overwriting a receipt."""
+    schema = json.loads(validate_rows.ROW_SCHEMA.read_text(encoding="utf-8"))["properties"]["target"]
+    generated_schema, rewrites = local_transport.generation_schema(schema)
+    messages = prompt_template.render_messages(scenario["input"])
+    qwen = prepared["model"].startswith("Qwen/")
+    if qwen:
+        messages[0]["content"] += local_transport.QWEN3_PROMPT
+    body = {"model": prepared["alias"], "temperature": 0, "n": 1,
+            "max_tokens": max_output, "messages": messages,
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": "director_target_v1", "strict": True, "schema": generated_schema}}}
+    if qwen:
+        body.update(chat_template_kwargs={"enable_thinking": False}, reasoning_effort="none")
+    record = {**prepared, "provider": "local_model", "purpose": purpose,
+              "terms_verified_at": verified_at, "input": scenario["input"],
+              "source_group": scenario["source_group"],
+              "source_provenance": scenario["source_provenance"],
+              "prompt_sha256": local_transport.sha256(json.dumps(messages, sort_keys=True).encode("utf-8")),
+              "schema_sha256": local_transport.sha256(json.dumps(schema, sort_keys=True).encode("utf-8")),
+              "request_sha256": local_transport.sha256(json.dumps(body, sort_keys=True).encode("utf-8")),
+              "schema_rewrites": rewrites, "temperature": 0, "api_cost_usd": 0,
+              "local_compute": "not metered as API spend", "start_utc": local_transport.utc_now(),
+              "status": "failed", "usage": None, "response_id": None, "response_sha256": None}
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    stamp = record["start_utc"].replace("-", "").replace(":", "").replace(".", "")
+    path = receipts_dir / f"local-{stamp}-{secrets.token_hex(8)}.json"
+    # Reserve the receipt before contact; a collision fails before any inference.
+    try:
+        handle = path.open("x", encoding="utf-8", newline="\n")
+    except OSError:
+        fail("could not reserve local receipt; no inference was sent")
+    with handle:
+        try:
+            response = local_transport.http_json("POST", prepared["base_url"] + "/chat/completions", body, timeout)
+            if not isinstance(response, dict) or response.get("error"):
+                raise ValueError("server error or malformed response")
+            record["response_sha256"] = local_transport.sha256(json.dumps(response, sort_keys=True).encode("utf-8"))
+            record["response_model"] = response.get("model")
+            if record["response_model"] not in {prepared["alias"], prepared["loaded_model_binding"]["model_key"]}:
+                raise ValueError("response model differs from the verified loaded alias and catalog model")
+            record["response_id"] = response.get("id")
+            record["usage"] = response.get("usage")
+            choices = response.get("choices")
+            if not isinstance(choices, list) or len(choices) != 1 or choices[0]["finish_reason"] != "stop":
+                raise ValueError("expected one complete, non-truncated choice")
+            message = choices[0]["message"]
+            usage = response.get("usage") or {}
+            if not isinstance(message, dict) or not isinstance(usage, dict):
+                raise ValueError("malformed message or usage")
+            details = usage.get("completion_tokens_details") or {}
+            if (not isinstance(details, dict) or details.get("reasoning_tokens", 0) != 0
+                    or message.get("reasoning") or message.get("reasoning_content")):
+                raise ValueError("response contains reasoning")
+            text = message["content"]
+            if not isinstance(text, str) or re.search(r"<\s*think\b", text, re.I):
+                raise ValueError("completion content is not clean text")
+            target = local_transport.strict_json(text)
+            if not jsonschema.Draft202012Validator(schema).is_valid(target):
+                raise ValueError("local response fails the four-field target schema")
+            refuse_secrets(target, "local answer")
+            record.update(status="completed", target=target)
+        except (OSError, ValueError, KeyError, IndexError, TypeError,
+                local_transport.http.client.HTTPException) as exc:
+            record["error"] = f"{type(exc).__name__}: {exc}"
+            fail("local inference failed; inspect its receipt before any retry")
+        finally:
+            record["end_utc"] = local_transport.utc_now()
+            json.dump(record, handle, sort_keys=True, ensure_ascii=False, allow_nan=False)
+            handle.write("\n")
+    return DispatchResult(text, path, prepared["model"])
+
+
+def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target: dict[str, Any],
+                       verified_at: str) -> str:
+    """A local row must bind the completed receipt, not merely a model alias."""
+    try:
+        raw = result.receipt_path.read_bytes()
+        record = local_transport.strict_json(raw)
+        gguf_hash, license_hash = LOCAL_MODELS[result.model]
+        binding = record["loaded_model_binding"]
+        if (record["status"] != "completed" or record["provider"] != "local_model"
+                or record["model"] != result.model or record["input"] != scenario["input"]
+                or record["source_group"] != scenario["source_group"] or record["target"] != target
+                or record["source_provenance"] != scenario["source_provenance"]
+                or record["purpose"] != purpose_for(scenario["source_group"])
+                or record["terms_verified_at"] != verified_at or record["api_cost_usd"] != 0
+                or record["model_gguf_sha256"] != gguf_hash or record["license_sha256"] != license_hash
+                or binding["sha256"] != gguf_hash or binding["identifier"] != record["alias"]
+                or record["response_model"] not in {record["alias"], binding["model_key"]}
+                or not binding["model_key"] or record["model_gguf_bytes"] <= 0
+                or not record["conversion_receipt"] or not record["license_file"]
+                or not record["model_gguf_path"]):
+            fail("local receipt does not bind this row and admitted model")
+        for key in ("conversion_receipt_sha256", "prompt_sha256", "schema_sha256", "request_sha256", "response_sha256"):
+            if re.fullmatch(r"[0-9a-f]{64}", record[key]) is None:
+                fail("local receipt is missing a required artifact hash")
+        for key in ("start_utc", "end_utc"):
+            if UTC_PATTERN.fullmatch(record[key]) is None:
+                fail("local receipt is missing an explicit UTC time")
+        messages = prompt_template.render_messages(scenario["input"])
+        if result.model.startswith("Qwen/"):
+            messages[0]["content"] += local_transport.QWEN3_PROMPT
+        schema = _schema_validator().schema["properties"]["target"]
+        if (record["prompt_sha256"] != local_transport.sha256(json.dumps(messages, sort_keys=True).encode("utf-8"))
+                or record["schema_sha256"] != local_transport.sha256(json.dumps(schema, sort_keys=True).encode("utf-8"))
+                or record["conversion_receipt_sha256"] != local_transport.sha256(Path(record["conversion_receipt"]).read_bytes())
+                or license_hash != local_transport.sha256(Path(record["license_file"]).read_bytes())):
+            fail("local receipt artifact or prompt bytes changed")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        fail(f"local receipt verification failed: {type(exc).__name__}")
+    return local_transport.sha256(raw)
+
+
 def build_row(
     scenario: dict[str, Any],
     target: dict[str, Any],
@@ -507,7 +687,7 @@ def build_row(
         "source_kind": "provider_exemplar",
         "source_provider": provider,
         "source_model": model,
-        "terms_tier": "competing_only_clause",
+        "terms_tier": "open_weight_license" if provider == "local_model" else "competing_only_clause",
         "terms_verified_at": verified_at,
         "generated_at": generated_at,
         "receipt_ref": receipt,
@@ -560,8 +740,9 @@ def generate(
     timeout: int = 120,
     max_output: int = 1024,
     worktree: Path | None = None,
+    local_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if provider not in COMPETING_PROVIDERS:
+    if provider not in COMPETING_PROVIDERS and provider != "local_model":
         fail(f"provider is not a competing-only exemplar source: {provider}")
     if UTC_PATTERN.fullmatch(terms_verified_at) is None or UTC_PATTERN.fullmatch(generated_at) is None:
         fail("terms-verified-at and generated-at must be explicit UTC timestamps")
@@ -575,15 +756,33 @@ def generate(
         fail(f"refusing existing --out: {out}")
     root = infer_source_root(set_a, set_b, source_root)
     validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets)
+    for scenario in scenarios:
+        exemplar_packet(scenario["input"])  # Preserve the same packet-size bound on every route.
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
+    if provider != "local_model" and dispatch is None:
+        fail("cloud exemplar generation is held by the M2 training-data terms gate")
+    if provider == "local_model" and dispatch is None:
+        if not isinstance(local_options, dict):
+            fail("local_model requires pinned model, conversion, license and receipt paths")
+        options = dict(local_options)
+        receipts_dir = options.pop("receipts_dir", None)
+        if not isinstance(receipts_dir, Path) or "receipts" not in receipts_dir.parts:
+            fail("local receipts directory must contain a receipts path segment")
+        if set(options) != {"model", "model_gguf", "conversion_receipt", "license_file", "base_url", "lms_models_dir"}:
+            fail("local_model requires all pinned model options")
+        prepared = prepare_local_model(timeout=timeout, **options)
     caller = dispatch or (lambda name, packet, purpose: live_dispatch(
         name, packet, purpose, timeout=timeout, max_output=max_output, worktree=worktree))
     checker = scrub or live_scrub
     validator = _schema_validator()
     rows: list[dict[str, Any]] = []
     for scenario in scenarios:
-        result = caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"]))
+        result = (local_dispatch(scenario, purpose_for(scenario["source_group"]), prepared,
+                                receipts_dir=receipts_dir, verified_at=terms_verified_at,
+                                timeout=timeout, max_output=max_output)
+                  if provider == "local_model" and dispatch is None
+                  else caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"])))
         if not isinstance(result, DispatchResult):
             fail("dispatch returned no result")
         if not result.model.strip():
@@ -594,6 +793,8 @@ def generate(
             receipt=receipt_ref(result.receipt_path), verified_at=terms_verified_at,
             generated_at=generated_at, sets=sets,
         )
+        if provider == "local_model":
+            row["receipt_sha256"] = local_receipt_hash(result, scenario, target, terms_verified_at)
         errors = list(validator.iter_errors(row))
         if errors:
             fail(f"row failed the schema: {errors[0].message}")
@@ -641,6 +842,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--worktree", type=Path, default=None)
     parser.add_argument("--source-root", type=Path, default=None, dest="source_root")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--model")
+    parser.add_argument("--model-gguf", type=Path)
+    parser.add_argument("--conversion-receipt", type=Path)
+    parser.add_argument("--license-file", type=Path)
+    parser.add_argument("--receipts-dir", type=Path)
+    parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
+    parser.add_argument("--lms-models-dir", type=Path, default=Path.home() / ".lmstudio" / "models")
     args = parser.parse_args(argv)
     generated_at = args.generated_at or args.terms_verified_at
     try:
@@ -650,6 +858,9 @@ def main(argv: list[str] | None = None) -> int:
             terms_verified_at=args.terms_verified_at, generated_at=generated_at, dry_run=args.dry_run,
             source_root=args.source_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
+            local_options={key: getattr(args, key) for key in (
+                "model", "model_gguf", "conversion_receipt", "license_file", "receipts_dir",
+                "base_url", "lms_models_dir")} if args.provider == "local_model" else None,
         )
     except SystemExit as exc:
         if exc.code not in (0, None):
