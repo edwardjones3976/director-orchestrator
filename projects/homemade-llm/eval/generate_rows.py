@@ -187,6 +187,9 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
             or type(block.get("first_work_pr")) is not int
             or min(block["github_issue"], block["first_work_pr"]) < 1):
         fail(f"{label}: an unverified source needs github_issue and first_work_pr")
+    canonical_group = f"github/{repository.casefold()}/issues/{block['github_issue']}"
+    if scenario["source_group"] != canonical_group:
+        fail(f"{label}: source_group must equal verified issue group {canonical_group}")
     source_items = [item for item in scenario["input"]["context"]
                     if item["kind"] == "assignment_packet"]
     if not source_items or len(source_items) != len(scenario["input"]["context"]):
@@ -270,13 +273,24 @@ def validate_scenarios_for_dispatch(
     source_root: Path,
     set_a: Path,
     set_b: Path,
+    sets: list[validate_rows.HeldOutSet],
 ) -> None:
+    group_splits: dict[str, str] = {}
     for index, scenario in enumerate(scenarios, start=1):
         label = f"scenario {index} ({scenario.get('source_group', '?')})"
         validate_scenario_source_provenance(
             scenario, source_root=source_root, set_a=set_a, set_b=set_b, label=label,
         )
+        reasons, overlap, nearest = validate_rows.leak_wall(
+            {"input": scenario["input"], "target": {}, "source_group": scenario["source_group"]}, sets,
+        )
+        if reasons or overlap >= validate_rows.DEFAULT_THRESHOLD - validate_rows.DEFAULT_QUARANTINE_BAND:
+            fail(f"{label}: held-out input leak before dispatch: {reasons or nearest}")
         validate_chronology(scenario, source_root, label)
+        group, split = scenario["source_group"], scenario["split"]
+        if group in group_splits and group_splits[group] != split:
+            fail(f"{label}: one verified issue group cannot straddle train and dev")
+        group_splits[group] = split
 
 
 def _strings(value: Any) -> list[str]:
@@ -560,7 +574,7 @@ def generate(
     if out.exists():
         fail(f"refusing existing --out: {out}")
     root = infer_source_root(set_a, set_b, source_root)
-    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b)
+    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets)
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
     caller = dispatch or (lambda name, packet, purpose: live_dispatch(

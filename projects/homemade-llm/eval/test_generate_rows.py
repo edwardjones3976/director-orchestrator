@@ -45,7 +45,7 @@ def install_pre_work_assignment(root: Path) -> tuple[str, str, dict]:
     return source_ref, source_sha256, provenance
 
 
-def scenario(group: str = "seed-001", root: Path | None = None, **overrides) -> dict:
+def scenario(group: str = "github/edwardjones3976/director-orchestrator/issues/77", root: Path | None = None, **overrides) -> dict:
     if root is None:
         raise ValueError("scenario fixtures require a dataset root with assignment sources")
     source_ref, source_sha256, provenance = install_pre_work_assignment(root)
@@ -329,6 +329,47 @@ class GenerateRowsTests(unittest.TestCase):
             self.generate([row])
         self.assertEqual(self.calls, [])
         self.assertFalse(self.out.exists())
+
+    def test_same_assignment_cannot_use_aliases_for_train_and_dev(self):
+        rows = [self.default_scenario(), self.default_scenario(group="dev-alias", split="dev")]
+        caller = self.dispatch()
+        answers = iter([json.dumps(TARGET), json.dumps(dict(TARGET,
+            evidence_requirements=["retain the signature rotation logs and both verification test transcripts"]))])
+
+        def distinct_targets(*args):
+            result = caller(*args)
+            result.text = next(answers)
+            return result
+
+        with self.assertRaises(SystemExit):
+            self.generate(rows, max_rows=2, dispatch=distinct_targets)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.out.exists())
+
+    def test_canonical_group_straddling_is_refused_before_provider_call(self):
+        rows = [self.default_scenario(), self.default_scenario(split="dev")]
+        with self.assertRaises(SystemExit):
+            self.generate(rows, max_rows=2)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.out.exists())
+
+    def test_held_out_input_title_objective_and_near_duplicate_are_refused_before_call(self):
+        held = generate_rows.validate_rows.HeldOutSet("a", self.set_a)
+        objective = held.references["ew-alpha"]["objective"]
+        for field, value in (("title", held.titles["ew-alpha"]), ("objective", objective),
+                             ("objective", objective.rstrip(".") + " safely.")):
+            with self.subTest(field=field, value=value):
+                row = self.default_scenario()
+                row["input"][field] = value
+                body = f"# {row['input']['title']}\n\n{row['input']['objective']}\n\n{ASSIGNMENT_EXCERPT}\n"
+                self.github_record["issue"].update(title=row["input"]["title"], body=body)
+                source = self.root / row["input"]["context"][0]["source_ref"]
+                source.write_bytes(body.encode("utf-8"))
+                row["input"]["context"][0]["source_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+                with self.assertRaises(SystemExit):
+                    self.generate([row])
+                self.assertEqual(self.calls, [])
+                self.assertFalse(self.out.exists())
 
     def test_training_cannot_claim_a_held_out_own_source(self):
         row = self.default_scenario()
