@@ -1,3 +1,4 @@
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 04:10 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-30 | 03:06 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-28 | 23:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:10 UTC | BEGIN]]
@@ -1466,6 +1467,15 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 ).fetchone()
             return waiting is not None
 
+        def writer_lease_expired() -> bool:
+            with self.handle.pool.connection() as watcher:
+                lease = watcher.execute(
+                    f"SELECT lease_expires_at <= clock_timestamp() AS expired "
+                    f"FROM {self.schema}.director_primary_task_writer WHERE task_id=%s",
+                    (wave.task_id,),
+                ).fetchone()
+            return lease is not None and bool(lease["expired"])
+
         with ThreadPoolExecutor(max_workers=1) as pool, self._no_provider_call():
             with self.handle.pool.connection() as blocker, blocker.transaction():
                 blocker.execute(
@@ -1490,9 +1500,13 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 self.assertTrue(
                     batch_row_is_contended(),
                     "admission must be blocked on the batch row before the lease runs out")
-                remaining = lease_seconds + 0.5 - (real_monotonic() - opened)
-                if remaining > 0:
-                    sleep(remaining)
+                expiry_deadline = opened + lease_seconds + 30.0
+                while not writer_lease_expired():
+                    if admitting.done():
+                        self.fail("admission completed before the writer lease expired")
+                    if real_monotonic() >= expiry_deadline:
+                        self.fail("writer lease did not expire within the bounded wait")
+                    sleep(0.05)
                 self.assertFalse(
                     admitting.done(),
                     "the batch lock must hold admission until the lease has expired")
@@ -2782,3 +2796,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:10 UTC | END]]
 # [[Cursor | Auto | 2026-09-28 | 23:58 UTC | END]]
 # [[Cursor | Auto | 2026-09-30 | 03:06 UTC | END]]
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 04:10 UTC | END]]
