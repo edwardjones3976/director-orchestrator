@@ -234,7 +234,7 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
         if not isinstance(source_repo, str):
             fail(f"{label}: linked PR repository is unverified")
         if source_repo.casefold() != repository.casefold():
-            continue
+            fail(f"{label}: foreign PR cross-reference needs independent source admission")
         closing = pr.get("closingIssuesReferences") or {}
         if (closing.get("pageInfo") or {}).get("hasNextPage") is not False:
             fail(f"{label}: linked PR closing-issue history is incomplete")
@@ -248,13 +248,8 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
                           and (node.get("repository") or {}).get("nameWithOwner", "").casefold() == repository.casefold()
                           for node in closing.get("nodes") or []))
         if not claimed:
-            # Refuse ambiguous claims instead of guessing at Markdown/link syntax.
-            if re.search(rf"(?im)^Issue:|{closing_claim}", pr.get("body") or ""):
-                fail(f"{label}: linked PR has an unbound work claim")
-            if (pr.get("lastEditedAt") is not None
-                    or (pr.get("userContentEdits") or {}).get("totalCount") != 0):
-                fail(f"{label}: edited linked PR may hide an earlier work claim")
-            continue  # A discussion cross-reference is not a work claim.
+            # ponytail: unknown PR references stop; richer admission needs independent evidence.
+            fail(f"{label}: unbound same-repository PR cross-reference")
         commits = pr.get("commits") or {}
         if (commits.get("pageInfo") or {}).get("hasNextPage") is not False or not commits.get("nodes"):
             fail(f"{label}: linked PR commit history is incomplete")

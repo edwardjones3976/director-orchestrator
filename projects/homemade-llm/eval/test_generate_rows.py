@@ -83,7 +83,7 @@ class GenerateRowsTests(unittest.TestCase):
                 "userContentEdits": {"totalCount": 0},
                 "body": ASSIGNMENT_BODY,
                 "timelineItems": {"pageInfo": {"hasNextPage": False}, "nodes": [
-                    {"source": {"__typename": "PullRequest", "number": 66,
+                    {"source": {"__typename": "Issue", "number": 66,
                                 "body": "Discussion of #77; not a work claim", "createdAt": "2026-09-26T12:00:00Z",
                                 "commits": {"pageInfo": {"hasNextPage": False}, "nodes": [
                                     {"commit": {"committedDate": "2026-09-26T11:00:00Z"}},
@@ -397,6 +397,7 @@ class GenerateRowsTests(unittest.TestCase):
 
     def test_standard_closing_claim_cannot_hide_earlier_work(self):
         earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier["__typename"] = "PullRequest"
         for keyword in ("Fixes", "Closes", "Resolves", "FIXED:", "close", "resolved"):
             with self.subTest(keyword=keyword):
                 earlier["body"] = f"{keyword} #77"
@@ -408,6 +409,7 @@ class GenerateRowsTests(unittest.TestCase):
 
     def test_manually_linked_issue_cannot_hide_earlier_work(self):
         earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier["__typename"] = "PullRequest"
         earlier["closingIssuesReferences"]["nodes"] = [{
             "number": 77, "repository": {"nameWithOwner": "edwardjones3976/director-orchestrator"}}]
         with self.assertRaises(SystemExit):
@@ -416,10 +418,12 @@ class GenerateRowsTests(unittest.TestCase):
 
     def test_url_and_unbound_closing_claims_cannot_hide_earlier_work(self):
         earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier["__typename"] = "PullRequest"
         claims = ("Fixes https://github.com/edwardjones3976/director-orchestrator/issues/77",
                   "Issue: https://github.com/edwardjones3976/director-orchestrator/issues/77",
                   "Fixes GH-77", "Fixes [assignment](https://github.com/edwardjones3976/director-orchestrator/issues/77)",
-                  "Issue: [assignment](https://github.com/edwardjones3976/director-orchestrator/issues/77)")
+                  "Issue: [assignment](https://github.com/edwardjones3976/director-orchestrator/issues/77)",
+                  "Implements #77", "Handles #77", "Discussion of #77; not a work claim")
         for index, claim in enumerate(claims):
             with self.subTest(claim=claim):
                 self.calls.clear()
@@ -441,6 +445,7 @@ class GenerateRowsTests(unittest.TestCase):
 
     def test_edited_out_work_claim_is_ambiguous_and_refused(self):
         earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier["__typename"] = "PullRequest"
         earlier["lastEditedAt"] = "2026-09-28T13:00:00Z"
         earlier["userContentEdits"]["totalCount"] = 1
         with self.assertRaises(SystemExit):
@@ -453,6 +458,15 @@ class GenerateRowsTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.generate([self.default_scenario()])
         self.assertEqual(self.calls, [])
+
+    def test_earlier_foreign_work_reference_is_not_silently_ignored(self):
+        earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
+        earlier.update(__typename="PullRequest", body="Implements edwardjones3976/director-orchestrator#77",
+                       repository={"nameWithOwner": "another/repository"})
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()])
+        self.assertEqual(self.calls, [])
+        self.assertFalse(self.out.exists())
 
     def test_renamed_issue_title_is_not_immutable_input(self):
         self.github_record["issue"]["timelineItems"]["nodes"].append({
