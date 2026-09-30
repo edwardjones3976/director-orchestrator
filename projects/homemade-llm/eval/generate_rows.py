@@ -14,12 +14,14 @@ M2 terms gate. Rows publish only after the leak wall, schema and scrub pass.
         --source-root path/to/dataset --terms-verified-at 2026-09-28T20:00:00Z
 
 Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and
-GitHub issue/linked-PR chronology before a dry run or provider call.
-Other source types fail closed until they have an independent chronology route.
+its source route before a dry run or provider call: GitHub issue/linked-PR
+chronology, or a pinned independent admission of a licensed specification.
+Licensed specifications are synthetic training/development sources only.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -78,6 +80,17 @@ RECEIPT_MODEL_TAG = re.compile(
     r"[0-9]{2}:[0-9]{2} UTC \| BEGIN\]\]$"
 )
 DISPATCH_PY = Path.home() / ".claude" / "skills" / "provider-dispatch" / "dispatch.py"
+# Independently reviewed capture, admitted for source facts only (PR #371).
+# New captures require a new reviewed admission, not a caller-written ACCEPT.
+LICENSED_SPECIFICATION_ADMISSIONS = {
+    "455f614b08fb9401c7eb6d76b5777c002444f8e789e07b0cfb147d78c33e8565": (
+        "e81c7466526f09136ddb83a1eb4844bf477f217ce3b7b94e3de4d636bc971cf1",
+        "70dd620928a2b9682b2db4c1430fb54c6b2d8284a54c25ec69563981ae5f9568",
+        "6f9eb528b994ab2e6f00653a2806be6ef4497319df9847061e0dcb0147a8a3de",
+        frozenset({"bank-account"}),  # Selected diagnostic; other admitted facts lack required evidence.
+    ),
+}
+LICENSED_SPECIFICATION_REPOSITORY = "exercism/problem-specifications"
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
@@ -281,6 +294,138 @@ def validate_chronology(scenario: dict[str, Any], source_root: Path, label: str)
             fail(f"{label}: captured source bytes differ from GitHub issue body")
 
 
+def _source_artifact(root: Path, ref: Any, label: str) -> bytes:
+    """Read a bounded relative artifact, refusing path escapes and symlinks."""
+    if (not isinstance(ref, str) or RECEIPT_REF_PATTERN.fullmatch(ref) is None
+            or any(part in (".", "..") for part in ref.split("/"))):
+        fail(f"{label}: source artifact reference must be a relative path")
+    if not isinstance(root, Path):
+        fail(f"{label}: source artifact root must be a path")
+    root = root.resolve()
+    path = root
+    for part in ref.split("/"):
+        path = path / part
+        if path.is_symlink():
+            fail(f"{label}: source artifact symlink is not allowed")
+    try:
+        if not path.resolve().is_relative_to(root) or not path.is_file() or path.stat().st_size > 1024 * 1024:
+            fail(f"{label}: source artifact is missing, outside its root or oversized")
+        return path.read_bytes()
+    except OSError:
+        fail(f"{label}: source artifact is unreadable")
+
+
+def _source_utc(value: Any, label: str) -> datetime:
+    if not isinstance(value, str) or UTC_PATTERN.fullmatch(value) is None:
+        fail(f"{label}: source timestamp must be explicit UTC")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        fail(f"{label}: invalid source timestamp")
+
+
+def validate_licensed_specification(scenario: dict[str, Any], source_root: Path, label: str,
+                                   review_receipts_root: Path | None = None) -> None:
+    """Bind a reviewed public description to its official capture and license."""
+    block = scenario["source_provenance"]
+    digest = block.get("admission_sha256")
+    pins = LICENSED_SPECIFICATION_ADMISSIONS.get(digest) if isinstance(digest, str) else None
+    if pins is None:
+        fail(f"{label}: licensed specification has no independently admitted digest")
+    manifest_hash, official_hash, review_hash, row_pilot = pins
+    admission_raw = _source_artifact(source_root, block.get("admission_ref"), label)
+    manifest_raw = _source_artifact(source_root, block.get("manifest_ref"), label)
+    official_raw = _source_artifact(source_root, block.get("official_capture_ref"), label)
+    if (hashlib.sha256(admission_raw).hexdigest() != block["admission_sha256"]
+            or hashlib.sha256(manifest_raw).hexdigest() != manifest_hash
+            or hashlib.sha256(official_raw).hexdigest() != official_hash):
+        fail(f"{label}: licensed source admission/capture bytes changed")
+    try:
+        admission = local_transport.strict_json(admission_raw)
+        official = local_transport.strict_json(official_raw)
+        manifest = [local_transport.strict_json(line) for line in manifest_raw.splitlines() if line.strip()]
+        records = [entry for entry in manifest if entry["source_id"] == block.get("source_id")]
+        if len(records) != 1:
+            fail(f"{label}: source_id is not unique in the admitted manifest")
+        entry = records[0]
+        repository, commit = entry["source_repository"], entry["source_commit"]
+        slug = entry["path"].split("/")[1]
+        if (repository != LICENSED_SPECIFICATION_REPOSITORY
+                or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+                or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
+                or entry["path"] != f"exercises/{slug}/description.md"
+                or entry["source_id"] != f"exercism/{commit}/{slug}"
+                or entry["source_url"] != f"https://github.com/{repository}/blob/{commit}/{entry['path']}"
+                or entry["destination"] != "training_candidates_only"
+                or entry["source_kind"] != "independently_licensed_specification"
+                or entry["license"] != "MIT" or entry["targets_generated"] != 0
+                or admission["source_admission"] != "ACCEPT_FOR_SOURCE_FACTS"
+                or admission["manifest_sha256"] != manifest_hash
+                or admission["official_capture_sha256"] != official_hash
+                or admission["review_receipt_sha256"] != review_hash
+                or admission["targets_accepted"] != 0
+                or slug not in row_pilot or slug not in admission["pilot_suitable"] or slug in admission["pilot_hold"]
+                or block.get("admitted_at") != admission["admitted_at"]):
+            fail(f"{label}: licensed source is outside the admitted synthetic pilot")
+        receipt_raw = _source_artifact(
+            review_receipts_root or DISPATCH_PY.parent / "receipts", admission["review_receipt_ref"], label)
+        if hashlib.sha256(receipt_raw).hexdigest() != review_hash:
+            fail(f"{label}: independent source-review receipt bytes changed")
+        receipt = local_transport.strict_json(receipt_raw)
+        if (receipt["provider"] != "xai" or receipt["model"] != "grok-4.6"
+                or receipt["http_status"] != 200 or receipt["response_status"] != "completed"
+                or not receipt["response_id"] or receipt["response_id"] != admission["response_id"]
+                or receipt["answer"] != admission["review_answer"]
+                or not receipt["answer"].startswith("**ACCEPT_FOR_SOURCE_FACTS**")
+                or manifest_hash not in receipt["answer"] or commit not in receipt["answer"]):
+            fail(f"{label}: independent source review has no bound ACCEPT")
+        api = f"https://api.github.com/repos/{repository}"
+        upstream = official["official_commit"]
+        tree = official["official_tree"]
+        if (upstream["sha"] != commit or upstream["url"] != f"{api}/commits/{commit}"
+                or tree["url"] != f"{api}/git/trees/{commit}" or tree["sha"] != commit
+                or tree["truncated"] is not False
+                # GitHub's commit-addressed tree response echoes the commit SHA.
+                # The official commit separately binds its canonical tree SHA.
+                or re.fullmatch(r"[0-9a-f]{40}", upstream["commit"]["tree"]["sha"]) is None
+                or upstream["commit"]["tree"]["url"] != f"{api}/git/trees/{upstream['commit']['tree']['sha']}"
+                or upstream["commit"]["committer"]["date"] != entry["upstream_commit_time"]):
+            fail(f"{label}: official commit/tree capture does not bind this source")
+        source_raw = _source_artifact(source_root, entry["source_ref"], label)
+        license_raw = _source_artifact(source_root, block.get("license_ref", "LICENSE"), label)
+        for path, raw, expected_blob in ((entry["path"], source_raw, entry["source_git_blob"]),
+                                          ("LICENSE", license_raw, None)):
+            blobs = [item for item in tree["tree"] if item["path"] == path]
+            blob_hash = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+            if (len(blobs) != 1 or blobs[0]["type"] != "blob" or blobs[0]["mode"] != "100644"
+                    or blobs[0]["size"] != len(raw) or blobs[0]["sha"] != blob_hash
+                    or (expected_blob is not None and expected_blob != blob_hash)):
+                fail(f"{label}: description/license differs from the captured Git blob")
+        if (hashlib.sha256(source_raw).hexdigest() != entry["source_sha256"]
+                or hashlib.sha256(license_raw).hexdigest() != entry["license_sha256"]):
+            fail(f"{label}: licensed description/license bytes changed")
+        started = _source_utc(local_transport.utc_now(), label)
+        captured = _source_utc(entry["captured_at"], label)
+        admitted = _source_utc(admission["admitted_at"], label)
+        historical = _source_utc(entry["upstream_commit_time"], label)
+        if not (historical < _source_utc("2020-01-01T00:00:00Z", label)
+                and historical < captured < _source_utc(official["observed_at"], label) < admitted < started):
+            fail(f"{label}: upstream/capture/admission/generation chronology is invalid")
+        context = scenario["input"]["context"]
+        if (scenario["split"] not in ("train", "dev")
+                or scenario["source_group"] != f"licensed/{repository}/{slug}"
+                or scenario["input"]["repository"] != repository or scenario["input"]["title"] != slug
+                or len(context) != 1 or context[0]["kind"] != "assignment_packet"
+                or context[0]["source_ref"] != entry["source_ref"]
+                or context[0]["source_sha256"] != entry["source_sha256"]
+                or context[0]["text"] != source_raw.decode("utf-8")
+                or not scenario["input"]["objective"].strip()
+                or " ".join(scenario["input"]["objective"].split()) not in " ".join(source_raw.decode("utf-8").split())):
+            fail(f"{label}: input is not the exact admitted description and grounded objective/title")
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        fail(f"{label}: malformed licensed-source evidence")
+
+
 def validate_scenarios_for_dispatch(
     scenarios: list[dict[str, Any]],
     *,
@@ -288,6 +433,7 @@ def validate_scenarios_for_dispatch(
     set_a: Path,
     set_b: Path,
     sets: list[validate_rows.HeldOutSet],
+    review_receipts_root: Path | None = None,
 ) -> None:
     group_splits: dict[str, str] = {}
     for index, scenario in enumerate(scenarios, start=1):
@@ -300,10 +446,17 @@ def validate_scenarios_for_dispatch(
         )
         if reasons or overlap >= validate_rows.DEFAULT_THRESHOLD - validate_rows.DEFAULT_QUARANTINE_BAND:
             fail(f"{label}: held-out input leak before dispatch: {reasons or nearest}")
-        validate_chronology(scenario, source_root, label)
+        block = scenario.get("source_provenance")
+        kind = block.get("kind", "github_issue") if isinstance(block, dict) else "github_issue"
+        if kind == "github_issue":
+            validate_chronology(scenario, source_root, label)
+        elif kind == "licensed_specification":
+            validate_licensed_specification(scenario, source_root, label, review_receipts_root)
+        else:
+            fail(f"{label}: unsupported source-provenance kind")
         group, split = scenario["source_group"], scenario["split"]
         if group in group_splits and group_splits[group] != split:
-            fail(f"{label}: one verified issue group cannot straddle train and dev")
+            fail(f"{label}: one verified source group cannot straddle train and dev")
         group_splits[group] = split
 
 
@@ -572,6 +725,9 @@ def local_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, A
               "schema_rewrites": rewrites, "temperature": 0, "api_cost_usd": 0,
               "local_compute": "not metered as API spend", "start_utc": local_transport.utc_now(),
               "status": "failed", "usage": None, "response_id": None, "response_sha256": None}
+    if scenario["source_provenance"].get("kind") == "licensed_specification":
+        if _source_utc(scenario["source_provenance"]["admitted_at"], "licensed source") >= _source_utc(record["start_utc"], "local inference"):
+            fail("licensed source admission must precede actual local inference; no request sent")
     receipts_dir.mkdir(parents=True, exist_ok=True)
     stamp = record["start_utc"].replace("-", "").replace(":", "").replace(".", "")
     path = receipts_dir / f"local-{stamp}-{secrets.token_hex(8)}.json"
@@ -648,6 +804,11 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
         for key in ("start_utc", "end_utc"):
             if UTC_PATTERN.fullmatch(record[key]) is None:
                 fail("local receipt is missing an explicit UTC time")
+        if scenario["source_provenance"].get("kind") == "licensed_specification":
+            if not (_source_utc(scenario["source_provenance"]["admitted_at"], "licensed source")
+                    < _source_utc(record["start_utc"], "local inference")
+                    <= _source_utc(record["end_utc"], "local inference")):
+                fail("local receipt violates licensed-source admission chronology")
         messages = prompt_template.render_messages(scenario["input"])
         if result.model.startswith("Qwen/"):
             messages[0]["content"] += local_transport.QWEN3_PROMPT
@@ -741,6 +902,7 @@ def generate(
     max_output: int = 1024,
     worktree: Path | None = None,
     local_options: dict[str, Any] | None = None,
+    source_review_receipts_root: Path | None = None,
 ) -> dict[str, Any]:
     if provider not in COMPETING_PROVIDERS and provider != "local_model":
         fail(f"provider is not a competing-only exemplar source: {provider}")
@@ -755,8 +917,14 @@ def generate(
     if out.exists():
         fail(f"refusing existing --out: {out}")
     root = infer_source_root(set_a, set_b, source_root)
-    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets)
+    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets,
+                                    review_receipts_root=source_review_receipts_root)
     for scenario in scenarios:
+        if scenario["source_provenance"].get("kind") == "licensed_specification":
+            if provider != "local_model":
+                fail("licensed-specification targets require the admitted local_model route")
+            if _source_utc(generated_at, "row generation") <= _source_utc(scenario["source_provenance"]["admitted_at"], "licensed source"):
+                fail("row generation timestamp must follow licensed-source admission")
         exemplar_packet(scenario["input"])  # Preserve the same packet-size bound on every route.
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
@@ -841,6 +1009,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--worktree", type=Path, default=None)
     parser.add_argument("--source-root", type=Path, default=None, dest="source_root")
+    parser.add_argument("--source-review-receipts-root", type=Path, default=None,
+                        help="Independent source-review receipts (defaults to provider-dispatch receipts).")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--model")
     parser.add_argument("--model-gguf", type=Path)
@@ -857,6 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
             scenarios, provider=args.provider, set_a=args.set_a, set_b=args.set_b, out=args.out,
             terms_verified_at=args.terms_verified_at, generated_at=generated_at, dry_run=args.dry_run,
             source_root=args.source_root,
+            source_review_receipts_root=args.source_review_receipts_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
             local_options={key: getattr(args, key) for key in (
                 "model", "model_gguf", "conversion_receipt", "license_file", "receipts_dir",

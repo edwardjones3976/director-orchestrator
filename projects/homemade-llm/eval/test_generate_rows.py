@@ -444,6 +444,15 @@ class GenerateRowsTests(unittest.TestCase):
                 self.assertTrue(self.generate([self.default_scenario()], dry_run=True)["dry_run"])
                 self.assertEqual(self.calls, [])
 
+    def test_explicit_github_issue_kind_preserves_the_original_route(self):
+        row = self.default_scenario()
+        row["source_provenance"]["kind"] = "github_issue"
+        self.assertTrue(self.generate([row], dry_run=True)["dry_run"])
+        self.github_record["issue"]["lastEditedAt"] = "2026-09-28T00:00:00Z"
+        with self.assertRaises(SystemExit):
+            self.generate([row], dry_run=True)
+        self.assertEqual(self.calls, [])
+
     def test_edited_out_work_claim_is_ambiguous_and_refused(self):
         earlier = self.github_record["issue"]["timelineItems"]["nodes"][0]["source"]
         earlier["__typename"] = "PullRequest"
@@ -676,6 +685,268 @@ class GenerateRowsTests(unittest.TestCase):
                     source_root=self.root, dry_run=False)
             call.assert_not_called()
         self.assertFalse(self.out.exists())
+
+
+class LicensedSpecificationTests(unittest.TestCase):
+    """A synthetic fixture stands in for the externally reviewed, pinned capture."""
+
+    local_options = GenerateRowsTests.local_options
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.set_a, self.set_b = write_sets(self.root)
+        self.out = self.root / "rows.jsonl"
+        self.specs = self.root / "specs"
+        self.specs.mkdir()
+        self.review_root = self.root / "review-receipts"
+        (self.review_root / "xai").mkdir(parents=True)
+        self.commit = "a" * 40
+        self.description = ("Simulate a bank account supporting opening/closing, withdrawals, and deposits.\n"
+                            "Watch out for concurrent transactions!\n"
+                            "Operations against a closed account must fail.\nRun the test file.\n")
+        (self.specs / "bank-account.md").write_bytes(self.description.encode())
+        (self.specs / "LICENSE").write_bytes(b"MIT test-only source license")
+        self.entry = {
+            "source_id": f"exercism/{self.commit}/bank-account",
+            "source_repository": "exercism/problem-specifications", "source_commit": self.commit,
+            "upstream_commit_time": "2019-12-31T12:28:34Z", "captured_at": "2026-09-27T11:00:00Z",
+            "path": "exercises/bank-account/description.md", "source_ref": "specs/bank-account.md",
+            "source_url": f"https://github.com/exercism/problem-specifications/blob/{self.commit}/exercises/bank-account/description.md",
+            "source_sha256": hashlib.sha256(self.description.encode()).hexdigest(),
+            "source_git_blob": self.blob(self.description.encode()), "license": "MIT",
+            "license_sha256": hashlib.sha256((self.specs / "LICENSE").read_bytes()).hexdigest(),
+            "destination": "training_candidates_only", "source_kind": "independently_licensed_specification",
+            "targets_generated": 0,
+        }
+        api = "https://api.github.com/repos/exercism/problem-specifications"
+        self.official = {
+            "official_commit": {"sha": self.commit, "url": f"{api}/commits/{self.commit}", "commit": {
+                "committer": {"date": self.entry["upstream_commit_time"]},
+                "tree": {"sha": "b" * 40, "url": f"{api}/git/trees/{'b' * 40}"}}},
+            "official_tree": {"sha": self.commit, "url": f"{api}/git/trees/{self.commit}",
+                "truncated": False, "tree": [
+                    {"path": self.entry["path"], "mode": "100644", "type": "blob",
+                     "sha": self.entry["source_git_blob"], "size": len(self.description.encode())},
+                    {"path": "LICENSE", "mode": "100644", "type": "blob",
+                     "sha": self.blob((self.specs / "LICENSE").read_bytes()),
+                     "size": (self.specs / "LICENSE").stat().st_size}]},
+            "observed_at": "2026-09-27T11:10:00Z",
+        }
+        self.admission = {"source_admission": "ACCEPT_FOR_SOURCE_FACTS", "response_id": "independent-response",
+            "review_receipt_ref": "xai/review.json", "pilot_suitable": ["bank-account"], "pilot_hold": [],
+            "targets_accepted": 0, "admitted_at": "2026-09-27T11:20:00Z"}
+        self.receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
+                        "response_status": "completed", "response_id": "independent-response"}
+        self.row = {"source_group": "licensed/exercism/problem-specifications/bank-account", "split": "train",
+            "source_provenance": {"kind": "licensed_specification", "source_id": self.entry["source_id"],
+                "manifest_ref": "specs/manifest.jsonl", "admission_ref": "specs/admission.json",
+                "official_capture_ref": "specs/official.json", "license_ref": "specs/LICENSE",
+                "admitted_at": self.admission["admitted_at"]},
+            "input": {"title": "bank-account", "repository": "exercism/problem-specifications",
+                "objective": "Simulate a bank account supporting opening/closing, withdrawals, and deposits.",
+                "context": [{"kind": "assignment_packet", "text": self.description,
+                    "source_ref": self.entry["source_ref"], "source_sha256": self.entry["source_sha256"]}]}}
+        self.pins = patch.dict(generate_rows.LICENSED_SPECIFICATION_ADMISSIONS, {}, clear=True)
+        self.pins.start()
+        self.addCleanup(self.pins.stop)
+        self.write_evidence()
+        self.github = patch.object(generate_rows, "github_chronology", side_effect=AssertionError("not an issue"))
+        self.github.start()
+        self.addCleanup(self.github.stop)
+
+    @staticmethod
+    def blob(raw):
+        return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+
+    def write_evidence(self):
+        """Pin fixture bytes as an independent admission, never a live approval."""
+        manifest = (json.dumps(self.entry) + "\n").encode()
+        official = json.dumps(self.official).encode()
+        self.admission.update(manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+                              official_capture_sha256=hashlib.sha256(official).hexdigest())
+        prior_answer = self.admission.get("review_answer")
+        self.admission["review_answer"] = "**ACCEPT_FOR_SOURCE_FACTS** " + self.admission["manifest_sha256"] + " " + self.commit
+        if self.receipt.get("answer") in (None, prior_answer):
+            self.receipt["answer"] = self.admission["review_answer"]
+        receipt = json.dumps(self.receipt).encode()
+        self.admission["review_receipt_sha256"] = hashlib.sha256(receipt).hexdigest()
+        admission = json.dumps(self.admission).encode()
+        for name, raw in (("manifest.jsonl", manifest), ("official.json", official), ("admission.json", admission)):
+            (self.specs / name).write_bytes(raw)
+        (self.review_root / "xai/review.json").write_bytes(receipt)
+        digest = hashlib.sha256(admission).hexdigest()
+        self.row["source_provenance"]["admission_sha256"] = digest
+        generate_rows.LICENSED_SPECIFICATION_ADMISSIONS[digest] = (
+            self.admission["manifest_sha256"], self.admission["official_capture_sha256"],
+            self.admission["review_receipt_sha256"], frozenset({"bank-account"}))
+
+    def generate(self, rows=None, **kwargs):
+        return generate_rows.generate(rows or [self.row], provider=kwargs.pop("provider", "local_model"),
+            set_a=self.set_a, set_b=self.set_b, out=self.out, source_root=self.root,
+            source_review_receipts_root=self.review_root, terms_verified_at=UTC,
+            generated_at=kwargs.pop("generated_at", UTC), dry_run=kwargs.pop("dry_run", True), **kwargs)
+
+    def test_valid_spec_dry_run_needs_no_issue_pr_probe_or_transport(self):
+        with patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate(), {"dry_run": True, "rows": 0, "receipts": 0})
+            probe.assert_not_called()
+            transport.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_valid_spec_local_receipt_preserves_source_binding_and_row_kind(self):
+        target = {"non_goals": ["Do not allow operations against closed accounts"],
+                  "constraints": ["Watch out for concurrent transactions"],
+                  "acceptance_checks": ["Operations against a closed account must fail"],
+                  "evidence_requirements": ["Run the test file"]}
+        options = self.local_options({"model": "qwen-local", "usage": {}, "choices": [
+            {"finish_reason": "stop", "message": {"content": json.dumps(target)}}]})
+        self.generate(dry_run=False, local_options=options, scrub=lambda folder: "reports/scan.json")
+        row = json.loads(self.out.read_bytes())
+        receipt = json.loads((self.root / row["receipt_ref"]).read_bytes())
+        self.assertEqual(row["source_kind"], "provider_exemplar")
+        self.assertEqual(row["source_provider"], "local_model")
+        self.assertEqual(receipt["source_provenance"], self.row["source_provenance"])
+        self.assertEqual(receipt["input"]["context"][0]["text"], self.description)
+
+    def test_unknown_unadmitted_or_cloud_source_is_refused(self):
+        for key, value in (("kind", "arbitrary_spec"), ("admission_sha256", "0" * 64),
+                           ("admission_sha256", [])):
+            original = self.row["source_provenance"][key]
+            self.row["source_provenance"][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(SystemExit):
+                self.generate()
+            self.row["source_provenance"][key] = original
+        with self.assertRaises(SystemExit):
+            self.generate(provider="openai")
+
+    def test_changed_bytes_are_refused_before_any_transport(self):
+        paths = [self.specs / name for name in ("admission.json", "manifest.jsonl", "official.json",
+                                               "LICENSE", "bank-account.md")]
+        paths.append(self.review_root / "xai/review.json")
+        with patch.object(generate_rows, "prepare_local_model") as probe:
+            for path in paths:
+                original = path.read_bytes()
+                path.write_bytes(original + b"changed")
+                with self.subTest(path=path.name), self.assertRaises(SystemExit):
+                    self.generate(dry_run=False)
+                path.write_bytes(original)
+            probe.assert_not_called()
+
+    def test_invalid_chronology_and_generation_metadata_are_refused(self):
+        for field, value in (("upstream_commit_time", "2020-01-01T00:00:00Z"),
+                             ("captured_at", "2019-12-30T00:00:00Z"),
+                             ("captured_at", "2026-09-27T12:00:00Z"),
+                             ("captured_at", "2026-02-30T00:00:00Z")):
+            original = self.entry[field]
+            self.entry[field] = value
+            self.official["official_commit"]["commit"]["committer"]["date"] = self.entry["upstream_commit_time"]
+            self.write_evidence()
+            with self.subTest(field=field, value=value), self.assertRaises(SystemExit):
+                self.generate()
+            self.entry[field] = original
+        self.official["official_commit"]["commit"]["committer"]["date"] = self.entry["upstream_commit_time"]
+        for value in ("2026-09-27T10:00:00Z", "2099-01-01T00:00:00Z"):
+            self.admission["admitted_at"] = value
+            self.row["source_provenance"]["admitted_at"] = value
+            self.write_evidence()
+            with self.subTest(admitted=value), self.assertRaises(SystemExit):
+                self.generate()
+        self.admission["admitted_at"] = "2026-09-27T11:20:00Z"
+        self.row["source_provenance"]["admitted_at"] = self.admission["admitted_at"]
+        self.write_evidence()
+        with self.assertRaises(SystemExit):
+            self.generate(generated_at="2026-09-27T11:19:59Z")
+
+    def test_unsupported_repository_solution_path_or_held_slug_is_refused(self):
+        for field, value in (("source_repository", "someone/unreviewed"),
+                             ("path", "exercises/bank-account/canonical-data.json"),
+                             ("destination", "evaluation"), ("source_kind", "owner_seed")):
+            original = self.entry[field]
+            self.entry[field] = value
+            self.write_evidence()
+            with self.subTest(field=field), self.assertRaises(SystemExit):
+                self.generate()
+            self.entry[field] = original
+        self.admission["pilot_hold"] = ["bank-account"]
+        self.write_evidence()
+        with self.assertRaises(SystemExit):
+            self.generate()
+
+    def test_unauthenticated_verdict_and_wrong_official_blob_are_refused(self):
+        for field, value in (("response_id", "different-response"), ("provider", "openai"),
+                             ("http_status", 0), ("answer", "ACCEPT invented")):
+            original = self.receipt[field]
+            self.receipt[field] = value
+            self.write_evidence()
+            with self.subTest(field=field), self.assertRaises(SystemExit):
+                self.generate()
+            self.receipt[field] = original
+        self.official["official_tree"]["tree"][0]["sha"] = "0" * 40
+        self.write_evidence()
+        with self.assertRaises(SystemExit):
+            self.generate()
+
+    def test_path_escape_and_ungrounded_title_objective_context_are_refused(self):
+        for key, value in (("manifest_ref", "../manifest.jsonl"), ("admission_ref", "C:/admission.json"),
+                           ("official_capture_ref", "specs/missing.json")):
+            original = self.row["source_provenance"][key]
+            self.row["source_provenance"][key] = value
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.generate()
+            self.row["source_provenance"][key] = original
+        for key, value in (("title", "invented title"), ("objective", "Deploy an unmentioned database")):
+            original = self.row["input"][key]
+            self.row["input"][key] = value
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.generate()
+            self.row["input"][key] = original
+        self.row["input"]["context"][0]["text"] = "Run the test file."
+        with self.assertRaises(SystemExit):
+            self.generate()
+
+    def test_heldout_identity_and_stable_group_split_remain_gates(self):
+        original = self.row["source_group"]
+        self.row["source_group"] = "ew-alpha"
+        with self.assertRaises(SystemExit):
+            self.generate()
+        self.row["source_group"] = original
+        dev = json.loads(json.dumps(self.row))
+        dev["split"] = "dev"
+        with self.assertRaises(SystemExit):
+            self.generate([self.row, dev])
+        self.row["source_group"] += "/" + self.commit
+        with self.assertRaises(SystemExit):
+            self.generate()
+
+    def test_heldout_source_digest_remains_a_gate(self):
+        metadata = self.set_a / "metadata/ew-alpha.meta.json"
+        record = json.loads(metadata.read_text())
+        record["source_sha256"] = self.entry["source_sha256"]
+        metadata.write_text(json.dumps(record), encoding="utf-8")
+        with patch.object(generate_rows, "prepare_local_model") as probe:
+            with self.assertRaises(SystemExit):
+                self.generate(dry_run=False)
+            probe.assert_not_called()
+
+    def test_source_artifact_symlink_and_size_guard(self):
+        with patch.object(Path, "is_symlink", return_value=True):
+            with self.assertRaises(SystemExit):
+                generate_rows._source_artifact(self.root, "specs/LICENSE", "test")
+        (self.specs / "large.json").write_bytes(b" " * (1024 * 1024 + 1))
+        with self.assertRaises(SystemExit):
+            generate_rows._source_artifact(self.root, "specs/large.json", "test")
+
+    def test_actual_inference_clock_cannot_precede_admission(self):
+        options = self.local_options()
+        with patch.object(generate_rows.local_transport, "utc_now", side_effect=[UTC, "2026-09-27T11:00:00Z"]):
+            with self.assertRaises(SystemExit):
+                self.generate(dry_run=False, local_options=options)
+        self.local_http.assert_not_called()
+        self.assertFalse(options["receipts_dir"].exists())
 
 
 class GitHubLookupTests(unittest.TestCase):
