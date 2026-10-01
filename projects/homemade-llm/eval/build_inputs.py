@@ -23,6 +23,8 @@ matching source bytes containing the excerpt. The item's own frozen assignment
 source is allowed once its path, metadata hash, file hash, and excerpt all match,
 including policy text that another task's reference also scores. Another held-out
 item's source is not allowed, and a matching filename alone does not admit it.
+Objective/title overlap is also allowed when the complete scalar text occurs in
+a verified own-assignment excerpt; legacy inputs have no such exception.
 """
 from __future__ import annotations
 
@@ -114,6 +116,11 @@ def _scored_field_strings(reference: dict[str, Any]) -> list[str]:
 
 def _leak_match(reference: dict[str, Any], objective: str, repository: str, title: str) -> str | None:
     return _text_leak_match(reference, f"{objective} {repository} {title}")
+
+
+def _assignment_text(text: str) -> str:
+    # ponytail: single-backtick Markdown only; preserve operators, case and all other punctuation.
+    return " ".join(re.sub(r"(?<!`)`([^`\r\n]+)`(?!`)", r"\1", text).split())
 
 
 def _text_leak_match(reference: dict[str, Any], text: str) -> str | None:
@@ -471,12 +478,8 @@ def build(argv: list[str] | None = None) -> int:
             missing_titles.append(item_id)
             continue
 
-        leak = _leak_match(reference, objective, repository, title)
-        if leak is not None and item_id not in allow_leak_ids:
-            leak_errors.append((item_id, leak))
-            continue
-
         context: list[dict[str, str]] | None = None
+        own_excerpts: list[str] = []
         if context_dir is not None:
             try:
                 context = _load_context_file(context_dir, item_id)
@@ -488,6 +491,26 @@ def build(argv: list[str] | None = None) -> int:
             if problems:
                 context_errors.extend((item_id, problem) for problem in problems)
                 continue
+            meta_path = refs_dir / "metadata" / f"{item_id}.meta.json"
+            meta = _load_json(meta_path) if meta_path.is_file() else {}
+            if isinstance(meta, dict):
+                for item in context:
+                    candidate_own = (item["kind"] == "assignment_packet"
+                                     and item["source_ref"] == meta.get("source_file"))
+                    verified, _ = _verified_own_assignment(
+                        item, meta, refs_dir.parent, "scalar citation", candidate_own, held_out_digests,
+                    )
+                    if verified:
+                        own_excerpts.append(_assignment_text(item["text"]))
+
+        checked_objective, checked_title = (
+            "" if any(_assignment_text(value) in excerpt for excerpt in own_excerpts) else value
+            for value in (objective, title)
+        )
+        leak = _leak_match(reference, checked_objective, repository, checked_title)
+        if leak is not None and item_id not in allow_leak_ids:
+            leak_errors.append((item_id, leak))
+            continue
 
         built[item_id] = _format_task_input(item_id, objective, repository, title, context)
 
