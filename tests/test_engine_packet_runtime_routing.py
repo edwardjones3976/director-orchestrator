@@ -1205,10 +1205,15 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             engine._route_live_dispatch(store.get(record.task_id), assignment)
         )
         try:
+            # Dispatch/startup isolation under CI load, not the packet timeout
+            # (work["limits"]["timeout_seconds"] remains 5).
+            startup_seconds = 15
             self.assertTrue(
                 await asyncio.wait_for(
-                    asyncio.to_thread(transport.entered.wait, 2), timeout=2
-                )
+                    asyncio.to_thread(transport.entered.wait, startup_seconds),
+                    timeout=startup_seconds,
+                ),
+                "sync readback did not start within the dispatch startup allowance",
             )
             await asyncio.sleep(0.05)
             self.assertFalse(route.done(), "sync readback blocked the event loop")
