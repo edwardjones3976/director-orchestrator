@@ -584,7 +584,7 @@ def validate_scenarios_for_dispatch(
             validate_licensed_specification(scenario, source_root, label, review_receipts_root)
         else:
             fail(f"{label}: unsupported source-provenance kind")
-        group, split = scenario["source_group"], scenario["split"]
+        group, split = validate_rows.split_source_group(scenario["source_group"]), scenario["split"]
         if group in group_splits and group_splits[group] != split:
             fail(f"{label}: one verified source group cannot straddle train and dev")
         group_splits[group] = split
