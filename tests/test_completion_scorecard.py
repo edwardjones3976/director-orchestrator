@@ -5276,9 +5276,23 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(len(graces), 1)
         self.assertLess(graces[0], 0.5)  # what was left of the 1-second deadline, never a fresh 5 seconds
 
+    def test_run_bytes_piped_print_ok_is_exactly_ok(self):
+        """#388 Ubuntu run 36896064850 failed at the print('ok') equality
+        (line 5281), AssertionError, payload redacted. Overflow elapsed is
+        not that failure. Piped stdout is block-buffered unless flushed;
+        the sibling cleanup case already uses flush=True."""
+        import sys
+        sc._DEADLINE[0] = None
+        self.addCleanup(lambda: sc._DEADLINE.__setitem__(0, None))
+        raw = sc._run_bytes([sys.executable, "-c", "print('ok', flush=True)"])
+        self.assertEqual(raw.strip(), b"ok", f"piped print('ok', flush=True) stdout was {raw!r}")
+
     def test_subprocess_output_is_capped_on_both_pipes_while_running(self):
         import sys
-        self.assertEqual(sc._run_bytes([sys.executable, "-c", "print('ok')"]).strip(), b"ok")
+        sc._DEADLINE[0] = None
+        self.addCleanup(lambda: sc._DEADLINE.__setitem__(0, None))
+        raw = sc._run_bytes([sys.executable, "-c", "print('ok', flush=True)"])
+        self.assertEqual(raw.strip(), b"ok", f"normal stdout was {raw!r}")
         for pipe in ("stdout", "stderr"):
             # More than MAX_BYTES, then it would keep writing forever: killed on overflow, never parsed.
             script = ("import sys\nblock = b'x' * 65536\nwhile True:\n    sys.%s.buffer.write(block)\n" % pipe)

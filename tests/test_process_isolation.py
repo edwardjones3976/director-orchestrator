@@ -106,9 +106,15 @@ class ProcessIsolationTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            process.communicate(timeout=5)
-            guard.terminate()
-            guard.close()
+            try:
+                # wait() is the parent-exit bound. communicate() also waits on
+                # inherited pipes held by the detached grandchild, which is
+                # cleanup, not spawn.
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.fail("contained parent did not exit within the spawn allowance")
+            finally:
+                process_isolation.stop_contained_process(process, guard, grace_seconds=5.0)
             time.sleep(1.25)
             self.assertFalse(marker.exists())
 
@@ -266,6 +272,26 @@ class ProcessIsolationTests(unittest.TestCase):
         for observation in ("'tree_terminated': False", "'child_stopped': True",
                             "'guard_closed': True", "'pipes_closed': True", "'returncode': -9"):
             self.assertIn(observation, message)
+
+    def test_signal_contained_tree_terminates_an_active_guard_then_kills_the_child(self):
+        process = Mock()
+        guard = Mock()
+        guard.active = True
+        process_isolation.signal_contained_tree(process, guard)
+        guard.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+
+    def test_signal_contained_tree_uses_the_posix_process_group_when_idle(self):
+        process = Mock(pid=4242)
+        guard = Mock()
+        guard.active = False
+        with (
+            patch.object(process_isolation.os, "name", "posix"),
+            patch.object(process_isolation.os, "killpg") as killpg,
+        ):
+            process_isolation.signal_contained_tree(process, guard)
+        killpg.assert_called_once_with(4242, getattr(process_isolation.signal, "SIGKILL", 9))
+        process.kill.assert_called_once_with()
 
 
 if __name__ == "__main__":
