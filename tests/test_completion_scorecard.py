@@ -5277,21 +5277,25 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertLess(graces[0], 0.5)  # what was left of the 1-second deadline, never a fresh 5 seconds
 
     def test_run_bytes_piped_print_ok_is_exactly_ok(self):
-        """#388 Ubuntu run 36896064850 failed at the print('ok') equality
-        (line 5281), AssertionError, payload redacted. Overflow elapsed is
-        not that failure. Piped stdout is block-buffered unless flushed;
-        the sibling cleanup case already uses flush=True."""
-        import sys
+        """#388 Ubuntu run 36896064850 failed at the original print('ok')
+        equality (test_subprocess_output_is_capped_on_both_pipes_while_running
+        line 5281): AssertionError, payload redacted. That is the only proven
+        Ubuntu failure. Overflow elapsed is a later assertion in the same
+        method, not this one. Tree-kill, leftover _DEADLINE, and PIPE block
+        buffering are inferences: a leftover deadline would raise
+        TimeoutExpired or ValueError, not this equality. The original command
+        is print('ok') without flush; a normal-exit child flushes stdio, so
+        flush=True would hide the original command rather than bind it.
+        Clearing _DEADLINE here is isolation hygiene, not a proven cause."""
         sc._DEADLINE[0] = None
         self.addCleanup(lambda: sc._DEADLINE.__setitem__(0, None))
-        raw = sc._run_bytes([sys.executable, "-c", "print('ok', flush=True)"])
-        self.assertEqual(raw.strip(), b"ok", f"piped print('ok', flush=True) stdout was {raw!r}")
+        raw = sc._run_bytes([sys.executable, "-c", "print('ok')"])
+        self.assertEqual(raw.strip(), b"ok", f"piped print('ok') stdout was {raw!r}")
 
     def test_subprocess_output_is_capped_on_both_pipes_while_running(self):
-        import sys
         sc._DEADLINE[0] = None
         self.addCleanup(lambda: sc._DEADLINE.__setitem__(0, None))
-        raw = sc._run_bytes([sys.executable, "-c", "print('ok', flush=True)"])
+        raw = sc._run_bytes([sys.executable, "-c", "print('ok')"])
         self.assertEqual(raw.strip(), b"ok", f"normal stdout was {raw!r}")
         for pipe in ("stdout", "stderr"):
             # More than MAX_BYTES, then it would keep writing forever: killed on overflow, never parsed.
