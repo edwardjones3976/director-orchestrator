@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
 """Unit tests for the M2-G1 exemplar harness. No provider is contacted.
@@ -544,6 +545,13 @@ class GenerateRowsTests(unittest.TestCase):
                          (row["source_model"], row["input"], row["target"]))
         self.assertEqual(receipt["api_cost_usd"], 0)
         self.assertEqual(receipt["response_id"], "local-response-1")
+        training = generate_rows.prompt_template.render_messages(row["input"], row["target"])
+        sent = body["messages"]
+        self.assertEqual(sent[1], training[1])
+        self.assertEqual(sent[0]["content"],
+                         training[0]["content"] + generate_rows.local_transport.QWEN3_PROMPT)
+        self.assertEqual(receipt["prompt_sha256"],
+                         hashlib.sha256(json.dumps(sent, sort_keys=True).encode()).hexdigest())
 
     def test_local_dry_run_never_probes_or_writes(self):
         options = self.local_options()
@@ -1142,3 +1150,4 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | END]]
