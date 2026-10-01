@@ -1,4 +1,3 @@
-# [[Cursor | Auto | 2026-10-01 | 16:45 UTC | BEGIN]]
 """The CI credential scan must not treat a hyphenated id as a secret key."""
 
 import re
@@ -43,6 +42,3 @@ class SecretHygienePatternTests(unittest.TestCase):
     def test_key_buried_in_a_hyphenated_word_does_not_match(self) -> None:
         buried = "xxsk-" + ("d" * 30)
         self.assertIsNone(credential_pattern().search(buried))
-
-
-# [[Cursor | Auto | 2026-10-01 | 16:45 UTC | END]]
