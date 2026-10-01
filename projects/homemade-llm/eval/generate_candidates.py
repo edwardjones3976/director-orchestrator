@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
@@ -223,8 +224,8 @@ def manifest(directory: Path, files=None) -> str:
     return sha256(lines.encode("utf-8"))
 
 
-def http_json(method, url, body, timeout):
-    """One HTTP exchange, no redirects/retries; deadline includes body reading."""
+def http_json(method, url, body, timeout, *, capture=None):
+    """One bounded exchange; optional capture retains the exact HTTP body bytes."""
     parsed = urlsplit(url)
     connection_type = (
         http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
@@ -252,15 +253,24 @@ def http_json(method, url, body, timeout):
         if expired.is_set() or remaining <= 0:
             raise TimeoutError("item timeout")
         transport_socket.settimeout(remaining)
+        request_bytes = None if body is None else json.dumps(body, allow_nan=False).encode("utf-8")
+        if capture is not None:
+            capture["request_bytes"] = request_bytes
         connection.request(
             method, parsed.path or "/",
-            body=None if body is None else json.dumps(body, allow_nan=False).encode("utf-8"),
+            body=request_bytes,
             headers={"Content-Type": "application/json", "Connection": "keep-alive"},
         )
         with connection.getresponse() as response:
+            if capture is not None:
+                capture["http_status"] = response.status
             if response.status != 200:
+                if capture is not None:
+                    capture["response_bytes"] = response.read()
                 raise ValueError(f"HTTP {response.status}")
             raw = response.read()
+            if capture is not None:
+                capture["response_bytes"] = raw
         if expired.is_set() or time.monotonic() >= deadline:
             raise TimeoutError("item timeout")
         return strict_json(raw)
@@ -533,3 +543,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:10 UTC | END]]
