@@ -287,7 +287,7 @@ class ProcessIsolationTests(unittest.TestCase):
         guard.active = False
         with (
             patch.object(process_isolation.os, "name", "posix"),
-            patch.object(process_isolation.os, "killpg") as killpg,
+            patch.object(process_isolation.os, "killpg", create=True) as killpg,
         ):
             process_isolation.signal_contained_tree(process, guard)
         killpg.assert_called_once_with(4242, getattr(process_isolation.signal, "SIGKILL", 9))

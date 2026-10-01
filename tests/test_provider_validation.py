@@ -1059,11 +1059,12 @@ class PostgresValidationTests(unittest.TestCase):
         PostgresValidationStore.fail is anchored to that same absolute
         deadline-plus-grace, not a second, fresh window stacked on top of it.
         Elapsed time is the full ``service.run()`` clock, start to refusal:
-        that is the original absolute 2s+1s contract. For ``verify_fence``
-        the ACCESS EXCLUSIVE fixture lock is taken before that clock starts,
-        because waiting for the lock under parallel shard load is setup, not
-        service time. Claim and settle still arm their blockers inside the
-        patched store call, matching their original clocks.
+        that is the original absolute 2s+1s contract. Fence contention is a
+        row lock taken only after ``admit`` and packet-ceiling tightening,
+        when ``verify_fence`` is entered. Taking ACCESS EXCLUSIVE on
+        ``attempts`` before ``service.run()`` blocked ``admit`` under the
+        60s transport ceiling and never witnessed the tightened fence
+        deadline. Claim and settle keep the same in-call row lock.
 
         `threading.Event.wait` returns False on a timeout WITHOUT setting the
         event, so `release.is_set()` can never observe an automatic watchdog
@@ -1087,21 +1088,16 @@ class PostgresValidationTests(unittest.TestCase):
         import time as time_module
         fixture=self._responses_service_fixture()
         box={"watchdog_fired":None,"errors":[]}
-        def start_blocker(*, lock_table, reservation=None, arm=None):
+        def start_blocker(reservation):
             release,held=threading.Event(),threading.Event()
             def blocker():
                 try:
                     with self.store.connect() as db:
                         db.execute("SELECT set_config('statement_timeout','15000',true),"
                             "set_config('lock_timeout','15000',true)")
-                        if lock_table:
-                            db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
-                        else:
-                            db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
-                                       (reservation,)).fetchone()
+                        db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
+                                   (reservation,)).fetchone()
                         held.set()
-                        if arm is not None and not arm.wait(10):
-                            return
                         # Self-release at 3s (2s packet budget + 1s
                         # scheduler grace) is a watchdog safety net; the
                         # service is expected to finish, and this test to
@@ -1131,20 +1127,14 @@ class PostgresValidationTests(unittest.TestCase):
             def wrapped(*args,**kwargs):
                 if phase in ("claim_execution","settle"):
                     box["reservation"]=args[0]["reservation"]
-                    start_blocker(lock_table=False, reservation=box["reservation"])
                 elif phase=="verify_fence":
                     box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
+                start_blocker(box["reservation"])
                 return original(*args,**kwargs)
             return wrapped
         try:
-            arm=None
-            if phase=="verify_fence":
-                arm=threading.Event()
-                start_blocker(lock_table=True, arm=arm)
             with patch.object(self.store,phase,wrapped_factory(getattr(self.store,phase))):
                 started=time_module.monotonic()
-                if arm is not None:
-                    arm.set()
                 with self.assertRaises(Exception) as caught:
                     fixture["service"].run(ValidationRequest(
                         generation=fixture["generation"],provider="openai"),OWNER)
