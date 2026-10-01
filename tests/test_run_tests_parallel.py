@@ -17,6 +17,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -338,6 +340,83 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertIn("File test_a.py, line 12, in test_a", rendered)
         self.assertIn("AssertionError: [message redacted]", rendered)
         self.assertIn("FAILED (failures=1)", rendered)
+
+    def test_stopping_a_registered_shard_returns_before_its_timeout(self):
+        self.module(
+            "test_child",
+            "import time, unittest\n"
+            "class Example(unittest.TestCase):\n"
+            " def test_sleep(self):\n"
+            "  time.sleep(120)\n",
+        )
+        holder = {}
+
+        def go():
+            holder["result"] = runner.run_shard(
+                0, ["test_child"], None, 120, False, start=str(self.start), expected_count=1)
+
+        worker = threading.Thread(target=go)
+        worker.start()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not runner._LIVE_PROCESSES:
+            time.sleep(0.05)
+        self.assertTrue(runner._LIVE_PROCESSES)
+        started = time.monotonic()
+        runner.stop_registered_processes()
+        worker.join(timeout=15)
+        self.assertFalse(worker.is_alive())
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertTrue(holder["result"]["failed"])
+        self.assertFalse(runner._LIVE_PROCESSES)
+
+    def test_interrupt_stops_shards_before_the_pool_waits(self):
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"],
+            start_new_session=os.name != "nt",
+        )
+        self.addCleanup(lambda: runner.stop_process(child) if child.poll() is None else None)
+        runner.register_process(child)
+        entered = threading.Event()
+
+        def blocking(*args, **kwargs):
+            entered.set()
+            child.wait()
+            return dict(index=0, counts=dict(tests=0, failures=0, errors=0, skips=0),
+                        failures=[], durations=[], progress=[], status="stopped", failed=True, tail=[])
+
+        def raise_interrupt(self, timeout=None):
+            if not entered.wait(10):
+                raise AssertionError("shard did not start")
+            raise KeyboardInterrupt
+
+        with patch.object(runner, "run_shard", blocking), \
+                patch("concurrent.futures.Future.result", raise_interrupt):
+            started = time.monotonic()
+            with self.assertRaises(KeyboardInterrupt):
+                runner.execute_shards([["test_child"]], [None], {"test_child": ["t"]}, 120, False)
+            self.assertLess(time.monotonic() - started, 15)
+        self.assertIsNotNone(child.poll())
+        self.assertFalse(runner._LIVE_PROCESSES)
+
+    def test_shard_output_over_the_cap_fails_closed(self):
+        self.module(
+            "test_child",
+            "import sys, unittest\n"
+            "class Example(unittest.TestCase):\n"
+            " def test_flood(self):\n"
+            "  sys.stdout.write('x' * 20000)\n"
+            "  sys.stdout.flush()\n"
+            "  print()\n"
+            "  print('Ran 1 test in 0.001s')\n"
+            "  print('OK')\n",
+        )
+        with patch.object(runner, "OUTPUT_LIMIT", 1024):
+            result = runner.run_shard(
+                0, ["test_child"], None, 30, False, start=str(self.start), expected_count=1)
+        self.assertTrue(result["failed"])
+        self.assertEqual("output truncated", result["status"])
+        self.assertLessEqual(result["output_bytes"], 1024)
+        self.assertNotIn("xxxxxxxx", "\n".join(result["tail"]))
 
     def test_serial_escape_hatch_is_exact(self):
         with patch.object(runner.subprocess, "call", return_value=7) as call:

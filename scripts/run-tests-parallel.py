@@ -20,11 +20,17 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
 
 DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
+# Eight shards retain at most this much stdout each. Past the cap the rest is
+# discarded and the shard cannot pass.
+OUTPUT_LIMIT = 1 << 20
+_LIVE_PROCESSES = set()
+_LIVE_LOCK = threading.Lock()
 
 
 class RunnerError(RuntimeError):
@@ -145,21 +151,107 @@ def shard_databases(dsn, count):
 
 
 def stop_process(process):
+    if process.poll() is not None:
+        return
     if os.name == "nt":
         try:
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-        finally:
-            if process.poll() is None:
-                process.kill()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     else:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError, OSError):
             pass
     if process.poll() is None:
-        process.kill()
-    process.wait(timeout=30)
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait(timeout=5)
+    stream = process.stdout
+    if stream is not None and not stream.closed:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
+def register_process(process):
+    with _LIVE_LOCK:
+        _LIVE_PROCESSES.add(process)
+
+
+def unregister_process(process):
+    with _LIVE_LOCK:
+        _LIVE_PROCESSES.discard(process)
+
+
+def stop_registered_processes():
+    with _LIVE_LOCK:
+        processes = list(_LIVE_PROCESSES)
+    for process in processes:
+        try:
+            stop_process(process)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        unregister_process(process)
+
+
+def collect_output(process, timeout, limit=None):
+    """Drain stdout in chunks. Retain at most `limit` bytes; keep draining."""
+    cap = OUTPUT_LIMIT if limit is None else limit
+    state = {"retained": bytearray(), "truncated": False}
+
+    def drain():
+        retained = bytearray()
+        truncated = False
+        try:
+            while True:
+                chunk = process.stdout.read(65536)
+                if not chunk:
+                    break
+                if truncated:
+                    continue
+                room = cap - len(retained)
+                if len(chunk) <= room:
+                    retained.extend(chunk)
+                else:
+                    if room > 0:
+                        retained.extend(chunk[:room])
+                    truncated = True
+        except (OSError, ValueError):
+            truncated = True
+        state["retained"] = retained
+        state["truncated"] = truncated
+
+    reader = threading.Thread(target=drain)
+    reader.start()
+    timed_out = False
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        stop_process(process)
+    reader.join(timeout=30)
+    if reader.is_alive():
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
+        reader.join(timeout=5)
+        state["truncated"] = True
+    retained = bytes(state["retained"])
+    text = retained.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    return text, state["truncated"], timed_out, len(retained)
 
 
 def parse_output(output):
@@ -219,33 +311,68 @@ def run_shard(index, modules, dsn, timeout, record, start="tests", expected_coun
         try:
             process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       text=True, encoding="utf-8", errors="replace",
                                        start_new_session=os.name != "nt")
         except OSError:
             return dict(index=index, counts=dict(tests=0, failures=0, errors=0, skips=0),
-                        failures=[], durations=[], progress=[], status="launch failed", failed=True)
+                        failures=[], durations=[], progress=[], status="launch failed", failed=True,
+                        output_bytes=0)
+        register_process(process)
         timed_out = False
+        truncated = False
+        output = ""
+        output_bytes = 0
         try:
-            output, _ = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            stop_process(process)
-            output, _ = process.communicate(timeout=30)
-        except BaseException:
-            stop_process(process)
-            raise
+            try:
+                output, truncated, timed_out, output_bytes = collect_output(process, timeout)
+            except BaseException:
+                stop_process(process)
+                raise
+        finally:
+            unregister_process(process)
+            if process.poll() is None:
+                stop_process(process)
+            stream = process.stdout
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
         counts, failures, durations, complete = parse_output(output)
         progress = re.findall(r"^[\w.]+ \(([\w.]+)\) \.\.\. (ok|FAIL|ERROR|skipped|expected failure|unexpected success)", output, re.MULTILINE)
-        status = "timeout" if timed_out else "complete" if complete else "crash/incomplete"
-        failed = timed_out or not complete or process.returncode != 0 or counts["failures"] or counts["errors"]
+        if timed_out:
+            status = "timeout"
+        elif truncated:
+            status = "output truncated"
+        elif complete:
+            status = "complete"
+        else:
+            status = "crash/incomplete"
+        failed = timed_out or truncated or not complete or process.returncode != 0 or counts["failures"] or counts["errors"]
         fixture_skip = re.search(r"^setUp(?:Class|Module) \([\w.]+\) \.\.\. skipped", output, re.MULTILINE)
-        if complete and expected_count is not None and counts["tests"] != expected_count and not fixture_skip:
+        if complete and not truncated and expected_count is not None and counts["tests"] != expected_count and not fixture_skip:
             status = "execution count differs from discovery"
             failed = True
-        if not complete:
+        if not complete and not truncated:
             status += " (counts unavailable; zero contribution to totals)"
         return dict(index=index, counts=counts, failures=failures, durations=durations, progress=progress,
-                    status=status, failed=bool(failed), tail=sanitized_tail(output) if failed else [])
+                    status=status, failed=bool(failed), tail=sanitized_tail(output) if failed else [],
+                    output_bytes=output_bytes)
+
+
+def execute_shards(shards, dsns, modules, timeout, record, start="tests"):
+    """Run shards. On interrupt, stop their processes before the pool waits."""
+    executor = ThreadPoolExecutor(max_workers=len(shards))
+    try:
+        futures = [executor.submit(run_shard, i, shard, dsns[i], timeout, record,
+                                   start=start,
+                                   expected_count=sum(len(modules[m]) for m in shard))
+                   for i, shard in enumerate(shards)]
+        return [future.result() for future in futures]
+    finally:
+        try:
+            stop_registered_processes()
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
 
 def docs_only(paths):
@@ -304,11 +431,7 @@ def main(argv=None):
         shards = make_shards(modules, args.shards, durations)
         print(f"Discovery parity: {sum(map(len, modules.values()))} tests; {len(modules)} modules; {len(shards)} shards", flush=True)
         with shard_databases(os.environ.get(DSN_VARIABLE), len(shards)) as dsns:
-            with ThreadPoolExecutor(max_workers=len(shards)) as pool:
-                futures = [pool.submit(run_shard, i, shard, dsns[i], args.timeout, args.record_durations,
-                                       expected_count=sum(len(modules[m]) for m in shard))
-                           for i, shard in enumerate(shards)]
-                results = [future.result() for future in futures]
+            results = execute_shards(shards, dsns, modules, args.timeout, args.record_durations)
             total = Counter()
             measured = Counter()
             for result in results:
