@@ -1542,6 +1542,7 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
 
     blob = staticmethod(LicensedSpecificationTests.blob)
     unused_sources = frozenset({"hello_world", "my_first_io", "http_client"})
+    server_sources = frozenset({"time_server", "http_file_server", "http_json_api_server"})
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -1559,7 +1560,7 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
             "LICENSE.md": b"MIT test-only source license",
         }
         self.allowed_slugs = generate_rows.LEARNYOUNODE_SOURCES
-        for slug in sorted(self.allowed_slugs | self.unused_sources):
+        for slug in sorted(self.allowed_slugs | self.unused_sources | self.server_sources):
             self.source_bytes[slug + ".problem.md"] = f"Complete the {slug} exercise.\nCheck with {{appname}} verify {slug}.js.\n".encode()
         self.manifest = []
         self.tree = []
@@ -1588,14 +1589,27 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
         self.pins = patch.dict(generate_rows.LEARNYOUNODE_ADMISSIONS, {}, clear=True)
         self.pins.start()
         self.addCleanup(self.pins.stop)
+        self.server_pin = patch.object(generate_rows, "LEARNYOUNODE_SERVER_ADMISSION", "fixture-not-admitted")
+        self.server_pin.start()
+        self.addCleanup(self.server_pin.stop)
         self.write_evidence()
 
-    def write_evidence(self):
+    def write_evidence(self, *, plain=False, answer=None, answer_hash=None, bind_plain=True):
         manifest = "".join(json.dumps(entry) + "\n" for entry in self.manifest).encode()
         commit = json.dumps(self.commit_record).encode()
         tree = json.dumps(self.tree_record).encode()
         self.admission["manifest_sha256"] = hashlib.sha256(manifest).hexdigest()
-        answer = "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS** " + self.admission["manifest_sha256"] + " " + self.commit
+        if plain:
+            self.admission.update(source_tree="b" * 40, share_record_sha256="c" * 64)
+            answer = answer if answer is not None else (
+                "TERMINAL: ACCEPT_FOR_SOURCE_FACTS\nPACKET_ID QA-M2-LNY-SERVERS-SOURCE-1\n"
+                f"source_pin {self.commit}\nsource_tree {self.admission['source_tree']}\n"
+                f"manifest_sha256 {self.admission['manifest_sha256']}\n"
+                f"share_record_sha256 {self.admission['share_record_sha256']}\n\nSource facts only.")
+            self.admission["review_answer_exact_utf8_sha256"] = (
+                answer_hash if answer_hash is not None else hashlib.sha256(answer.encode()).hexdigest())
+        else:
+            answer = "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS** " + self.admission["manifest_sha256"] + " " + self.commit
         self.admission["review_answer"] = answer
         self.receipt["answer"] = answer
         receipt = json.dumps(self.receipt).encode()
@@ -1608,6 +1622,8 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
         generate_rows.LEARNYOUNODE_ADMISSIONS[self.digest] = (
             self.admission["manifest_sha256"], hashlib.sha256(commit).hexdigest(),
             hashlib.sha256(tree).hexdigest(), self.admission["review_receipt_sha256"], self.allowed_slugs)
+        if plain and bind_plain:
+            generate_rows.LEARNYOUNODE_SERVER_ADMISSION = self.digest
 
     def scenario(self, slug="baby_steps"):
         entry = next(item for item in self.manifest if item["path"] == f"exercises/{slug}/problem.md")
@@ -1700,12 +1716,14 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
         self.assertFalse((self.root / "receipts").exists())
 
     def test_cross_batch_sources_refused_before_probe_even_if_evidence_lists_them(self):
-        self.admission["suitable"] = sorted(generate_rows.LEARNYOUNODE_SOURCES | self.unused_sources)
+        self.admission["suitable"] = sorted(generate_rows.LEARNYOUNODE_SOURCES | self.unused_sources | self.server_sources)
         with patch.object(generate_rows, "github_chronology") as github, \
                 patch.object(generate_rows, "prepare_local_model") as probe, \
                 patch.object(generate_rows.local_transport, "http_json") as transport:
             for allowed, refused in ((generate_rows.LEARNYOUNODE_SOURCES, "hello_world"),
-                                     (self.unused_sources, "baby_steps")):
+                                     (self.unused_sources, "baby_steps"),
+                                     (generate_rows.LEARNYOUNODE_SOURCES, "time_server"),
+                                     (self.unused_sources, "http_file_server")):
                 self.allowed_slugs = allowed
                 self.write_evidence()
                 self.assertEqual(self.generate([self.scenario(sorted(allowed)[0])]),
@@ -1785,6 +1803,102 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
         self.write_evidence()
         with self.assertRaises(SystemExit):
             self.generate()
+
+    def test_server_batch_plain_review_dry_run_has_no_effects(self):
+        self.allowed_slugs = self.server_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs)
+        self.write_evidence(plain=True)
+        rows = [self.scenario(slug) for slug in sorted(self.allowed_slugs)]
+        original = json.loads(json.dumps(rows))
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate(rows), {"dry_run": True, "rows": 0, "receipts": 0})
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertEqual(rows, original)
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_plain_review_is_not_enabled_for_old_batch(self):
+        self.write_evidence(plain=True, bind_plain=False)
+        with patch.object(generate_rows, "prepare_local_model") as probe, self.assertRaises(SystemExit):
+            self.generate(dry_run=False)
+        probe.assert_not_called()
+
+    def test_server_plain_verdict_and_exact_bindings_fail_closed(self):
+        self.allowed_slugs = self.server_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs)
+        self.write_evidence(plain=True)
+        valid = self.receipt["answer"]
+        invalid = [valid.replace("TERMINAL: ACCEPT_FOR_SOURCE_FACTS", "TERMINAL: CHANGES_REQUIRED", 1),
+                   "Quoted verdict:\n" + valid, valid + "\nTERMINAL: CHANGES_REQUIRED",
+                   valid.replace("SOURCE-1", "SOURCE-2"), valid.replace("c" * 64, "d" * 64),
+                   valid.replace("b" * 40, "a" * 40), valid.replace(self.commit, "e" * 40),
+                   valid.replace(self.admission["manifest_sha256"], "f" * 64)]
+        with patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            for answer in invalid:
+                self.write_evidence(plain=True, answer=answer)
+                with self.subTest(answer=answer.splitlines()[0]), self.assertRaises(SystemExit):
+                    self.generate([self.scenario("time_server")], dry_run=False)
+            self.write_evidence(plain=True, answer_hash="0" * 64)
+            with self.assertRaises(SystemExit):
+                self.generate([self.scenario("time_server")], dry_run=False)
+            for call in (probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_server_plain_review_keeps_authenticated_status_and_identity_checks(self):
+        self.allowed_slugs = self.server_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs)
+        with patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            for key, value in (("provider", "openai"), ("model", "wrong-model"), ("http_status", 500),
+                               ("response_status", "incomplete"), ("response_id", ""),
+                               ("response_id", "unbound-response")):
+                original = self.receipt[key]
+                self.receipt[key] = value
+                self.write_evidence(plain=True)
+                with self.subTest(key=key, value=value), self.assertRaises(SystemExit):
+                    self.generate([self.scenario("time_server")], dry_run=False)
+                self.receipt[key] = original
+            for call in (probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_server_batch_tampered_evidence_and_extra_slugs_fail_before_contact(self):
+        self.allowed_slugs = self.server_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs | self.unused_sources)
+        self.write_evidence(plain=True)
+        row = self.scenario("time_server")
+        with patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate([row]), {"dry_run": True, "rows": 0, "receipts": 0})
+            for ref in ("admission.json", "manifest.jsonl", "commit.json", "tree.json", "LICENSE.md",
+                        "README.md", "time_server.problem.md", "http_file_server.problem.md", "http_json_api_server.problem.md"):
+                path = self.root / ref
+                raw = path.read_bytes()
+                path.write_bytes(raw + b"tampered")
+                slug = ref.removesuffix(".problem.md") if ref.endswith(".problem.md") else "time_server"
+                with self.subTest(ref=ref), self.assertRaises(SystemExit):
+                    self.generate([self.scenario(slug)], dry_run=False)
+                path.write_bytes(raw)
+            path = self.review_root / "xai/review.json"
+            raw = path.read_bytes()
+            path.write_bytes(raw + b"tampered")
+            with self.assertRaises(SystemExit):
+                self.generate([row], dry_run=False)
+            path.write_bytes(raw)
+            for slug in self.unused_sources | generate_rows.LEARNYOUNODE_SOURCES:
+                with self.subTest(slug=slug), self.assertRaises(SystemExit):
+                    self.generate([self.scenario(slug)], dry_run=False)
+            for call in (probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
 
 
 class GitHubLookupTests(unittest.TestCase):
