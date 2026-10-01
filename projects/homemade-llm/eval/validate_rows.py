@@ -33,9 +33,10 @@ written:
      that carries a whole scored-field string or an eight-word shingle of a
      reference is refused outright, as ``build_inputs.py`` already does for
      inputs.
-4. Split: every ``source_group`` sits on one side of train and dev; the report
-   carries the unique group count per split. A row the producer already marked
-   ``quarantine`` stays in the quarantine file until a non-author reviewer
+4. Split: every source group, including the proven learnyounode sync/async
+   sibling pair, sits on one side of train and dev; the report counts these
+   groups per split while rows retain their raw IDs. A row the producer already
+   marked ``quarantine`` stays in the quarantine file until a non-author reviewer
    decides (D-M2-3).
 
 Outputs, in an empty ``--out`` directory: ``accepted.jsonl``, ``quarantine.jsonl``
@@ -205,6 +206,13 @@ def _canonical_reasons(errors: list[str]) -> list[str]:
     return sorted(set(errors))
 
 
+def split_source_group(source_group: str) -> str:
+    """Co-locate the proven learnyounode sync/async siblings for split checks only."""
+    if source_group == "licensed/workshopper/learnyounode/my_first_io":
+        return "licensed/workshopper/learnyounode/my_first_async_io"
+    return source_group
+
+
 def validate(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate DIRECTOR data v1 rows (M2-S1).")
     parser.add_argument("--rows", type=Path, required=True, help="JSONL of candidate rows.")
@@ -312,24 +320,25 @@ def validate(argv: list[str] | None = None) -> int:
                 near["max_overlap"] = max_overlap
                 if nearest is not None:
                     near["nearest_item"] = nearest
-            group = row["source_group"]
+            group = split_source_group(row["source_group"])
             group_sides.setdefault(group, set()).add(row["split"])
             group_lines.setdefault(group, []).append(line_number)
             accepted.append(row)
 
-    # Split check: every source_group on exactly one side.
+    # Split check: every group, including the known sibling pair, on exactly one side.
     straddling = sorted(group for group, sides in group_sides.items() if len(sides) > 1)
     if straddling:
         kept: list[dict[str, Any]] = []
         for row in accepted:
-            if row["source_group"] in straddling:
+            if split_source_group(row["source_group"]) in straddling:
                 rejected.append({"line": None, "row_id": row["row_id"],
-                                 "reasons": [f"split: source_group {row['source_group']} appears on both sides"]})
+                                 "reasons": [f"split: source_group {row['source_group']} belongs to a group appearing on both sides"]})
             else:
                 kept.append(row)
         accepted = kept
     groups_per_split = {
-        split: len({row["source_group"] for row in accepted if row["split"] == split}) for split in ("train", "dev")
+        split: len({split_source_group(row["source_group"]) for row in accepted if row["split"] == split})
+        for split in ("train", "dev")
     }
     rows_per_split = {split: sum(1 for row in accepted if row["split"] == split) for split in ("train", "dev")}
 

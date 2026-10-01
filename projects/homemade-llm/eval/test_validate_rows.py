@@ -312,6 +312,59 @@ class ValidateRowsTests(unittest.TestCase):
         self.assertEqual(report["unique_source_groups_per_split"], {"train": 0, "dev": 1})
         self.assertEqual([r["source_group"] for r in self.read("accepted.jsonl")], ["lone-group"])
 
+    def test_licensed_siblings_on_opposite_sides_reject_both_in_either_direction(self):
+        sync = "licensed/workshopper/learnyounode/my_first_io"
+        asynchronous = "licensed/workshopper/learnyounode/my_first_async_io"
+        unrelated = "licensed/workshopper/learnyounode/http_client"
+        for train, dev in ((sync, asynchronous), (asynchronous, sync)):
+            with self.subTest(train=train):
+                rows = [self.row(source_group=train, input={"title": "Train sibling fixture"}),
+                        self.row(source_group=dev, split="dev", input={"title": "Dev sibling fixture"}),
+                        self.row(source_group=unrelated, split="dev", input={"title": "Unrelated fixture"})]
+                code, report, _ = self.run_validator(rows)
+                self.assertEqual(code, 1)
+                self.assertEqual(report["straddling_source_groups"], [asynchronous])
+                self.assertEqual((report["n_accepted"], report["n_rejected"]), (1, 2))
+                self.assertEqual({r["row_id"] for r in report["rejected"]},
+                                 {row["row_id"] for row in rows[:2]})
+                self.assertEqual(report["unique_source_groups_per_split"], {"train": 0, "dev": 1})
+                self.assertEqual([r["source_group"] for r in self.read("accepted.jsonl")], [unrelated])
+
+    def test_licensed_siblings_on_same_side_count_once_and_preserve_raw_ids(self):
+        sync = "licensed/workshopper/learnyounode/my_first_io"
+        asynchronous = "licensed/workshopper/learnyounode/my_first_async_io"
+        unrelated = "licensed/workshopper/learnyounode/http_client"
+        for side, other in (("train", "dev"), ("dev", "train")):
+            with self.subTest(side=side):
+                rows = [self.row(source_group=sync, split=side, input={"title": "Sync fixture"}),
+                        self.row(source_group=asynchronous, split=side, input={"title": "Async fixture"}),
+                        self.row(source_group=unrelated, split=other, input={"title": "Unrelated fixture"})]
+                code, report, stderr = self.run_validator(rows)
+                self.assertEqual(code, 0, stderr)
+                self.assertEqual(report["n_accepted"], 3)
+                self.assertEqual(report["straddling_source_groups"], [])
+                self.assertEqual(report["unique_source_groups_per_split"], {"train": 1, "dev": 1})
+                self.assertEqual(self.read("accepted.jsonl"), rows)
+
+    def test_quarantined_licensed_sibling_does_not_straddle_accepted_side(self):
+        sync = "licensed/workshopper/learnyounode/my_first_io"
+        asynchronous = "licensed/workshopper/learnyounode/my_first_async_io"
+        for side in ("train", "dev"):
+            with self.subTest(side=side):
+                rows = [self.row(source_group=sync, split="quarantine", input={"title": "Quarantine fixture"},
+                                 heldout_check={"overlap": "quarantined", "near_duplicate": {
+                                     "status": "quarantined", "max_overlap": 0.35, "threshold": 0.5,
+                                     "quarantine_band": 0.2, "nearest_item": "b/pr-beta/objective"}}),
+                        self.row(source_group=asynchronous, split=side, input={"title": "Accepted fixture"})]
+                code, report, stderr = self.run_validator(rows)
+                self.assertEqual(code, 0, stderr)
+                self.assertEqual((report["n_accepted"], report["n_quarantined"]), (1, 1))
+                self.assertEqual(report["straddling_source_groups"], [])
+                self.assertEqual(report["unique_source_groups_per_split"],
+                                 {"train": int(side == "train"), "dev": int(side == "dev")})
+                self.assertEqual(self.read("accepted.jsonl"), rows[1:])
+                self.assertEqual(self.read("quarantine.jsonl")[0]["source_group"], sync)
+
     def test_manifest_binding_and_run_parameters_are_enforced(self):
         stale = self.row(heldout_check={"set_a_manifest": "f" * 64})
         code, report, _ = self.run_validator([stale])

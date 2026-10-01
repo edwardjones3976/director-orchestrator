@@ -1654,6 +1654,51 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
         self.assertFalse(self.out.exists())
         self.assertFalse((self.root / "receipts").exists())
 
+    def test_linked_siblings_cannot_cross_splits_before_probe_or_any_output(self):
+        asynchronous = self.scenario("my_first_async_io")
+        (self.root / "old-admission.json").write_bytes((self.root / "admission.json").read_bytes())
+        asynchronous["source_provenance"]["admission_ref"] = "old-admission.json"
+        self.allowed_slugs = self.unused_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs)
+        self.write_evidence()
+        sync = self.scenario("my_first_io")
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            for train, dev in ((sync, asynchronous), (asynchronous, sync)):
+                rows = json.loads(json.dumps([train, dev]))
+                rows[1]["split"] = "dev"
+                original = json.loads(json.dumps(rows))
+                with self.subTest(train=train["source_group"]), patch.object(
+                        generate_rows, "fail", wraps=generate_rows.fail) as failure, self.assertRaises(SystemExit):
+                    self.generate(rows, dry_run=False)
+                self.assertIn("one verified source group cannot straddle train and dev", failure.call_args.args[0])
+                self.assertEqual(rows, original)
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_linked_siblings_same_side_keep_raw_groups_and_allow_unrelated_opposite_side(self):
+        asynchronous = self.scenario("my_first_async_io")
+        (self.root / "old-admission.json").write_bytes((self.root / "admission.json").read_bytes())
+        asynchronous["source_provenance"]["admission_ref"] = "old-admission.json"
+        self.allowed_slugs = self.unused_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs)
+        self.write_evidence()
+        rows = [self.scenario("my_first_io"), asynchronous, self.scenario("http_client")]
+        rows[2]["split"] = "dev"
+        original = json.loads(json.dumps(rows))
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate(rows), {"dry_run": True, "rows": 0, "receipts": 0})
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertEqual(rows, original)
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
     def test_cross_batch_sources_refused_before_probe_even_if_evidence_lists_them(self):
         self.admission["suitable"] = sorted(generate_rows.LEARNYOUNODE_SOURCES | self.unused_sources)
         with patch.object(generate_rows, "github_chronology") as github, \
