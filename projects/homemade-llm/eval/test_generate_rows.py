@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
@@ -13,7 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate_rows  # noqa: E402
@@ -552,6 +553,155 @@ class GenerateRowsTests(unittest.TestCase):
                          training[0]["content"] + generate_rows.local_transport.QWEN3_PROMPT)
         self.assertEqual(receipt["prompt_sha256"],
                          hashlib.sha256(json.dumps(sent, sort_keys=True).encode()).hexdigest())
+
+
+    def quote_options(self, bad_stage=None):
+        options = self.local_options()
+        scenario = self.default_scenario()
+        context = scenario["input"]["context"][0]
+        self.quote_calls = []
+        def respond(method, url, body, timeout, *, capture):
+            index = len(self.quote_calls)
+            if index == 1:
+                receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text())
+                self.assertEqual(receipt["stages"][0]["status"], "completed")
+                self.assertNotIn("target", receipt)
+            self.quote_calls.append(body)
+            output = {"quotes": [{"source_ref": context["source_ref"], "quote": context["text"]}]} if index == 0 else TARGET
+            if bad_stage == index:
+                output = {"quotes": [{"source_ref": context["source_ref"], "quote": "unsupported quote"}]} if index == 0 else {}
+            response = {"id": f"quote-stage-{index}", "model": "qwen-local",
+                "usage": {"completion_tokens": 40}, "choices": [{"finish_reason": "stop",
+                "message": {"content": json.dumps(output)}}]}
+            capture.update(request_bytes=json.dumps(body, allow_nan=False).encode(),
+                           response_bytes=json.dumps(response, indent=2).encode(), http_status=200)
+            return response
+        self.local_http.side_effect = respond
+        return options, scenario
+
+    def test_quote_teacher_has_two_raw_bound_stages_and_original_student_input(self):
+        options, scenario = self.quote_options()
+        self.assertEqual(self.generate_local(options, scenario, quote_first=True)["rows"], 1)
+        self.assertEqual(len(self.quote_calls), 2)
+        self.assertEqual(set(self.quote_calls[1]["response_format"]["json_schema"]["schema"]["properties"]), set(TARGET))
+        row = json.loads(self.out.read_text())
+        self.assertEqual(row["input"], scenario["input"])
+        receipt = json.loads((self.root / row["receipt_ref"]).read_text())
+        self.assertEqual(receipt["protocol"], "source-quotes/v1")
+        self.assertEqual([s["name"] for s in receipt["stages"]], ["extract", "map"])
+        for body, stage in zip(self.quote_calls, receipt["stages"]):
+            self.assertEqual(bytes.fromhex(stage["request_bytes_hex"]), json.dumps(body).encode())
+            self.assertEqual(json.loads(bytes.fromhex(stage["response_bytes_hex"])), stage["response"])
+        self.assertNotEqual(receipt["prompt_sha256"], receipt["student_prompt_sha256"])
+        self.assertEqual(receipt["student_prompt_sha256"], generate_rows._json_hash(generate_rows.prompt_template.render_messages(row["input"])))
+        self.assertEqual(row["receipt_sha256"], hashlib.sha256((self.root / row["receipt_ref"]).read_bytes()).hexdigest())
+
+    def test_quote_missing_or_ambiguous_source_spans_are_refused(self):
+        item = {"context": [{"source_ref": "wo.md", "text": "one obligation. one obligation."}]}
+        for entry in ({"source_ref": "wo.md", "quote": "missing"},
+                      {"source_ref": "unknown.md", "quote": "one obligation."},
+                      {"source_ref": "wo.md", "quote": "one obligation."},
+                      {"source_ref": "wo.md", "quote": "one obligation.", "start": 0}):
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                generate_rows._located_quotes(item, {"quotes": [entry]})
+        unique = {"context": [{"source_ref": "wo.md", "text": "prefix α obligation suffix"}]}
+        located = generate_rows._located_quotes(unique, {"quotes": [{"source_ref": "wo.md", "quote": "α obligation"}]})
+        self.assertEqual((located[0]["start"], located[0]["end"]), (7, 19))
+
+    def test_quote_stage_failures_preserve_first_stage_and_do_not_retry_or_emit(self):
+        options, scenario = self.quote_options(bad_stage=0)
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, scenario, quote_first=True)
+        self.assertEqual(len(self.quote_calls), 1)
+        first = json.loads(next(options["receipts_dir"].glob("*.json")).read_text())
+        self.assertEqual((first["status"], first["stages"][0]["status"]), ("failed", "failed"))
+        self.assertFalse(self.out.exists())
+        # Same configured mock changes only the failure phase; this is a new offline attempt.
+        self.quote_calls.clear()
+        def bad_mapping(method, url, body, timeout, *, capture):
+            index = len(self.quote_calls)
+            self.quote_calls.append(body)
+            context = scenario["input"]["context"][0]
+            answer = {"quotes": [{"source_ref": context["source_ref"], "quote": context["text"]}]} if index == 0 else {}
+            response = {"id": str(index), "model": "qwen-local", "usage": {},
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer)}}]}
+            capture.update(request_bytes=json.dumps(body).encode(), response_bytes=json.dumps(response).encode(), http_status=200)
+            return response
+        self.local_http.side_effect = bad_mapping
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, scenario, quote_first=True)
+        records = [json.loads(p.read_text()) for p in options["receipts_dir"].glob("*.json")]
+        second = next(r for r in records if len(r["stages"]) == 2)
+        self.assertEqual([s["status"] for s in second["stages"]], ["completed", "failed"])
+        self.assertEqual(second["status"], "failed")
+        self.assertEqual(len(self.quote_calls), 2)
+        self.assertFalse(self.out.exists())
+
+    def test_quote_mapping_preparation_failure_is_recorded_before_second_contact(self):
+        options, scenario = self.quote_options()
+        original = generate_rows._teacher_messages
+        def oversized(item, model, quotes=None):
+            messages = original(item, model, quotes)
+            if quotes is not None:
+                messages[1]["content"] = "x" * (generate_rows.MAX_PACKET_BYTES + 1)
+            return messages
+        with patch.object(generate_rows, "_teacher_messages", side_effect=oversized), self.assertRaises(SystemExit):
+            self.generate_local(options, scenario, quote_first=True)
+        self.assertEqual(len(self.quote_calls), 1)
+        receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text())
+        self.assertEqual([s["status"] for s in receipt["stages"]], ["completed", "failed"])
+        self.assertNotIn("request", receipt["stages"][1])
+        self.assertFalse(self.out.exists())
+
+    def test_quote_chain_readback_rejects_mutated_offsets_bytes_order_or_target(self):
+        options, scenario = self.quote_options()
+        self.generate_local(options, scenario, quote_first=True)
+        row = json.loads(self.out.read_text())
+        path = self.root / row["receipt_ref"]
+        original = path.read_bytes()
+        def changed_quote(r): r["located_quotes"][0]["start"] += 1
+        def changed_bytes(r): r["stages"][0]["response_bytes_hex"] = b'{}'.hex()
+        def changed_order(r): r["stages"].reverse()
+        def changed_target(r): r["stages"][1]["output"]["constraints"] = ["invented"]
+        def changed_time(r): r["stages"][1]["start_utc"] = "2026-09-01T00:00:00Z"
+        def changed_usage(r): r["usage"]["completion_tokens"] = 999
+        for mutate in (changed_quote, changed_bytes, changed_order, changed_target, changed_time, changed_usage):
+            record = json.loads(original)
+            mutate(record)
+            path.write_text(json.dumps(record))
+            with self.subTest(mutation=mutate.__name__), self.assertRaises(SystemExit):
+                generate_rows.local_receipt_hash(generate_rows.DispatchResult(json.dumps(row["target"]), path, row["source_model"]),
+                                                  scenario, row["target"], UTC)
+        path.write_bytes(original)
+
+    def test_quote_dry_run_and_cloud_refusal_make_no_request_or_receipt(self):
+        options = self.local_options()
+        self.assertEqual(self.generate_local(options, quote_first=True, dry_run=True), {"dry_run": True, "rows": 0, "receipts": 0})
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+        self.assertFalse(options["receipts_dir"].exists())
+        with self.assertRaises(SystemExit):
+            self.generate([self.default_scenario()], quote_first=True, dry_run=True)
+        self.assertFalse(self.out.exists())
+
+    def test_http_optional_capture_preserves_wire_bytes_without_network(self):
+        raw = b'{ "ok": true }\n'
+        connection = MagicMock()
+        response = connection.getresponse.return_value.__enter__.return_value
+        response.status = 200
+        response.read.return_value = raw
+        capture = {}
+        with patch.object(generate_rows.local_transport.http.client, "HTTPConnection", return_value=connection):
+            self.assertEqual(generate_rows.local_transport.http_json("POST", "http://127.0.0.1:1234/v1", {"probe": True}, 30, capture=capture), {"ok": True})
+        self.assertEqual(capture, {"request_bytes": b'{"probe": true}', "response_bytes": raw, "http_status": 200})
+        self.assertEqual(connection.request.call_args.kwargs["body"], capture["request_bytes"])
+        response.status = 503
+        failed_capture = {}
+        with patch.object(generate_rows.local_transport.http.client, "HTTPConnection", return_value=connection), self.assertRaises(ValueError):
+            generate_rows.local_transport.http_json("POST", "http://127.0.0.1:1234/v1", {"probe": True}, 30, capture=failed_capture)
+        self.assertEqual(failed_capture["response_bytes"], raw)
+        self.assertEqual(failed_capture["http_status"], 503)
+
 
     def test_local_dry_run_never_probes_or_writes(self):
         options = self.local_options()
@@ -1151,3 +1301,5 @@ if __name__ == "__main__":
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:13 UTC | END]]
