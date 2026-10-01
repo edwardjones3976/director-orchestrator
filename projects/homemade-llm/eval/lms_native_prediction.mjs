@@ -109,20 +109,23 @@ function rawConfig(value) {
 }
 
 // Injection exists for offline assertions. A mock outcome cannot qualify a live route.
-export async function predictNative(input, {dryRun = false, sdkLoader = loadPinnedSdk} = {}) {
+export async function predictNative(input, {dryRun = false, sdkLoader = loadPinnedSdk, absoluteDeadline = Infinity, ownedInstanceReference} = {}) {
   const started = performance.now();
   const request = validateNativeRequest(input);
   const evidence = {protocol: request.protocol, status: 'DRY_RUN',
     requestSha256: hash(JSON.stringify(request)), messagesSha256: hash(JSON.stringify(request.messages)),
     schemaSha256: hash(JSON.stringify(request.schema)), messageCount: request.messages.length,
     inferenceCalls: 0, sdkProvenance: UNKNOWN, server: UNKNOWN,
+    requestedPredictionConfig: {temperature: request.temperature, maxTokens: request.maxOutput,
+      enableThinking: request.enableThinking, contextOverflowPolicy: 'stopAtLimit',
+      structured: {type: 'json', jsonSchema: request.schema}},
     predictionConfig: {state: UNKNOWN, value: null}, loadConfig: {state: UNKNOWN, value: null},
     templateSnapshot: {state: UNKNOWN, finalWireBinding: UNKNOWN},
     effectiveSampler: UNKNOWN, generationAdmission: false,
     cleanup: {cancellationRequested: false, clientDisposal: UNKNOWN, backendStopped: UNKNOWN,
       parentProcessContained: UNKNOWN, ownedAliasUnloaded: UNKNOWN}};
   if (dryRun) return snapshot(evidence);
-  const end = started + request.deadlineMs;
+  const end = Math.min(started + request.deadlineMs, absoluteDeadline);
   const controller = new AbortController();
   let client, prediction, stage = 'sdk_setup', timedOut = false, terminal = false;
   let rejectExpiry;
@@ -160,7 +163,7 @@ export async function predictNative(input, {dryRun = false, sdkLoader = loadPinn
     assert.deepEqual(evidence.server, request.expectedServer, 'server version drift');
     const aliasHandle = await bounded('alias_handle', () => client.llm.createDynamicHandle({identifier: request.alias}));
     const initial = await bounded('alias_identity', () => aliasHandle.getModelInfo());
-    assertIdentity(initial, request);
+    assertIdentity(initial, request, ownedInstanceReference);
     evidence.initialModel = snapshot(initial);
     assert.equal(typeof client.llm.createDynamicHandleFromInstanceReference, 'function', 'public pinned handle missing');
     const pinned = await bounded('pinned_handle', () =>
@@ -189,6 +192,9 @@ export async function predictNative(input, {dryRun = false, sdkLoader = loadPinn
     evidence.loadConfig = rawConfig(result.loadConfig);
     evidence.returnedModel = result.modelInfo === undefined ? UNKNOWN : snapshot(result.modelInfo);
     evidence.stats = result.stats === undefined ? UNKNOWN : snapshot(result.stats);
+    evidence.roundIndex = result.roundIndex === undefined ? UNKNOWN : result.roundIndex;
+    evidence.reasoningContent = result.reasoningContent === undefined ? UNKNOWN : result.reasoningContent;
+    evidence.nonReasoningContent = result.nonReasoningContent === undefined ? UNKNOWN : result.nonReasoningContent;
     assertIdentity(result.modelInfo, request, initial.instanceReference);
     assert.equal(result.roundIndex, 0);
     assert.ok(['eosFound', 'stopStringFound'].includes(result.stats?.stopReason), 'incomplete prediction');
@@ -237,3 +243,96 @@ export async function predictNative(input, {dryRun = false, sdkLoader = loadPinn
   return snapshot(evidence);
 }
 // [[OpenAI Codex | GPT-6 | 2026-10-01 | 21:58 UTC | END]]
+
+// One owned load/prediction/unload. Injection is exclusively an offline library test seam.
+// Public unload is alias based: identity checks are observations, not an atomic guarantee.
+export async function predictOwnedNative(input, {dryRun = false, sdkLoader = loadPinnedSdk} = {}) {
+  const started = performance.now();
+  const request = validateNativeRequest(input);
+  if (dryRun) return predictNative(request, {dryRun: true, sdkLoader});
+  const end = Math.min(started + request.deadlineMs,
+    request.generationDeadlineUnixMs === undefined ? Infinity : started + Math.max(0, request.generationDeadlineUnixMs - Date.now()));
+  const ac = new AbortController();
+  let client, owned, loaded = false, stage = 'owned_setup';
+  let outcome = {protocol: request.protocol, status: 'REFUSED', inferenceCalls: 0};
+  const lifecycle = {loadCalls: 0, unloadCalls: 0, ownedInstance: UNKNOWN,
+    ownedAliasUnloaded: UNKNOWN, backendStopped: UNKNOWN, clientDisposal: UNKNOWN,
+    requestedLoadConfig: {contextLength: 8192, gpu: {ratio: 'max'}}};
+  async function bounded(name, factory, deadline = end) {
+    stage = name;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error('deadline');
+    let timer;
+    try {
+      return await Promise.race([Promise.resolve().then(factory), new Promise((_, reject) => {
+        timer = setTimeout(() => {ac.abort(); reject(new Error('deadline'));}, remaining);
+      })]);
+    } finally { clearTimeout(timer); }
+  }
+  try {
+    const pinnedSdk = await bounded('owned_setup', () => sdkLoader(request.sdkEntryUrl));
+    assert.equal(pinnedSdk.version, SDK_PIN.version);
+    assert.equal(pinnedSdk.entrySha256, SDK_PIN.entrySha256);
+    assert.equal(pinnedSdk.packageSha256, SDK_PIN.packageSha256);
+    client = new pinnedSdk.sdk.LMStudioClient({baseUrl: request.baseUrl, verboseErrorMessages: false,
+      logger: {info() {}, warn() {}, error() {}, debug() {}}});
+    assert.deepEqual(await bounded('owned_version', () => client.system.getLMStudioVersion()), request.expectedServer);
+    assert.deepEqual(await bounded('owned_inventory', () => client.llm.listLoaded()), []);
+    assert.deepEqual(await bounded('owned_embedding_inventory', () => client.embedding.listLoaded()), []);
+    const catalog = await bounded('owned_catalog', () => client.system.listDownloadedModels('llm'));
+    const matches = catalog.filter(info => info.modelKey === request.expectedModel.modelKey &&
+      info.path === request.expectedModel.path && info.sizeBytes === request.expectedModel.sizeBytes);
+    assert.equal(matches.length, 1, 'catalog artifact identity');
+    assert.ok(matches[0].deviceIdentifier == null, 'local catalog only');
+    const handle = await bounded('owned_load', () => {
+      lifecycle.loadCalls++;
+      return client.llm.load(request.expectedModel.modelKey, {identifier: request.alias,
+        deviceIdentifier: null, config: lifecycle.requestedLoadConfig, signal: ac.signal, verbose: false});
+    });
+    loaded = true;
+    owned = await bounded('owned_loaded_identity', () => handle.getModelInfo());
+    assertIdentity(owned, request);
+    assert.ok(owned.deviceIdentifier == null, 'local instance only');
+    lifecycle.ownedInstance = snapshot(owned);
+    outcome = JSON.parse(JSON.stringify(await predictNative(request, {sdkLoader: async () => pinnedSdk, absoluteDeadline: end, ownedInstanceReference: owned.instanceReference})));
+    if (outcome.returnedModel !== undefined && outcome.returnedModel !== UNKNOWN)
+      assertIdentity(outcome.returnedModel, request, owned.instanceReference);
+  } catch {
+    outcome.status = performance.now() >= end ? 'TIMEOUT' : 'REFUSED';
+    outcome.failureStage = stage;
+    ac.abort();
+  } finally {
+    // A separate bounded cleanup reserve. Timeout/late load cannot imply ownership.
+    const cleanupEnd = performance.now() + 15000;
+    try {
+      if (client && owned) {
+        const alias = client.llm.createDynamicHandle({identifier: request.alias});
+        const current = await bounded('owned_cleanup_identity', () => alias.getModelInfo(), cleanupEnd);
+        assertIdentity(current, request, owned.instanceReference);
+        assert.ok(current.deviceIdentifier == null, 'local cleanup only');
+        await bounded('owned_unload', () => {
+          lifecycle.unloadCalls++;
+          return client.llm.unload(request.alias, {deviceIdentifier: null});
+        }, cleanupEnd);
+        const remaining = await bounded('owned_absence', () => client.llm.listLoaded(), cleanupEnd);
+        const infos = await bounded('owned_absence_identity', () => Promise.all(remaining.map(h => h.getModelInfo())), cleanupEnd);
+        assert.ok(!infos.some(info => info.identifier === request.alias || info.instanceReference === owned.instanceReference));
+        lifecycle.ownedAliasUnloaded = 'ABSENCE_OBSERVED';
+      } else if (client && !loaded && lifecycle.loadCalls === 0) {
+        lifecycle.ownedAliasUnloaded = 'NO_LOAD_ATTEMPTED';
+      }
+    } catch { lifecycle.ownedAliasUnloaded = UNKNOWN; }
+    try {
+      if (client && typeof client[Symbol.asyncDispose] === 'function') {
+        await bounded('owned_disposal', () => client[Symbol.asyncDispose](), cleanupEnd);
+        lifecycle.clientDisposal = 'CONNECTIONS_CLOSED';
+      }
+    } catch { lifecycle.clientDisposal = UNKNOWN; }
+  }
+  outcome.lifecycle = lifecycle;
+  if (lifecycle.ownedAliasUnloaded !== 'ABSENCE_OBSERVED' || lifecycle.clientDisposal !== 'CONNECTIONS_CLOSED') {
+    if (outcome.status === 'NATIVE_COMPLETED') outcome.status = 'CLEANUP_UNKNOWN';
+    delete outcome.content;
+  }
+  return snapshot(outcome);
+}
