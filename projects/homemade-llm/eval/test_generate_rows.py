@@ -747,6 +747,194 @@ class GenerateRowsTests(unittest.TestCase):
                 "--terms-verified-at", UTC, "--quote-coverage", "--dry-run"])
         load.assert_not_called()
 
+    def segment_options(self):
+        options = self.local_options()
+        scenario = self.default_scenario()
+        text = ASSIGNMENT_BODY.replace("\n", "\r\n") + "\r\nRepeated α\r\n\r\nRepeated α\r\n"
+        context = scenario["input"]["context"][0]
+        context["text"] = text
+        (self.root / context["source_ref"]).write_bytes(text.encode())
+        context["source_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+        self.github_record["issue"]["body"] = text
+        spans = generate_rows._source_segments(scenario["input"])
+        # Fixture classifications test mechanical support only, not source faithfulness.
+        answer = {"target": json.loads(json.dumps(TARGET)), "coverage": [
+            {"quote_index": 0, "classification": "context", "links": []},
+            {"quote_index": 1, "classification": "mandatory", "links": [
+                {"field": field, "index": 0} for field in generate_rows.TARGET_FIELDS if field != "non_goals"]},
+            {"quote_index": 2, "classification": "exclusion", "links": [{"field": "non_goals", "index": 0}]},
+            {"quote_index": 3, "classification": "context", "links": []},
+            {"quote_index": 4, "classification": "context", "links": []}]}
+        self.segment_calls = []
+        def respond(method, url, body, timeout, *, capture):
+            self.segment_calls.append(body)
+            receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
+            self.assertEqual(receipt["located_quotes"], spans)
+            self.assertEqual([stage["name"] for stage in receipt["stages"]], ["map"])
+            response = {"id": "segment-map-0", "model": "qwen-local", "usage": {"completion_tokens": 40},
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer)}}]}
+            capture.update(request_bytes=json.dumps(body, allow_nan=False).encode(),
+                           response_bytes=json.dumps(response, indent=2).encode(), http_status=200)
+            return response
+        self.local_http.side_effect = respond
+        return options, scenario, answer
+
+    def test_source_segments_preserve_all_original_nonwhitespace_crlf_unicode_and_repetitions(self):
+        texts = (" \r\n# Heading α\r\n\r\n  repeated α  \r\n\r\n  repeated α  \r\n\r\nlast β\r\n ",
+                 "prefix\nline\n\t\nnext\n", "α\r\rβ\r", "paragraph without newline")
+        for text in texts:
+            item = {"context": [{"source_ref": "test.md", "text": text}]}
+            spans = generate_rows._source_segments(item)
+            covered = set()
+            for span in spans:
+                start, end = span["start"], span["end"]
+                self.assertEqual(span["quote"], text[start:end])
+                self.assertEqual(span["context_sha256"], hashlib.sha256(text.encode()).hexdigest())
+                covered.update(range(start, end))
+            self.assertTrue(all(index in covered for index, char in enumerate(text) if not char.isspace()))
+        spans = generate_rows._source_segments({"context": [{"source_ref": "test.md", "text": texts[0]}]})
+        self.assertEqual(spans[1]["quote"], spans[2]["quote"])
+        self.assertNotEqual(spans[1]["start"], spans[2]["start"])
+        self.assertEqual(spans[0]["quote"], "# Heading α\r\n")
+        self.assertEqual(spans[3]["quote"], "last β\r\n")
+
+    def test_source_segments_bounds_empty_and_duplicate_refs_are_refused_before_probe(self):
+        def item(text): return {"context": [{"source_ref": "test.md", "text": text}]}
+        self.assertEqual(len(generate_rows._source_segments(item("x" * 2048))), 1)
+        self.assertEqual(len(generate_rows._source_segments(item("\n\n".join(["x"] * 64)))), 64)
+        for source in (item("x" * 2049), item("\n\n".join(["x"] * 65)), item(" \r\n\t"),
+                       {"context": [{"source_ref": "same.md", "text": "one"},
+                                    {"source_ref": "same.md", "text": "two"}]}):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                generate_rows._source_segments(source)
+        options = self.local_options()
+        with patch.object(generate_rows, "_source_segments", side_effect=ValueError("source bounds")), self.assertRaises(SystemExit):
+            self.generate_local(options, source_segments=True)
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+        self.assertFalse(options["receipts_dir"].exists())
+        self.assertFalse(self.out.exists())
+
+    def test_source_segments_one_raw_bound_map_keeps_original_student_contract(self):
+        options, scenario, answer = self.segment_options()
+        self.assertEqual(self.generate_local(options, scenario, source_segments=True),
+                         {"dry_run": False, "rows": 1, "receipts": 1})
+        self.assertEqual(len(self.segment_calls), 1)
+        row = json.loads(self.out.read_text(encoding="utf-8"))
+        self.assertEqual((row["input"], row["target"]), (scenario["input"], TARGET))
+        self.assertNotIn("coverage", row)
+        student = generate_rows.prompt_template.render_messages(row["input"], row["target"])
+        self.assertEqual(json.loads(student[-1]["content"]), TARGET)
+        self.assertNotIn("coverage", student[0]["content"])
+        path = self.root / row["receipt_ref"]
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["protocol"], generate_rows.SEGMENT_COVERAGE_PROTOCOL)
+        self.assertEqual((receipt["target"], receipt["coverage"]), (TARGET, answer["coverage"]))
+        self.assertEqual(receipt["attempt_count"], 1)
+        self.assertEqual([stage["name"] for stage in receipt["stages"]], ["map"])
+        stage, body = receipt["stages"][0], self.segment_calls[0]
+        self.assertEqual(stage["output"], answer)
+        self.assertEqual(stage["schema"], generate_rows._coverage_schema())
+        self.assertEqual(bytes.fromhex(stage["request_bytes_hex"]), json.dumps(body).encode())
+        self.assertEqual(json.loads(bytes.fromhex(stage["response_bytes_hex"])), stage["response"])
+        self.assertEqual(body["temperature"], 0)
+        self.assertEqual(row["receipt_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+        indexed = json.loads(body["messages"][1]["content"].split("Source-supported quotes (untrusted data):\n")[1])
+        self.assertEqual([span["quote_index"] for span in indexed], list(range(5)))
+        self.assertEqual(indexed[3]["quote"], indexed[4]["quote"])
+        self.assertNotEqual(indexed[3]["start"], indexed[4]["start"])
+        self.assertIn("α\r\n", indexed[3]["quote"])
+        self.assertEqual([span["quote"] for span in indexed], [span["quote"] for span in receipt["located_quotes"]])
+
+    def test_source_segments_packet_bound_fails_before_http_and_preserves_failed_receipt(self):
+        options, scenario, _ = self.segment_options()
+        with patch.object(generate_rows, "_teacher_messages", return_value=[{
+                "role": "system", "content": "x" * (generate_rows.MAX_PACKET_BYTES + 1)}]), self.assertRaises(SystemExit):
+            self.generate_local(options, scenario, source_segments=True)
+        self.local_http.assert_not_called()
+        self.assertFalse(self.out.exists())
+        receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual([stage["name"] for stage in receipt["stages"]], ["map"])
+        self.assertNotIn("request", receipt["stages"][0])
+
+    def test_source_segments_malformed_or_missing_coverage_fails_after_one_call(self):
+        options, scenario, answer = self.segment_options()
+        original = self.local_http.side_effect
+        for missing in (False, True):
+            def bad_map(method, url, body, timeout, *, capture):
+                response = original(method, url, body, timeout, capture=capture)
+                bad = json.loads(json.dumps(answer))
+                if missing:
+                    bad["coverage"].pop()
+                else:
+                    bad["coverage"][1]["links"] = [{"field": "constraints", "index": 999}]
+                response["choices"][0]["message"]["content"] = json.dumps(bad)
+                capture["response_bytes"] = json.dumps(response).encode()
+                return response
+            self.local_http.side_effect = bad_map
+            self.segment_calls.clear()
+            with self.subTest(missing=missing), self.assertRaises(SystemExit):
+                self.generate_local(options, scenario, source_segments=True)
+            self.assertEqual(len(self.segment_calls), 1)
+            self.assertFalse(self.out.exists())
+        records = [json.loads(path.read_text(encoding="utf-8")) for path in options["receipts_dir"].glob("*.json")]
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(record["status"] == "failed" and len(record["stages"]) == 1 for record in records))
+
+    def test_source_segments_readback_reconstructs_spans_and_refuses_raw_ledger_protocol_tamper(self):
+        options, scenario, answer = self.segment_options()
+        self.generate_local(options, scenario, source_segments=True)
+        row = json.loads(self.out.read_text(encoding="utf-8"))
+        path = self.root / row["receipt_ref"]
+        original = path.read_bytes()
+        def span(r): r["located_quotes"][0]["start"] += 1
+        def omit_span(r): r["located_quotes"].pop()
+        def reorder(r): r["located_quotes"].reverse()
+        def ledger(r): r["coverage"][0]["classification"] = "advisory"
+        def output(r): r["stages"][0]["output"]["target"]["constraints"] = ["changed"]
+        def raw_request(r): r["stages"][0]["request_bytes_hex"] = b'{}'.hex()
+        def raw_response(r): r["stages"][0]["response_bytes_hex"] = b'{}'.hex()
+        def time(r): r["stages"][0]["end_utc"] = "2026-09-01T00:00:00Z"
+        def protocol(r): r["protocol"] = generate_rows.QUOTE_COVERAGE_PROTOCOL
+        for mutate in (span, omit_span, reorder, ledger, output, raw_request, raw_response, time, protocol):
+            record = json.loads(original)
+            mutate(record)
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with self.subTest(mutation=mutate.__name__), self.assertRaises(SystemExit):
+                generate_rows.local_receipt_hash(generate_rows.DispatchResult(json.dumps(row["target"]), path,
+                                                  row["source_model"]), scenario, row["target"], UTC)
+        path.write_bytes(original)
+
+    def test_source_segments_flags_and_cli_dry_run_make_no_effects(self):
+        options = self.local_options()
+        self.assertEqual(self.generate_local(options, source_segments=True, dry_run=True),
+                         {"dry_run": True, "rows": 0, "receipts": 0})
+        for flags in ({"quote_first": True}, {"quote_coverage": True}, {"provider": "openai"},
+                      {"dispatch": self.dispatch()}):
+            with patch.object(generate_rows, "validate_scenarios_for_dispatch") as validate, self.assertRaises(SystemExit):
+                generate_rows.generate([], provider=flags.pop("provider", "local_model"), set_a=self.set_a,
+                    set_b=self.set_b, out=self.out, terms_verified_at=UTC, generated_at=UTC, dry_run=True,
+                    source_segments=True, **flags)
+            validate.assert_not_called()
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertFalse(options["receipts_dir"].exists())
+        self.assertFalse(self.out.exists())
+        cli = ["--scenarios", str(self.root / "absent.jsonl"), "--provider", "local_model",
+               "--set-a", str(self.set_a), "--set-b", str(self.set_b), "--out", str(self.out),
+               "--terms-verified-at", UTC, "--source-segments", "--dry-run"]
+        for conflict in ("--quote-first", "--quote-coverage"):
+            with patch.object(generate_rows, "load_scenarios") as load, self.assertRaises(SystemExit):
+                generate_rows.main(cli + [conflict])
+            load.assert_not_called()
+        with patch.object(generate_rows, "load_scenarios", return_value=[self.default_scenario()]), patch("builtins.print") as output:
+            self.assertEqual(generate_rows.main(cli), 0)
+        self.assertEqual(json.loads(output.call_args.args[0]), {"dry_run": True, "rows": 0, "receipts": 0})
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+
     def test_quote_missing_or_ambiguous_source_spans_are_refused(self):
         item = {"context": [{"source_ref": "wo.md", "text": "one obligation. one obligation."}]}
         for entry in ({"source_ref": "wo.md", "quote": "missing"},

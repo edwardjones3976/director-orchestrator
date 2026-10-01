@@ -1,6 +1,6 @@
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
-"""M2-G1: bounded admitted local dispatch; opt-in quote-first uses two stages.
+"""M2-G1: bounded admitted local dispatch; opt-in teachers use one or two stages.
 
 A dry run checks source chronology and the held-out folders, then writes
 nothing and makes no inference call or model probe. GitHub chronology still
@@ -756,6 +756,7 @@ def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Pat
 
 QUOTE_PROTOCOL = "source-quotes/v1"
 QUOTE_COVERAGE_PROTOCOL = "source-quotes-coverage/v1"
+SEGMENT_COVERAGE_PROTOCOL = "source-segments-coverage/v1"
 QUOTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quotes"],
     "properties": {"quotes": {"type": "array", "minItems": 1, "maxItems": 64, "items": {
         "type": "object", "additionalProperties": False, "required": ["source_ref", "quote"],
@@ -792,6 +793,37 @@ def _located_quotes(item: dict[str, Any], extraction: dict[str, Any]) -> list[di
                             context_sha256=local_transport.sha256(text.encode("utf-8"))))
         seen.add((ref, quote))
     return located
+
+
+def _source_segments(item):
+    """Exact original nonempty paragraphs; blank-line gaps contain whitespace only."""
+    # ponytail: paragraphs can mix clause types; use finer source spans if independent grading exposes loss.
+    segments, seen = [], set()
+    for context in item["context"]:
+        ref, text = context["source_ref"], context["text"]
+        if ref in seen:
+            raise ValueError("ambiguous source_ref")
+        seen.add(ref)
+        spans, start, offset = [], None, 0
+        for line in text.splitlines(keepends=True):
+            if line.strip():
+                if start is None:
+                    start = offset
+            elif start is not None:
+                spans.append((start, offset))
+                start = None
+            offset += len(line)
+        if start is not None:
+            spans.append((start, offset))
+        for start, end in spans:
+            quote = text[start:end]
+            if len(quote) > 2048 or len(segments) >= 64:
+                raise ValueError("original source segments exceed count or text bounds")
+            segments.append(dict(source_ref=ref, quote=quote, start=start, end=end,
+                                 context_sha256=local_transport.sha256(text.encode("utf-8"))))
+    if not segments:
+        raise ValueError("original context has no nonempty source segment")
+    return segments
 
 
 def _coverage_schema():
@@ -884,9 +916,13 @@ def _json_hash(value):
     return local_transport.sha256(json.dumps(value, sort_keys=True).encode("utf-8"))
 
 
-def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, timeout, max_output, coverage=False):
-    """Two bounded calls, one exclusively reserved attempt; never repair or retry."""
-    record = {**prepared, "provider": "local_model", "protocol": QUOTE_COVERAGE_PROTOCOL if coverage else QUOTE_PROTOCOL,
+def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, timeout, max_output,
+                   coverage=False, segments=False):
+    """One segment-map or two quote calls, one reserved attempt; never repair or retry."""
+    quotes = _source_segments(scenario["input"]) if segments else None
+    coverage = coverage or segments
+    protocol = SEGMENT_COVERAGE_PROTOCOL if segments else QUOTE_COVERAGE_PROTOCOL if coverage else QUOTE_PROTOCOL
+    record = {**prepared, "provider": "local_model", "protocol": protocol,
         "purpose": purpose, "terms_verified_at": verified_at, "input": scenario["input"],
         "source_group": scenario["source_group"], "source_provenance": scenario["source_provenance"],
         "temperature": 0, "api_cost_usd": 0, "local_compute": "not metered as API spend",
@@ -913,9 +949,11 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
     with handle:
         try:
             persist()
-            quotes = None
+            if segments:
+                record["located_quotes"] = quotes
             target_schema = _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"]
-            for index, (name, schema) in enumerate((("extract", QUOTE_SCHEMA), ("map", target_schema))):
+            stages = (("map", target_schema),) if segments else (("extract", QUOTE_SCHEMA), ("map", target_schema))
+            for index, (name, schema) in enumerate(stages):
                 start = record["start_utc"] if index == 0 else local_transport.utc_now()
                 stage = dict(name=name, status="in_progress", start_utc=start)
                 record["stages"].append(stage)
@@ -934,7 +972,7 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                     stage.update(response=response, response_sha256=_json_hash(response))
                     answer = _local_answer(response, prepared, schema)
                     stage["output"] = answer
-                    if index == 0:
+                    if name == "extract":
                         quotes = _located_quotes(scenario["input"], answer)
                         record["located_quotes"] = quotes
                     else:
@@ -961,7 +999,8 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                 response_model=final["response"].get("model"), usage=final["response"].get("usage"))
         except (OSError, ValueError, KeyError, IndexError, TypeError, local_transport.http.client.HTTPException) as exc:
             record.update(status="failed", error=type(exc).__name__, error_detail=str(exc))
-            fail("teacher inference failed; inspect both-stage receipt before any retry")
+            fail("teacher inference failed; inspect segment-map receipt before any retry" if segments
+                 else "teacher inference failed; inspect both-stage receipt before any retry")
         finally:
             if record["status"] != "completed":
                 record["status"] = "failed"
@@ -972,15 +1011,19 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
 
 def _verify_quote_chain(record, scenario, target):
     stages = record["stages"]
-    if record["attempt_count"] != 1 or len(stages) != 2 or [s["name"] for s in stages] != ["extract", "map"]:
+    segments = record["protocol"] == SEGMENT_COVERAGE_PROTOCOL
+    expected = ["map"] if segments else ["extract", "map"]
+    if record["attempt_count"] != 1 or len(stages) != len(expected) or [s["name"] for s in stages] != expected:
         raise ValueError("invalid teacher stage chain")
-    quotes = _located_quotes(scenario["input"], stages[0]["output"])
+    quotes = (_source_segments(scenario["input"]) if segments
+              else _located_quotes(scenario["input"], stages[0]["output"]))
     if record["located_quotes"] != quotes or record["student_prompt_sha256"] != _json_hash(prompt_template.render_messages(scenario["input"])):
         raise ValueError("stored source quotes or original render changed")
-    coverage = record["protocol"] == QUOTE_COVERAGE_PROTOCOL
-    schemas = (QUOTE_SCHEMA, _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"])
+    coverage = record["protocol"] in {QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}
+    map_schema = _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"]
+    schemas = (map_schema,) if segments else (QUOTE_SCHEMA, map_schema)
     for index, (stage, schema) in enumerate(zip(stages, schemas)):
-        stage_quotes = None if index == 0 else quotes
+        stage_quotes = quotes if segments or index else None
         messages = (_teacher_messages(scenario["input"], record["model"], stage_quotes, coverage=True)
                     if coverage else _teacher_messages(scenario["input"], record["model"], stage_quotes))
         body = _teacher_body(record, messages, schema, stage["request"]["max_tokens"], stage["name"])
@@ -999,18 +1042,19 @@ def _verify_quote_chain(record, scenario, target):
         begin, end = (_source_utc(stage[k], "teacher time") for k in ("start_utc", "end_utc"))
         if begin > end or (index and _source_utc(stages[0]["end_utc"], "extract end") > begin):
             raise ValueError("teacher stage chronology changed")
-    mapped = stages[1]["output"]
+    final = stages[-1]
+    mapped = final["output"]
     mapped_target = _coverage_target(mapped, quotes) if coverage else mapped
     if coverage and record["coverage"] != mapped["coverage"]:
         raise ValueError("stored coverage differs from teacher wire output")
-    if (stages[0]["start_utc"] != record["start_utc"] or _source_utc(stages[1]["end_utc"], "map end") > _source_utc(record["end_utc"], "receipt end")
+    if (stages[0]["start_utc"] != record["start_utc"] or _source_utc(final["end_utc"], "map end") > _source_utc(record["end_utc"], "receipt end")
             or mapped_target != target
-            or record["response_id"] != stages[1]["response"].get("id")
-            or record["response_model"] != stages[1]["response"].get("model")
-            or record["usage"] != stages[1]["response"].get("usage")):
+            or record["response_id"] != final["response"].get("id")
+            or record["response_model"] != final["response"].get("model")
+            or record["usage"] != final["response"].get("usage")):
         raise ValueError("teacher aggregate endpoints or target changed")
     for key in ("prompt_sha256", "schema_sha256", "request_sha256", "response_sha256"):
-        if record[key] != stages[1][key]:
+        if record[key] != final[key]:
             raise ValueError("aggregate does not bind final teacher stage")
     return (_teacher_messages(scenario["input"], record["model"], quotes, coverage=True)
             if coverage else _teacher_messages(scenario["input"], record["model"], quotes))
@@ -1132,7 +1176,7 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
                     < _source_utc(record["start_utc"], "local inference")
                     <= _source_utc(record["end_utc"], "local inference")):
                 fail("local receipt violates licensed-source admission chronology")
-        if record.get("protocol") in {QUOTE_PROTOCOL, QUOTE_COVERAGE_PROTOCOL}:
+        if record.get("protocol") in {QUOTE_PROTOCOL, QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}:
             messages = _verify_quote_chain(record, scenario, target)
         elif "protocol" in record:
             fail("unknown local receipt protocol")
@@ -1140,7 +1184,7 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
             messages = prompt_template.render_messages(scenario["input"])
             if result.model.startswith("Qwen/"):
                 messages[0]["content"] += local_transport.QWEN3_PROMPT
-        schema = (_coverage_schema() if record.get("protocol") == QUOTE_COVERAGE_PROTOCOL
+        schema = (_coverage_schema() if record.get("protocol") in {QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}
                   else _schema_validator().schema["properties"]["target"])
         if (record["prompt_sha256"] != local_transport.sha256(json.dumps(messages, sort_keys=True).encode("utf-8"))
                 or record["schema_sha256"] != local_transport.sha256(json.dumps(schema, sort_keys=True).encode("utf-8"))
@@ -1234,7 +1278,10 @@ def generate(
     source_review_receipts_root: Path | None = None,
     quote_first: bool = False,
     quote_coverage: bool = False,
+    source_segments: bool = False,
 ) -> dict[str, Any]:
+    if source_segments and (quote_first or quote_coverage or provider != "local_model" or dispatch is not None):
+        fail("source-segments requires the native local_model route and no legacy quote flags")
     if quote_coverage and not quote_first:
         fail("quote-coverage requires quote-first")
     if quote_first and (provider != "local_model" or dispatch is not None):
@@ -1261,6 +1308,11 @@ def generate(
             if _source_utc(generated_at, "row generation") <= _source_utc(scenario["source_provenance"]["admitted_at"], "licensed source"):
                 fail("row generation timestamp must follow licensed-source admission")
         exemplar_packet(scenario["input"])  # Preserve the same packet-size bound on every route.
+        if source_segments:
+            try:
+                _source_segments(scenario["input"])
+            except ValueError as exc:
+                fail(str(exc))
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
     if provider != "local_model" and dispatch is None:
@@ -1281,11 +1333,11 @@ def generate(
     validator = _schema_validator()
     rows: list[dict[str, Any]] = []
     for scenario in scenarios:
-        local_caller = quote_dispatch if quote_first else local_dispatch
+        local_caller = quote_dispatch if quote_first or source_segments else local_dispatch
         result = (local_caller(scenario, purpose_for(scenario["source_group"]), prepared,
                                 receipts_dir=receipts_dir, verified_at=terms_verified_at,
                                 timeout=timeout, max_output=max_output,
-                                **({"coverage": True} if quote_coverage else {}))
+                                **({"segments": True} if source_segments else {"coverage": True} if quote_coverage else {}))
                   if provider == "local_model" and dispatch is None
                   else caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"])))
         if not isinstance(result, DispatchResult):
@@ -1351,6 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quote-first", action="store_true", help="Two-stage local teacher; final input/target contract unchanged.")
     parser.add_argument("--quote-coverage", action="store_true", help="Quote-first teacher coverage ledger; not semantic acceptance.")
+    parser.add_argument("--source-segments", action="store_true", help="One local coverage map of exact original paragraphs; no quote extraction.")
     parser.add_argument("--model")
     parser.add_argument("--model-gguf", type=Path)
     parser.add_argument("--conversion-receipt", type=Path)
@@ -1359,6 +1412,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--lms-models-dir", type=Path, default=Path.home() / ".lmstudio" / "models")
     args = parser.parse_args(argv)
+    if args.source_segments and (args.quote_first or args.quote_coverage or args.provider != "local_model"):
+        parser.error("--source-segments requires native local_model and no legacy quote flags")
     if args.quote_coverage and (not args.quote_first or args.provider != "local_model"):
         parser.error("--quote-coverage requires --quote-first and the native local_model route")
     generated_at = args.generated_at or args.terms_verified_at
@@ -1370,7 +1425,7 @@ def main(argv: list[str] | None = None) -> int:
             source_root=args.source_root,
             source_review_receipts_root=args.source_review_receipts_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
-            quote_first=args.quote_first, quote_coverage=args.quote_coverage,
+            quote_first=args.quote_first, quote_coverage=args.quote_coverage, source_segments=args.source_segments,
             local_options={key: getattr(args, key) for key in (
                 "model", "model_gguf", "conversion_receipt", "license_file", "receipts_dir",
                 "base_url", "lms_models_dir")} if args.provider == "local_model" else None,
