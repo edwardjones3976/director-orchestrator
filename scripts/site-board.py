@@ -1,4 +1,3 @@
-# [[Cursor | Auto | 2026-10-01 | 16:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 """Display open work and detect exact repository-relative path conflicts."""
@@ -214,4 +213,3 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | END]]
-# [[Cursor | Auto | 2026-10-01 | 16:54 UTC | END]]
