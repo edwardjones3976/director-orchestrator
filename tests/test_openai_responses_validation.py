@@ -721,6 +721,100 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(1, store.admit.call_count)
         store.settle.assert_not_called()
 
+    def test_integrity_hash_spends_original_packet_and_transport_deadlines(self):
+        from director_orchestrator import provider_validation as module
+        for transport_ceiling, expected_deadline in ((60, 130.0), (20, 120.0)):
+            with self.subTest(transport_ceiling=transport_ceiling):
+                transport, route, admission, store, service = self._mocked_responses_bridge()
+                transport.maximum_timeout_seconds = transport_ceiling
+                admission["configuration_digest"] = route.configuration_digest
+                clock, seen, lookup_remaining = {"now": 100.0}, [], []
+                original_hash = module._hash_runtime
+                def hash_bytes(root):
+                    value = original_hash(root)  # Keep the real byte-integrity operation.
+                    clock["now"] += 10.0
+                    return value
+                def lookup(generation, provider, *, remaining_seconds):
+                    lookup_remaining.append(remaining_seconds())
+                    return admission["configuration_digest"]
+                def send(packet, context=None):
+                    seen.append(context)
+                    raise RuntimeError("stop-after-context")
+                store.expected_configuration_digest.side_effect = lookup
+                transport.send = send
+                previous_scope = module._RUNTIME_SCOPE.get()
+                with (patch.object(module.time, "monotonic", side_effect=lambda: clock["now"]),
+                      patch.object(module, "_hash_runtime", side_effect=hash_bytes) as hashes):
+                    with self.assertRaisesRegex(RuntimeError, "stop-after-context"):
+                        service.run(ValidationRequest(generation=admission["generation"], provider="openai"),
+                                    service.owner_token)
+                self.assertEqual([transport_ceiling - 10.0], lookup_remaining)
+                self.assertEqual(expected_deadline, seen[0].deadline)
+                self.assertEqual(expected_deadline - 110.0, seen[0].timeout_seconds)
+                hashes.assert_called_once()
+                self.assertIs(previous_scope, module._RUNTIME_SCOPE.get())
+                store.settle.assert_not_called()
+
+    def test_integrity_hash_exhausting_transport_refuses_before_admission(self):
+        from director_orchestrator import provider_validation as module
+        transport, route, admission, store, service = self._mocked_responses_bridge()
+        clock = {"now": 100.0}
+        original_hash = module._hash_runtime
+        def hash_bytes(root):
+            value = original_hash(root)
+            clock["now"] += 61.0
+            return value
+        def lookup(generation, provider, *, remaining_seconds):
+            remaining_seconds()  # Real store acquisition checks this before opening a connection.
+            return admission["configuration_digest"]
+        store.expected_configuration_digest.side_effect = lookup
+        previous_scope = module._RUNTIME_SCOPE.get()
+        with (patch.object(module.time, "monotonic", side_effect=lambda: clock["now"]),
+              patch.object(module, "_hash_runtime", side_effect=hash_bytes) as hashes):
+            with self.assertRaisesRegex(ValidationError, "timeout is exhausted"):
+                service.run(ValidationRequest(generation=admission["generation"], provider="openai"),
+                            service.owner_token)
+        hashes.assert_called_once()
+        store.admit.assert_not_called()
+        store.claim_execution.assert_not_called()
+        route.budget_authority.reserve.assert_not_called()
+        transport.send.assert_not_called()
+        store.settle.assert_not_called()
+        store.fail.assert_not_called()
+        self.assertIs(previous_scope, module._RUNTIME_SCOPE.get())
+
+    def test_integrity_hash_exhausting_discovered_packet_refuses_claim_and_paid_send(self):
+        from director_orchestrator import provider_validation as module
+        transport, route, admission, store, service = self._mocked_responses_bridge()
+        clock = {"now": 100.0}
+        original_hash = module._hash_runtime
+        def hash_bytes(root):
+            value = original_hash(root)
+            clock["now"] += 31.0
+            return value
+        def lookup(generation, provider, *, remaining_seconds):
+            self.assertEqual(29.0, remaining_seconds())
+            return admission["configuration_digest"]
+        def cleanup(reservation, *, remaining_seconds):
+            remaining_seconds()  # No fresh cleanup window after original packet+grace expiry.
+        store.expected_configuration_digest.side_effect = lookup
+        store.fail.side_effect = cleanup
+        previous_scope = module._RUNTIME_SCOPE.get()
+        with (patch.object(module.time, "monotonic", side_effect=lambda: clock["now"]),
+              patch.object(module, "_hash_runtime", side_effect=hash_bytes) as hashes):
+            with self.assertRaisesRegex(ValidationError, "timeout is exhausted"):
+                service.run(ValidationRequest(generation=admission["generation"], provider="openai"),
+                            service.owner_token)
+        hashes.assert_called_once()
+        store.admit.assert_called_once()  # Packet ceiling is discovered through existing admission readback.
+        store.claim_execution.assert_not_called()
+        store.verify_fence.assert_not_called()
+        route.budget_authority.reserve.assert_not_called()
+        transport.send.assert_not_called()
+        store.settle.assert_not_called()
+        store.fail.assert_called_once_with(admission["reservation"], remaining_seconds=ANY)
+        self.assertIs(previous_scope, module._RUNTIME_SCOPE.get())
+
     def test_transport_refuses_expired_deadline_before_any_http(self):
         from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
         import time as time_module
