@@ -310,8 +310,8 @@ discovers these tests. For #201, run the delivery tests only on the assigned lan
 
 ```powershell
 $env:PYTHONPATH = 'src'
-& C:/Users/edwar/director-orchestrator/.worktrees/langgraph-primary-cutover/.venv/Scripts/python.exe -m unittest tests.test_collect_offline_slack_trials tests.test_record_offline_trial tests.test_completion_scorecard -v
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-postgres-test-lane.ps1 -Action Test -ContainerName director-lane-201 -HostPort 55442 -Python C:/Users/edwar/director-orchestrator/.worktrees/langgraph-primary-cutover/.venv/Scripts/python.exe -TestNames tests.test_primary_slack_delivery
+& <venv-python> -m unittest tests.test_collect_offline_slack_trials tests.test_record_offline_trial tests.test_completion_scorecard -v
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-postgres-test-lane.ps1 -Action Test -ContainerName director-lane-201 -HostPort 55442 -Python <venv-python> -TestNames tests.test_primary_slack_delivery
 ```
 
 Static source checks do not replace executed tests, exact-head review, CI or

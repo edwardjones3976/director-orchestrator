@@ -37,7 +37,7 @@ the in-memory claim so Slack redelivery can reach the durable receipt store.
 ## Provider lanes and passive status (September 14 investigation)
 
 The table summarizes the retained
-[provider status-mention investigation](file:///C:/Users/edwar/.codex/artifacts/provider-status-mention-investigation-20260914/REPORT.md)
+[provider status-mention investigation](file:///<report-path>)
 plus its Grok addendum. Without a demonstrated route-level result, native
 zero-new-work behavior is **unsupported/unverified**; use the controlled
 Director status-receipt path above.

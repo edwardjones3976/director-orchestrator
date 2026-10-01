@@ -20,7 +20,7 @@ token, password or channel ID belongs in this file. It is a repository document.
 | Compose project | `dirsim` | ☐ |
 | Environment file | `.env.simulation` | ☐ |
 | Host port | `8091` | ☐ free (WO-01) |
-| Snapshot directory | `C:\Users\edwar\director-orchestrator-sim-snapshot` | ☐ |
+| Snapshot directory | `<snapshot-dir>` | ☐ |
 | Checkpoint namespace | `sim-director-primary-v1` | ☐ |
 | Postgres schema | `director_primary_v1` | ☐ |
 | Slack | **none** — S never posts | ☐ |

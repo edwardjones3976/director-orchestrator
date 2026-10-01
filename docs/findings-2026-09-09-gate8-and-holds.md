@@ -18,7 +18,7 @@ go/no-go, and by closing the two lanes held open in the delegation matrix.
 The canary is **registered, not run.**
 
 Evidence, read directly from the canary worktree
-`C:\Users\edwar\.codex\worktrees\long-table-native-langgraph-canary`:
+`<worktree>`:
 
 `director/native-program/langgraph-canary.yaml` (schema
 `long-table-langgraph-canary/v1`) declares the program with execution closed:

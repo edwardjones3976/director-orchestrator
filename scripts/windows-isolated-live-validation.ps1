@@ -504,7 +504,7 @@ function Assert-ProfileIdentity {
         throw "$profilePath did not stage the Oracle merge gate closed."
     }
     if ($ProfileName -eq "long-table") {
-        if ([string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "C:/Users/edwar/.director-snapshots/long-table-main" -or
+        if ([string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "<snapshot-dir>" -or
             [string]$Values["REPOSITORY_SNAPSHOT_ROOT"] -cne "/repository") {
             throw "$profilePath has an unexpected Long Table repository snapshot boundary."
         }

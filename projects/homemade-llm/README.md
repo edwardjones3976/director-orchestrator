@@ -74,7 +74,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
    old branch with untracked work; never switch it.
 
    ```powershell
-   cd C:\Users\edwar\director-orchestrator
+   cd <repo-root>
    git fetch github main
    git worktree add .worktrees\homemade-llm-<slug> -b <provider>/homemade-llm-<slug>-YYYYMMDD github/main
    git -C .worktrees\homemade-llm-<slug> rev-parse --show-toplevel   # must print the worktree path

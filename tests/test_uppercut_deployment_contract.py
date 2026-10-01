@@ -1450,7 +1450,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "LANGGRAPH_RUNTIME_CHECKPOINT_PATH=/data/long-table-langgraph-runtime.sqlite3",
             "LANGGRAPH_RUNTIME_LEDGER_PATH=/data/long-table-langgraph-ledger.sqlite3",
             "COMPLETION_GATE_STORE_PATH=/data/long-table-completion-gates.sqlite3",
-            "REPOSITORY_SNAPSHOT_HOST_PATH=C:/Users/edwar/.director-snapshots/long-table-main",
+            "REPOSITORY_SNAPSHOT_HOST_PATH=<snapshot-dir>",
             "REPOSITORY_SNAPSHOT_ROOT=/repository",
         )
         for line in expected:
