@@ -92,6 +92,7 @@ LICENSED_SPECIFICATION_ADMISSIONS = {
 }
 LICENSED_SPECIFICATION_REPOSITORY = "exercism/problem-specifications"
 # Independently reviewed learnyounode batches; not a general source registry.
+LEARNYOUNODE_SERVER_ADMISSION = "b2f150ca5bfc37f7695b7391e723f6d34b95fd52e210a4d4c6859bf69c34f774"
 LEARNYOUNODE_ADMISSIONS = {
     "71ce7054a96946bfc22501943e2d87beb27f6d1c320a7957d6e7a560568bbedf": (
         "d5ca6fcde9195ca598104438a74e2ca327de5be63dab58a14097234aa8acf657",
@@ -106,6 +107,13 @@ LEARNYOUNODE_ADMISSIONS = {
         "c122fd7f53515900193f1f622da505487dc9fcee93ae77c297025bb5f10ceaf4",
         "b88d30b10e25607bbc0049c6f2331144990cfdcc70f0dc2202a06da396b89084",
         frozenset({"hello_world", "my_first_io", "http_client"}),
+    ),
+    LEARNYOUNODE_SERVER_ADMISSION: (
+        "ed77e1e3cac7b44875fe2870d9c31a2fb3b3053dc718308b9e6b885a5c382663",
+        "526d2290c70599bd432254b8eb1da50dfc6d05dbe617e090b6ac9101253ac838",
+        "c122fd7f53515900193f1f622da505487dc9fcee93ae77c297025bb5f10ceaf4",
+        "059d233b9faa5447aab6b91c070af96d58da2183c4370410d65aeeb4eaadd369",
+        frozenset({"time_server", "http_file_server", "http_json_api_server"}),
     ),
 }
 LEARNYOUNODE_REPOSITORY = "workshopper/learnyounode"
@@ -456,6 +464,20 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         if hashlib.sha256(receipt_raw).hexdigest() != review_hash:
             fail(f"{label}: independent source-review receipt bytes changed")
         receipt = local_transport.strict_json(receipt_raw)
+        review_prefix = ("**Verdict:** `ACCEPT_FOR_SOURCE_FACTS`" if accessibility else
+                         "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if separate_tree else "**ACCEPT_FOR_SOURCE_FACTS**")
+        if learnyounode and digest == LEARNYOUNODE_SERVER_ADMISSION:
+            # Only this immutable batch reviewed the plain, fully bound terminal header.
+            review_prefix = ("TERMINAL: ACCEPT_FOR_SOURCE_FACTS\nPACKET_ID QA-M2-LNY-SERVERS-SOURCE-1\n"
+                             f"source_pin {commit}\nsource_tree {admission['source_tree']}\n"
+                             f"manifest_sha256 {manifest_hash}\n"
+                             f"share_record_sha256 {admission['share_record_sha256']}\n")
+            if (hashlib.sha256(receipt["answer"].encode("utf-8")).hexdigest()
+                    != admission["review_answer_exact_utf8_sha256"]
+                    or admission["source_tree"] != official["commit"]["tree"]["sha"]
+                    or re.findall(r"(?m)^TERMINAL:.*$", receipt["answer"])
+                    != ["TERMINAL: ACCEPT_FOR_SOURCE_FACTS"]):
+                fail(f"{label}: independent source review has no bound plain ACCEPT")
         if (receipt["provider"] != "xai" or receipt["model"] != "grok-4.6"
                 or receipt["http_status"] != 200 or receipt["response_status"] != "completed"
                 or not receipt["response_id"] or receipt["response_id"] != admission["response_id"]
@@ -463,8 +485,7 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                                         != admission["verdict_sha256"]
                                         or admission["share_record_sha256"] not in receipt["answer"]))
                 or (not accessibility and receipt["answer"] != admission["review_answer"])
-                or not receipt["answer"].startswith("**Verdict:** `ACCEPT_FOR_SOURCE_FACTS`" if accessibility else
-                        "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if separate_tree else "**ACCEPT_FOR_SOURCE_FACTS**")
+                or not receipt["answer"].startswith(review_prefix)
                 or manifest_hash not in receipt["answer"] or commit not in receipt["answer"]):
             fail(f"{label}: independent source review has no bound ACCEPT")
         api = f"https://api.github.com/repos/{repository}"

@@ -1485,17 +1485,56 @@ class StandingGrantExerciseTests(unittest.TestCase):
             ledger.delegation_audit_records(limit=10, deadline=started + 0.3)
         self.assertLess(time_module.monotonic() - started, 1.5)
         self.assertLess(anchor.timeouts[-1], 0.31)
-        # The advance itself runs out: never a clean refusal.
+        # Control setup time so this case reaches the irreversible advance.
+        from director_orchestrator import store as store_module
+
         anchor.latency = 0.0
         ledger.append_delegation_audit_record(record("director-langgraph:DIR-LG-A"))
-        anchor.latency, anchor.timeouts = 2.0, []
-        original_read = anchor.read_head
-        anchor.read_head = lambda *, timeout=None: (anchor.head)  # the verifying read is fast
-        with self.assertRaises(DelegationAuditAnchorUnavailable):
-            ledger.append_delegation_audit_record(
-                record("director-langgraph:DIR-LG-B"), deadline=time_module.monotonic() + 0.3)
-        self.assertTrue(anchor.timeouts and anchor.timeouts[0] < 0.31)
-        anchor.read_head = original_read
+        previous_head = anchor.head
+        clock = [100.0]
+        original_snapshot = ledger._verified_audit_snapshot
+
+        def verification_spends(seconds):
+            def verify(*args, **kwargs):
+                result = original_snapshot(*args, **kwargs)
+                clock[0] += seconds
+                return result
+            return verify
+
+        def timed_out_advance(expected, updated, *, timeout):
+            self.assertEqual(previous_head, expected)
+            self.assertGreater(timeout, 0.0)
+            self.assertAlmostEqual(0.2, timeout)
+            clock[0] += timeout
+            raise DelegationAuditDeadlineExceeded("anchor call timed out")
+
+        with patch.object(store_module, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(ledger, "_verified_audit_snapshot",
+                             side_effect=verification_spends(0.1)), \
+                patch.object(anchor, "read_head", return_value=previous_head), \
+                patch.object(anchor, "compare_and_set", side_effect=timed_out_advance) as advance:
+            with self.assertRaises(DelegationAuditAnchorUnavailable) as failure:
+                ledger.append_delegation_audit_record(
+                    record("director-langgraph:DIR-LG-B"), deadline=100.3)
+        advance.assert_called_once()
+        self.assertIsInstance(failure.exception.__cause__, DelegationAuditDeadlineExceeded)
+        self.assertEqual(previous_head, anchor.head)
+        self.assertEqual(1, len(ledger.delegation_audit_records(limit=10)))
+
+        # Setup expiry is a clean refusal, with no anchor write and a rollback.
+        clock[0] = 100.0
+        with patch.object(store_module, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(ledger, "_verified_audit_snapshot",
+                             side_effect=verification_spends(0.4)), \
+                patch.object(anchor, "read_head", return_value=previous_head), \
+                patch.object(anchor, "compare_and_set") as advance:
+            with self.assertRaisesRegex(DelegationAuditDeadlineExceeded,
+                                        "audit append reached its deadline"):
+                ledger.append_delegation_audit_record(
+                    record("director-langgraph:DIR-LG-C"), deadline=100.3)
+        advance.assert_not_called()
+        self.assertEqual(previous_head, anchor.head)
+        self.assertEqual(1, len(ledger.delegation_audit_records(limit=10)))
         # Unbounded callers keep the old call shape: no timeout is passed.
         anchor.latency, anchor.timeouts = 0.0, []
         ledger.delegation_audit_records(limit=10)

@@ -1,3 +1,4 @@
+// [[OpenAI Codex | GPT-6 | 2026-10-01 | 21:58 UTC | BEGIN]]
 // Offline checks only: real SDK Chat conversion, mocked clients/results, no inference.
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -217,3 +218,4 @@ assert.equal(networkAttempts, 0);
 console.log(JSON.stringify({status: 'PASS', checks, names, networkAttempts,
   realSdkImportAndChat: real ? 'PASS_PINNED_2.0.0_NETWORK_DENIED' : 'NOT_RUN_PACKAGE_NOT_STAGED',
   clientsAndPredictionResults: 'OFFLINE_MOCKS_ONLY', liveInference: false, containment: 'UNKNOWN'}));
+// [[OpenAI Codex | GPT-6 | 2026-10-01 | 21:58 UTC | END]]
