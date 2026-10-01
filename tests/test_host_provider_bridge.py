@@ -558,6 +558,26 @@ class HostProviderBridgeTests(unittest.TestCase):
                                               deadline=1.0, resolve=lambda *a, **k: [])
             self.assertEqual(2, factory.call_count)  # Completed lookup released its slot.
 
+    def test_slot_is_released_once_when_start_and_lookup_both_finish(self) -> None:
+        from director_orchestrator import host_provider_bridge as bridge
+
+        slots = threading.BoundedSemaphore(1)
+        resolver = MagicMock()
+        resolver.is_alive.return_value = False
+
+        def start_after_lookup() -> None:
+            factory.call_args.kwargs["target"]()
+            raise RuntimeError("start observed the worker")
+
+        resolver.start.side_effect = start_after_lookup
+        with patch.object(bridge, "_RESOLVER_SLOTS", slots), \
+             patch.object(bridge, "_time_left", return_value=1.0), \
+             patch.object(bridge.threading, "Thread", return_value=resolver) as factory:
+            with self.assertRaisesRegex(RuntimeError, "start observed the worker"):
+                bridge.connect_until_deadline(("bridge", 443), 30, deadline=1.0, resolve=lambda *a, **k: [])
+        self.assertTrue(slots.acquire(blocking=False))
+        slots.release()
+
     def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
         import time as time_module
         from director_orchestrator.host_provider_bridge import read_until_deadline
