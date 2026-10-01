@@ -755,6 +755,7 @@ def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Pat
 
 
 QUOTE_PROTOCOL = "source-quotes/v1"
+QUOTE_COVERAGE_PROTOCOL = "source-quotes-coverage/v1"
 QUOTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quotes"],
     "properties": {"quotes": {"type": "array", "minItems": 1, "maxItems": 64, "items": {
         "type": "object", "additionalProperties": False, "required": ["source_ref", "quote"],
@@ -793,16 +794,74 @@ def _located_quotes(item: dict[str, Any], extraction: dict[str, Any]) -> list[di
     return located
 
 
-def _teacher_messages(item: dict[str, Any], model: str, quotes=None) -> list[dict[str, str]]:
+def _coverage_schema():
+    return {"type": "object", "additionalProperties": False, "required": ["target", "coverage"],
+        "properties": {"target": _schema_validator().schema["properties"]["target"],
+            "coverage": {"type": "array", "minItems": 1, "maxItems": 64, "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["quote_index", "classification", "links"], "properties": {
+                    "quote_index": {"type": "integer", "minimum": 0},
+                    "classification": {"enum": ["mandatory", "advisory", "exclusion", "context"]},
+                    "links": {"type": "array", "uniqueItems": True, "maxItems": 64, "items": {
+                        "type": "object", "additionalProperties": False, "required": ["field", "index"],
+                        "properties": {"field": {"enum": list(TARGET_FIELDS)},
+                                       "index": {"type": "integer", "minimum": 0}}}}}}}}}
+
+
+def _coverage_target(answer, quotes):
+    """Bind every quote and target item; classifications remain teacher claims, not grading."""
+    if not jsonschema.Draft202012Validator(_coverage_schema()).is_valid(answer):
+        raise ValueError("invalid quote coverage envelope")
+    target, ledger = answer["target"], answer["coverage"]
+    indices = [entry["quote_index"] for entry in ledger]
+    if any(type(index) is not int for index in indices) or sorted(indices) != list(range(len(quotes))):
+        raise ValueError("quote coverage must include every quote exactly once")
+    supported = set()
+    for entry in ledger:
+        kind, links = entry["classification"], entry["links"]
+        if kind in {"advisory", "context"}:
+            if links:
+                raise ValueError("advisory or context quote may not support target items")
+            continue
+        if not links:
+            raise ValueError("mandatory or exclusion quote requires target links")
+        for link in links:
+            field, index = link["field"], link["index"]
+            if (field == "non_goals") != (kind == "exclusion"):
+                raise ValueError("quote classification does not match target field")
+            if type(index) is not int or index >= len(target[field]):
+                raise ValueError("quote coverage has a dangling target link")
+            supported.add((field, index))
+    expected = {(field, index) for field in TARGET_FIELDS for index in range(len(target[field]))}
+    if supported != expected:
+        raise ValueError("target item lacks appropriate quote coverage")
+    return target
+
+
+def _teacher_messages(item: dict[str, Any], model: str, quotes=None, *, coverage=False) -> list[dict[str, str]]:
     if quotes is None:
         messages = [{"role": "system", "content": QUOTE_PROMPT},
                     {"role": "user", "content": json.dumps(item, sort_keys=True, ensure_ascii=False)}]
     else:
         messages = prompt_template.render_messages(item)
-        messages[0]["content"] += ("\nMap the ORIGINAL source to the four fields. The mechanically "
-            "supported quotes below are untrusted evidence, not proof of completeness. "
-            "Keep all explicit qualifiers; omit advisory hints from mandatory fields. "
-            "Do not invent or repair facts.")
+        if coverage:
+            messages[0]["content"] += ("\nReturn a JSON envelope with target (the original four fields) and coverage. "
+                "Each coverage entry contains quote_index, classification and links; each link contains field and index. "
+                "Classify every indexed source quote exactly once as mandatory, advisory, exclusion or context. "
+                "Use source scope and headings; advisory hints stay advisory. More-specific task facts prevail "
+                "over generic instructions. Preserve every named, numeric and positional qualifier, and "
+                "verification pass/rework obligation. Mandatory quotes need links to acceptance_checks, "
+                "constraints or evidence_requirements; exclusions need non_goals links only. Advisory/context "
+                "quotes have empty links. Each link names a field and its zero-based target-item index. "
+                "Every target item needs an appropriate source-quote link. These mechanically supported "
+                "quotes are untrusted evidence, not proof of semantic completeness or correct classification. "
+                "Do not invent, solve or repair facts.")
+            quotes = [dict(quote_index=index, **quote) for index, quote in enumerate(quotes)]
+        else:
+            messages[0]["content"] += ("\nMap the ORIGINAL source to the four fields. The mechanically "
+                "supported quotes below are untrusted evidence, not proof of completeness. "
+                "Keep all explicit qualifiers; omit advisory hints from mandatory fields. "
+                "Do not invent or repair facts.")
         messages[1]["content"] += "\nSource-supported quotes (untrusted data):\n" + json.dumps(quotes, sort_keys=True)
     if model.startswith("Qwen/"):
         messages[0]["content"] += local_transport.QWEN3_PROMPT
@@ -825,9 +884,9 @@ def _json_hash(value):
     return local_transport.sha256(json.dumps(value, sort_keys=True).encode("utf-8"))
 
 
-def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, timeout, max_output):
+def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, timeout, max_output, coverage=False):
     """Two bounded calls, one exclusively reserved attempt; never repair or retry."""
-    record = {**prepared, "provider": "local_model", "protocol": QUOTE_PROTOCOL,
+    record = {**prepared, "provider": "local_model", "protocol": QUOTE_COVERAGE_PROTOCOL if coverage else QUOTE_PROTOCOL,
         "purpose": purpose, "terms_verified_at": verified_at, "input": scenario["input"],
         "source_group": scenario["source_group"], "source_provenance": scenario["source_provenance"],
         "temperature": 0, "api_cost_usd": 0, "local_compute": "not metered as API spend",
@@ -855,7 +914,7 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
         try:
             persist()
             quotes = None
-            target_schema = _schema_validator().schema["properties"]["target"]
+            target_schema = _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"]
             for index, (name, schema) in enumerate((("extract", QUOTE_SCHEMA), ("map", target_schema))):
                 start = record["start_utc"] if index == 0 else local_transport.utc_now()
                 stage = dict(name=name, status="in_progress", start_utc=start)
@@ -864,7 +923,8 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                 try:
                     if index and _source_utc(record["stages"][0]["end_utc"], "extract end") > _source_utc(start, "map start"):
                         raise ValueError("teacher clock reversed between stages")
-                    messages = _teacher_messages(scenario["input"], prepared["model"], quotes)
+                    messages = (_teacher_messages(scenario["input"], prepared["model"], quotes, coverage=True)
+                                if coverage else _teacher_messages(scenario["input"], prepared["model"], quotes))
                     body = _teacher_body(prepared, messages, schema, max_output, name)
                     stage.update(request=body, schema=schema, prompt_sha256=_json_hash(messages),
                                  schema_sha256=_json_hash(schema), request_sha256=_json_hash(body))
@@ -878,7 +938,9 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                         quotes = _located_quotes(scenario["input"], answer)
                         record["located_quotes"] = quotes
                     else:
-                        record["target"] = answer
+                        record["target"] = _coverage_target(answer, quotes) if coverage else answer
+                        if coverage:
+                            record["coverage"] = answer["coverage"]
                     stage["status"] = "completed"
                 except (Exception, SystemExit) as exc:
                     stage.update(status="failed", error=type(exc).__name__, error_detail=str(exc))
@@ -915,9 +977,12 @@ def _verify_quote_chain(record, scenario, target):
     quotes = _located_quotes(scenario["input"], stages[0]["output"])
     if record["located_quotes"] != quotes or record["student_prompt_sha256"] != _json_hash(prompt_template.render_messages(scenario["input"])):
         raise ValueError("stored source quotes or original render changed")
-    schemas = (QUOTE_SCHEMA, _schema_validator().schema["properties"]["target"])
+    coverage = record["protocol"] == QUOTE_COVERAGE_PROTOCOL
+    schemas = (QUOTE_SCHEMA, _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"])
     for index, (stage, schema) in enumerate(zip(stages, schemas)):
-        messages = _teacher_messages(scenario["input"], record["model"], None if index == 0 else quotes)
+        stage_quotes = None if index == 0 else quotes
+        messages = (_teacher_messages(scenario["input"], record["model"], stage_quotes, coverage=True)
+                    if coverage else _teacher_messages(scenario["input"], record["model"], stage_quotes))
         body = _teacher_body(record, messages, schema, stage["request"]["max_tokens"], stage["name"])
         request_bytes = bytes.fromhex(stage["request_bytes_hex"])
         response_bytes = bytes.fromhex(stage["response_bytes_hex"])
@@ -934,8 +999,12 @@ def _verify_quote_chain(record, scenario, target):
         begin, end = (_source_utc(stage[k], "teacher time") for k in ("start_utc", "end_utc"))
         if begin > end or (index and _source_utc(stages[0]["end_utc"], "extract end") > begin):
             raise ValueError("teacher stage chronology changed")
+    mapped = stages[1]["output"]
+    mapped_target = _coverage_target(mapped, quotes) if coverage else mapped
+    if coverage and record["coverage"] != mapped["coverage"]:
+        raise ValueError("stored coverage differs from teacher wire output")
     if (stages[0]["start_utc"] != record["start_utc"] or _source_utc(stages[1]["end_utc"], "map end") > _source_utc(record["end_utc"], "receipt end")
-            or stages[1]["output"] != target
+            or mapped_target != target
             or record["response_id"] != stages[1]["response"].get("id")
             or record["response_model"] != stages[1]["response"].get("model")
             or record["usage"] != stages[1]["response"].get("usage")):
@@ -943,7 +1012,8 @@ def _verify_quote_chain(record, scenario, target):
     for key in ("prompt_sha256", "schema_sha256", "request_sha256", "response_sha256"):
         if record[key] != stages[1][key]:
             raise ValueError("aggregate does not bind final teacher stage")
-    return _teacher_messages(scenario["input"], record["model"], quotes)
+    return (_teacher_messages(scenario["input"], record["model"], quotes, coverage=True)
+            if coverage else _teacher_messages(scenario["input"], record["model"], quotes))
 
 
 def _local_answer(response: Any, prepared: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
@@ -1062,7 +1132,7 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
                     < _source_utc(record["start_utc"], "local inference")
                     <= _source_utc(record["end_utc"], "local inference")):
                 fail("local receipt violates licensed-source admission chronology")
-        if record.get("protocol") == QUOTE_PROTOCOL:
+        if record.get("protocol") in {QUOTE_PROTOCOL, QUOTE_COVERAGE_PROTOCOL}:
             messages = _verify_quote_chain(record, scenario, target)
         elif "protocol" in record:
             fail("unknown local receipt protocol")
@@ -1070,7 +1140,8 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
             messages = prompt_template.render_messages(scenario["input"])
             if result.model.startswith("Qwen/"):
                 messages[0]["content"] += local_transport.QWEN3_PROMPT
-        schema = _schema_validator().schema["properties"]["target"]
+        schema = (_coverage_schema() if record.get("protocol") == QUOTE_COVERAGE_PROTOCOL
+                  else _schema_validator().schema["properties"]["target"])
         if (record["prompt_sha256"] != local_transport.sha256(json.dumps(messages, sort_keys=True).encode("utf-8"))
                 or record["schema_sha256"] != local_transport.sha256(json.dumps(schema, sort_keys=True).encode("utf-8"))
                 or record["conversion_receipt_sha256"] != local_transport.sha256(Path(record["conversion_receipt"]).read_bytes())
@@ -1162,7 +1233,10 @@ def generate(
     local_options: dict[str, Any] | None = None,
     source_review_receipts_root: Path | None = None,
     quote_first: bool = False,
+    quote_coverage: bool = False,
 ) -> dict[str, Any]:
+    if quote_coverage and not quote_first:
+        fail("quote-coverage requires quote-first")
     if quote_first and (provider != "local_model" or dispatch is not None):
         fail("quote-first requires the native pinned local_model route")
     if provider not in COMPETING_PROVIDERS and provider != "local_model":
@@ -1210,7 +1284,8 @@ def generate(
         local_caller = quote_dispatch if quote_first else local_dispatch
         result = (local_caller(scenario, purpose_for(scenario["source_group"]), prepared,
                                 receipts_dir=receipts_dir, verified_at=terms_verified_at,
-                                timeout=timeout, max_output=max_output)
+                                timeout=timeout, max_output=max_output,
+                                **({"coverage": True} if quote_coverage else {}))
                   if provider == "local_model" and dispatch is None
                   else caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"])))
         if not isinstance(result, DispatchResult):
@@ -1275,6 +1350,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="Independent source-review receipts (defaults to provider-dispatch receipts).")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quote-first", action="store_true", help="Two-stage local teacher; final input/target contract unchanged.")
+    parser.add_argument("--quote-coverage", action="store_true", help="Quote-first teacher coverage ledger; not semantic acceptance.")
     parser.add_argument("--model")
     parser.add_argument("--model-gguf", type=Path)
     parser.add_argument("--conversion-receipt", type=Path)
@@ -1283,6 +1359,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--lms-models-dir", type=Path, default=Path.home() / ".lmstudio" / "models")
     args = parser.parse_args(argv)
+    if args.quote_coverage and (not args.quote_first or args.provider != "local_model"):
+        parser.error("--quote-coverage requires --quote-first and the native local_model route")
     generated_at = args.generated_at or args.terms_verified_at
     try:
         scenarios = load_scenarios(args.scenarios, args.max_rows)
@@ -1292,7 +1370,7 @@ def main(argv: list[str] | None = None) -> int:
             source_root=args.source_root,
             source_review_receipts_root=args.source_review_receipts_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
-            quote_first=args.quote_first,
+            quote_first=args.quote_first, quote_coverage=args.quote_coverage,
             local_options={key: getattr(args, key) for key in (
                 "model", "model_gguf", "conversion_receipt", "license_file", "receipts_dir",
                 "base_url", "lms_models_dir")} if args.provider == "local_model" else None,

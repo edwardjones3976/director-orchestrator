@@ -554,7 +554,16 @@ class GenerateRowsTests(unittest.TestCase):
                          hashlib.sha256(json.dumps(sent, sort_keys=True).encode()).hexdigest())
 
 
-    def quote_options(self, bad_stage=None):
+    def coverage_answer(self):
+        # Artificial offline ledger: tests structural binding, never semantic grading.
+        return {"target": json.loads(json.dumps(TARGET)), "coverage": [
+            {"quote_index": 0, "classification": "mandatory", "links": [
+                {"field": field, "index": 0} for field in generate_rows.TARGET_FIELDS if field != "non_goals"]},
+            {"quote_index": 1, "classification": "exclusion", "links": [{"field": "non_goals", "index": 0}]},
+            {"quote_index": 2, "classification": "advisory", "links": []},
+            {"quote_index": 3, "classification": "context", "links": []}]}
+
+    def quote_options(self, bad_stage=None, coverage_answer=None):
         options = self.local_options()
         scenario = self.default_scenario()
         context = scenario["input"]["context"][0]
@@ -566,7 +575,10 @@ class GenerateRowsTests(unittest.TestCase):
                 self.assertEqual(receipt["stages"][0]["status"], "completed")
                 self.assertNotIn("target", receipt)
             self.quote_calls.append(body)
-            output = {"quotes": [{"source_ref": context["source_ref"], "quote": context["text"]}]} if index == 0 else TARGET
+            quotes = [context["text"]] if coverage_answer is None else [
+                "Both secrets", "are accepted", "for one hour", "after rotation."]
+            output = ({"quotes": [{"source_ref": context["source_ref"], "quote": quote} for quote in quotes]}
+                      if index == 0 else TARGET if coverage_answer is None else coverage_answer)
             if bad_stage == index:
                 output = {"quotes": [{"source_ref": context["source_ref"], "quote": "unsupported quote"}]} if index == 0 else {}
             response = {"id": f"quote-stage-{index}", "model": "qwen-local",
@@ -587,6 +599,9 @@ class GenerateRowsTests(unittest.TestCase):
         self.assertEqual(row["input"], scenario["input"])
         receipt = json.loads((self.root / row["receipt_ref"]).read_text())
         self.assertEqual(receipt["protocol"], "source-quotes/v1")
+        self.assertEqual([stage["prompt_sha256"] for stage in receipt["stages"]], [
+            "2e9759e6909c8db0e07624936a7de2f74784b0e6a09319695ce47e1c88a082bc",
+            "f18620e0f3b29d655246a1824f6d7a2bfc2a8e62c6664385940428c95d35edd7"])
         self.assertEqual([s["name"] for s in receipt["stages"]], ["extract", "map"])
         for body, stage in zip(self.quote_calls, receipt["stages"]):
             self.assertEqual(bytes.fromhex(stage["request_bytes_hex"]), json.dumps(body).encode())
@@ -594,6 +609,143 @@ class GenerateRowsTests(unittest.TestCase):
         self.assertNotEqual(receipt["prompt_sha256"], receipt["student_prompt_sha256"])
         self.assertEqual(receipt["student_prompt_sha256"], generate_rows._json_hash(generate_rows.prompt_template.render_messages(row["input"])))
         self.assertEqual(row["receipt_sha256"], hashlib.sha256((self.root / row["receipt_ref"]).read_bytes()).hexdigest())
+
+    def test_quote_coverage_two_raw_bound_stages_keep_original_student_contract(self):
+        answer = self.coverage_answer()
+        options, scenario = self.quote_options(coverage_answer=answer)
+        self.assertEqual(self.generate_local(options, scenario, quote_first=True, quote_coverage=True),
+                         {"dry_run": False, "rows": 1, "receipts": 1})
+        self.assertEqual(len(self.quote_calls), 2)
+        self.assertEqual(self.quote_calls[0]["messages"],
+                         generate_rows._teacher_messages(scenario["input"], next(iter(generate_rows.LOCAL_MODELS))))
+        schema = self.quote_calls[1]["response_format"]["json_schema"]["schema"]
+        self.assertEqual(set(schema["properties"]), {"target", "coverage"})
+        row = json.loads(self.out.read_text(encoding="utf-8"))
+        self.assertEqual((row["input"], row["target"]), (scenario["input"], TARGET))
+        self.assertNotIn("coverage", row)
+        student = generate_rows.prompt_template.render_messages(row["input"], row["target"])
+        self.assertEqual(json.loads(student[-1]["content"]), TARGET)
+        self.assertNotIn("coverage", student[0]["content"])
+        path = self.root / row["receipt_ref"]
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["protocol"], generate_rows.QUOTE_COVERAGE_PROTOCOL)
+        self.assertEqual((receipt["target"], receipt["coverage"]), (TARGET, answer["coverage"]))
+        self.assertEqual(receipt["stages"][1]["output"], answer)
+        for body, stage in zip(self.quote_calls, receipt["stages"]):
+            self.assertEqual(bytes.fromhex(stage["request_bytes_hex"]), json.dumps(body).encode())
+            self.assertEqual(json.loads(bytes.fromhex(stage["response_bytes_hex"])), stage["response"])
+            self.assertEqual(stage["request"]["temperature"], 0)
+        self.assertEqual(row["receipt_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+        indexed = json.loads(self.quote_calls[1]["messages"][1]["content"].split(
+            "Source-supported quotes (untrusted data):\n")[1])
+        self.assertEqual([quote["quote_index"] for quote in indexed], list(range(4)))
+
+    def test_quote_coverage_refuses_unsupported_or_malformed_mapping_before_publication(self):
+        valid = self.coverage_answer()
+        cases = {}
+        def case(name):
+            answer = json.loads(json.dumps(valid))
+            cases[name] = answer
+            return answer
+        case("missing quote")["coverage"].pop()
+        case("duplicate quote")["coverage"][3]["quote_index"] = 0
+        case("extra quote")["coverage"].append({"quote_index": 4, "classification": "context", "links": []})
+        case("dangling link")["coverage"][0]["links"][0]["index"] = 1
+        case("unlinked item")["target"]["constraints"].append("unlinked test-only item")
+        case("advisory promotion")["coverage"][2]["links"] = [{"field": "constraints", "index": 0}]
+        case("context promotion")["coverage"][3]["links"] = [{"field": "constraints", "index": 0}]
+        case("wrong exclusion field")["coverage"][1]["links"] = [{"field": "constraints", "index": 0}]
+        case("wrong mandatory field")["coverage"][0]["links"].append({"field": "non_goals", "index": 0})
+        case("missing mandatory link")["coverage"][0]["links"] = []
+        case("missing exclusion link")["coverage"][1]["links"] = []
+        case("invalid classification")["coverage"][0]["classification"] = "guess"
+        case("invalid field")["coverage"][0]["links"][0]["field"] = "title"
+        case("negative index")["coverage"][0]["links"][0]["index"] = -1
+        case("fractional type index")["coverage"][0]["links"][0]["index"] = 0.0
+        case("boolean index")["coverage"][0]["quote_index"] = True
+        case("float quote index")["coverage"][0]["quote_index"] = 0.0
+        case("excess links")["coverage"][0]["links"] = [{"field": "constraints", "index": index} for index in range(65)]
+        case("additional envelope field")["repair"] = True
+        case("additional target field")["target"]["notes"] = []
+        options, scenario = self.quote_options(coverage_answer=valid)
+        for name, answer in cases.items():
+            self.quote_calls.clear()
+            original = self.local_http.side_effect
+            def invalid_mapping(method, url, body, timeout, *, capture, answer=answer):
+                response = original(method, url, body, timeout, capture=capture)
+                if len(self.quote_calls) == 2:
+                    response["choices"][0]["message"]["content"] = json.dumps(answer)
+                    capture["response_bytes"] = json.dumps(response).encode()
+                return response
+            self.local_http.side_effect = invalid_mapping
+            with self.subTest(case=name), self.assertRaises(SystemExit):
+                self.generate_local(options, scenario, quote_first=True, quote_coverage=True)
+            self.local_http.side_effect = original
+            self.assertEqual(len(self.quote_calls), 2)
+            self.assertFalse(self.out.exists())
+        records = [json.loads(path.read_text(encoding="utf-8")) for path in options["receipts_dir"].glob("*.json")]
+        self.assertEqual(len(records), len(cases))
+        self.assertTrue(all([stage["status"] for stage in receipt["stages"]] == ["completed", "failed"]
+                            and receipt["status"] == "failed" for receipt in records))
+
+    def test_quote_coverage_receipt_readback_rejects_ledger_and_wire_target_tampering(self):
+        options, scenario = self.quote_options(coverage_answer=self.coverage_answer())
+        self.generate_local(options, scenario, quote_first=True, quote_coverage=True)
+        row = json.loads(self.out.read_text(encoding="utf-8"))
+        path = self.root / row["receipt_ref"]
+        original = path.read_bytes()
+        def ledger(r): r["coverage"][2]["classification"] = "context"
+        def stage_ledger(r): r["stages"][1]["output"]["coverage"][2]["classification"] = "context"
+        def stage_target(r): r["stages"][1]["output"]["target"]["constraints"] = ["changed"]
+        def aggregate_target(r): r["target"]["constraints"] = ["changed"]
+        def schema(r): r["stages"][1]["schema"] = generate_rows.QUOTE_SCHEMA
+        def wire(r): r["stages"][1]["response_bytes_hex"] = b'{}'.hex()
+        def both_ledgers(r):
+            r["coverage"][2]["classification"] = "context"
+            r["stages"][1]["output"]["coverage"][2]["classification"] = "context"
+        def wire_target(r):
+            stage = r["stages"][1]
+            answer = json.loads(stage["response"]["choices"][0]["message"]["content"])
+            answer["target"]["constraints"] = ["changed"]
+            stage["response"]["choices"][0]["message"]["content"] = json.dumps(answer)
+            raw = json.dumps(stage["response"]).encode()
+            stage["response_bytes_hex"] = raw.hex()
+            stage["response_bytes_sha256"] = hashlib.sha256(raw).hexdigest()
+            stage["response_sha256"] = generate_rows._json_hash(stage["response"])
+        def protocol(r): r["protocol"] = "source-quotes-coverage/v99"
+        for mutate in (ledger, stage_ledger, both_ledgers, stage_target, aggregate_target, schema, wire, wire_target, protocol):
+            record = json.loads(original)
+            mutate(record)
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with self.subTest(mutation=mutate.__name__), self.assertRaises(SystemExit):
+                generate_rows.local_receipt_hash(generate_rows.DispatchResult(json.dumps(row["target"]), path,
+                                                  row["source_model"]), scenario, row["target"], UTC)
+        path.write_bytes(original)
+
+    def test_quote_coverage_flag_guards_and_dry_run_have_no_effects(self):
+        options = self.local_options()
+        self.assertEqual(self.generate_local(options, quote_first=True, quote_coverage=True, dry_run=True),
+                         {"dry_run": True, "rows": 0, "receipts": 0})
+        with patch.object(generate_rows, "validate_scenarios_for_dispatch") as validation:
+            for flags in ({"quote_coverage": True},
+                          {"quote_first": True, "quote_coverage": True, "provider": "openai"}):
+                with self.subTest(flags=flags), self.assertRaises(SystemExit):
+                    generate_rows.generate([], provider=flags.pop("provider", "local_model"),
+                        set_a=self.set_a, set_b=self.set_b, out=self.out, terms_verified_at=UTC,
+                        generated_at=UTC, source_root=self.root, dry_run=True, **flags)
+            validation.assert_not_called()
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, quote_first=True, quote_coverage=True, dispatch=self.dispatch(), dry_run=True)
+        self.local_probe.assert_not_called()
+        self.local_http.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertFalse(options["receipts_dir"].exists())
+        self.assertFalse(self.out.exists())
+        with patch.object(generate_rows, "load_scenarios") as load, self.assertRaises(SystemExit):
+            generate_rows.main(["--scenarios", str(self.root / "absent.jsonl"), "--provider", "local_model",
+                "--set-a", str(self.set_a), "--set-b", str(self.set_b), "--out", str(self.out),
+                "--terms-verified-at", UTC, "--quote-coverage", "--dry-run"])
+        load.assert_not_called()
 
     def test_quote_missing_or_ambiguous_source_spans_are_refused(self):
         item = {"context": [{"source_ref": "wo.md", "text": "one obligation. one obligation."}]}
