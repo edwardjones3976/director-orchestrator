@@ -1,4 +1,3 @@
-<!-- [[Cursor | Auto | 2026-10-01 | 17:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:57 UTC | BEGIN]] -->
 <!-- MX-055 -->
@@ -160,4 +159,3 @@ something this project read or measured. Times are UTC.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 03:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 02:30 UTC | END]] -->
-<!-- [[Cursor | Auto | 2026-10-01 | 17:12 UTC | END]] -->

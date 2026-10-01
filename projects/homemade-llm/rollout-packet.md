@@ -1,4 +1,3 @@
-<!-- [[Cursor | Auto | 2026-10-01 | 17:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | BEGIN]] -->
@@ -141,4 +140,3 @@ used as a fallback.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:52 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 23:39 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:15 UTC | END]] -->
-<!-- [[Cursor | Auto | 2026-10-01 | 17:12 UTC | END]] -->

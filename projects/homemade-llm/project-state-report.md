@@ -1,4 +1,3 @@
-<!-- [[Cursor | Auto | 2026-10-01 | 17:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | BEGIN]] -->
@@ -340,4 +339,3 @@ Future M1 dispatches require approved packets, leases, allocation and gates; lat
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 03:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 05:55 UTC | END]] -->
-<!-- [[Cursor | Auto | 2026-10-01 | 17:12 UTC | END]] -->
