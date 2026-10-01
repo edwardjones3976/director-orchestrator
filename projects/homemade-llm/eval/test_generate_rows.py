@@ -765,6 +765,9 @@ class GenerateRowsTests(unittest.TestCase):
             {"quote_index": 2, "classification": "exclusion", "links": [{"field": "non_goals", "index": 0}]},
             {"quote_index": 3, "classification": "context", "links": []},
             {"quote_index": 4, "classification": "context", "links": []}]}
+        answer = {f"segment_{entry['quote_index']}": {"classification": entry["classification"], "items": [
+            {"field": link["field"], "text": TARGET[link["field"]][link["index"]]} for link in entry["links"]]}
+            for entry in answer["coverage"]}
         self.segment_calls = []
         def respond(method, url, body, timeout, *, capture):
             self.segment_calls.append(body)
@@ -828,23 +831,81 @@ class GenerateRowsTests(unittest.TestCase):
         self.assertNotIn("coverage", student[0]["content"])
         path = self.root / row["receipt_ref"]
         receipt = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(receipt["protocol"], generate_rows.SEGMENT_COVERAGE_PROTOCOL)
-        self.assertEqual((receipt["target"], receipt["coverage"]), (TARGET, answer["coverage"]))
+        self.assertEqual(receipt["protocol"], generate_rows.SOURCE_RECORDS_PROTOCOL)
+        assembled = generate_rows._source_record_output(answer, receipt["located_quotes"])
+        self.assertEqual((receipt["target"], receipt["coverage"]), (TARGET, assembled["coverage"]))
         self.assertEqual(receipt["attempt_count"], 1)
         self.assertEqual([stage["name"] for stage in receipt["stages"]], ["map"])
         stage, body = receipt["stages"][0], self.segment_calls[0]
         self.assertEqual(stage["output"], answer)
-        self.assertEqual(stage["schema"], generate_rows._coverage_schema())
+        self.assertEqual(stage["schema"], generate_rows._source_record_schema(receipt["located_quotes"]))
         self.assertEqual(bytes.fromhex(stage["request_bytes_hex"]), json.dumps(body).encode())
         self.assertEqual(json.loads(bytes.fromhex(stage["response_bytes_hex"])), stage["response"])
         self.assertEqual(body["temperature"], 0)
         self.assertEqual(row["receipt_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
         indexed = json.loads(body["messages"][1]["content"].split("Source-supported quotes (untrusted data):\n")[1])
-        self.assertEqual([span["quote_index"] for span in indexed], list(range(5)))
-        self.assertEqual(indexed[3]["quote"], indexed[4]["quote"])
-        self.assertNotEqual(indexed[3]["start"], indexed[4]["start"])
-        self.assertIn("α\r\n", indexed[3]["quote"])
-        self.assertEqual([span["quote"] for span in indexed], [span["quote"] for span in receipt["located_quotes"]])
+        self.assertEqual(set(indexed), {f"segment_{index}" for index in range(5)})
+        self.assertEqual(indexed["segment_3"]["quote"], indexed["segment_4"]["quote"])
+        self.assertNotEqual(indexed["segment_3"]["start"], indexed["segment_4"]["start"])
+        self.assertIn("α\r\n", indexed["segment_3"]["quote"])
+        self.assertEqual([indexed[f"segment_{index}"]["quote"] for index in range(5)],
+                         [span["quote"] for span in receipt["located_quotes"]])
+
+    def test_source_records_assembly_is_original_order_and_creates_all_links(self):
+        options, scenario, answer = self.segment_options()
+        spans = generate_rows._source_segments(scenario["input"])
+        forward = generate_rows._source_record_output(answer, spans)
+        reverse = generate_rows._source_record_output(dict(reversed(list(answer.items()))), spans)
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward["target"], TARGET)
+        self.assertEqual([entry["quote_index"] for entry in forward["coverage"]], list(range(5)))
+        linked = {(link["field"], link["index"]) for entry in forward["coverage"] for link in entry["links"]}
+        self.assertEqual(linked, {(field, index) for field in generate_rows.TARGET_FIELDS
+                                 for index in range(len(forward["target"][field]))})
+        self.local_http.assert_not_called()
+        self.assertFalse(options["receipts_dir"].exists())
+
+    def test_historical_source_segment_v1_receipt_replays_exact_prompt_schema_and_wire(self):
+        options, scenario, _ = self.segment_options()
+        self.generate_local(options, scenario, source_segments=True)
+        row = json.loads(self.out.read_text(encoding="utf-8"))
+        path = self.root / row["receipt_ref"]
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        receipt["protocol"] = generate_rows.SEGMENT_COVERAGE_PROTOCOL
+        stage = receipt["stages"][0]
+        messages = generate_rows._teacher_messages(scenario["input"], row["source_model"],
+                                                  receipt["located_quotes"], coverage=True)
+        schema = generate_rows._coverage_schema()
+        self.assertEqual(generate_rows._json_hash(messages),
+                         "fad98c8abbbfb18387b8719745565b3ae9a17e75626e07bed994850353f51b81")
+        self.assertEqual(generate_rows._json_hash(schema),
+                         "80b604b384d081f8e22a17b0e520fc535aecbc6ee7f962284bef4d3253b53656")
+        body = generate_rows._teacher_body(receipt, messages, schema, stage["request"]["max_tokens"], "map")
+        envelope = {"target": row["target"], "coverage": receipt["coverage"]}
+        response = stage["response"]
+        response["choices"][0]["message"]["content"] = json.dumps(envelope)
+        request_bytes, response_bytes = json.dumps(body, allow_nan=False).encode(), json.dumps(response).encode()
+        stage.update(request=body, response=response, schema=schema, output=envelope,
+                     prompt_sha256=generate_rows._json_hash(messages), schema_sha256=generate_rows._json_hash(schema),
+                     request_sha256=generate_rows._json_hash(body), response_sha256=generate_rows._json_hash(response),
+                     request_bytes_hex=request_bytes.hex(), request_bytes_sha256=hashlib.sha256(request_bytes).hexdigest(),
+                     response_bytes_hex=response_bytes.hex(), response_bytes_sha256=hashlib.sha256(response_bytes).hexdigest())
+        for key in ("prompt_sha256", "schema_sha256", "request_sha256", "response_sha256"):
+            receipt[key] = stage[key]
+        path.write_text(json.dumps(receipt), encoding="utf-8")
+        digest = generate_rows.local_receipt_hash(generate_rows.DispatchResult(json.dumps(row["target"]), path,
+                                                 row["source_model"]), scenario, row["target"], UTC)
+        self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(len(self.segment_calls), 1)
+
+    def test_source_records_complete_packet_bounds_include_required_key_schema(self):
+        quotes = [{"quote": "test-only source"}] * 64
+        schema = generate_rows._source_record_schema(quotes)
+        prepared = {"alias": "offline", "model": "microsoft/phi-4"}
+        messages = [{"role": "user", "content": "short"}]
+        self.assertLess(len(json.dumps(messages).encode()), generate_rows.MAX_PACKET_BYTES)
+        with self.assertRaises(ValueError):
+            generate_rows._teacher_body(prepared, messages, schema, 1024, "map", full_packet=True)
 
     def test_source_segments_packet_bound_fails_before_http_and_preserves_failed_receipt(self):
         options, scenario, _ = self.segment_options()
@@ -858,28 +919,40 @@ class GenerateRowsTests(unittest.TestCase):
         self.assertEqual([stage["name"] for stage in receipt["stages"]], ["map"])
         self.assertNotIn("request", receipt["stages"][0])
 
-    def test_source_segments_malformed_or_missing_coverage_fails_after_one_call(self):
+    def test_source_segments_malformed_records_fail_after_one_call(self):
         options, scenario, answer = self.segment_options()
+        cases = {}
+        def case(name):
+            bad = json.loads(json.dumps(answer))
+            cases[name] = bad
+            return bad
+        case("missing key").pop("segment_4")
+        case("extra key")["segment_5"] = {"classification": "context", "items": []}
+        case("empty mandatory")["segment_1"]["items"] = []
+        case("advisory promotion")["segment_0"]["items"] = answer["segment_1"]["items"]
+        case("wrong exclusion field")["segment_2"]["items"][0]["field"] = "constraints"
+        case("unknown class")["segment_0"]["classification"] = "guess"
+        case("invalid field")["segment_1"]["items"][0]["field"] = "title"
+        case("oversized text")["segment_1"]["items"][0]["text"] = "x" * 2049
+        case("oversized items")["segment_1"]["items"] = [answer["segment_1"]["items"][0]] * 65
+        case("extra item field")["segment_1"]["items"][0]["index"] = 0
+        case("secret text")["segment_1"]["items"][0]["text"] = "PASSWORD=not-a-real-secret"
+        cases["duplicate JSON key"] = '{"segment_0":' + json.dumps(answer["segment_0"]) + ',' + json.dumps(answer)[1:]
         original = self.local_http.side_effect
-        for missing in (False, True):
-            def bad_map(method, url, body, timeout, *, capture):
+        for name, bad in cases.items():
+            def bad_map(method, url, body, timeout, *, capture, bad=bad):
                 response = original(method, url, body, timeout, capture=capture)
-                bad = json.loads(json.dumps(answer))
-                if missing:
-                    bad["coverage"].pop()
-                else:
-                    bad["coverage"][1]["links"] = [{"field": "constraints", "index": 999}]
-                response["choices"][0]["message"]["content"] = json.dumps(bad)
+                response["choices"][0]["message"]["content"] = json.dumps(bad) if isinstance(bad, dict) else bad
                 capture["response_bytes"] = json.dumps(response).encode()
                 return response
             self.local_http.side_effect = bad_map
             self.segment_calls.clear()
-            with self.subTest(missing=missing), self.assertRaises(SystemExit):
+            with self.subTest(case=name), self.assertRaises(SystemExit):
                 self.generate_local(options, scenario, source_segments=True)
             self.assertEqual(len(self.segment_calls), 1)
             self.assertFalse(self.out.exists())
         records = [json.loads(path.read_text(encoding="utf-8")) for path in options["receipts_dir"].glob("*.json")]
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), len(cases))
         self.assertTrue(all(record["status"] == "failed" and len(record["stages"]) == 1 for record in records))
 
     def test_source_segments_readback_reconstructs_spans_and_refuses_raw_ledger_protocol_tamper(self):
@@ -892,12 +965,14 @@ class GenerateRowsTests(unittest.TestCase):
         def omit_span(r): r["located_quotes"].pop()
         def reorder(r): r["located_quotes"].reverse()
         def ledger(r): r["coverage"][0]["classification"] = "advisory"
-        def output(r): r["stages"][0]["output"]["target"]["constraints"] = ["changed"]
+        def output(r): r["stages"][0]["output"]["segment_1"]["items"][0]["text"] = "changed"
+        def assembled(r): r["target"]["constraints"] = ["changed"]
         def raw_request(r): r["stages"][0]["request_bytes_hex"] = b'{}'.hex()
         def raw_response(r): r["stages"][0]["response_bytes_hex"] = b'{}'.hex()
         def time(r): r["stages"][0]["end_utc"] = "2026-09-01T00:00:00Z"
         def protocol(r): r["protocol"] = generate_rows.QUOTE_COVERAGE_PROTOCOL
-        for mutate in (span, omit_span, reorder, ledger, output, raw_request, raw_response, time, protocol):
+        def downgrade(r): r["protocol"] = generate_rows.SEGMENT_COVERAGE_PROTOCOL
+        for mutate in (span, omit_span, reorder, ledger, output, assembled, raw_request, raw_response, time, protocol, downgrade):
             record = json.loads(original)
             mutate(record)
             path.write_text(json.dumps(record), encoding="utf-8")
