@@ -186,6 +186,29 @@ class SiteBoardTests(unittest.TestCase):
         self.assertIn("src/a\u2423\u2423b.py", output)
         self.assertNotIn("src/a b.py", output)
 
+    def test_space_open_box_and_escape_marker_displays_are_distinct(self):
+        paths = (
+            "src/a b.py",
+            "src/a\u2423b.py",
+            "src/a\\u2423b.py",
+            "src/a\\\\u2423b.py",
+            "src/a<U+2423>b.py",
+        )
+        displays = [board.inline_path(path) for path in paths]
+        self.assertEqual(displays[0], "src/a\u2423b.py")
+        self.assertEqual(displays[1], "src/a\\\\u2423b.py")
+        self.assertEqual(displays[2], "src/a\\\\\\\\u2423b.py")
+        self.assertEqual(displays[3], "src/a\\\\\\\\\\\\\\\\u2423b.py")
+        self.assertEqual(displays[4], "src/a\\<U+2423\\>b.py")
+        self.assertEqual(len(set(displays)), len(displays))
+        self.files = [{"path": path, "changeType": "MODIFIED"} for path in paths]
+        self.file_count = len(paths)
+        code, output = self.run_board()
+        self.assertEqual(code, 0)
+        for display in displays:
+            self.assertIn(display, output)
+        self.assertNotIn("src/a b.py", output)
+
     def test_check_neutralizes_controls_and_keeps_literal_backslashes(self):
         code, output = self.run_board("--check", "safe\x1b.py")
         self.assertEqual(code, 0)
@@ -195,6 +218,23 @@ class SiteBoardTests(unittest.TestCase):
         code, output = self.run_board("--check", "src\\shared.py")
         self.assertEqual(code, 1)
         self.assertIn("src\\shared.py: #1, #2", output)
+
+    def test_check_prefixed_literal_backslash_overlaps_stored_git_path(self):
+        self.files = [{"path": "src\\shared.py", "changeType": "MODIFIED"}]
+        code, output = self.run_board("--check", "./src\\shared.py")
+        self.assertEqual(code, 1)
+        self.assertIn("./src\\shared.py: #1, #2", output)
+        self.assertEqual(
+            board.check_lookup_keys("./src\\shared.py"),
+            {"./src\\shared.py", "src\\shared.py", "src/shared.py"},
+        )
+
+    def test_check_still_refuses_unsafe_paths(self):
+        for path in ("../secret.py", "./../secret.py", "/abs.py", "C:\\abs.py", "src/../x.py"):
+            with self.subTest(path=path), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(board.BoardError):
+                    board.check_lookup_keys(path)
+                self.assertEqual(self.run_board("--check", path)[0], 2)
 
     def test_oversized_board_is_refused_before_any_github_call(self):
         gh = board.GitHub()

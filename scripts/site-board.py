@@ -113,8 +113,13 @@ def inline(value):
 
 
 def inline_path(value):
-    """Show a repository path without collapsing significant whitespace."""
-    visible = neutralize(value).replace(" ", "\u2423")
+    """Show a repository path without collapsing significant whitespace.
+
+    Ordinary spaces become U+2423. A literal U+2423 is encoded as ``\\u2423``
+    after backslashes are doubled, so a space, a literal open box, and a
+    filename that already contains that escape marker stay distinct.
+    """
+    visible = neutralize(value).replace("\\", "\\\\").replace("\u2423", "\\u2423").replace(" ", "\u2423")
     return _MARKDOWN.sub(r"\\\1", visible).replace("@", "@\u200d")
 
 
@@ -169,6 +174,25 @@ def post_board(gh, issue, board):
         gh.call("api", "-X", "POST", f"{API}/issues/{issue}/comments", body=body)
 
 
+def check_lookup_keys(path):
+    """Keys that may overlap a Git path given a ``--check`` input.
+
+    Strip an accepted leading ``./`` before changing separators so a
+    prefixed literal-backslash form still matches the stored Git path.
+    The POSIX-normalized form is compared alongside it. Unsafe paths
+    are refused.
+    """
+    stripped = path
+    while stripped.startswith("./"):
+        stripped = stripped[2:]
+    slash = stripped.replace("\\", "/")
+    while slash.startswith("./"):
+        slash = slash[2:]
+    if not slash or slash.startswith("/") or re.match(r"^[A-Za-z]:", slash) or ".." in slash.split("/"):
+        raise BoardError("check paths must be repository-relative without '..'")
+    return {path, stripped, str(PurePosixPath(slash))}
+
+
 def positive_issue(value):
     if not value.isdecimal() or int(value) < 1:
         raise argparse.ArgumentTypeError("issue must be a positive number")
@@ -188,13 +212,7 @@ def main(argv=None):
             index = file_index(prs)
             conflict = False
             for path in args.check:
-                normalized = path.replace("\\", "/")
-                while normalized.startswith("./"):
-                    normalized = normalized[2:]
-                if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized) or ".." in normalized.split("/"):
-                    raise BoardError("check paths must be repository-relative without '..'")
-                normalized = str(PurePosixPath(normalized))
-                numbers = sorted(set(index.get(path, [])) | set(index.get(normalized, [])))
+                numbers = sorted({number for key in check_lookup_keys(path) for number in index.get(key, [])})
                 print(f"{neutralize(path)}: " + (", ".join(f"#{number}" for number in numbers) if numbers else "clear"))
                 conflict |= bool(numbers)
             return int(conflict)
