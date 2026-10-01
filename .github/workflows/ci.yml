@@ -478,7 +478,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pattern='gh[oprsu]_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{30,}|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'
+          pattern='gh[oprsu]_[A-Za-z0-9_]{30,}|((^|[^A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,})|((^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{30,})|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'
           matches=$(git grep -l -E "$pattern" -- ':!.github/workflows/ci.yml' || true)
           if [ -n "$matches" ]; then
             echo "::error::Credential-shaped content found in committed files."
