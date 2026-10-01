@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-10-01 | 00:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | BEGIN]]
 """DIRECTOR prompt template: one rendering of the task input for evaluation and training.
 
@@ -66,8 +67,9 @@ SYSTEM_PROMPT_CONTEXT = (
     "conditions, numeric bounds, positional meaning and named artifacts. "
     "Do not replace several obligations with a broad summary. Use precise source "
     "wording instead of a lossy paraphrase. Input assumptions belong in constraints, "
-    "not new output behaviours. Treat advisory hints as optional unless the source "
-    "makes them mandatory. Before emitting JSON, check that no explicit obligation "
+    "not new output behaviours. Omit advisory hints from required fields and "
+    "non_goals unless the source explicitly mandates or excludes the behaviour. "
+    "Before emitting JSON, check that no explicit obligation "
     "was omitted and every included item is source-supported. Do not emit this "
     "check or any extra fields."
 )
@@ -166,3 +168,4 @@ def render_messages(item: dict[str, Any], target: dict[str, Any] | None = None) 
         messages.append({"role": "assistant", "content": render_target(target)})
     return messages
 # [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-10-01 | 00:10 UTC | END]]
