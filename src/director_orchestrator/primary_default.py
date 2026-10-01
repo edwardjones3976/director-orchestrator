@@ -1409,6 +1409,20 @@ def _small_producer_constraints(
     ]
 
 
+def _scoped_write_authorized(template: Assignment, prestage, *,
+                            is_research: bool, is_antigravity: bool) -> bool:
+    """Keep a structured draft grant; intake prose and the dry-run placeholder do not create one."""
+
+    if is_research or is_antigravity:
+        return False
+    if not template.allow_draft_pr or not template.requires_approval:
+        return False
+    if prestage is None:
+        return False
+    paths = tuple(prestage.owned_paths)
+    return bool(paths) and paths != ("dry-run/no-files",)
+
+
 def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                         available: tuple[str, ...], history: tuple[str, ...]) -> None:
     """Freeze a minimal capability-selected DAG before execution approval."""
@@ -1496,8 +1510,10 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                     "repository": None if is_research or is_antigravity else repository,
                     "starting_ref": starting_ref,
                     "depends_on": ([1] if selected.research and lane == selected.producer else []),
-                    "requires_approval": is_research,
-                    "allow_draft_pr": False,
+                    "requires_approval": is_research or _scoped_write_authorized(
+                        work_template, plan.prestage, is_research=is_research, is_antigravity=is_antigravity),
+                    "allow_draft_pr": _scoped_write_authorized(
+                        work_template, plan.prestage, is_research=is_research, is_antigravity=is_antigravity),
                     "retry_limit": 3,
                     "estimated_cost_usd": lane_budgets[sequence - 1],
                 }
