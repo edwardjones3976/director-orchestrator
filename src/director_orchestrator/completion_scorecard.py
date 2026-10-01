@@ -118,7 +118,12 @@ from urllib.parse import urlsplit
 import httpx
 
 from .primary_activation_evidence import actors_distinct, canonical_actor
-from .process_isolation import ProcessContainmentError, launch_contained_process, stop_contained_process
+from .process_isolation import (
+    ProcessContainmentError,
+    launch_contained_process,
+    signal_contained_tree,
+    stop_contained_process,
+)
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
@@ -319,7 +324,7 @@ def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
             while not done.is_set() and (chunk := os.read(fd, 65536)):
                 if len(captured[name]) + len(chunk) > MAX_BYTES:
                     overflow.set()
-                    process.kill()
+                    signal_contained_tree(process, guard)
                     return
                 captured[name] += chunk
         except OSError:

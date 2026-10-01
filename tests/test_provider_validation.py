@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict,replace
 from datetime import datetime,timezone
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -516,6 +517,18 @@ class NativeCaptureTests(unittest.TestCase):
             service.record(provider_id="claude",surface=ProviderActivationSurface.APP,
                 stage=ProviderActivationStage.LIVE_OK,evidence_id="assertion",evidence_digest="a"*64,
                 observed_at=now,expires_at=now)
+
+
+class FenceContentionLockTests(unittest.TestCase):
+    def test_fence_blocker_uses_access_exclusive_because_fence_select_takes_no_row_lock(self):
+        """CI 36915002980/36915004595 failed elapsed at line 1150 because
+        SELECT FOR UPDATE does not block verify_fence's plain SELECT."""
+        fence = inspect.getsource(PostgresValidationStore.verify_fence)
+        self.assertNotIn("FOR UPDATE", fence)
+        helper = inspect.getsource(PostgresValidationTests._run_service_contention_case)
+        self.assertIn("LOCK TABLE", helper)
+        self.assertIn("ACCESS EXCLUSIVE MODE", helper)
+        self.assertIn('if phase == "verify_fence":', helper)
 
 
 class PostgresValidationTests(unittest.TestCase):
@@ -1058,7 +1071,17 @@ class PostgresValidationTests(unittest.TestCase):
         1s scheduler grace is the whole boundary, and the cleanup allowance in
         PostgresValidationStore.fail is anchored to that same absolute
         deadline-plus-grace, not a second, fresh window stacked on top of it.
-        Completion must land strictly inside 2s+1s.
+        Elapsed time is the full ``service.run()`` clock, start to refusal:
+        that is the original absolute 2s+1s contract. Production
+        ``verify_fence`` is a plain SELECT, which SELECT FOR UPDATE does
+        not block (CI 36915002980/36915004595 at line 1150). Fence
+        contention is therefore ACCESS EXCLUSIVE on ``attempts``, taken
+        only after ``admit`` and packet-ceiling tightening, when
+        ``verify_fence`` is entered. Taking that table lock before
+        ``service.run()`` blocked ``admit`` under the 60s transport
+        ceiling and never witnessed the tightened fence deadline. Claim
+        and settle keep their in-call row FOR UPDATE, matching those
+        statements.
 
         `threading.Event.wait` returns False on a timeout WITHOUT setting the
         event, so `release.is_set()` can never observe an automatic watchdog
@@ -1082,49 +1105,51 @@ class PostgresValidationTests(unittest.TestCase):
         import time as time_module
         fixture=self._responses_service_fixture()
         box={"watchdog_fired":None,"errors":[]}
+        def start_blocker(reservation):
+            release,held=threading.Event(),threading.Event()
+            def blocker():
+                try:
+                    with self.store.connect() as db:
+                        db.execute("SELECT set_config('statement_timeout','15000',true),"
+                            "set_config('lock_timeout','15000',true)")
+                        if phase == "verify_fence":
+                            db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
+                        else:
+                            db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
+                                       (reservation,)).fetchone()
+                        held.set()
+                        # Self-release at 3s (2s packet budget + 1s
+                        # scheduler grace) is a watchdog safety net; the
+                        # service is expected to finish, and this test to
+                        # call release.set() itself, well before this
+                        # fires. Event.wait returns False on a timeout
+                        # without setting the event, so the outcome is
+                        # recorded explicitly rather than inferred from
+                        # release.is_set().
+                        released_explicitly=release.wait(3.0)
+                        box["watchdog_fired"]=not released_explicitly
+                except BaseException as error:
+                    box["errors"].append(error)
+                    held.set()
+            thread=threading.Thread(target=blocker,daemon=True)
+            # Recorded before the thread starts or any wait, so a setup
+            # failure below can still be released and joined.
+            box["release"]=release;box["thread"]=thread
+            thread.start()
+            acquired=held.wait(10)
+            if box["errors"]:
+                release.set();thread.join(5)
+                raise AssertionError(f"contention blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
+            if not acquired:
+                release.set();thread.join(5)
+                raise AssertionError("contention blocker never acquired its lock")
         def wrapped_factory(original):
             def wrapped(*args,**kwargs):
                 if phase in ("claim_execution","settle"):
                     box["reservation"]=args[0]["reservation"]
                 elif phase=="verify_fence":
                     box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
-                release,held=threading.Event(),threading.Event()
-                def blocker():
-                    try:
-                        with self.store.connect() as db:
-                            db.execute("SELECT set_config('statement_timeout','15000',true),"
-                                "set_config('lock_timeout','15000',true)")
-                            if phase=="verify_fence":
-                                db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
-                            else:
-                                db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
-                                           (box["reservation"],)).fetchone()
-                            held.set()
-                            # Self-release at 3s (2s packet budget + 1s
-                            # scheduler grace) is a watchdog safety net; the
-                            # service is expected to finish, and this test to
-                            # call release.set() itself, well before this
-                            # fires. Event.wait returns False on a timeout
-                            # without setting the event, so the outcome is
-                            # recorded explicitly rather than inferred from
-                            # release.is_set().
-                            released_explicitly=release.wait(3.0)
-                            box["watchdog_fired"]=not released_explicitly
-                    except BaseException as error:
-                        box["errors"].append(error)
-                        held.set()
-                thread=threading.Thread(target=blocker,daemon=True)
-                # Recorded before the thread starts or any wait, so a setup
-                # failure below can still be released and joined.
-                box["release"]=release;box["thread"]=thread
-                thread.start()
-                acquired=held.wait(10)
-                if box["errors"]:
-                    release.set();thread.join(5)
-                    raise AssertionError(f"contention blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
-                if not acquired:
-                    release.set();thread.join(5)
-                    raise AssertionError("contention blocker never acquired its lock")
+                start_blocker(box["reservation"])
                 return original(*args,**kwargs)
             return wrapped
         try:

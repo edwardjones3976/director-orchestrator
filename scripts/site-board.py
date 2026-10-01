@@ -16,6 +16,9 @@ API = f"repos/{REPO}"
 MARKER = "<!-- site-board -->"
 MAX_PRS = 1000
 MAX_PAGES = 10
+COMMENT_LIMIT = 65536
+_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+_MARKDOWN = re.compile(r"([\\`*_{}\[\]()<>#!|])")
 
 
 class BoardError(Exception):
@@ -99,10 +102,25 @@ def file_index(prs):
     return index
 
 
+def neutralize(value):
+    """Replace terminal and bidi controls without changing the remaining characters."""
+    return _CONTROLS.sub("\ufffd", str(value))
+
+
 def inline(value):
-    """Keep remote text inert in terminal output and Markdown comments."""
-    value = re.sub(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", "\ufffd", str(value))
-    return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(value.split())).replace("@", "@\u200d")
+    """Keep remote prose inert in terminal output and Markdown comments."""
+    return _MARKDOWN.sub(r"\\\1", " ".join(neutralize(value).split())).replace("@", "@\u200d")
+
+
+def inline_path(value):
+    """Show a repository path without collapsing significant whitespace.
+
+    Ordinary spaces become U+2423. A literal U+2423 is encoded as ``\\u2423``
+    after backslashes are doubled, so a space, a literal open box, and a
+    filename that already contains that escape marker stay distinct.
+    """
+    visible = neutralize(value).replace("\\", "\\\\").replace("\u2423", "\\u2423").replace(" ", "\u2423")
+    return _MARKDOWN.sub(r"\\\1", visible).replace("@", "@\u200d")
 
 
 def render_board(gh, prs):
@@ -122,20 +140,25 @@ def render_board(gh, prs):
             f"- Session: {inline(session.group(1).strip()) if session else 'unknown'}",
             f"- Latest head CI: {ci}; queue position: {position}",
             "- Files:",
-            *[f"  - {inline(path)}" for path in pr["files"]],
+            *[f"  - {inline_path(path)}" for path in pr["files"]],
             "",
         ])
     if not prs:
         lines.extend(["No open PRs.", ""])
     lines.extend(["## OVERLAPS", ""])
     overlaps = [(path, numbers) for path, numbers in sorted(file_index(prs).items()) if len(numbers) > 1]
-    lines.extend(f"- {inline(path)}: " + ", ".join(f"#{number}" for number in numbers) for path, numbers in overlaps)
+    lines.extend(f"- {inline_path(path)}: " + ", ".join(f"#{number}" for number in numbers) for path, numbers in overlaps)
     if not overlaps:
         lines.append("None.")
     return "\n".join(lines) + "\n"
 
 
 def post_board(gh, issue, board):
+    body = MARKER + "\n" + board
+    if len(body) > COMMENT_LIMIT:
+        raise BoardError(
+            f"board comment is {len(body)} characters; GitHub's limit is {COMMENT_LIMIT}; refusing to post"
+        )
     login = gh.call("api", "user")["login"]
     if not isinstance(login, str) or not login:
         raise BoardError("authenticated identity is missing; refusing to post")
@@ -145,11 +168,29 @@ def post_board(gh, issue, board):
                and MARKER in (comment.get("body") or "").splitlines()]
     if len(matches) > 1:
         raise BoardError("multiple marker comments found; resolve duplicates before posting")
-    body = MARKER + "\n" + board
     if matches:
         gh.call("api", "-X", "PATCH", f"{API}/issues/comments/{matches[0]['id']}", body=body)
     else:
         gh.call("api", "-X", "POST", f"{API}/issues/{issue}/comments", body=body)
+
+
+def check_lookup_keys(path):
+    """Keys that may overlap a Git path given a ``--check`` input.
+
+    Strip an accepted leading ``./`` before changing separators so a
+    prefixed literal-backslash form still matches the stored Git path.
+    The POSIX-normalized form is compared alongside it. Unsafe paths
+    are refused.
+    """
+    stripped = path
+    while stripped.startswith("./"):
+        stripped = stripped[2:]
+    slash = stripped.replace("\\", "/")
+    while slash.startswith("./"):
+        slash = slash[2:]
+    if not slash or slash.startswith("/") or re.match(r"^[A-Za-z]:", slash) or ".." in slash.split("/"):
+        raise BoardError("check paths must be repository-relative without '..'")
+    return {path, stripped, str(PurePosixPath(slash))}
 
 
 def positive_issue(value):
@@ -171,14 +212,8 @@ def main(argv=None):
             index = file_index(prs)
             conflict = False
             for path in args.check:
-                normalized = path.replace("\\", "/")
-                while normalized.startswith("./"):
-                    normalized = normalized[2:]
-                if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized) or ".." in normalized.split("/"):
-                    raise BoardError("check paths must be repository-relative without '..'")
-                normalized = str(PurePosixPath(normalized))
-                numbers = index.get(normalized, [])
-                print(f"{path}: " + (", ".join(f"#{number}" for number in numbers) if numbers else "clear"))
+                numbers = sorted({number for key in check_lookup_keys(path) for number in index.get(key, [])})
+                print(f"{neutralize(path)}: " + (", ".join(f"#{number}" for number in numbers) if numbers else "clear"))
                 conflict |= bool(numbers)
             return int(conflict)
         board = render_board(gh, prs)
