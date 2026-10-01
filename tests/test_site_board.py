@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-10-01 | 16:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 import contextlib
@@ -174,6 +175,35 @@ class SiteBoardTests(unittest.TestCase):
             self.assertEqual(board.main(["--check", "clear.py"]), 2)
         self.assertNotIn("private", stderr.getvalue())
 
+    def test_path_whitespace_stays_distinct(self):
+        self.files = [
+            {"path": "src/a b.py", "changeType": "MODIFIED"},
+            {"path": "src/a  b.py", "changeType": "MODIFIED"},
+        ]
+        self.file_count = 2
+        code, output = self.run_board()
+        self.assertEqual(code, 0)
+        self.assertIn("src/a\u2423b.py", output)
+        self.assertIn("src/a\u2423\u2423b.py", output)
+        self.assertNotIn("src/a b.py", output)
+
+    def test_check_neutralizes_controls_and_keeps_literal_backslashes(self):
+        code, output = self.run_board("--check", "safe\x1b.py")
+        self.assertEqual(code, 0)
+        self.assertIn("safe\ufffd.py: clear", output)
+        self.assertNotIn("\x1b", output)
+        self.files = [{"path": "src\\shared.py", "changeType": "MODIFIED"}]
+        code, output = self.run_board("--check", "src\\shared.py")
+        self.assertEqual(code, 1)
+        self.assertIn("src\\shared.py: #1, #2", output)
+
+    def test_oversized_board_is_refused_before_any_github_call(self):
+        gh = board.GitHub()
+        with patch.object(board.subprocess, "run", side_effect=self.gh):
+            with self.assertRaises(board.BoardError):
+                board.post_board(gh, 299, "x" * board.COMMENT_LIMIT)
+        self.assertEqual(self.calls, [])
+
     def test_pagination_bound_fails_and_reads_are_cached(self):
         gh = board.GitHub()
         with patch.object(board.subprocess, "run", return_value=subprocess.CompletedProcess("gh", 0, json.dumps([{}] * 100))) as run:
@@ -188,3 +218,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | END]]
+# [[Cursor | Auto | 2026-10-01 | 16:54 UTC | END]]

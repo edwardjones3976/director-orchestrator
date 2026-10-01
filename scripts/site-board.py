@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-10-01 | 16:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | BEGIN]]
 """Display open work and detect exact repository-relative path conflicts."""
@@ -16,6 +17,9 @@ API = f"repos/{REPO}"
 MARKER = "<!-- site-board -->"
 MAX_PRS = 1000
 MAX_PAGES = 10
+COMMENT_LIMIT = 65536
+_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+_MARKDOWN = re.compile(r"([\\`*_{}\[\]()<>#!|])")
 
 
 class BoardError(Exception):
@@ -99,10 +103,20 @@ def file_index(prs):
     return index
 
 
+def neutralize(value):
+    """Replace terminal and bidi controls without changing the remaining characters."""
+    return _CONTROLS.sub("\ufffd", str(value))
+
+
 def inline(value):
-    """Keep remote text inert in terminal output and Markdown comments."""
-    value = re.sub(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", "\ufffd", str(value))
-    return re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(value.split())).replace("@", "@\u200d")
+    """Keep remote prose inert in terminal output and Markdown comments."""
+    return _MARKDOWN.sub(r"\\\1", " ".join(neutralize(value).split())).replace("@", "@\u200d")
+
+
+def inline_path(value):
+    """Show a repository path without collapsing significant whitespace."""
+    visible = neutralize(value).replace(" ", "\u2423")
+    return _MARKDOWN.sub(r"\\\1", visible).replace("@", "@\u200d")
 
 
 def render_board(gh, prs):
@@ -122,20 +136,25 @@ def render_board(gh, prs):
             f"- Session: {inline(session.group(1).strip()) if session else 'unknown'}",
             f"- Latest head CI: {ci}; queue position: {position}",
             "- Files:",
-            *[f"  - {inline(path)}" for path in pr["files"]],
+            *[f"  - {inline_path(path)}" for path in pr["files"]],
             "",
         ])
     if not prs:
         lines.extend(["No open PRs.", ""])
     lines.extend(["## OVERLAPS", ""])
     overlaps = [(path, numbers) for path, numbers in sorted(file_index(prs).items()) if len(numbers) > 1]
-    lines.extend(f"- {inline(path)}: " + ", ".join(f"#{number}" for number in numbers) for path, numbers in overlaps)
+    lines.extend(f"- {inline_path(path)}: " + ", ".join(f"#{number}" for number in numbers) for path, numbers in overlaps)
     if not overlaps:
         lines.append("None.")
     return "\n".join(lines) + "\n"
 
 
 def post_board(gh, issue, board):
+    body = MARKER + "\n" + board
+    if len(body) > COMMENT_LIMIT:
+        raise BoardError(
+            f"board comment is {len(body)} characters; GitHub's limit is {COMMENT_LIMIT}; refusing to post"
+        )
     login = gh.call("api", "user")["login"]
     if not isinstance(login, str) or not login:
         raise BoardError("authenticated identity is missing; refusing to post")
@@ -145,7 +164,6 @@ def post_board(gh, issue, board):
                and MARKER in (comment.get("body") or "").splitlines()]
     if len(matches) > 1:
         raise BoardError("multiple marker comments found; resolve duplicates before posting")
-    body = MARKER + "\n" + board
     if matches:
         gh.call("api", "-X", "PATCH", f"{API}/issues/comments/{matches[0]['id']}", body=body)
     else:
@@ -177,8 +195,8 @@ def main(argv=None):
                 if not normalized or normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized) or ".." in normalized.split("/"):
                     raise BoardError("check paths must be repository-relative without '..'")
                 normalized = str(PurePosixPath(normalized))
-                numbers = index.get(normalized, [])
-                print(f"{path}: " + (", ".join(f"#{number}" for number in numbers) if numbers else "clear"))
+                numbers = sorted(set(index.get(path, [])) | set(index.get(normalized, [])))
+                print(f"{neutralize(path)}: " + (", ".join(f"#{number}" for number in numbers) if numbers else "clear"))
                 conflict |= bool(numbers)
             return int(conflict)
         board = render_board(gh, prs)
@@ -196,3 +214,4 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:36 UTC | END]]
+# [[Cursor | Auto | 2026-10-01 | 16:54 UTC | END]]
