@@ -847,11 +847,15 @@ class ValidationBridgeService:
         self.openai_responses_route=openai_responses_route
 
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
+        request_scope = {"digest": None}
+        if request.provider == "openai" and self.openai_responses_route is not None:
+            request_scope["started"] = time.monotonic()
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
         # One request scope: runtime bytes are hashed here, before admission,
-        # and rehashed at each post-execution check.
-        scope = _RUNTIME_SCOPE.set({"digest": None})
+        # and rehashed at each post-execution check. Responses also carries
+        # its original pre-hash start; the other lanes keep their own clocks.
+        scope = _RUNTIME_SCOPE.set(request_scope)
         try:
             rehash_runtime_scope()
             return self._run_lane(request, owner_token)
@@ -934,8 +938,9 @@ class ValidationBridgeService:
         """Explicit Responses API validation; never falls back to native Codex.
 
         One whole-operation deadline, measured from a single start reading taken
-        before admission, governs connection acquisition, admission, monetary
-        reservation, claim, fence, network, capture, settlement and COMMIT alike.
+        before the request's mandatory integrity hash, governs connection
+        acquisition, admission, monetary reservation, claim, fence, network,
+        capture, settlement and COMMIT alike.
         The canary packet's own ceiling tightens that same deadline from the shared
         start; a post-admission reading may never extend it.  Store calls receive
         the shared deadline so connection waits and transaction-local statement
@@ -957,7 +962,10 @@ class ValidationBridgeService:
         transport_ceiling = int(getattr(route.transport, "maximum_timeout_seconds", 180))
         if transport_ceiling < 1:
             raise ValidationError("Responses validation timeout is exhausted")
-        started = time.monotonic()
+        scope = _RUNTIME_SCOPE.get()
+        started = scope.get("started") if scope is not None else None
+        if started is None:  # Direct lane calls and legacy digest-only scopes retain their own start.
+            started = time.monotonic()
         deadline = started + transport_ceiling
 
         def remaining_seconds() -> float:
