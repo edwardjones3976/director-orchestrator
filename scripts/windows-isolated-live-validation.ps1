@@ -504,7 +504,14 @@ function Assert-ProfileIdentity {
         throw "$profilePath did not stage the Oracle merge gate closed."
     }
     if ($ProfileName -eq "long-table") {
-        if ([string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "<snapshot-dir>" -or
+        $snapshotHost = [string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"]
+        # The example keeps a privacy-safe placeholder. A live profile must
+        # name an absolute operator-supplied directory; Assert-LongTableSnapshot
+        # then proves that directory is the Long Table worktree.
+        if ([string]::IsNullOrWhiteSpace($snapshotHost) -or
+            $snapshotHost.Contains("<") -or
+            $snapshotHost.Contains(">") -or
+            -not [System.IO.Path]::IsPathRooted($snapshotHost) -or
             [string]$Values["REPOSITORY_SNAPSHOT_ROOT"] -cne "/repository") {
             throw "$profilePath has an unexpected Long Table repository snapshot boundary."
         }
