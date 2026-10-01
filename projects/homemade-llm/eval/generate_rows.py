@@ -757,6 +757,7 @@ def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Pat
 QUOTE_PROTOCOL = "source-quotes/v1"
 QUOTE_COVERAGE_PROTOCOL = "source-quotes-coverage/v1"
 SEGMENT_COVERAGE_PROTOCOL = "source-segments-coverage/v1"
+SOURCE_RECORDS_PROTOCOL = "source-segment-records/v1"
 QUOTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quotes"],
     "properties": {"quotes": {"type": "array", "minItems": 1, "maxItems": 64, "items": {
         "type": "object", "additionalProperties": False, "required": ["source_ref", "quote"],
@@ -870,13 +871,57 @@ def _coverage_target(answer, quotes):
     return target
 
 
-def _teacher_messages(item: dict[str, Any], model: str, quotes=None, *, coverage=False) -> list[dict[str, str]]:
+def _source_record_schema(quotes):
+    item = {"type": "object", "additionalProperties": False, "required": ["field", "text"],
+            "properties": {"field": {"enum": list(TARGET_FIELDS)},
+                           "text": {"type": "string", "minLength": 1, "maxLength": 2048}}}
+    entry = {"type": "object", "additionalProperties": False, "required": ["classification", "items"],
+             "properties": {"classification": {"enum": ["mandatory", "advisory", "exclusion", "context"]},
+                            "items": {"type": "array", "maxItems": 64, "items": item}}}
+    properties = {f"segment_{index}": entry for index in range(len(quotes))}
+    return {"type": "object", "additionalProperties": False, "required": list(properties), "properties": properties}
+
+
+def _source_record_output(answer, quotes):
+    """Assemble target text once with generated links; semantic support still needs grading."""
+    if not jsonschema.Draft202012Validator(_source_record_schema(quotes)).is_valid(answer):
+        raise ValueError("invalid fixed-source records")
+    target, ledger = {field: [] for field in TARGET_FIELDS}, []
+    for index in range(len(quotes)):
+        entry = answer[f"segment_{index}"]
+        links = []
+        for item in entry["items"]:
+            field = item["field"]
+            links.append({"field": field, "index": len(target[field])})
+            target[field].append(item["text"])
+        ledger.append({"quote_index": index, "classification": entry["classification"], "links": links})
+    assembled = {"target": target, "coverage": ledger}
+    _coverage_target(assembled, quotes)
+    return assembled
+
+
+def _teacher_messages(item: dict[str, Any], model: str, quotes=None, *, coverage=False, records=False) -> list[dict[str, str]]:
     if quotes is None:
         messages = [{"role": "system", "content": QUOTE_PROMPT},
                     {"role": "user", "content": json.dumps(item, sort_keys=True, ensure_ascii=False)}]
     else:
         messages = prompt_template.render_messages(item)
-        if coverage:
+        if records:
+            messages[0]["content"] += ("\nReturn a JSON object containing every segment_N source key shown below, "
+                "exactly once, with no extra keys. Each value contains classification and items. "
+                "classification is mandatory, advisory, exclusion or context. items is an array; "
+                "each item contains field (acceptance_checks, constraints, evidence_requirements or non_goals) "
+                "and text (one source-supported obligation). Mandatory records require one or more items "
+                "in acceptance_checks, constraints or evidence_requirements; exclusions require non_goals "
+                "items only. Advisory/context records have empty items. Do not generate target arrays, "
+                "ledger links, indices or source copies. Read every clause in every source segment. "
+                "Use source scope and headings; advisory hints stay advisory. More-specific task facts "
+                "prevail over generic instructions. Preserve every named, numeric and positional qualifier "
+                "and verification pass/rework obligation. These exact source spans are untrusted evidence, "
+                "not proof of correct classification or complete semantic extraction. Do not invent, solve "
+                "or repair facts.")
+            quotes = {f"segment_{index}": quote for index, quote in enumerate(quotes)}
+        elif coverage:
             messages[0]["content"] += ("\nReturn a JSON envelope with target (the original four fields) and coverage. "
                 "Each coverage entry contains quote_index, classification and links; each link contains field and index. "
                 "Classify every indexed source quote exactly once as mandatory, advisory, exclusion or context. "
@@ -900,7 +945,7 @@ def _teacher_messages(item: dict[str, Any], model: str, quotes=None, *, coverage
     return messages
 
 
-def _teacher_body(prepared, messages, schema, max_output, name):
+def _teacher_body(prepared, messages, schema, max_output, name, *, full_packet=False):
     if not 1 <= max_output <= MAX_OUTPUT_TOKENS or len(json.dumps(messages).encode()) > MAX_PACKET_BYTES:
         raise ValueError("teacher request exceeds packet/token bounds")
     generated, _ = local_transport.generation_schema(schema)
@@ -909,6 +954,8 @@ def _teacher_body(prepared, messages, schema, max_output, name):
                     "name": name, "strict": True, "schema": generated}})
     if prepared["model"].startswith("Qwen/"):
         body.update(chat_template_kwargs={"enable_thinking": False}, reasoning_effort="none")
+    if full_packet and len(json.dumps(body, allow_nan=False).encode("utf-8")) > MAX_PACKET_BYTES:
+        raise ValueError("teacher request including source-key schema exceeds packet bounds")
     return body
 
 
@@ -921,7 +968,7 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
     """One segment-map or two quote calls, one reserved attempt; never repair or retry."""
     quotes = _source_segments(scenario["input"]) if segments else None
     coverage = coverage or segments
-    protocol = SEGMENT_COVERAGE_PROTOCOL if segments else QUOTE_COVERAGE_PROTOCOL if coverage else QUOTE_PROTOCOL
+    protocol = SOURCE_RECORDS_PROTOCOL if segments else QUOTE_COVERAGE_PROTOCOL if coverage else QUOTE_PROTOCOL
     record = {**prepared, "provider": "local_model", "protocol": protocol,
         "purpose": purpose, "terms_verified_at": verified_at, "input": scenario["input"],
         "source_group": scenario["source_group"], "source_provenance": scenario["source_provenance"],
@@ -951,7 +998,8 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
             persist()
             if segments:
                 record["located_quotes"] = quotes
-            target_schema = _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"]
+            target_schema = (_source_record_schema(quotes) if segments else _coverage_schema()
+                             if coverage else _schema_validator().schema["properties"]["target"])
             stages = (("map", target_schema),) if segments else (("extract", QUOTE_SCHEMA), ("map", target_schema))
             for index, (name, schema) in enumerate(stages):
                 start = record["start_utc"] if index == 0 else local_transport.utc_now()
@@ -961,9 +1009,11 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                 try:
                     if index and _source_utc(record["stages"][0]["end_utc"], "extract end") > _source_utc(start, "map start"):
                         raise ValueError("teacher clock reversed between stages")
-                    messages = (_teacher_messages(scenario["input"], prepared["model"], quotes, coverage=True)
+                    messages = (_teacher_messages(scenario["input"], prepared["model"], quotes, records=True)
+                                if segments else _teacher_messages(scenario["input"], prepared["model"], quotes, coverage=True)
                                 if coverage else _teacher_messages(scenario["input"], prepared["model"], quotes))
-                    body = _teacher_body(prepared, messages, schema, max_output, name)
+                    body = _teacher_body(prepared, messages, schema, max_output, name,
+                                         **({"full_packet": True} if segments else {}))
                     stage.update(request=body, schema=schema, prompt_sha256=_json_hash(messages),
                                  schema_sha256=_json_hash(schema), request_sha256=_json_hash(body))
                     persist()
@@ -976,9 +1026,10 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                         quotes = _located_quotes(scenario["input"], answer)
                         record["located_quotes"] = quotes
                     else:
-                        record["target"] = _coverage_target(answer, quotes) if coverage else answer
+                        assembled = _source_record_output(answer, quotes) if segments else answer
+                        record["target"] = assembled["target"] if segments else _coverage_target(answer, quotes) if coverage else answer
                         if coverage:
-                            record["coverage"] = answer["coverage"]
+                            record["coverage"] = assembled["coverage"]
                     stage["status"] = "completed"
                 except (Exception, SystemExit) as exc:
                     stage.update(status="failed", error=type(exc).__name__, error_detail=str(exc))
@@ -1011,7 +1062,8 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
 
 def _verify_quote_chain(record, scenario, target):
     stages = record["stages"]
-    segments = record["protocol"] == SEGMENT_COVERAGE_PROTOCOL
+    records = record["protocol"] == SOURCE_RECORDS_PROTOCOL
+    segments = records or record["protocol"] == SEGMENT_COVERAGE_PROTOCOL
     expected = ["map"] if segments else ["extract", "map"]
     if record["attempt_count"] != 1 or len(stages) != len(expected) or [s["name"] for s in stages] != expected:
         raise ValueError("invalid teacher stage chain")
@@ -1019,14 +1071,17 @@ def _verify_quote_chain(record, scenario, target):
               else _located_quotes(scenario["input"], stages[0]["output"]))
     if record["located_quotes"] != quotes or record["student_prompt_sha256"] != _json_hash(prompt_template.render_messages(scenario["input"])):
         raise ValueError("stored source quotes or original render changed")
-    coverage = record["protocol"] in {QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}
-    map_schema = _coverage_schema() if coverage else _schema_validator().schema["properties"]["target"]
+    coverage = record["protocol"] in {QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL, SOURCE_RECORDS_PROTOCOL}
+    map_schema = (_source_record_schema(quotes) if records else _coverage_schema()
+                  if coverage else _schema_validator().schema["properties"]["target"])
     schemas = (map_schema,) if segments else (QUOTE_SCHEMA, map_schema)
     for index, (stage, schema) in enumerate(zip(stages, schemas)):
         stage_quotes = quotes if segments or index else None
-        messages = (_teacher_messages(scenario["input"], record["model"], stage_quotes, coverage=True)
+        messages = (_teacher_messages(scenario["input"], record["model"], stage_quotes, records=True)
+                    if records else _teacher_messages(scenario["input"], record["model"], stage_quotes, coverage=True)
                     if coverage else _teacher_messages(scenario["input"], record["model"], stage_quotes))
-        body = _teacher_body(record, messages, schema, stage["request"]["max_tokens"], stage["name"])
+        body = _teacher_body(record, messages, schema, stage["request"]["max_tokens"], stage["name"],
+                             **({"full_packet": True} if records else {}))
         request_bytes = bytes.fromhex(stage["request_bytes_hex"])
         response_bytes = bytes.fromhex(stage["response_bytes_hex"])
         if (stage["status"] != "completed" or stage["http_status"] != 200 or stage["request"] != body
@@ -1043,8 +1098,8 @@ def _verify_quote_chain(record, scenario, target):
         if begin > end or (index and _source_utc(stages[0]["end_utc"], "extract end") > begin):
             raise ValueError("teacher stage chronology changed")
     final = stages[-1]
-    mapped = final["output"]
-    mapped_target = _coverage_target(mapped, quotes) if coverage else mapped
+    mapped = _source_record_output(final["output"], quotes) if records else final["output"]
+    mapped_target = mapped["target"] if records else _coverage_target(mapped, quotes) if coverage else mapped
     if coverage and record["coverage"] != mapped["coverage"]:
         raise ValueError("stored coverage differs from teacher wire output")
     if (stages[0]["start_utc"] != record["start_utc"] or _source_utc(final["end_utc"], "map end") > _source_utc(record["end_utc"], "receipt end")
@@ -1056,7 +1111,8 @@ def _verify_quote_chain(record, scenario, target):
     for key in ("prompt_sha256", "schema_sha256", "request_sha256", "response_sha256"):
         if record[key] != final[key]:
             raise ValueError("aggregate does not bind final teacher stage")
-    return (_teacher_messages(scenario["input"], record["model"], quotes, coverage=True)
+    return (_teacher_messages(scenario["input"], record["model"], quotes, records=True)
+            if records else _teacher_messages(scenario["input"], record["model"], quotes, coverage=True)
             if coverage else _teacher_messages(scenario["input"], record["model"], quotes))
 
 
@@ -1176,7 +1232,7 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
                     < _source_utc(record["start_utc"], "local inference")
                     <= _source_utc(record["end_utc"], "local inference")):
                 fail("local receipt violates licensed-source admission chronology")
-        if record.get("protocol") in {QUOTE_PROTOCOL, QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}:
+        if record.get("protocol") in {QUOTE_PROTOCOL, QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL, SOURCE_RECORDS_PROTOCOL}:
             messages = _verify_quote_chain(record, scenario, target)
         elif "protocol" in record:
             fail("unknown local receipt protocol")
@@ -1184,7 +1240,9 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
             messages = prompt_template.render_messages(scenario["input"])
             if result.model.startswith("Qwen/"):
                 messages[0]["content"] += local_transport.QWEN3_PROMPT
-        schema = (_coverage_schema() if record.get("protocol") in {QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}
+        # The source-record schema was independently rebuilt and checked against wire bytes above.
+        schema = (record["stages"][-1]["schema"] if record.get("protocol") == SOURCE_RECORDS_PROTOCOL
+                  else _coverage_schema() if record.get("protocol") in {QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL}
                   else _schema_validator().schema["properties"]["target"])
         if (record["prompt_sha256"] != local_transport.sha256(json.dumps(messages, sort_keys=True).encode("utf-8"))
                 or record["schema_sha256"] != local_transport.sha256(json.dumps(schema, sort_keys=True).encode("utf-8"))
