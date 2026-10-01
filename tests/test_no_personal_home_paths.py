@@ -1,4 +1,3 @@
-# [[Cursor | Auto | 2026-10-01 | 17:02 UTC | BEGIN]]
 """Committed text must not carry a personal Windows home path."""
 
 from pathlib import Path
@@ -28,4 +27,3 @@ class PersonalHomePathTests(unittest.TestCase):
         self.assertEqual(hits, [])
 
 
-# [[Cursor | Auto | 2026-10-01 | 17:02 UTC | END]]
