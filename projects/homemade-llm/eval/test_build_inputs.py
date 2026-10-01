@@ -561,6 +561,65 @@ def _context_item(**overrides):
 class BuildInputsContextTests(unittest.TestCase):
     """Packet M2-C1: the D-M2-10 input contract with provenance-bound context."""
 
+    def test_scalar_overlap_requires_a_verified_own_assignment_excerpt(self):
+        objective = "Make receipt costs include every paid route without mixing budget buckets."
+        title = "Preserve costs and stop at the stated budget limit"
+        source_text = f"# {title}\n\n{objective}\nKeep `cost < limit` before dispatch.\n"
+        cases = (
+            "own", "inline_code", "wrong_digest", "wrong_metadata", "foreign",
+            "not_assignment", "outside_excerpt", "injected_objective", "injected_title",
+            "altered_operator", "repository", "legacy",
+        )
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                source = root / "assignment.md"
+                source.write_bytes(source_text.encode("utf-8"))
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                reference = _minimal_ref("p1", objective=objective,
+                    acceptance_checks=[objective, title, "Keep cost < limit before dispatch.",
+                                       "Require separate written authorization for exporting the sealed packet."])
+                meta = {"source_file": "assignment.md", "source_sha256": digest,
+                        "source_title": title}
+                item = _context_item(text=source_text, source_ref="assignment.md", source_sha256=digest)
+                if case == "inline_code":
+                    reference["objective"] = "Keep cost < limit before dispatch."
+                elif case == "wrong_digest":
+                    item["source_sha256"] = "0" * 64
+                elif case == "wrong_metadata":
+                    meta["source_sha256"] = "0" * 64
+                elif case == "foreign":
+                    (root / "foreign.md").write_bytes(source.read_bytes())
+                    item["source_ref"] = "foreign.md"
+                elif case == "not_assignment":
+                    item["kind"] = "project_policy"
+                elif case == "outside_excerpt":
+                    item["text"] = "Keep `cost < limit` before dispatch."
+                elif case == "injected_objective":
+                    reference["objective"] = reference["acceptance_checks"][-1]
+                elif case == "injected_title":
+                    meta["source_title"] = reference["acceptance_checks"][-1]
+                elif case == "altered_operator":
+                    reference["objective"] = "Keep cost > limit before dispatch."
+                elif case == "repository":
+                    reference["repository"] = reference["acceptance_checks"][-1]
+                (refs / "p1.json").write_text(json.dumps(reference), encoding="utf-8")
+                (refs / "metadata" / "p1.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+                (context / "p1.context.json").write_text(json.dumps([item]), encoding="utf-8")
+                argv = ["--set", "b", "--refs", str(refs), "--out", str(out)]
+                if case != "legacy":
+                    argv += ["--context", str(context)]
+                with redirect_stderr(io.StringIO()):
+                    code = build_inputs.build(argv)
+                self.assertEqual(code, 0 if case in {"own", "inline_code"} else 1)
+                if code:
+                    self.assertFalse(out.exists())
+                else:
+                    payload = json.loads((out / "p1.json").read_text(encoding="utf-8"))
+                    self.assertEqual(payload["objective"], reference["objective"])
+                    self.assertEqual(payload["title"], title)
+                    self.assertEqual(payload["context"], [item])
+
     def _layout(self, tmp: Path) -> tuple[Path, Path, Path, Path]:
         root = tmp / "dataset"
         refs, out, context = root / "refs", root / "inputs", root / "context"
