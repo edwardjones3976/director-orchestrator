@@ -1726,6 +1726,157 @@ class GitHubLookupTests(unittest.TestCase):
                 generate_rows.github_chronology("edwardjones3976/director-orchestrator", 77)
 
 
+class MarkdownAdmissionTests(unittest.TestCase):
+    """Offline fixture for one pinned learner challenge, never a live approval."""
+
+    blob = staticmethod(LicensedSpecificationTests.blob)
+    generate = LearnyounodeAdmissionTests.generate
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.set_a, self.set_b = write_sets(self.root)
+        self.out = self.root / "rows.jsonl"
+        self.review_root = self.root / "reviews"
+        (self.review_root / "xai").mkdir(parents=True)
+        self.repository, self.commit = generate_rows.MARKDOWN_REPOSITORY, generate_rows.MARKDOWN_COMMIT
+        self.description = "Tutorial example: # Heading 1.\nPlease create a first-level heading and verify your solution.\n"
+        self.source_bytes = {"headings.md": self.description.encode(), "LICENSE": b"MIT test-only source license",
+                             "footer.md": b"- To verify your program, run: `{appname} verify file.md`\n"}
+        paths = {"headings.md": "exercises/headings/en.md", "LICENSE": "LICENSE", "footer.md": "i18n/footer/en.md"}
+        self.manifest, self.tree = [], []
+        for ref, raw in self.source_bytes.items():
+            (self.root / ref).write_bytes(raw)
+            path = paths[ref]
+            self.manifest.append({"source_id": f"{self.repository}/{self.commit}/{path}",
+                "source_repository": self.repository, "source_commit": self.commit, "source_tree": "b" * 40,
+                "path": path, "source_ref": ref, "source_url": f"https://github.com/{self.repository}/blob/{self.commit}/{path}",
+                "source_sha256": hashlib.sha256(raw).hexdigest(), "source_git_blob": self.blob(raw),
+                "license": "MIT", "license_sha256": hashlib.sha256(self.source_bytes["LICENSE"]).hexdigest(),
+                "upstream_commit_time": "2017-12-06T12:29:12Z", "captured_at": "2026-09-27T11:00:00.123456+00:00",
+                "source_kind": "independently_licensed_specification", "destination": "training_candidates_only"})
+            self.tree.append({"path": path, "mode": "100644", "type": "blob", "sha": self.blob(raw), "size": len(raw)})
+        api = f"https://api.github.com/repos/{self.repository}"
+        self.commit_record = {"sha": self.commit, "url": f"{api}/commits/{self.commit}", "commit": {
+            "committer": {"date": "2017-12-06T12:29:12Z"}, "tree": {"sha": "b" * 40, "url": f"{api}/git/trees/{'b' * 40}"}}}
+        self.tree_record = {"sha": self.commit, "url": f"{api}/git/trees/{self.commit}", "truncated": False, "tree": self.tree}
+        self.input = {"objective": "Please create a first-level heading and verify your solution.",
+            "repository": self.repository, "title": "headings", "context": [
+                {"kind": "assignment_packet", "source_ref": ref, "source_sha256": hashlib.sha256(self.source_bytes[ref]).hexdigest(),
+                 "text": self.source_bytes[ref].decode()} for ref in ("headings.md", "footer.md")]}
+        self.admission = {"source_facts_verdict": "ACCEPT_FOR_SOURCE_FACTS", "pinned_commit": self.commit,
+            "suitable": ["headings"], "targets_generated": 0, "targets_accepted": 0,
+            "admitted_at": "2026-09-27T11:20:00Z", "response_id": "independent-response", "review_receipt_ref": "xai/review.json"}
+        self.receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
+            "response_status": "completed", "response_id": "independent-response"}
+        pins = patch.dict(generate_rows.MARKDOWN_ADMISSIONS, {}, clear=True)
+        pins.start()
+        self.addCleanup(pins.stop)
+        self.write_evidence()
+
+    def write_evidence(self):
+        raws = {"manifest.jsonl": "".join(json.dumps(e) + "\n" for e in self.manifest).encode(),
+                "commit.json": json.dumps(self.commit_record).encode(), "tree.json": json.dumps(self.tree_record).encode(),
+                "input.preparation.json": json.dumps(self.input).encode()}
+        self.admission["manifest_sha256"] = hashlib.sha256(raws["manifest.jsonl"]).hexdigest()
+        self.admission["input_preparation_sha256"] = hashlib.sha256(raws["input.preparation.json"]).hexdigest()
+        old = self.admission.get("review_answer")
+        self.admission["review_answer"] = "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS** " + " ".join(
+            (self.admission["manifest_sha256"], self.admission["input_preparation_sha256"], self.commit))
+        if self.receipt.get("answer") in (None, old):
+            self.receipt["answer"] = self.admission["review_answer"]
+        receipt = json.dumps(self.receipt).encode()
+        self.admission["review_receipt_sha256"] = hashlib.sha256(receipt).hexdigest()
+        raws["admission.json"] = json.dumps(self.admission).encode()
+        for ref, raw in raws.items():
+            (self.root / ref).write_bytes(raw)
+        (self.review_root / "xai/review.json").write_bytes(receipt)
+        self.digest = hashlib.sha256(raws["admission.json"]).hexdigest()
+        generate_rows.MARKDOWN_ADMISSIONS[self.digest] = tuple(hashlib.sha256(raws[ref]).hexdigest()
+            for ref in ("manifest.jsonl", "commit.json", "tree.json")) + (
+                self.admission["review_receipt_sha256"], self.admission["input_preparation_sha256"])
+
+    def scenario(self):
+        return {"source_group": f"licensed/{self.repository}/headings", "split": "train",
+            "source_provenance": {"kind": "licensed_specification", "source_id": self.manifest[0]["source_id"],
+                "admission_ref": "admission.json", "admission_sha256": self.digest, "manifest_ref": "manifest.jsonl",
+                "official_capture_ref": "commit.json", "official_tree_ref": "tree.json", "license_ref": "LICENSE",
+                "admitted_at": self.admission["admitted_at"]}, "input": json.loads(json.dumps(self.input))}
+
+    def test_valid_dry_run_makes_no_effects(self):
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate(), {"dry_run": True, "rows": 0, "receipts": 0})
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_changed_artifacts_receipt_and_prepared_input_fail_before_probe(self):
+        paths = [self.root / ref for ref in (*self.source_bytes, "manifest.jsonl", "admission.json", "commit.json",
+                                           "tree.json", "input.preparation.json")]
+        paths.append(self.review_root / "xai/review.json")
+        with patch.object(generate_rows, "prepare_local_model") as probe:
+            for path in paths:
+                original = path.read_bytes()
+                path.write_bytes(original + b"changed")
+                with self.subTest(path=path.name), self.assertRaises(SystemExit):
+                    self.generate(dry_run=False)
+                path.write_bytes(original)
+            probe.assert_not_called()
+
+    def test_context_identity_paths_and_split_remain_closed(self):
+        for change in ("unknown", "second-task", "escape", "title", "objective", "footer", "placeholder", "extra", "group", "split"):
+            row = self.scenario()
+            if change == "unknown": row["source_provenance"]["admission_sha256"] = "0" * 64
+            elif change == "second-task": row["source_provenance"]["source_id"] = f"{self.repository}/{self.commit}/exercises/hello_world/en.md"
+            elif change == "escape": row["source_provenance"]["official_tree_ref"] = "../tree.json"
+            elif change == "title": row["input"]["title"] = "hello-world"
+            elif change == "objective": row["input"]["objective"] = "Invent a new deliverable."
+            elif change == "footer": row["input"]["context"].pop()
+            elif change == "placeholder": row["input"]["context"][1]["text"] = row["input"]["context"][1]["text"].replace("{appname}", "how-to-markdown")
+            elif change == "extra": row["input"]["context"].append(row["input"]["context"][0])
+            elif change == "group": row["source_group"] += "/variant"
+            else: row["split"] = "evaluation"
+            with self.subTest(change=change), self.assertRaises(SystemExit):
+                self.generate([row])
+        with self.assertRaises(SystemExit):
+            self.generate(provider="openai")
+        with patch.object(Path, "is_symlink", return_value=True), self.assertRaises(SystemExit):
+            self.generate()
+        train, dev = self.scenario(), self.scenario()
+        dev["split"] = "dev"
+        with self.assertRaises(SystemExit):
+            self.generate([train, dev])
+
+    def test_forged_review_capture_and_closed_manifest_fail_with_test_pins(self):
+        for record, key, value in ((self.receipt, "response_id", "forged"), (self.receipt, "answer", "ACCEPT invented"),
+                (self.receipt, "http_status", 0), (self.manifest[0], "source_repository", "other/repo"),
+                (self.manifest[0], "captured_at", "2026-09-27T11:30:00Z"),
+                (self.manifest[0], "captured_at", "2026-09-27T11:00:00+01:00"),
+                (self.tree[0], "sha", "0" * 40), (self.admission, "suitable", ["headings", "extra"])):
+            original = record[key]
+            record[key] = value
+            self.write_evidence()
+            with self.subTest(key=key, value=value), self.assertRaises(SystemExit):
+                self.generate()
+            record[key] = original
+        self.manifest.append(dict(self.manifest[0]))
+        self.write_evidence()
+        with self.assertRaises(SystemExit):
+            self.generate()
+
+    def test_heldout_source_digest_still_fails_before_probe(self):
+        path = self.set_a / "metadata/ew-alpha.meta.json"
+        record = json.loads(path.read_text())
+        record["source_sha256"] = self.manifest[0]["source_sha256"]
+        path.write_text(json.dumps(record), encoding="utf-8")
+        with patch.object(generate_rows, "prepare_local_model") as probe, self.assertRaises(SystemExit):
+            self.generate(dry_run=False)
+        probe.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]

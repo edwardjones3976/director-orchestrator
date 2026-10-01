@@ -103,6 +103,18 @@ LEARNYOUNODE_ADMISSIONS = {
 LEARNYOUNODE_REPOSITORY = "workshopper/learnyounode"
 LEARNYOUNODE_COMMIT = "6b8b8f16fcfbfc201f1ee3df2dc554d4ec3fc393"
 LEARNYOUNODE_SOURCES = frozenset({"baby_steps", "filtered_ls", "my_first_async_io"})
+# One independently reviewed English challenge; no curriculum-wide admission.
+MARKDOWN_ADMISSIONS = {
+    "aa2556e103878e049ad0c39eca31c29d651ab709fe1f9c307a09d923dc3c53c9": (
+        "7f7b64410f20afbdce7659f09abc73d8641b052099028f9220d46fa52231368a",
+        "06985a0e23673ccbd43b99cc524d663a3c7eeb4fc48d4aa76c8deeab605d5cf7",
+        "4041178fae5550e512f6d2938da498e91bafd4f93d96bb73bca97b0a1143ee25",
+        "302486c7367fb390cf4bd1f576e8c7505d59a66077fddd403db944d483586ece",
+        "14e4031b25b46e5d2619ff25bb8aa8ebdfd26a0881ea83626ebe3972cf8fe888",
+    ),
+}
+MARKDOWN_REPOSITORY = "workshopper/how-to-markdown"
+MARKDOWN_COMMIT = "370d15292d96d06a97f47c9baeed863c12d62854"
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
@@ -342,10 +354,15 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
     block = scenario["source_provenance"]
     digest = block.get("admission_sha256")
     learnyounode = isinstance(digest, str) and digest in LEARNYOUNODE_ADMISSIONS
+    markdown = isinstance(digest, str) and digest in MARKDOWN_ADMISSIONS
+    separate_tree = learnyounode or markdown
     pins = LICENSED_SPECIFICATION_ADMISSIONS.get(digest) if isinstance(digest, str) else None
-    if pins is None and not learnyounode:
+    if pins is None and not separate_tree:
         fail(f"{label}: licensed specification has no independently admitted digest")
-    if learnyounode:
+    if markdown:
+        manifest_hash, official_hash, tree_hash, review_hash, input_hash = MARKDOWN_ADMISSIONS[digest]
+        row_pilot = frozenset({"headings"})
+    elif learnyounode:
         manifest_hash, official_hash, tree_hash, review_hash = LEARNYOUNODE_ADMISSIONS[digest]
         row_pilot = LEARNYOUNODE_SOURCES
     else:
@@ -353,11 +370,11 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
     admission_raw = _source_artifact(source_root, block.get("admission_ref"), label)
     manifest_raw = _source_artifact(source_root, block.get("manifest_ref"), label)
     official_raw = _source_artifact(source_root, block.get("official_capture_ref"), label)
-    tree_raw = _source_artifact(source_root, block.get("official_tree_ref"), label) if learnyounode else None
+    tree_raw = _source_artifact(source_root, block.get("official_tree_ref"), label) if separate_tree else None
     if (hashlib.sha256(admission_raw).hexdigest() != block["admission_sha256"]
             or hashlib.sha256(manifest_raw).hexdigest() != manifest_hash
             or hashlib.sha256(official_raw).hexdigest() != official_hash
-            or (learnyounode and hashlib.sha256(tree_raw).hexdigest() != tree_hash)):
+            or (separate_tree and hashlib.sha256(tree_raw).hexdigest() != tree_hash)):
         fail(f"{label}: licensed source admission/capture bytes changed")
     try:
         admission = local_transport.strict_json(admission_raw)
@@ -369,25 +386,29 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         entry = records[0]
         repository, commit = entry["source_repository"], entry["source_commit"]
         slug = entry["path"].split("/")[1]
-        if learnyounode:
-            if (commit != LEARNYOUNODE_COMMIT or admission["pinned_commit"] != commit
+        if separate_tree:
+            if (commit != (MARKDOWN_COMMIT if markdown else LEARNYOUNODE_COMMIT)
+                    or admission["pinned_commit"] != commit
                     or admission["source_facts_verdict"] != "ACCEPT_FOR_SOURCE_FACTS"
                     or admission["targets_generated"] != 0
                     or slug not in admission["suitable"]):
-                fail(f"{label}: learnyounode source is outside the admitted three-source batch")
+                fail(f"{label}: source is outside the independently admitted closed batch")
         elif (admission["source_admission"] != "ACCEPT_FOR_SOURCE_FACTS"
               or admission["official_capture_sha256"] != official_hash
               or slug not in admission["pilot_suitable"] or slug in admission["pilot_hold"]):
             fail(f"{label}: licensed source is outside the admitted synthetic pilot")
-        if (repository != (LEARNYOUNODE_REPOSITORY if learnyounode else LICENSED_SPECIFICATION_REPOSITORY)
+        expected_repository = (MARKDOWN_REPOSITORY if markdown else
+                               LEARNYOUNODE_REPOSITORY if learnyounode else LICENSED_SPECIFICATION_REPOSITORY)
+        expected_path = f"exercises/{slug}/{'en.md' if markdown else 'problem.md' if learnyounode else 'description.md'}"
+        if (repository != expected_repository
                 or re.fullmatch(r"[0-9a-f]{40}", commit) is None
                 or re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*" if learnyounode else r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
-                or entry["path"] != f"exercises/{slug}/{'problem.md' if learnyounode else 'description.md'}"
-                or entry["source_id"] != (f"{repository}/{commit}/{entry['path']}" if learnyounode else f"exercism/{commit}/{slug}")
+                or entry["path"] != expected_path
+                or entry["source_id"] != (f"{repository}/{commit}/{entry['path']}" if separate_tree else f"exercism/{commit}/{slug}")
                 or entry["source_url"] != f"https://github.com/{repository}/blob/{commit}/{entry['path']}"
                 or entry["destination"] != "training_candidates_only"
                 or entry["source_kind"] != "independently_licensed_specification"
-                or entry["license"] != "MIT" or entry["targets_generated"] != 0
+                or entry["license"] != "MIT" or (not markdown and entry["targets_generated"] != 0)
                 or admission["manifest_sha256"] != manifest_hash
                 or admission["review_receipt_sha256"] != review_hash
                 or admission["targets_accepted"] != 0
@@ -403,12 +424,12 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 or receipt["http_status"] != 200 or receipt["response_status"] != "completed"
                 or not receipt["response_id"] or receipt["response_id"] != admission["response_id"]
                 or receipt["answer"] != admission["review_answer"]
-                or not receipt["answer"].startswith("**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if learnyounode else "**ACCEPT_FOR_SOURCE_FACTS**")
+                or not receipt["answer"].startswith("**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if separate_tree else "**ACCEPT_FOR_SOURCE_FACTS**")
                 or manifest_hash not in receipt["answer"] or commit not in receipt["answer"]):
             fail(f"{label}: independent source review has no bound ACCEPT")
         api = f"https://api.github.com/repos/{repository}"
-        upstream = official if learnyounode else official["official_commit"]
-        tree = local_transport.strict_json(tree_raw) if learnyounode else official["official_tree"]
+        upstream = official if separate_tree else official["official_commit"]
+        tree = local_transport.strict_json(tree_raw) if separate_tree else official["official_tree"]
         if (upstream["sha"] != commit or upstream["url"] != f"{api}/commits/{commit}"
                 or tree["url"] != f"{api}/git/trees/{commit}" or tree["sha"] != commit
                 or tree["truncated"] is not False
@@ -418,8 +439,8 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 or upstream["commit"]["tree"]["url"] != f"{api}/git/trees/{upstream['commit']['tree']['sha']}"
                 or upstream["commit"]["committer"]["date"] != entry["upstream_commit_time"]):
             fail(f"{label}: official commit/tree capture does not bind this source")
-        if learnyounode and entry["source_tree"] != upstream["commit"]["tree"]["sha"]:
-            fail(f"{label}: learnyounode canonical tree does not match its manifest")
+        if separate_tree and entry["source_tree"] != upstream["commit"]["tree"]["sha"]:
+            fail(f"{label}: canonical tree does not match its manifest")
         source_raw = _source_artifact(source_root, entry["source_ref"], label)
         license_raw = _source_artifact(source_root, block.get("license_ref", "LICENSE"), label)
         for path, raw, expected_blob in ((entry["path"], source_raw, entry["source_git_blob"]),
@@ -436,26 +457,38 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         started = _source_utc(local_transport.utc_now(), label)
         # This closed capture records UTC as +00:00; other offsets stay invalid.
         capture_time = entry["captured_at"]
-        if learnyounode and isinstance(capture_time, str) and capture_time.endswith("+00:00"):
+        if separate_tree and isinstance(capture_time, str) and capture_time.endswith("+00:00"):
             capture_time = capture_time[:-6] + "Z"
         captured = _source_utc(capture_time, label)
         admitted = _source_utc(admission["admitted_at"], label)
         historical = _source_utc(entry["upstream_commit_time"], label)
         if not (historical < captured < admitted < started
-                and (learnyounode or (historical < _source_utc("2020-01-01T00:00:00Z", label)
+                and (separate_tree or (historical < _source_utc("2020-01-01T00:00:00Z", label)
                      and captured < _source_utc(official["observed_at"], label) < admitted))):
             fail(f"{label}: upstream/capture/admission/generation chronology is invalid")
         context = scenario["input"]["context"]
-        if learnyounode:
-            readme_records = [item for item in manifest if item["path"] == "README.md"]
+        if markdown:
+            input_raw = _source_artifact(source_root, "input.preparation.json", label)
+            if (len(manifest) != 3 or {item["path"] for item in manifest} !=
+                    {"LICENSE", "exercises/headings/en.md", "i18n/footer/en.md"}
+                    or admission["suitable"] != ["headings"]
+                    or hashlib.sha256(input_raw).hexdigest() != input_hash
+                    or admission["input_preparation_sha256"] != input_hash
+                    or input_hash not in receipt["answer"]
+                    or local_transport.strict_json(input_raw) != scenario["input"]):
+                fail(f"{label}: input or manifest differs from the one reviewed headings task")
+        if separate_tree:
+            policy_path = "i18n/footer/en.md" if markdown else "README.md"
+            readme_records = [item for item in manifest if item["path"] == policy_path]
             if len(readme_records) != 1:
                 fail(f"{label}: admitted README is missing or ambiguous")
             readme = readme_records[0]
             readme_raw = _source_artifact(source_root, readme["source_ref"], label)
-            readme_blobs = [item for item in tree["tree"] if item["path"] == "README.md"]
+            readme_blobs = [item for item in tree["tree"] if item["path"] == policy_path]
             readme_blob = hashlib.sha1(b"blob " + str(len(readme_raw)).encode("ascii") + b"\0" + readme_raw).hexdigest()
-            verification = [line for line in readme_raw.decode("utf-8").splitlines()
-                            if line.startswith("4. **Verify that your solution to the lesson is correct**")]
+            verification = ([readme_raw.decode("utf-8")] if markdown else
+                            [line for line in readme_raw.decode("utf-8").splitlines()
+                             if line.startswith("4. **Verify that your solution to the lesson is correct**")])
             if (hashlib.sha256(readme_raw).hexdigest() != readme["source_sha256"]
                     or len(readme_blobs) != 1 or readme_blobs[0]["type"] != "blob"
                     or readme_blobs[0]["mode"] != "100644" or readme_blobs[0]["size"] != len(readme_raw)
@@ -469,7 +502,7 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         if (scenario["split"] not in ("train", "dev")
                 or scenario["source_group"] != f"licensed/{repository}/{slug}"
                 or scenario["input"]["repository"] != repository or scenario["input"]["title"] != slug
-                or len(context) != (2 if learnyounode else 1) or context[0]["kind"] != "assignment_packet"
+                or len(context) != (2 if separate_tree else 1) or context[0]["kind"] != "assignment_packet"
                 or context[0]["source_ref"] != entry["source_ref"]
                 or context[0]["source_sha256"] != entry["source_sha256"]
                 or context[0]["text"] != source_raw.decode("utf-8")
