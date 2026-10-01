@@ -1,4 +1,3 @@
-# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:10 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
 """M2-G1: bounded admitted local dispatch; opt-in quote-first uses two stages.
@@ -882,7 +881,7 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                         record["target"] = answer
                     stage["status"] = "completed"
                 except (Exception, SystemExit) as exc:
-                    stage.update(status="failed", error=type(exc).__name__)
+                    stage.update(status="failed", error=type(exc).__name__, error_detail=str(exc))
                     raise
                 finally:
                     stage["end_utc"] = local_transport.utc_now()
@@ -899,7 +898,7 @@ def quote_dispatch(scenario, purpose, prepared, *, receipts_dir, verified_at, ti
                 response_sha256=final["response_sha256"], response_id=final["response"].get("id"),
                 response_model=final["response"].get("model"), usage=final["response"].get("usage"))
         except (OSError, ValueError, KeyError, IndexError, TypeError, local_transport.http.client.HTTPException) as exc:
-            record.update(status="failed", error=type(exc).__name__)
+            record.update(status="failed", error=type(exc).__name__, error_detail=str(exc))
             fail("teacher inference failed; inspect both-stage receipt before any retry")
         finally:
             if record["status"] != "completed":
@@ -1310,5 +1309,3 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
-
-# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:10 UTC | END]]

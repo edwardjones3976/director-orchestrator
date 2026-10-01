@@ -1,4 +1,3 @@
-# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
@@ -635,6 +634,22 @@ class GenerateRowsTests(unittest.TestCase):
         self.assertEqual([s["status"] for s in second["stages"]], ["completed", "failed"])
         self.assertEqual(second["status"], "failed")
         self.assertEqual(len(self.quote_calls), 2)
+        self.assertFalse(self.out.exists())
+
+    def test_quote_failure_receipts_distinguish_causes_without_retry(self):
+        options, scenario = self.quote_options()
+        details = ("quote is missing or not unique in source", "teacher request exceeds packet/token bounds")
+        for detail in details:
+            with self.subTest(detail=detail), patch.object(generate_rows, "_teacher_body", side_effect=ValueError(detail)), self.assertRaises(SystemExit):
+                self.generate_local(options, scenario, quote_first=True)
+        records = [json.loads(p.read_text(encoding="utf-8")) for p in options["receipts_dir"].glob("*.json")]
+        self.assertEqual(len(records), 2)
+        self.assertEqual({r["error_detail"] for r in records}, set(details))
+        for record in records:
+            self.assertEqual((record["status"], record["error"]), ("failed", "ValueError"))
+            self.assertEqual(record["stages"][0]["error_detail"], record["error_detail"])
+            self.assertEqual(len(record["stages"]), 1)
+        self.local_http.assert_not_called()
         self.assertFalse(self.out.exists())
 
     def test_quote_mapping_preparation_failure_is_recorded_before_second_contact(self):
@@ -1301,5 +1316,3 @@ if __name__ == "__main__":
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-30 | 23:54 UTC | END]]
-
-# [[OpenAI Codex | GPT-6 | 2026-10-01 | 01:13 UTC | END]]
