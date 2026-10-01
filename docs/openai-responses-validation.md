@@ -222,9 +222,10 @@ not constitute self-acceptance or independent review.
   `ProviderActivationBinding` contract; the earlier `model`/`account_id` keys
   were never binding fields. Hexadecimal generation/tree fixtures and the
   native Codex hard-cap refusal regression are preserved.
-- One whole-operation deadline, measured from a single start reading taken
-  before admission, bounds store connection acquisition, admission, monetary
-  reservation, claim, fence, transport, capture, settlement and COMMIT alike.
+- One whole-operation deadline, measured from the Responses request entry
+  before its mandatory byte-integrity hash, bounds store connection acquisition,
+  admission, monetary reservation, claim, fence, transport, capture, settlement
+  and COMMIT alike.
   The canary packet's own ceiling tightens that same deadline from the shared
   start; a post-admission reading never extends it. Store calls receive the
   shared deadline, and statement/lock timeouts are re-derived before later
@@ -234,6 +235,13 @@ not constitute self-acceptance or independent review.
   aborts and rolls back instead of persisting eligible evidence after expiry,
   while real provider results, usage and charges are never treated as reversed
   and remain reconcilable facts.
+- The Responses request-local scope carries its original pre-hash start into
+  the lane; direct lane calls and legacy digest-only scopes retain their own
+  start. Every existing byte-integrity security point remains. Hashing consumes
+  the known transport budget before admission; the packet ceiling discovered
+  through admission tightens from that same origin before claim, funding or
+  send. Native and Antigravity timing, the service contention oracles, watchdog
+  and fixed cleanup allowance/margin are unchanged.
 - Anchored failure cleanup: `PostgresValidationStore.fail` writes its
   best-effort ambiguity marker under one allowance anchored at the first
   reading -- the smaller of the shared operation deadline's remaining time
