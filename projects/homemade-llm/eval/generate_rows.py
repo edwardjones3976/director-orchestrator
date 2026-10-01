@@ -115,6 +115,20 @@ MARKDOWN_ADMISSIONS = {
 }
 MARKDOWN_REPOSITORY = "workshopper/how-to-markdown"
 MARKDOWN_COMMIT = "370d15292d96d06a97f47c9baeed863c12d62854"
+# One source-facts-reviewed assignment; no other Microsoft curriculum task.
+ACCESSIBILITY_ADMISSIONS = {
+    "686bd3d84a268f535c6d9270b0ec0f4f203cd4e9e4554f04fc972f16ec40e17a": (
+        "33b1d12f59d6180fbe27a28e30c642dd78df0ae90341c137b0fa320242b41ea4",
+        "9cfaeb8908362ed19c2bc15a2f5b7d2a7e11aeaf3ea686fe81476b0f5b466364",
+        "bd56eeac1ba9cbdf47548b15a6a77c52aae6babb766fd3524346cc1d32088a84",
+        "4242dd5173f1ff83132bf1cc1f0ccbad5f6b9a8ccc05664b41aeac488223aa00",
+    ),
+}
+ACCESSIBILITY_REPOSITORY = "microsoft/Web-Dev-For-Beginners"
+ACCESSIBILITY_COMMIT = "668fcff0da975a5851966b30c2cc1f11c18fb502"
+ACCESSIBILITY_PATH = "1-getting-started-lessons/3-accessibility/assignment.md"
+ACCESSIBILITY_TITLE = "Analyze an inaccessible site"
+ACCESSIBILITY_OBJECTIVE = "Identify a website that you believe is NOT accessible and create an action plan to improve its accessibility."
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
@@ -355,11 +369,15 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
     digest = block.get("admission_sha256")
     learnyounode = isinstance(digest, str) and digest in LEARNYOUNODE_ADMISSIONS
     markdown = isinstance(digest, str) and digest in MARKDOWN_ADMISSIONS
-    separate_tree = learnyounode or markdown
+    accessibility = isinstance(digest, str) and digest in ACCESSIBILITY_ADMISSIONS
+    separate_tree = learnyounode or markdown or accessibility
     pins = LICENSED_SPECIFICATION_ADMISSIONS.get(digest) if isinstance(digest, str) else None
     if pins is None and not separate_tree:
         fail(f"{label}: licensed specification has no independently admitted digest")
-    if markdown:
+    if accessibility:
+        manifest_hash, official_hash, tree_hash, review_hash = ACCESSIBILITY_ADMISSIONS[digest]
+        row_pilot = frozenset({"accessibility"})
+    elif markdown:
         manifest_hash, official_hash, tree_hash, review_hash, input_hash = MARKDOWN_ADMISSIONS[digest]
         row_pilot = frozenset({"headings"})
     elif learnyounode:
@@ -385,8 +403,18 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
             fail(f"{label}: source_id is not unique in the admitted manifest")
         entry = records[0]
         repository, commit = entry["source_repository"], entry["source_commit"]
-        slug = entry["path"].split("/")[1]
-        if separate_tree:
+        slug = "accessibility" if accessibility else entry["path"].split("/")[1]
+        admitted_at = admission["recorded_at"].replace("+00:00", "Z") if accessibility else admission["admitted_at"]
+        if accessibility:
+            if (commit != ACCESSIBILITY_COMMIT or admission["source_pin"] != commit
+                    or admission["disposition"] != "ACCEPT_FOR_SOURCE_FACTS"
+                    or admission["generated_targets"] != 0 or admission["accepted_training_rows"] != 0
+                    or admission["receipt_sha256"] != review_hash
+                    or admission["source_files"]["commit-evidence.json"] != official_hash
+                    or admission["source_files"]["tree-evidence.json"] != tree_hash
+                    or len(manifest) != 2 or {item["path"] for item in manifest} != {ACCESSIBILITY_PATH, "LICENSE"}):
+                fail(f"{label}: source is outside the one admitted accessibility assignment")
+        elif separate_tree:
             if (commit != (MARKDOWN_COMMIT if markdown else LEARNYOUNODE_COMMIT)
                     or admission["pinned_commit"] != commit
                     or admission["source_facts_verdict"] != "ACCEPT_FOR_SOURCE_FACTS"
@@ -397,9 +425,9 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
               or admission["official_capture_sha256"] != official_hash
               or slug not in admission["pilot_suitable"] or slug in admission["pilot_hold"]):
             fail(f"{label}: licensed source is outside the admitted synthetic pilot")
-        expected_repository = (MARKDOWN_REPOSITORY if markdown else
+        expected_repository = (ACCESSIBILITY_REPOSITORY if accessibility else MARKDOWN_REPOSITORY if markdown else
                                LEARNYOUNODE_REPOSITORY if learnyounode else LICENSED_SPECIFICATION_REPOSITORY)
-        expected_path = f"exercises/{slug}/{'en.md' if markdown else 'problem.md' if learnyounode else 'description.md'}"
+        expected_path = ACCESSIBILITY_PATH if accessibility else f"exercises/{slug}/{'en.md' if markdown else 'problem.md' if learnyounode else 'description.md'}"
         if (repository != expected_repository
                 or re.fullmatch(r"[0-9a-f]{40}", commit) is None
                 or re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*" if learnyounode else r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
@@ -410,31 +438,37 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 or entry["source_kind"] != "independently_licensed_specification"
                 or entry["license"] != "MIT" or (not markdown and entry["targets_generated"] != 0)
                 or admission["manifest_sha256"] != manifest_hash
-                or admission["review_receipt_sha256"] != review_hash
-                or admission["targets_accepted"] != 0
+                or (not accessibility and (admission["review_receipt_sha256"] != review_hash
+                                           or admission["targets_accepted"] != 0))
                 or slug not in row_pilot
-                or block.get("admitted_at") != admission["admitted_at"]):
+                or block.get("admitted_at") != admitted_at):
             fail(f"{label}: licensed source is outside the admitted synthetic pilot")
-        receipt_raw = _source_artifact(
-            review_receipts_root or DISPATCH_PY.parent / "receipts", admission["review_receipt_ref"], label)
+        review_ref = (admission["receipt"].replace("\\", "/").rsplit("/receipts/", 1)[-1]
+                      if accessibility else admission["review_receipt_ref"])
+        receipt_raw = _source_artifact(review_receipts_root or DISPATCH_PY.parent / "receipts", review_ref, label)
         if hashlib.sha256(receipt_raw).hexdigest() != review_hash:
             fail(f"{label}: independent source-review receipt bytes changed")
         receipt = local_transport.strict_json(receipt_raw)
         if (receipt["provider"] != "xai" or receipt["model"] != "grok-4.6"
                 or receipt["http_status"] != 200 or receipt["response_status"] != "completed"
                 or not receipt["response_id"] or receipt["response_id"] != admission["response_id"]
-                or receipt["answer"] != admission["review_answer"]
-                or not receipt["answer"].startswith("**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if separate_tree else "**ACCEPT_FOR_SOURCE_FACTS**")
+                or (accessibility and (hashlib.sha256((receipt["answer"] + "\n").encode("utf-8")).hexdigest()
+                                        != admission["verdict_sha256"]
+                                        or admission["share_record_sha256"] not in receipt["answer"]))
+                or (not accessibility and receipt["answer"] != admission["review_answer"])
+                or not receipt["answer"].startswith("**Verdict:** `ACCEPT_FOR_SOURCE_FACTS`" if accessibility else
+                        "**TERMINAL: ACCEPT_FOR_SOURCE_FACTS**" if separate_tree else "**ACCEPT_FOR_SOURCE_FACTS**")
                 or manifest_hash not in receipt["answer"] or commit not in receipt["answer"]):
             fail(f"{label}: independent source review has no bound ACCEPT")
         api = f"https://api.github.com/repos/{repository}"
         upstream = official if separate_tree else official["official_commit"]
         tree = local_transport.strict_json(tree_raw) if separate_tree else official["official_tree"]
+        captured_tree = upstream["commit"]["tree"]["sha"] if accessibility else commit
         if (upstream["sha"] != commit or upstream["url"] != f"{api}/commits/{commit}"
-                or tree["url"] != f"{api}/git/trees/{commit}" or tree["sha"] != commit
+                or tree["url"] != f"{api}/git/trees/{captured_tree}" or tree["sha"] != captured_tree
                 or tree["truncated"] is not False
-                # GitHub's commit-addressed tree response echoes the commit SHA.
-                # The official commit separately binds its canonical tree SHA.
+                # Earlier captures use commit-addressed trees; Microsoft's capture
+                # addresses the canonical tree bound by the official commit.
                 or re.fullmatch(r"[0-9a-f]{40}", upstream["commit"]["tree"]["sha"]) is None
                 or upstream["commit"]["tree"]["url"] != f"{api}/git/trees/{upstream['commit']['tree']['sha']}"
                 or upstream["commit"]["committer"]["date"] != entry["upstream_commit_time"]):
@@ -460,7 +494,7 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         if separate_tree and isinstance(capture_time, str) and capture_time.endswith("+00:00"):
             capture_time = capture_time[:-6] + "Z"
         captured = _source_utc(capture_time, label)
-        admitted = _source_utc(admission["admitted_at"], label)
+        admitted = _source_utc(admitted_at, label)
         historical = _source_utc(entry["upstream_commit_time"], label)
         if not (historical < captured < admitted < started
                 and (separate_tree or (historical < _source_utc("2020-01-01T00:00:00Z", label)
@@ -477,7 +511,7 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                     or input_hash not in receipt["answer"]
                     or local_transport.strict_json(input_raw) != scenario["input"]):
                 fail(f"{label}: input or manifest differs from the one reviewed headings task")
-        if separate_tree:
+        if separate_tree and not accessibility:
             policy_path = "i18n/footer/en.md" if markdown else "README.md"
             readme_records = [item for item in manifest if item["path"] == policy_path]
             if len(readme_records) != 1:
@@ -501,8 +535,10 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
                 fail(f"{label}: input lacks the exact reviewed README verification passage")
         if (scenario["split"] not in ("train", "dev")
                 or scenario["source_group"] != f"licensed/{repository}/{slug}"
-                or scenario["input"]["repository"] != repository or scenario["input"]["title"] != slug
-                or len(context) != (2 if separate_tree else 1) or context[0]["kind"] != "assignment_packet"
+                or scenario["input"]["repository"] != repository
+                or scenario["input"]["title"] != (ACCESSIBILITY_TITLE if accessibility else slug)
+                or (accessibility and scenario["input"]["objective"] != ACCESSIBILITY_OBJECTIVE)
+                or len(context) != (2 if separate_tree and not accessibility else 1) or context[0]["kind"] != "assignment_packet"
                 or context[0]["source_ref"] != entry["source_ref"]
                 or context[0]["source_sha256"] != entry["source_sha256"]
                 or context[0]["text"] != source_raw.decode("utf-8")

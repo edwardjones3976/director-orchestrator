@@ -1877,6 +1877,144 @@ class MarkdownAdmissionTests(unittest.TestCase):
             self.generate(dry_run=False)
         probe.assert_not_called()
 
+class AccessibilityAdmissionTests(unittest.TestCase):
+    """Offline evidence uses the existing Microsoft admission field names."""
+
+    blob = staticmethod(LicensedSpecificationTests.blob)
+    generate = LearnyounodeAdmissionTests.generate
+    test_valid_dry_run_makes_no_effects = MarkdownAdmissionTests.test_valid_dry_run_makes_no_effects
+    test_heldout_source_digest_still_fails_before_probe = MarkdownAdmissionTests.test_heldout_source_digest_still_fails_before_probe
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.set_a, self.set_b = write_sets(self.root)
+        self.out = self.root / "rows.jsonl"
+        self.review_root = self.root / "reviews"
+        (self.review_root / "xai").mkdir(parents=True)
+        self.repository, self.commit = generate_rows.ACCESSIBILITY_REPOSITORY, generate_rows.ACCESSIBILITY_COMMIT
+        self.description = f"# {generate_rows.ACCESSIBILITY_TITLE}\n\n{generate_rows.ACCESSIBILITY_OBJECTIVE}\n"
+        self.source_bytes = {"assignment.md": self.description.encode(), "LICENSE": b"MIT test-only source license"}
+        self.manifest, self.tree = [], []
+        for ref, raw in self.source_bytes.items():
+            (self.root / ref).write_bytes(raw)
+            path = generate_rows.ACCESSIBILITY_PATH if ref == "assignment.md" else ref
+            self.manifest.append({"source_id": f"{self.repository}/{self.commit}/{path}",
+                "source_repository": self.repository, "source_commit": self.commit, "source_tree": "b" * 40,
+                "path": path, "source_ref": ref, "source_url": f"https://github.com/{self.repository}/blob/{self.commit}/{path}",
+                "source_sha256": hashlib.sha256(raw).hexdigest(), "source_git_blob": self.blob(raw),
+                "license": "MIT", "license_sha256": hashlib.sha256(self.source_bytes["LICENSE"]).hexdigest(),
+                "upstream_commit_time": "2021-12-28T15:05:08Z", "captured_at": "2026-09-27T11:00:00.123456+00:00",
+                "source_kind": "independently_licensed_specification", "destination": "training_candidates_only",
+                "targets_generated": 0})
+            self.tree.append({"path": path, "mode": "100644", "type": "blob", "sha": self.blob(raw), "size": len(raw)})
+        api = f"https://api.github.com/repos/{self.repository}"
+        self.commit_record = {"sha": self.commit, "url": f"{api}/commits/{self.commit}", "commit": {
+            "committer": {"date": "2021-12-28T15:05:08Z"}, "tree": {"sha": "b" * 40, "url": f"{api}/git/trees/{'b' * 40}"}}}
+        self.tree_record = {"sha": "b" * 40, "url": f"{api}/git/trees/{'b' * 40}", "truncated": False, "tree": self.tree}
+        self.admission = {"disposition": "ACCEPT_FOR_SOURCE_FACTS", "source_pin": self.commit,
+            "generated_targets": 0, "accepted_training_rows": 0, "recorded_at": "2026-09-27T11:20:00+00:00",
+            "response_id": "independent-response", "receipt": r"C:\fixture\receipts\xai\review.json",
+            "share_record_sha256": "a" * 64, "source_files": {}, "code_admission": "PENDING"}
+        self.receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
+            "response_status": "completed", "response_id": "independent-response"}
+        pins = patch.dict(generate_rows.ACCESSIBILITY_ADMISSIONS, {}, clear=True)
+        pins.start()
+        self.addCleanup(pins.stop)
+        self.write_evidence()
+
+    def write_evidence(self):
+        raws = {"manifest.jsonl": "".join(json.dumps(e) + "\n" for e in self.manifest).encode(),
+                "commit.json": json.dumps(self.commit_record).encode(), "tree.json": json.dumps(self.tree_record).encode()}
+        hashes = {ref: hashlib.sha256(raw).hexdigest() for ref, raw in raws.items()}
+        self.admission["manifest_sha256"] = hashes["manifest.jsonl"]
+        self.admission["source_files"].update({"commit-evidence.json": hashes["commit.json"],
+                                             "tree-evidence.json": hashes["tree.json"]})
+        answer = "**Verdict:** `ACCEPT_FOR_SOURCE_FACTS` " + " ".join(
+            (self.admission["manifest_sha256"], self.commit, self.admission["share_record_sha256"]))
+        if self.receipt.get("answer") in (None, getattr(self, "review_answer", None)):
+            self.receipt["answer"] = answer
+        self.review_answer = answer
+        self.admission["verdict_sha256"] = hashlib.sha256((self.receipt["answer"] + "\n").encode()).hexdigest()
+        receipt = json.dumps(self.receipt).encode()
+        self.admission["receipt_sha256"] = hashlib.sha256(receipt).hexdigest()
+        raws["admission.json"] = json.dumps(self.admission).encode()
+        for ref, raw in raws.items():
+            (self.root / ref).write_bytes(raw)
+        (self.review_root / "xai/review.json").write_bytes(receipt)
+        self.digest = hashlib.sha256(raws["admission.json"]).hexdigest()
+        generate_rows.ACCESSIBILITY_ADMISSIONS[self.digest] = tuple(hashes[ref]
+            for ref in ("manifest.jsonl", "commit.json", "tree.json")) + (self.admission["receipt_sha256"],)
+
+    def scenario(self):
+        entry = self.manifest[0]
+        return {"source_group": f"licensed/{self.repository}/accessibility", "split": "train",
+            "source_provenance": {"kind": "licensed_specification", "source_id": entry["source_id"],
+                "admission_ref": "admission.json", "admission_sha256": self.digest, "manifest_ref": "manifest.jsonl",
+                "official_capture_ref": "commit.json", "official_tree_ref": "tree.json", "license_ref": "LICENSE",
+                "admitted_at": self.admission["recorded_at"].replace("+00:00", "Z")},
+            "input": {"repository": self.repository, "title": generate_rows.ACCESSIBILITY_TITLE,
+                "objective": generate_rows.ACCESSIBILITY_OBJECTIVE, "context": [{"kind": "assignment_packet",
+                    "source_ref": entry["source_ref"], "source_sha256": entry["source_sha256"], "text": self.description}]}}
+
+    def test_changed_artifacts_fail_before_probe(self):
+        paths = [self.root / ref for ref in (*self.source_bytes, "manifest.jsonl", "admission.json", "commit.json", "tree.json")]
+        paths.append(self.review_root / "xai/review.json")
+        with patch.object(generate_rows, "prepare_local_model") as probe:
+            for path in paths:
+                original = path.read_bytes()
+                path.write_bytes(original + b"changed")
+                with self.subTest(path=path.name), self.assertRaises(SystemExit):
+                    self.generate(dry_run=False)
+                path.write_bytes(original)
+            probe.assert_not_called()
+
+    def test_input_identity_paths_and_local_only_remain_closed(self):
+        for change in ("unknown", "task", "escape", "title", "objective", "context", "extra", "group", "split"):
+            row = self.scenario()
+            if change == "unknown": row["source_provenance"]["admission_sha256"] = "0" * 64
+            elif change == "task": row["source_provenance"]["source_id"] = self.manifest[1]["source_id"]
+            elif change == "escape": row["source_provenance"]["official_tree_ref"] = "../tree.json"
+            elif change == "title": row["input"]["title"] = "accessibility"
+            elif change == "objective": row["input"]["objective"] = "Identify a website"
+            elif change == "context": row["input"]["context"][0]["text"] = generate_rows.ACCESSIBILITY_OBJECTIVE
+            elif change == "extra": row["input"]["context"].append(row["input"]["context"][0])
+            elif change == "group": row["source_group"] += "/variant"
+            else: row["split"] = "evaluation"
+            with self.subTest(change=change), self.assertRaises(SystemExit):
+                self.generate([row])
+        for provider in generate_rows.COMPETING_PROVIDERS:
+            with self.subTest(provider=provider), self.assertRaises(SystemExit):
+                self.generate(provider=provider)
+        with patch.object(Path, "is_symlink", return_value=True), self.assertRaises(SystemExit):
+            self.generate()
+        dev = self.scenario()
+        dev["split"] = "dev"
+        self.assertEqual(self.generate([dev]), {"dry_run": True, "rows": 0, "receipts": 0})
+        with self.assertRaises(SystemExit):
+            self.generate([self.scenario(), dev])
+
+    def test_forged_receipt_capture_and_chronology_fail_even_with_test_pins(self):
+        for record, key, value in ((self.receipt, "response_id", "forged"), (self.receipt, "answer", "ACCEPT invented"),
+                (self.receipt, "http_status", 0), (self.receipt, "response_status", "incomplete"),
+                (self.receipt, "model", "other"), (self.manifest[0], "source_commit", "0" * 40),
+                (self.manifest[0], "captured_at", "2026-09-27T11:30:00Z"),
+                (self.manifest[0], "captured_at", "2026-09-27T11:00:00+01:00"),
+                (self.tree[0], "sha", "0" * 40), (self.tree_record, "truncated", True),
+                (self.tree_record, "sha", self.commit),
+                (self.tree_record, "url", f"https://api.github.com/repos/{self.repository}/git/trees/{self.commit}"),
+                (self.admission, "disposition", "PENDING"), (self.admission, "generated_targets", 1)):
+            original = record[key]
+            record[key] = value
+            self.write_evidence()
+            with self.subTest(key=key, value=value), self.assertRaises(SystemExit):
+                self.generate()
+            record[key] = original
+        self.write_evidence()
+        with patch.object(generate_rows.local_transport, "utc_now", return_value="2026-09-27T11:10:00Z"), self.assertRaises(SystemExit):
+            self.generate()
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
