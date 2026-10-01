@@ -91,13 +91,21 @@ LICENSED_SPECIFICATION_ADMISSIONS = {
     ),
 }
 LICENSED_SPECIFICATION_REPOSITORY = "exercism/problem-specifications"
-# One independently reviewed learnyounode batch; not a general source registry.
+# Independently reviewed learnyounode batches; not a general source registry.
 LEARNYOUNODE_ADMISSIONS = {
     "71ce7054a96946bfc22501943e2d87beb27f6d1c320a7957d6e7a560568bbedf": (
         "d5ca6fcde9195ca598104438a74e2ca327de5be63dab58a14097234aa8acf657",
         "526d2290c70599bd432254b8eb1da50dfc6d05dbe617e090b6ac9101253ac838",
         "c122fd7f53515900193f1f622da505487dc9fcee93ae77c297025bb5f10ceaf4",
         "f2a436e94cd41192f72cb18e1ce155ca5f2de97ce0d8b7d266f8186b146014dd",
+        frozenset({"baby_steps", "filtered_ls", "my_first_async_io"}),
+    ),
+    "7a0d4993c0b018777282d982d08167738b3248bd373e180c30fc5946bdd5de83": (
+        "30bc518d9a05abea8a227a9aeeeb0884e4c72690260ace825d57392cb74d726b",
+        "526d2290c70599bd432254b8eb1da50dfc6d05dbe617e090b6ac9101253ac838",
+        "c122fd7f53515900193f1f622da505487dc9fcee93ae77c297025bb5f10ceaf4",
+        "b88d30b10e25607bbc0049c6f2331144990cfdcc70f0dc2202a06da396b89084",
+        frozenset({"hello_world", "my_first_io", "http_client"}),
     ),
 }
 LEARNYOUNODE_REPOSITORY = "workshopper/learnyounode"
@@ -381,8 +389,7 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         manifest_hash, official_hash, tree_hash, review_hash, input_hash = MARKDOWN_ADMISSIONS[digest]
         row_pilot = frozenset({"headings"})
     elif learnyounode:
-        manifest_hash, official_hash, tree_hash, review_hash = LEARNYOUNODE_ADMISSIONS[digest]
-        row_pilot = LEARNYOUNODE_SOURCES
+        manifest_hash, official_hash, tree_hash, review_hash, row_pilot = LEARNYOUNODE_ADMISSIONS[digest]
     else:
         manifest_hash, official_hash, review_hash, row_pilot = pins
     admission_raw = _source_artifact(source_root, block.get("admission_ref"), label)

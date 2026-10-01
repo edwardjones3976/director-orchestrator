@@ -1538,9 +1538,10 @@ class LicensedSpecificationTests(unittest.TestCase):
 
 
 class LearnyounodeAdmissionTests(unittest.TestCase):
-    """Offline, test-only captures stand in for the closed reviewed source batch."""
+    """Offline, test-only captures stand in for the closed reviewed source batches."""
 
     blob = staticmethod(LicensedSpecificationTests.blob)
+    unused_sources = frozenset({"hello_world", "my_first_io", "http_client"})
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -1557,7 +1558,8 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
             "README.md": ("Generic workshop instructions.\n" + self.verification + "\nOther material not admitted as context.\n").encode(),
             "LICENSE.md": b"MIT test-only source license",
         }
-        for slug in sorted(generate_rows.LEARNYOUNODE_SOURCES):
+        self.allowed_slugs = generate_rows.LEARNYOUNODE_SOURCES
+        for slug in sorted(self.allowed_slugs | self.unused_sources):
             self.source_bytes[slug + ".problem.md"] = f"Complete the {slug} exercise.\nCheck with {{appname}} verify {slug}.js.\n".encode()
         self.manifest = []
         self.tree = []
@@ -1579,7 +1581,7 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
             "committer": {"date": "2020-06-19T15:49:14Z"}, "tree": {"sha": "b" * 40, "url": f"{api}/git/trees/{'b' * 40}"}}}
         self.tree_record = {"sha": self.commit, "url": f"{api}/git/trees/{self.commit}", "truncated": False, "tree": self.tree}
         self.admission = {"source_facts_verdict": "ACCEPT_FOR_SOURCE_FACTS", "pinned_commit": self.commit,
-            "suitable": sorted(generate_rows.LEARNYOUNODE_SOURCES), "targets_generated": 0, "targets_accepted": 0,
+            "suitable": sorted(self.allowed_slugs), "targets_generated": 0, "targets_accepted": 0,
             "admitted_at": "2026-09-27T11:20:00Z", "response_id": "independent-response", "review_receipt_ref": "xai/review.json"}
         self.receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
             "response_status": "completed", "response_id": "independent-response"}
@@ -1605,7 +1607,7 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
         self.digest = hashlib.sha256(admission).hexdigest()
         generate_rows.LEARNYOUNODE_ADMISSIONS[self.digest] = (
             self.admission["manifest_sha256"], hashlib.sha256(commit).hexdigest(),
-            hashlib.sha256(tree).hexdigest(), self.admission["review_receipt_sha256"])
+            hashlib.sha256(tree).hexdigest(), self.admission["review_receipt_sha256"], self.allowed_slugs)
 
     def scenario(self, slug="baby_steps"):
         entry = next(item for item in self.manifest if item["path"] == f"exercises/{slug}/problem.md")
@@ -1633,6 +1635,40 @@ class LearnyounodeAdmissionTests(unittest.TestCase):
                 patch.object(generate_rows, "prepare_local_model") as probe, \
                 patch.object(generate_rows.local_transport, "http_json") as transport:
             self.assertEqual(self.generate(rows), {"dry_run": True, "rows": 0, "receipts": 0})
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_new_batch_dry_run_has_no_probe_transport_receipts_or_rows(self):
+        self.allowed_slugs = self.unused_sources
+        self.admission["suitable"] = sorted(self.allowed_slugs)
+        self.write_evidence()
+        rows = [self.scenario(slug) for slug in sorted(self.allowed_slugs)]
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            self.assertEqual(self.generate(rows), {"dry_run": True, "rows": 0, "receipts": 0})
+            for call in (github, probe, transport):
+                call.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+
+    def test_cross_batch_sources_refused_before_probe_even_if_evidence_lists_them(self):
+        self.admission["suitable"] = sorted(generate_rows.LEARNYOUNODE_SOURCES | self.unused_sources)
+        with patch.object(generate_rows, "github_chronology") as github, \
+                patch.object(generate_rows, "prepare_local_model") as probe, \
+                patch.object(generate_rows.local_transport, "http_json") as transport:
+            for allowed, refused in ((generate_rows.LEARNYOUNODE_SOURCES, "hello_world"),
+                                     (self.unused_sources, "baby_steps")):
+                self.allowed_slugs = allowed
+                self.write_evidence()
+                self.assertEqual(self.generate([self.scenario(sorted(allowed)[0])]),
+                                 {"dry_run": True, "rows": 0, "receipts": 0})
+                with self.subTest(refused=refused), patch.object(
+                        generate_rows, "fail", wraps=generate_rows.fail) as failure, self.assertRaises(SystemExit):
+                    self.generate([self.scenario(refused)], dry_run=False)
+                self.assertIn("outside the admitted synthetic pilot", failure.call_args.args[0])
             for call in (github, probe, transport):
                 call.assert_not_called()
         self.assertFalse(self.out.exists())
