@@ -98,21 +98,18 @@ plan mode (owner direction, 2026-09-29).
 
 ## Contribution attribution
 
-No contribution tags are written into file contents any more. Every commit
-carries `Contributed-by: <Assistant or Tool> | <Complete Model or System>`,
-one trailer per contributor; keep existing `Co-Authored-By` trailers.
-Every PR description carries exactly one header line:
-`Sole author: <assistant> (<model>)`, followed on that line by
-`; assistance: <id>[, <id>...]` when others assisted. Follow the 52% sole-author
-rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
-this policy does not redefine it.
-Existing in-file tags are historical; a later mechanical PR removes them.
-Attribution records acknowledge actual contributions only and never imply
-inherited authorship. They never authenticate provider identity, grant authority,
-or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
+Owner direction, 2026-10-01: contribution-documentation, tagging and
+acknowledgement procedures are discontinued for every provider and project.
+Do not add Submission Tag Headers, contribution envelopes, custom commit
+trailers, mandatory contribution headers or percentage/share paperwork.
+Preserve historical records and normal Git Author/Committer provenance;
+keep actual provider identity and ordinary task/review evidence accurate.
 
-Before handoff, run the checker with the exact base and head; see
-`docs/contribution-attribution-policy.md`.
+This retires formatting requirements only. It does not grant authority or
+change independent review, author/merger separation, exact-candidate binding,
+security, CI, budget, approval, merge or deployment gates. Before handoff,
+validate the exact base/head and event with scripts/check_contribution_tags.py;
+its result validates Git revisions/event structure, not authenticated authorship.
 
 11. Communicate concisely and accurately. Reuse fresh verified evidence; repeat a call or test only after state changes, an ambiguous result, or a named coverage gap. Before another paid or tool attempt, identify its expected information gain and stop, reshape, or escalate when that gain is low. Correct inaccuracies before dependent work. Brevity must not omit uncertainty, required evidence, safety gates, or unresolved risks.
 

@@ -176,7 +176,6 @@ class PullRequestEventTests(FixtureRepository):
             "bare domain evidence": (exception(self.h1, evidence="https://github.com"), "Evidence must be"),
             "unbounded reason": (exception(self.h1, reason="x " * 200), "Reason must be"),
             "one-word reason": (exception(self.h1, reason="fix"), "Reason must be"),
-            "no attribution": ("\n".join(exception(self.h1).splitlines()[1:-1]) + "\n", "review exception commit:"),
             "fields in the trailer block only": (
                 "Repair.\n\nReview-exception: P1\nContributed-by: Test Author | fixture\n",
                 "lacks a Review-exception field",
@@ -186,6 +185,9 @@ class PullRequestEventTests(FixtureRepository):
             with self.subTest(case=name):
                 h2 = self.commit(self.h1, message, {"feature.fixture": name})
                 rejected(self.h1, h2, expected)
+        ordinary = "\n".join(exception(self.h1).splitlines()[1:-1]) + "\n"
+        h2 = self.commit(self.h1, ordinary, {"feature.fixture": "tag-free exception"})
+        self.assertEqual([], ci_local.transition_errors(self.synchronize(self.h1, h2, ["frozen"])))
         duplicated = exception(self.h1).replace("Reason:", "Review-exception: P0\nReason:")
         rejected(self.h1, self.commit(self.h1, duplicated, {"feature.fixture": "dup"}), "repeats Review-exception")
 
@@ -215,11 +217,11 @@ class PullRequestEventTests(FixtureRepository):
         self.assertEqual(1, run(ci_local.ci_main, missing)[0])
         self.assertEqual(1, self.ci({"ref": "refs/heads/feature", "after": self.h1})[0])
 
-    def test_head_commit_without_an_envelope_fails_attribution(self):
+    def test_head_commit_without_an_envelope_passes_revision_checks(self):
         untagged = self.commit(self.m0, "untagged change", {"feature.fixture": "untagged\n"})
         code, output, checker = self.ci({"action": "opened", "pull_request": self.pull(untagged)})
-        self.assertEqual(1, code)
-        self.assertIn("Contributed-by trailer", output)
+        self.assertEqual(0, code, output)
+        self.assertIn("Git revision range and event structure valid", output)
         checker.assert_called_once()
 
     def test_main_push_keeps_its_exemption_and_range(self):

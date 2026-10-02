@@ -1,6 +1,6 @@
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 10:42 UTC | BEGIN]]
-"""One attribution preflight for local candidates and the CI pull_request event.
+"""One revision/event preflight for local candidates and the CI pull_request event.
 
 Review-loop lifecycle (issue #299). Two pull-request labels are visible state:
 
@@ -8,7 +8,7 @@ Review-loop lifecycle (issue #299). Two pull-request labels are visible state:
   change while the label is present; any head change is refused.
 - ``frozen``: the pull request is closed to ordinary churn. After the lock is
   released, a head change is admitted only with a one-use ``Review-exception``
-  inside the envelope of the single commit the push introduces::
+  in the ordinary message of the single commit the push introduces::
 
       Review-exception: P0 | P1 | required-gate
       Previous-head: <the actual previous remote head, full SHA>
@@ -30,7 +30,7 @@ Every mode checks the transition first, then runs the existing
 ``check_contribution_tags.py`` with ``--base`` set to the merge base of the
 event base and the head, so a newer unrelated main commit is not read as a
 reverse change by the pull request. The event file keeps GitHub's original
-base SHA. Attribution is parsed only by that checker. A main push keeps its
+base SHA. Revision/event validation is handled by that checker. A main push keeps its
 existing exemption: the checker receives the push range and event unchanged.
 
 Local modes are advisory: a contributor can skip them or push with plain Git.
@@ -82,7 +82,7 @@ _checker_module = None
 
 
 def _checker():
-    """Load check_contribution_tags.py, the repository's only attribution parser."""
+    """Load the revision/event checker, retaining its historical tag parser export."""
 
     global _checker_module
     if _checker_module is None:
@@ -128,7 +128,7 @@ def require_commit(sha: object, role: str) -> str:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 09:20 UTC | BEGIN]]
 def merge_base(base: str, head: str) -> str:
     # ``--all`` lists every best common ancestor; a criss-cross history has
-    # more than one, and attribution against an arbitrary one is unsound.
+    # more than one, and range validation against an arbitrary one is unsound.
     values = _git("merge-base", "--all", base, head).split()
     if len(values) != 1 or not _is_sha(values[0]):
         raise PreflightError(
@@ -252,14 +252,9 @@ def build_event(pull: dict, *, before: str, after: str) -> dict:
 
 
 def review_exception_errors(message: str, previous_head: str) -> list[str]:
-    """Validate the structured Review-exception inside one commit envelope."""
+    """Validate structured Review-exception fields in an ordinary commit message."""
 
     checker = _checker()
-    if not checker.message_attributed(message):
-        return [
-            "review exception commit: missing Contributed-by trailer "
-            "(or, on a pre-trailer branch, a matching contribution envelope)"
-        ]
     # The fields live in the message body: every nonblank line that is neither a
     # trailer nor a legacy contribution tag.
     trailer_keys = {key.lower() for key in ("Contributed-by", "Co-Authored-By", "Signed-off-by", "Claude-Session")}
