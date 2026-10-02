@@ -2957,9 +2957,13 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                 used = value["exposure_usd"]
                 if used > budget:
                     over.append("usage monitor " + str(provider))
-            if (attempted and value.get("cost_visibility_complete") is not True
-                    and value.get("reserved_cost_usd") is None and str(provider) not in over):
-                # reported_cost_usd sums known costs only; unknown cost is not zero.
+            if attempted and type(value["unreconciled_request_count"]) is not int and str(provider) not in over:
+                # A ledger-accounted provider's real requests carry their cost in the durable ledger: every settled
+                # request has a recorded actual charge exactly when unreconciled_request_count is 0 (a positive count
+                # is graded above), and an unsettled one counts at its reservation in exposure_usd. Only a monitor
+                # that cannot say is unpriced. Never the probes' price visibility (cost_visibility_complete) or the
+                # grok-only reserved total, which made Gemini and Perplexity a false UNKNOWN (#287 item 13, review
+                # 4112697684). Unknown cost is not zero.
                 unpriced.append(str(provider))
     budgets = None
     if paid is not None and consistency is not None:

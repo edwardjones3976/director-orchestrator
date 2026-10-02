@@ -5925,14 +5925,28 @@ class ScorecardCollectorTests(unittest.TestCase):
         unmonitored = self.world(evaluate_rules=True)
         del unmonitored.payload["usage_monitor"]
         self.assertEqual(unmonitored.state("15"), "UNKNOWN")
-        # reported_cost_usd sums known costs only: attempts with unknown, unreserved cost are not zero.
+        # Unknown cost is not zero: real requests whose reconciliation the monitor cannot report are unpriced.
         unpriced = self.world(evaluate_rules=True)
         unpriced.payload["usage_monitor"]["daily_accounting"]["grok"].update(
-            request_count=3, provider_request_count=3, cost_visibility_complete=False, reported_cost_usd=0.0,
-            reserved_cost_usd=None)
+            request_count=3, provider_request_count=3, unreconciled_request_count=None,
+            cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None)
         report = unpriced.report()
         self.assertEqual(row(report, "15")["status"], "UNKNOWN")
         self.assertIn("grok", row(report, "15")["explanation"])
+        # #287 item 13: Gemini and Perplexity real requests are priced by the durable ledger, not by the probes'
+        # price visibility or grok's reserved total. Every settled request charged (unreconciled 0) and exposure
+        # inside the cap is monitored, priced accounting; one settled without a recorded charge is still UNKNOWN.
+        for provider in ("gemini", "perplexity"):
+            with self.subTest(provider=provider):
+                ledger = self.world(evaluate_rules=True)
+                ledger.payload["usage_monitor"]["providers"].append(provider)
+                ledger.payload["usage_monitor"]["daily_accounting"][provider] = accounting(
+                    request_count=2, provider_request_count=2, unreconciled_request_count=0,
+                    cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None,
+                    daily_budget_usd=5.0, exposure_usd=0.4)
+                self.assertEqual(ledger.state("15"), "PASS")
+                ledger.payload["usage_monitor"]["daily_accounting"][provider]["unreconciled_request_count"] = 1
+                self.assertEqual(ledger.state("15"), "UNKNOWN")
         idle = self.world(evaluate_rules=True)
         idle.payload["usage_monitor"]["daily_accounting"]["grok"].update(
             request_count=0, provider_request_count=0, cost_visibility_complete=False, reported_cost_usd=0.0,
