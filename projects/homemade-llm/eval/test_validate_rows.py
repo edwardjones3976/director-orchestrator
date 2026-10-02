@@ -302,6 +302,29 @@ class ValidateRowsTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(report["n_accepted"], 0)
 
+    def test_closed_rustlings_members_co_locate_without_independence_claim(self):
+        members = sorted(validate_rows.RUSTLINGS_MEMBER_SOURCE_GROUPS)
+        for side in ("train", "dev"):
+            rows = [self.row(source_group=group, split=side, input={"title": f"Offline member {index}"})
+                    for index, group in enumerate(members)]
+            code, report, stderr = self.run_validator(rows)
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(report["n_accepted"], 3)
+            self.assertEqual(report["unique_source_groups_per_split"],
+                             {"train": 1 if side == "train" else 0, "dev": 1 if side == "dev" else 0})
+        for first in members:
+            for second in members:
+                if first == second: continue
+                rows = [self.row(source_group=first, input={"title": "Offline train member"}),
+                        self.row(source_group=second, split="dev", input={"title": "Offline dev member"})]
+                code, report, stderr = self.run_validator(rows)
+                self.assertEqual(code, 1, stderr)
+                self.assertEqual((report["n_accepted"], report["n_rejected"]), (0, 2))
+                self.assertEqual(report["straddling_source_groups"], [validate_rows.RUSTLINGS_MEMBER_GROUP])
+        for unknown in ("licensed/rust-lang/rustlings/variables2", members[0] + "/variant",
+                        "licensed/rust-lang/rustlings/another-pin/variables1"):
+            self.assertEqual(validate_rows.split_source_group(unknown), unknown)
+
     def test_source_group_on_both_sides_rejects_the_group(self):
         rows = [self.row(), self.row(split="dev", input={"title": "Second row of the same seed"}),
                 self.row(source_group="lone-group", split="dev", input={"title": "Lone row"})]

@@ -206,8 +206,19 @@ def _canonical_reasons(errors: list[str]) -> list[str]:
     return sorted(set(errors))
 
 
+# Independently reviewed conservative member co-location, not qualifying independence.
+RUSTLINGS_MEMBER_GROUP = "rustlings/5002c54ffb29b3df9db7282a1ef62ce075c99748/compile-repair-conservative-group-1"
+RUSTLINGS_MEMBER_SOURCE_GROUPS = frozenset({
+    "licensed/rust-lang/rustlings/variables1",
+    "licensed/rust-lang/rustlings/functions1",
+    "licensed/rust-lang/rustlings/move_semantics1",
+})
+
+
 def split_source_group(source_group: str) -> str:
-    """Co-locate the proven learnyounode sync/async siblings for split checks only."""
+    """Co-locate reviewed members for split checks; no cohort independence grant."""
+    if source_group in RUSTLINGS_MEMBER_SOURCE_GROUPS:
+        return RUSTLINGS_MEMBER_GROUP
     if source_group == "licensed/workshopper/learnyounode/my_first_io":
         return "licensed/workshopper/learnyounode/my_first_async_io"
     return source_group

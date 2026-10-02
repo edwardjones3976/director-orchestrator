@@ -176,6 +176,16 @@ RUSTLINGS_SOURCE_FACTS = {
         },
     },
 }
+# Root authenticated this exact completed public-only member-group review.
+# Acceptance is construction co-location only; responsible native release remains separate.
+RUSTLINGS_MEMBER_GROUP_PINS = {
+    "bee1deb11863be575133afb64d3ad2e2ae78e2d12338f6ff0eb0147bd07e3079": {
+        "receipt": "57e118d435f4a3524a7acc99c25ae842fa8402021b55af1b48593251d1501a45",
+        "share": "0d04c51099046fb8ca7b86f1e3ae02bf4f8eb1cfb85a45fbed4a971d2557307e",
+        "mapping": "392ebb335547295b32da30ca1e949bb8c8b2bd828ae9d80cad25715377e68713",
+        "answer": "8dbeecfbfd45547a515f3119aaba2368242914aa45cce68e33637bf1fe54ec27",
+    },
+}
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
@@ -536,6 +546,83 @@ def _validate_rustlings_source_facts(scenario: dict[str, Any], source_root: Path
             fail(f"{label}: Rustlings input is not the exact reviewed original and learner context")
     except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, StopIteration):
         fail(f"{label}: malformed Rustlings source-facts evidence")
+
+
+def _validate_rustlings_member_group(scenario: dict[str, Any], source_root: Path,
+                                    review_receipts_root: Path | None) -> str:
+    """Bind the closed member review; this cannot supply native operator authority."""
+    block = scenario["source_provenance"]
+    digest = block.get("member_group_sha256")
+    if not isinstance(digest, str) or digest not in RUSTLINGS_MEMBER_GROUP_PINS:
+        fail("Rustlings construction has no exact independently reviewed member-group digest")
+    pins = RUSTLINGS_MEMBER_GROUP_PINS[digest]
+    try:
+        def artifact(ref: Any, expected: str) -> dict[str, Any]:
+            raw = _source_artifact(source_root, ref, "Rustlings member group")
+            if local_transport.sha256(raw) != expected:
+                fail("Rustlings member-group evidence bytes changed")
+            return local_transport.strict_json(raw)
+
+        terminal = artifact(block.get("member_group_ref"), digest)
+        share = artifact(block.get("member_group_share_ref"), pins["share"])
+        mapping = artifact(block.get("member_group_mapping_ref"), pins["mapping"])
+        receipt_ref = terminal["receipt"].replace("\\", "/").rsplit("/receipts/", 1)[-1]
+        raw = _source_artifact(review_receipts_root or DISPATCH_PY.parent / "receipts", receipt_ref,
+                               "Rustlings member-group receipt")
+        if local_transport.sha256(raw) != pins["receipt"]:
+            fail("Rustlings member-group receipt bytes changed")
+        receipt = local_transport.strict_json(raw)
+        verdict = local_transport.strict_json(receipt["answer"])
+        if (receipt["provider"] != "xai" or receipt["model"] != "grok-4.6"
+                or receipt["http_status"] != 200 or receipt["response_status"] != "completed"
+                or not receipt["response_id"] or receipt["response_id"] != terminal["response_id"]
+                or terminal["receipt_sha256"] != pins["receipt"]
+                or local_transport.sha256(receipt["answer"].encode("utf-8")) != pins["answer"]
+                or verdict != terminal["verdict"]
+                or verdict["packet_id"] != "QA-M2-RUSTLINGS-MEMBER-GROUP-1"
+                or verdict["verdict"] != "ACCEPT_MEMBER_GROUP_FOR_CONSTRUCTION"
+                or verdict["mapping_status"] != "ACCEPT_MEMBER_GROUP_FOR_CONSTRUCTION_SUBJECT_TO_ROOT_GATES"
+                or verdict["scope"] != "MEMBER_COLOCATION_FOR_FIRST_EXAMPLE_CONSTRUCTION_ONLY"
+                or verdict["share_record_sha256"] != pins["share"]
+                or terminal["share_record_sha256"] != pins["share"]
+                or verdict["proposed_mapping_sha256"] != pins["mapping"]
+                or share["proposed_mapping_sha256"] != pins["mapping"]
+                or verdict["group_id"] != mapping["group_id"]
+                or mapping["group_id"] != validate_rows.RUSTLINGS_MEMBER_GROUP
+                or verdict["qualifying_cohort_independence"] != "UNKNOWN"
+                or mapping["qualifying_cohort_independence"] != "UNKNOWN"
+                or verdict["provisional_group_count_upper_bound"] != 1
+                or mapping["provisional_group_count_upper_bound"] != 1
+                or verdict["accepted_group_count_added"] != 0 or mapping["accepted_group_count_added"] != 0
+                or any(verdict[key] is not False for key in ("generation_release", "row_acceptance",
+                    "training_acceptance", "operational_release", "group_or_row_admission_granted"))
+                or mapping["row_training_operational_release"] is not False
+                or share["group_or_row_admission_granted"] is not False
+                or share["operational_or_training_release"] is not False
+                or terminal["operational_release"] is not False or terminal["training_admission"] is not False):
+            fail("Rustlings review is not the exact construction-only member disposition")
+        source_pins = RUSTLINGS_SOURCE_FACTS[block["admission_sha256"]]["sources"]
+        expected = {(f"rustlings/{RUSTLINGS_COMMIT}/{slug}", sha, path, RUSTLINGS_COMMIT)
+                    for slug, (path, sha) in source_pins.items()}
+        def identities(members):
+            return {(item["source_id"], item["sha256"], item["upstream_path"], item["pin"]) for item in members}
+        originals = [item for item in share["actual_prepared_public_only_files"]
+                     if item.get("content_kind") == "FULL_PUBLIC_UNSOLVED_ORIGINAL_TASK"]
+        if (len(mapping["members"]) != 3 or len(verdict["members"]) != 3 or len(originals) != 3
+                or identities(mapping["members"]) != expected or identities(verdict["members"]) != expected
+                or {(item["source_id"], item["sha256"], item["upstream_path"], RUSTLINGS_COMMIT)
+                    for item in originals} != expected
+                or block["source_id"] not in {item[0] for item in expected}
+                or scenario["source_group"] not in validate_rows.RUSTLINGS_MEMBER_SOURCE_GROUPS):
+            fail("Rustlings member identity/digest/path differs from the reviewed closed set")
+        reviewed_at = terminal["verified_utc"].replace("+00:00", "Z")
+        if not (_source_utc(block["admitted_at"], "Rustlings source facts")
+                < _source_utc(reviewed_at, "Rustlings member review")
+                < _source_utc(local_transport.utc_now(), "Rustlings construction")):
+            fail("Rustlings source/member review chronology is invalid")
+        return reviewed_at
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        fail("malformed Rustlings member-group evidence")
 
 
 def validate_licensed_specification(scenario: dict[str, Any], source_root: Path, label: str,
@@ -1062,11 +1149,24 @@ def native_execution_release(scenario: dict[str, Any], model: str, runtime: Path
     if len(history_raw) > NATIVE_MAX_BYTES or local_transport.sha256(history_raw) != record["attempt_history_sha256"]:
         fail("native attempt history changed")
     history = [local_transport.strict_json(line) for line in history_raw.splitlines() if line]
-    used = sum(row["execution_reservations"] for row in history
-               if row.get("source_group") == scenario["source_group"] and row.get("model") == model)
+    # Root must bind the complete combined history, not only the native registry.
+    # Keep historical source/model identities exact; split co-location is not a retry alias.
+    reservations = [row.get("execution_reservations") for row in history
+                    if row.get("source_group") == scenario["source_group"] and row.get("model") == model]
+    if any(type(count) is not int or count < 0 for count in reservations):
+        fail("native source/model reservation history is invalid")
+    used = sum(reservations)
     ordinal = record.get("attempt_ordinal")
-    if type(ordinal) is not int or ordinal != used + 1:
+    if used >= 3 or type(ordinal) is not int or not 1 <= ordinal <= 3:
+        fail("native source/model combined reservation ceiling is three; exhausted pair remains held")
+    if ordinal != used + 1:
         fail("native ordinal must preserve all source/model reservations, including zero-prediction failures")
+    if scenario["source_provenance"].get("admission_sha256") in RUSTLINGS_SOURCE_FACTS:
+        member_digest = scenario["source_provenance"].get("member_group_sha256")
+        if (not isinstance(member_digest, str) or member_digest not in RUSTLINGS_MEMBER_GROUP_PINS
+                or record.get("member_group_sha256") != member_digest
+                or record.get("member_group_id") != validate_rows.RUSTLINGS_MEMBER_GROUP):
+            fail("native root release does not bind the exact Rustlings member-group disposition")
     return {**record, "release_path": str(path), "release_sha256": digest}
 
 
@@ -2158,7 +2258,11 @@ def generate(
         return {"dry_run": True, "rows": 0, "receipts": 0}
     if any(scenario["source_provenance"].get("admission_sha256") in RUSTLINGS_SOURCE_FACTS
            for scenario in scenarios):
-        fail("Rustlings generation is held: independent semantic source-group admission is UNKNOWN")
+        if not native_sdk or dispatch is not None or native_release_pin is None:
+            fail("Rustlings generation is held: exact member-group binding and responsible-root native release required")
+        reviewed_at = _validate_rustlings_member_group(scenarios[0], root, source_review_receipts_root)
+        if _source_utc(generated_at, "Rustlings generation") <= _source_utc(reviewed_at, "Rustlings member review"):
+            fail("Rustlings generation timestamp must follow member-group review")
     if provider != "local_model" and dispatch is None:
         fail("cloud exemplar generation is held by the M2 training-data terms gate")
     if provider == "local_model" and dispatch is None:
