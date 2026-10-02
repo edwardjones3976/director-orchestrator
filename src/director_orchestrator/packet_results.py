@@ -192,7 +192,7 @@ class DirectorPacketResultConsumer:
             None,
         )
         if existing is not None:
-            bound_digest = existing.raw.get("packet_result_digest")
+            bound_digest = record.consumed_packet_results.get(existing.interaction_id or "")
             if bound_digest is not None and bound_digest != digest:
                 raise PacketResultConsumptionError(
                     "provider run reference is already bound to different evidence"
@@ -259,6 +259,7 @@ class DirectorPacketResultConsumer:
             record.provider_runs.append(run)
             recorded = True
 
+        record.consumed_packet_results[str(result["correlation"]["correlation_id"])] = digest
         packet_status = result["status"]
         terminal: TaskStatus | None = None
         requires_review = packet_status == "SUCCEEDED"

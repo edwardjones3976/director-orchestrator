@@ -59,6 +59,7 @@ from .models import Assignment, ProviderName, ProviderRun
 from .packet_contracts import canonical_json_bytes, validate_packet
 from .packet_routing import AuthoritySnapshotResolver, PacketRoutingError
 from .providers import ProviderAdapter, ProviderDailySpendLedger
+from .review_handoff import reconstruct_review_handoff
 from .store import AcknowledgementPersistencePending, TaskStore
 from .usage import authoritative_reported_cost
 
@@ -541,7 +542,8 @@ class LegacyProviderPacketTransport:
             0.1, float(github_effect_timeout_seconds)
         )
 
-    def _assignment(self, packet: Mapping[str, Any], provider: ProviderName, record=None) -> Assignment:
+    def _assignment(self, packet: Mapping[str, Any], provider: ProviderName, record=None,
+                    *, pin_starting_ref: bool = True) -> Assignment:
         sequence_text = str(packet["assignment_id"]).rsplit("-", 1)[-1]
         if not sequence_text.isdigit():
             raise ValueError("packet assignment identity lacks a numeric sequence")
@@ -557,12 +559,18 @@ class LegacyProviderPacketTransport:
         )
         if assignment is None or assignment.agent != provider:
             raise ValueError("packet assignment no longer matches the Director plan")
+        if sequence in record.review_handoff_digests:
+            assignment = reconstruct_review_handoff(
+                record, assignment,
+                trusted_provider_actors=self.adapter.settings.oracle_provider_actor_map(),
+            )
         assignment_digest = hashlib.sha256(
             canonical_json_bytes(assignment.model_dump(mode="json"))
         ).hexdigest()
         if not str(packet["idempotency_key"]).endswith(":" + assignment_digest):
             raise ValueError("packet assignment digest is stale")
-        return assignment.model_copy(update={"starting_ref": str(packet["starting_ref"])})
+        return (assignment.model_copy(update={"starting_ref": str(packet["starting_ref"])})
+                if pin_starting_ref else assignment)
 
     def _record_claude_dispatch(
         self,
@@ -1189,11 +1197,7 @@ class LegacyProviderPacketTransport:
         record = self.task_store.get(str(packet["task_id"]))
         if record is None:
             raise RuntimeError("Native metering task record is unavailable")
-        assignment = next((item for item in record.plan.assignments
-                           if packet["assignment_id"] == f"{record.task_id}-{item.sequence}"
-                           and item.agent == run.provider), None) if record.plan else None
-        if assignment is None:
-            raise RuntimeError("Native metering assignment is unavailable")
+        assignment = self._assignment(packet, run.provider, record, pin_starting_ref=False)
         packet_digest = hashlib.sha256(canonical_json_bytes(assignment.model_dump(mode="json"))).hexdigest()
         failed_keys = {
             item.effect_key for item in record.task_effect_ledger
@@ -1210,8 +1214,8 @@ class LegacyProviderPacketTransport:
             )
             and item.effect_key not in failed_keys
         }
-        if len(keys) > 1:
-            raise RuntimeError("Native metering has conflicting dispatch intents")
+        if len(keys) != 1:
+            raise RuntimeError("Native metering requires one exact dispatch intent")
         ledger = ProviderDailySpendLedger(self.task_store.path)
         for key in keys:
             ledger.record_charge(provider=run.provider, effect_key=key,
