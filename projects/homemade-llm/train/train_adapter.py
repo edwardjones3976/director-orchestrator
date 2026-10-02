@@ -40,6 +40,8 @@ SMOKE_BASE = "unsloth/qwen3-0.6b-unsloth-bnb-4bit"
 SMOKE_REVISION = "e86f5289a2ca40ab7114071959dc2079cf97cb3c"
 WINNER_BASE = "Qwen/Qwen3-14B"
 WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
+FALLBACK_BASE = "Qwen/Qwen3-8B"
+FALLBACK_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -67,8 +69,34 @@ def is_smoke_pin(base: str, revision: str) -> bool:
     return base == SMOKE_BASE and revision == SMOKE_REVISION
 
 
+def is_fallback_pin(base: str, revision: str) -> bool:
+    return base == FALLBACK_BASE and revision == FALLBACK_REVISION
+
+
 def is_allowed_probe_pin(base: str, revision: str) -> bool:
-    return is_winner_pin(base, revision) or is_smoke_pin(base, revision)
+    return (
+        is_winner_pin(base, revision)
+        or is_fallback_pin(base, revision)
+        or is_smoke_pin(base, revision)
+    )
+
+
+def probe_pin_name(base: str, revision: str) -> str:
+    if is_winner_pin(base, revision):
+        return "winner"
+    if is_fallback_pin(base, revision):
+        return "fallback"
+    if is_smoke_pin(base, revision):
+        return "smoke"
+    fail(f"probe pin is not recognized for {base}@{revision}")
+
+
+def length_gate_pass(p95: float, limit: int = SEQ) -> bool:
+    return p95 <= limit
+
+
+def probe_is_authoritative(base: str, revision: str, probe_seq_len: int) -> bool:
+    return (is_winner_pin(base, revision) or is_fallback_pin(base, revision)) and probe_seq_len == SEQ
 
 
 def _sha256_file(path: Path) -> str:
@@ -135,6 +163,8 @@ def digest_verification_before_load(
 ) -> dict | None:
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
+    if is_fallback_pin(base, revision) and expected_digests_path is None:
+        fail("--expected-digests is required for the fallback pin")
     if expected_digests_path is None:
         return None
     expected_files = load_expected_digests(expected_digests_path, base, revision)
@@ -449,31 +479,35 @@ def prepare_probe_examples(
 def build_probe_report(
     *,
     run: str,
+    pin: str,
+    mode: str,
     base: str,
     revision: str,
     rows: int,
     mask_coverage: float,
     resolved_commit: str,
     length_stats: dict[str, float | int],
+    length_gate_passed: bool,
     sequence_length: int,
-    sequence_length_method: str,
+    sequence_length_method: str | None,
     warmup_microsteps: int,
     timed_microsteps: int,
     gradient_accumulation: int,
-    timed_optimizer_updates: int,
-    seconds_per_microstep: float,
-    peak_reserved_gib: float,
+    timed_optimizer_updates: int | None,
+    seconds_per_microstep: float | None,
+    peak_reserved_gib: float | None,
     rows_total: int,
-    wall_seconds_three_epochs: float,
-    wall_seconds_three_epochs_contingency: float,
-    memory_pass: bool,
-    time_pass: bool,
+    wall_seconds_three_epochs: float | None,
+    wall_seconds_three_epochs_contingency: float | None,
+    memory_pass: bool | None,
+    time_pass: bool | None,
     authoritative: bool,
     digest_verification: dict | None = None,
 ) -> dict[str, Any]:
-    return {
+    report: dict[str, Any] = {
         "run": run,
-        "mode": "d_m1_f_probe",
+        "pin": pin,
+        "mode": mode,
         "base": base,
         "base_revision": revision,
         "base_resolved_commit": resolved_commit,
@@ -481,16 +515,17 @@ def build_probe_report(
         "probe_rows_total": rows_total,
         "mask_coverage": round(mask_coverage, 6),
         "token_lengths": length_stats,
+        "length_gate_pass": length_gate_passed,
         "sequence_length": sequence_length,
-        "sequence_length_method": sequence_length_method,
         "warmup_microsteps": warmup_microsteps,
         "timed_microsteps": timed_microsteps,
         "gradient_accumulation": gradient_accumulation,
-        "timed_optimizer_updates": timed_optimizer_updates,
-        "seconds_per_microstep": round(seconds_per_microstep, 6),
-        "peak_reserved_vram_gib": round(peak_reserved_gib, 3),
-        "wall_seconds_three_epochs": round(wall_seconds_three_epochs, 1),
-        "wall_seconds_three_epochs_contingency": round(wall_seconds_three_epochs_contingency, 1),
+        "seconds_per_microstep": None if seconds_per_microstep is None else round(seconds_per_microstep, 6),
+        "peak_reserved_vram_gib": None if peak_reserved_gib is None else round(peak_reserved_gib, 3),
+        "wall_seconds_three_epochs": None if wall_seconds_three_epochs is None else round(wall_seconds_three_epochs, 1),
+        "wall_seconds_three_epochs_contingency": None
+        if wall_seconds_three_epochs_contingency is None
+        else round(wall_seconds_three_epochs_contingency, 1),
         "memory_pass": memory_pass,
         "time_pass": time_pass,
         "authoritative": authoritative,
@@ -498,6 +533,11 @@ def build_probe_report(
         "gguf_sha256": None,
         "thinking": "disabled",
     }
+    if sequence_length_method is not None:
+        report["sequence_length_method"] = sequence_length_method
+    if timed_optimizer_updates is not None:
+        report["timed_optimizer_updates"] = timed_optimizer_updates
+    return report
 
 
 def sft_arguments(output_dir: str, steps: int) -> dict[str, Any]:
@@ -704,6 +744,40 @@ def run_probe(
         require_response_only(example["labels"], prompt_token_count(example["labels"]))
         for example in encoded
     ) / len(encoded)
+    pin = probe_pin_name(base, revision)
+    authoritative = probe_is_authoritative(base, revision, probe_seq_len)
+    mode = "d_m1_f_probe" if authoritative else "diagnostic_probe"
+    gate_passed = length_gate_pass(float(length_stats["p95"]))
+    if pin in ("winner", "fallback") and not gate_passed:
+        report = build_probe_report(
+            run=report_path.stem,
+            pin=pin,
+            mode=mode,
+            base=base,
+            revision=revision,
+            rows=len(rows),
+            mask_coverage=mask_coverage,
+            resolved_commit=resolved,
+            length_stats=length_stats,
+            length_gate_passed=False,
+            sequence_length=probe_seq_len,
+            sequence_length_method=None,
+            warmup_microsteps=PROBE_WARMUP_MICROSTEPS,
+            timed_microsteps=PROBE_TIMED_MICROSTEPS,
+            gradient_accumulation=PROBE_GRAD_ACCUM,
+            timed_optimizer_updates=None,
+            seconds_per_microstep=None,
+            peak_reserved_gib=None,
+            rows_total=probe_rows_total,
+            wall_seconds_three_epochs=None,
+            wall_seconds_three_epochs_contingency=None,
+            memory_pass=None,
+            time_pass=None,
+            authoritative=authoritative,
+            digest_verification=digest_verification,
+        )
+        write_report(report_path, report)
+        fail("row-length p95 exceeds 2048; D-M1-F length gate failed")
     pad_token_id = tokenizer.pad_token_id
     if pad_token_id is None:
         pad_token_id = tokenizer.eos_token_id
@@ -724,12 +798,15 @@ def run_probe(
     wall_contingency = wall_seconds_with_contingency(wall_three_epochs)
     report = build_probe_report(
         run=report_path.stem,
+        pin=pin,
+        mode=mode,
         base=base,
         revision=revision,
         rows=len(rows),
         mask_coverage=mask_coverage,
         resolved_commit=resolved,
         length_stats=length_stats,
+        length_gate_passed=gate_passed,
         sequence_length=probe_seq_len,
         sequence_length_method=sequence_length_method,
         warmup_microsteps=PROBE_WARMUP_MICROSTEPS,
@@ -743,7 +820,7 @@ def run_probe(
         wall_seconds_three_epochs_contingency=wall_contingency,
         memory_pass=probe_memory_pass(peak_gib),
         time_pass=probe_time_pass(wall_contingency),
-        authoritative=is_winner_pin(base, revision),
+        authoritative=authoritative,
         digest_verification=digest_verification,
     )
     write_report(report_path, report)
@@ -772,12 +849,14 @@ def main(argv: list[str] | None = None) -> None:
         fail("probe-rows-total must be positive")
     if args.probe_seq_len < 1:
         fail("probe-seq-len must be positive")
+    if args.probe and args.probe_seq_len > SEQ:
+        fail(f"probe-seq-len must not exceed {SEQ}")
     if args.probe and args.check_only:
         fail("--probe cannot be combined with --check-only")
     if args.probe and not is_allowed_probe_pin(args.base, args.revision):
         fail(
-            f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION} "
-            f"or {SMOKE_BASE}@{SMOKE_REVISION}"
+            f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION}, "
+            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")

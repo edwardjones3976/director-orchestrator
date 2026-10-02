@@ -17,6 +17,7 @@ param(
     [string]$MergeRevision = 'db4e90b8359f816f09bf5c944797ce116f26da3c',
     [int]$Steps = 20,
     [switch]$Winner,
+    [switch]$Fallback,
     [switch]$Probe,
     [string]$ExpectedDigests,
     [int]$ProbeRowsTotal = 96,
@@ -28,6 +29,11 @@ $ErrorActionPreference = 'Stop'
 
 $WinnerBase = 'Qwen/Qwen3-14B'
 $WinnerRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18'
+$FallbackBase = 'Qwen/Qwen3-8B'
+$FallbackRevision = 'b968826d9c46dd6066d109eabc6255188de91218'
+if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually exclusive' }
+if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
+if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
 if ($Winner) {
     foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
         if ($PSBoundParameters.ContainsKey($name)) { Write-Error "-Winner is pinned to $WinnerBase@$WinnerRevision; do not pass -$name" }
@@ -36,6 +42,15 @@ if ($Winner) {
     $Revision = $WinnerRevision
     $MergeSource = $WinnerBase
     $MergeRevision = $WinnerRevision
+}
+if ($Fallback) {
+    foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
+        if ($PSBoundParameters.ContainsKey($name)) { Write-Error "-Fallback is pinned to $FallbackBase@$FallbackRevision; do not pass -$name" }
+    }
+    $Base = $FallbackBase
+    $Revision = $FallbackRevision
+    $MergeSource = $FallbackBase
+    $MergeRevision = $FallbackRevision
 }
 if ($Steps -lt 1) { Write-Error '-Steps must be positive' }
 if ($ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
@@ -51,6 +66,9 @@ $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
 if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-14b.json'
+}
+if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-8b.json'
 }
 if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = [IO.Path]::GetFullPath($ExpectedDigests)

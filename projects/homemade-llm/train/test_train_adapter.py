@@ -410,15 +410,172 @@ class TrainAdapterTests(unittest.TestCase):
                     ])
             fake_flm.from_pretrained.assert_not_called()
 
+    def test_probe_pins_accepted_by_guard(self):
+        self.assertTrue(train_adapter.is_allowed_probe_pin(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
+        self.assertTrue(train_adapter.is_allowed_probe_pin(
+            train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION))
+        self.assertTrue(train_adapter.is_allowed_probe_pin(
+            train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION))
+        self.assertFalse(train_adapter.is_allowed_probe_pin("org/other-model", "a" * 40))
+
+    def test_length_gate_pass_boundary(self):
+        self.assertTrue(train_adapter.length_gate_pass(2048.0))
+        self.assertFalse(train_adapter.length_gate_pass(2048.001))
+
+    def test_fallback_pin_without_expected_digests_refused_before_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock()
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with self.assertRaises(SystemExit):
+                    train_adapter.main([
+                        "--rows", str(path),
+                        "--report", str(Path(tmp, "probe.json")),
+                        "--probe",
+                        "--base", train_adapter.FALLBACK_BASE,
+                        "--revision", train_adapter.FALLBACK_REVISION,
+                    ])
+            fake_flm.from_pretrained.assert_not_called()
+
+    def test_main_probe_fallback_pin_calls_run_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.FALLBACK_BASE}@{train_adapter.FALLBACK_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            with mock.patch.object(train_adapter, "run_probe", return_value={"pin": "fallback"}) as mocked:
+                with mock.patch.object(train_adapter, "load_expected_digests", return_value=[]):
+                    with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                        train_adapter.main([
+                            "--rows", str(path),
+                            "--report", str(Path(tmp, "probe.json")),
+                            "--probe",
+                            "--base", train_adapter.FALLBACK_BASE,
+                            "--revision", train_adapter.FALLBACK_REVISION,
+                            "--expected-digests", str(digest_path),
+                        ])
+            mocked.assert_called_once()
+
+    def test_probe_length_gate_failure_skips_microsteps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            fake_tokenizer = mock.MagicMock()
+            fake_tokenizer.pad_token_id = 0
+            fake_tokenizer.apply_chat_template = mock.MagicMock(return_value=[1, 2, 3])
+            fake_model = mock.MagicMock()
+            fake_model.config._commit_hash = train_adapter.WINNER_REVISION
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+            fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+            bad_stats = {"p50": 100.0, "p95": 2048.001, "max": 3000}
+            encoded = [{
+                "input_ids": [1, 2, 3],
+                "attention_mask": [1, 1, 1],
+                "labels": [-100, -100, 3],
+            }]
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                    with mock.patch.object(train_adapter, "encode_rows", return_value=encoded):
+                        with mock.patch.object(train_adapter, "length_statistics", return_value=bad_stats):
+                            with mock.patch.object(train_adapter, "run_probe_microsteps") as micro_mock:
+                                with self.assertRaises(SystemExit) as raised:
+                                    train_adapter.main([
+                                        "--rows", str(rows_path),
+                                        "--report", str(report_path),
+                                        "--probe",
+                                        "--base", train_adapter.WINNER_BASE,
+                                        "--revision", train_adapter.WINNER_REVISION,
+                                        "--expected-digests", str(digest_path),
+                                    ])
+            self.assertIn("length gate failed", str(raised.exception))
+            micro_mock.assert_not_called()
+            self.assertTrue(report_path.is_file())
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertFalse(payload["length_gate_pass"])
+            self.assertIsNone(payload["memory_pass"])
+            self.assertIsNone(payload["seconds_per_microstep"])
+            self.assertIsNone(payload["peak_reserved_vram_gib"])
+
+    def test_probe_mode_and_authoritative_matrix(self):
+        def report_for(base: str, revision: str, seq_len: int) -> dict:
+            pin = train_adapter.probe_pin_name(base, revision)
+            authoritative = train_adapter.probe_is_authoritative(base, revision, seq_len)
+            mode = "d_m1_f_probe" if authoritative else "diagnostic_probe"
+            kwargs = self._minimal_probe_report_kwargs()
+            kwargs.update({
+                "pin": pin,
+                "mode": mode,
+                "base": base,
+                "revision": revision,
+                "sequence_length": seq_len,
+                "authoritative": authoritative,
+            })
+            return train_adapter.build_probe_report(**kwargs)
+
+        winner_2048 = report_for(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 2048)
+        self.assertEqual(winner_2048["mode"], "d_m1_f_probe")
+        self.assertTrue(winner_2048["authoritative"])
+        self.assertEqual(winner_2048["pin"], "winner")
+
+        winner_1024 = report_for(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 1024)
+        self.assertEqual(winner_1024["mode"], "diagnostic_probe")
+        self.assertFalse(winner_1024["authoritative"])
+
+        smoke_2048 = report_for(
+            train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, 2048)
+        self.assertEqual(smoke_2048["mode"], "diagnostic_probe")
+        self.assertFalse(smoke_2048["authoritative"])
+        self.assertEqual(smoke_2048["pin"], "smoke")
+
+        fallback_2048 = report_for(
+            train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION, 2048)
+        self.assertEqual(fallback_2048["mode"], "d_m1_f_probe")
+        self.assertTrue(fallback_2048["authoritative"])
+        self.assertEqual(fallback_2048["pin"], "fallback")
+
+    def test_main_probe_seq_len_above_seq_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            with self.assertRaises(SystemExit):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.SMOKE_BASE,
+                    "--revision", train_adapter.SMOKE_REVISION,
+                    "--probe-seq-len", "4096",
+                ])
+
+    def test_wrapper_fallback_switch_and_probe_timeout(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("-Fallback", text)
+        self.assertIn("mutually exclusive", text)
+        self.assertIn("-Fallback is only valid together with -Probe", text)
+        self.assertIn("m1-expected-qwen3-8b.json", text)
+        self.assertIn("ContainsKey('TimeoutMinutes')", text)
+        self.assertIn("$TimeoutMinutes = 150", text)
+
     def _minimal_probe_report_kwargs(self) -> dict:
         return {
             "run": "probe",
+            "pin": "smoke",
+            "mode": "diagnostic_probe",
             "base": train_adapter.SMOKE_BASE,
             "revision": train_adapter.SMOKE_REVISION,
             "rows": 1,
             "mask_coverage": 0.5,
             "resolved_commit": train_adapter.SMOKE_REVISION,
             "length_stats": {"p50": 1.0, "p95": 2.0, "max": 3},
+            "length_gate_passed": True,
             "sequence_length": 2048,
             "sequence_length_method": "pad",
             "warmup_microsteps": 1,
@@ -432,12 +589,16 @@ class TrainAdapterTests(unittest.TestCase):
             "wall_seconds_three_epochs_contingency": 1.2,
             "memory_pass": True,
             "time_pass": True,
+            "authoritative": False,
         }
 
     def test_probe_report_authoritative_for_winner_and_smoke_pins(self):
         kwargs = self._minimal_probe_report_kwargs()
-        winner = train_adapter.build_probe_report(**kwargs, authoritative=True)
-        smoke = train_adapter.build_probe_report(**kwargs, authoritative=False)
+        kwargs.update({"pin": "winner", "mode": "d_m1_f_probe", "authoritative": True})
+        winner = train_adapter.build_probe_report(**kwargs)
+        smoke_kwargs = self._minimal_probe_report_kwargs()
+        smoke_kwargs.update({"pin": "smoke", "mode": "diagnostic_probe", "authoritative": False})
+        smoke = train_adapter.build_probe_report(**smoke_kwargs)
         self.assertTrue(winner["authoritative"])
         self.assertFalse(smoke["authoritative"])
         self.assertTrue(winner["memory_pass"])
