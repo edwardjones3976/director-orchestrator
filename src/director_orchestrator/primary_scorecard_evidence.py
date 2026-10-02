@@ -52,6 +52,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -1231,6 +1233,28 @@ def _global_task_evidence(connection, schema, usage_tables):
     return counts
 
 
+def _intake_authority(connection, schema, expected_token) -> dict | None:
+    """The persisted intake-authority row, read in the caller's snapshot. The lease
+    token is compared here with the owner-supplied setting and never returned. The lease's actual
+    absolute expiry is retained (it is not a secret) so the collector can revalidate a PASS through
+    its own FRESH_FOR/valid_until finalization path instead of trusting a single snapshot-time flag."""
+    row = connection.execute(
+        f"SELECT intake_owner, owner_token, fencing_generation, legacy_new_intake_disabled, lease_expires_at,"
+        f" lease_expires_at > now() AS lease_live FROM {schema}.director_primary_intake_authority"
+        " WHERE singleton").fetchone()
+    if row is None:
+        return None
+    token = row["owner_token"]
+    return {"intake_owner": row["intake_owner"],
+            "legacy_new_intake_disabled": row["legacy_new_intake_disabled"],
+            "fencing_generation": _plain(row["fencing_generation"]),
+            "lease_live": row["lease_live"],
+            "lease_expires_at": _plain(row["lease_expires_at"]),
+            "owner_token_matches": bool(isinstance(expected_token, str) and len(expected_token) >= 32
+                                        and isinstance(token, str)
+                                        and hmac.compare_digest(token.encode(), expected_token.encode()))}
+
+
 def consistency_report(settings, identity, *, tasks=(), connection=None, environment=None,
                        local_artifact=None, authority_secrets=None) -> dict:
     """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
@@ -1261,6 +1285,7 @@ def consistency_report(settings, identity, *, tasks=(), connection=None, environ
             connection.execute("SET LOCAL lock_timeout = '5s'")
             _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
+            authority = _intake_authority(connection, schema, settings.langgraph_primary_owner_token)
             present = connection.execute(
                 "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage",
                 [f"{schema}.director_primary_provider_{name}" for name in ("spend", "usage")]).fetchone()
@@ -1343,6 +1368,7 @@ def consistency_report(settings, identity, *, tasks=(), connection=None, environ
                            "image_id": environment.get("DIRECTOR_RUNTIME_IMAGE_ID")},
             "captured_at": _plain(counts["captured_at"]),
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
+            "intake_authority": authority,
             # None (over the row cap) is not a count: check 07 reads the snapshot as malformed, never as zero.
             "counts": {**{key: int(counts[key]) for key in _COUNT_KEYS},
                        **evidence_counts},
@@ -1376,7 +1402,47 @@ CLI_RELEASE_DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 UNATTESTED = "-unattested"
 
 
-RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
+OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"
+DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"
+
+
+def account_home():
+    """The account's profile directory from the operating system, never HOME or USERPROFILE (#287 item 34): the
+    identical lookup scripts/scorecard-launcher.py's account_home() performs, so this evaluator and the installed
+    launcher never disagree about which account owns the trust root."""
+    if os.name == "nt":
+        import ctypes
+        import uuid
+        folder = (ctypes.c_byte * 16).from_buffer_copy(
+            uuid.UUID("5E6C858F-0E22-4760-9AFE-EA3317B67173").bytes_le)  # FOLDERID_Profile
+        path = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(path)) != 0:
+            raise OSError("the account profile folder could not be resolved")
+        try:
+            return Path(path.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path)
+    import pwd
+    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+
+
+def owner_home():
+    """The account home the OS resolves for this process (#287 item 34), never HOME/USERPROFILE and never
+    DIRECTOR_SCORECARD_OWNER_HOME merely because that env var is set: a caller-controlled environment must not be
+    able to relocate the owner trust root. None when the launcher did not start this run (no DESCRIPTOR_ENV: such
+    runs are unattested and read no owner files), the OS account could not be resolved, or a forwarded owner-home
+    claim disagrees with the OS-resolved account -- that claim may only be checked for agreement, never used to
+    pick the root."""
+    if not os.environ.get(DESCRIPTOR_ENV):
+        return None
+    try:
+        home = account_home()
+    except OSError:
+        return None
+    forwarded = os.environ.get(OWNER_HOME_ENV)
+    if forwarded is not None and Path(forwarded).resolve() != home.resolve():
+        return None
+    return home
 
 
 def cli_release_descriptor():
@@ -1393,16 +1459,23 @@ def cli_release_descriptor():
     ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
     current main's ci.yml is trusted.
 
-    It is the owner-installed file RELEASE_DESCRIPTOR (fixed, no override, the stance of the replica signer key);
-    absent, a link, oversized, malformed or of another version, there is none. The owner-installed launcher
-    (scripts/scorecard-launcher.py) and scripts/director-scorecard.py read the same file with the standard library
-    alone before any repository module is imported.
+    It is the owner-installed ``.director-scorecard/release-descriptor.json`` under owner_home() (fixed, no
+    override, the stance of the replica signer key), and its exact bytes must hash to the digest the launcher pinned
+    for this run (#287 item 33); absent, a link, oversized, malformed, of another version or other bytes, there is
+    none. The owner-installed launcher (scripts/scorecard-launcher.py) and scripts/director-scorecard.py read the
+    same file with the standard library alone before any repository module is imported.
     """
+    home = owner_home()
+    if home is None:
+        return None
+    path = home / ".director-scorecard" / "release-descriptor.json"
     try:
-        if RELEASE_DESCRIPTOR.is_symlink() or not RELEASE_DESCRIPTOR.is_file() \
-                or RELEASE_DESCRIPTOR.stat().st_size > 1_048_576:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_048_576:
             return None
-        value = json.loads(RELEASE_DESCRIPTOR.read_bytes())
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != os.environ.get(DESCRIPTOR_ENV):
+            return None
+        value = json.loads(raw)
     except (OSError, ValueError):
         return None
     return value if isinstance(value, dict) and value.get("version") == CLI_RELEASE_DESCRIPTOR_VERSION else None

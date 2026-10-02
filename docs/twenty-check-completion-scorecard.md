@@ -238,7 +238,7 @@ predicate. Shared inputs are expanded here once:
 | 02 | Deployment; Windows `Win32_Process` known gateway inventory | T: daemon and host inventory; pending independent proof | Yes |
 | 03 | Deployment; route; Slack; task; bounded read-only thread binding for rejection and ambiguity drills | T: deployment, route store, Slack. C: workflow, task, thread binding | Yes |
 | 04 | Deployment; Slack; bound n8n-db active status workflow/version, latest and posting executions, saved Slack response and credential update time; candidate `director-status.json` | T: deployment, n8n store, Slack. C: candidate workflow contract pending proof | Yes |
-| 05 | Deployment; `/health` intake owner, legacy disablement, writer lease readiness and fencing generation | T: deployment. C: health ownership assertions | Yes |
+| 05 | Deployment; consistency; persisted intake-authority row (owner, legacy disablement, fence, live lease and its absolute expiry) read in the same verified-TLS snapshot, lease token compared with the owner-supplied setting and never exported | T: deployment, consistency, authority row. C: the row is Director-written but not yet independent of the candidate process that authored its generation, pending A3 | Yes |
 | 06 | Deployment; route; Slack; task; renderer; consistency approval/checkpoint/resume evidence | T: deployment, route store, Slack, consistency. C: workflow, task, renderer | Yes |
 | 07 | Deployment; `/health` holds, ambiguous counts and fence; consistency generation/counts | T: deployment, consistency. C: health | Yes |
 | 08 | Deployment; route; Slack; task; renderer; consistency approval authorizations, command receipts, application and effect bindings | T: deployment, route store, Slack, consistency. C: workflow, task, renderer | Yes |
@@ -262,7 +262,26 @@ pending-proof holds; source decoupling alone does not admit either check. The fu
 outside candidate control; they prove consistency of reported admissions, not
 external usage authenticity. The native Security store and installed owner keys
 likewise belong outside candidate control. Consistency and capture inputs are now T. Fourteen checks retain C inputs;
-02 and 17 retain pending-proof holds. All sixteen remain contained.
+02 and 17 retain pending-proof holds. Sixteen remain contained.
+
+**Round 5 increment, check 05 (2026-10-02).** Check 05 is graded from the
+`director_primary_intake_authority` row that `consistency_report` reads inside its
+one read-only REPEATABLE READ snapshot over the owner-bound verified-TLS store. It passes only
+when LangGraph owns intake, legacy intake is disabled, the fence is positive, the lease's absolute
+expiry (read alongside the live-lease flag, never the token) is in the future and will still be in
+the future when the collection finalizes — revalidated through the same FRESH_FOR/`valid_until`
+finalization path used elsewhere, failing closed on any missing, malformed or timezone-naive expiry —
+and the row's lease token equals the owner-supplied `langgraph_primary_owner_token`
+(constant-time comparison inside the evaluator; the token is never in the report). The snapshot must
+be bound to the running generation pin and read inside the collection window. Candidate `/health`
+is no longer read for 05, so it can neither promote nor fail it. Check 05 remains candidate-dependent
+and contained: a direct read of a Director-written row is not independent of the candidate process
+that authored its generation, pending the separately assigned reviewed-image admission gate (A3)
+that establishes process/store consistency. The current lease observation uses the existing full
+`FRESH_FOR` horizon and stays contained on that basis too: A3 must still establish process ownership
+and a usable bounded lease horizon, including the normal 60-second lease case, before this check can
+reach a live PASS. Check 07 is unchanged and stays contained: its
+in-memory historical-plan and reconciliation-hold counters have no independent source yet.
 
 Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
 existing `read_primary_qualification_evidence` is bounded and read-only. The
@@ -1370,7 +1389,20 @@ not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
 fails the rule. The descriptor is the owner-installed file
 `~/.director-scorecard/release-descriptor.json` (no override; absent, a link,
-over 1 MB, malformed or another version means none). A candidate can run its own
+over 1 MB, malformed or another version means none). The owner root both hops
+resolve to find it is the operating system's own account-profile directory
+(`SHGetKnownFolderPath(FOLDERID_Profile)` on Windows, the password-database
+entry on POSIX) — never the `HOME`/`USERPROFILE` environment variables or
+`Path.home()`, and never a value the launcher merely forwards. The launcher
+passes its own OS-resolved root to the archived CLI as
+`DIRECTOR_SCORECARD_OWNER_HOME`, plus a `DIRECTOR_SCORECARD_DESCRIPTOR_SHA256`
+digest of the descriptor bytes it pinned; the archived CLI (and
+`primary_scorecard_evidence.owner_home`, used by `cli_release_descriptor`)
+independently re-resolves that same OS account and only cross-checks the
+forwarded claim for agreement, refusing the run on any mismatch. Neither
+function ever selects its root from the forwarded claim merely because the
+digest variable is present (#287 item 34): a caller-controlled environment
+cannot relocate the owner trust root. A candidate can run its own
 code, but only launcher-attested reports count: a checkout cannot be trusted
 to check itself (review 4112412081). The
 owner-installed launcher (`~/.director-scorecard/launcher.py`, reviewed source

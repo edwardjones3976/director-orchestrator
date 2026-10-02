@@ -28,8 +28,9 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
+OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"  # the account home this launcher resolved, handed to its evaluator
+DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"  # digest of the exact descriptor bytes this launch pinned
 TREE_ENV = "DIRECTOR_SCORECARD_TREE"  # the archived evaluator tree the scorecard must be running from
 REPO_ENV = "DIRECTOR_SCORECARD_REPO"  # the repository git reads candidate and evaluator commits from
 SHA_ENV = "DIRECTOR_SCORECARD_EVALUATOR_SHA"  # the exact pin the tree was extracted from; the child must still see it
@@ -38,25 +39,81 @@ UNATTESTED = "UNATTESTED: not produced by the owner-installed launcher; no check
 NONCE_ENV = "DIRECTOR_SCORECARD_NONCE"
 
 
+def account_home() -> Path:
+    """The account's profile directory from the operating system, never HOME or USERPROFILE (#287 item 34):
+    a caller-controlled environment must not be able to relocate the owner trust root."""
+    if os.name == "nt":
+        import ctypes
+        import uuid
+        folder = (ctypes.c_byte * 16).from_buffer_copy(
+            uuid.UUID("5E6C858F-0E22-4760-9AFE-EA3317B67173").bytes_le)  # FOLDERID_Profile
+        path = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(path)) != 0:
+            raise OSError("the account profile folder could not be resolved")
+        try:
+            return Path(path.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path)
+    import pwd
+    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+
+
+def owner_root() -> Path:
+    return account_home() / ".director-scorecard"
+
+
+def release_descriptor() -> Path:
+    return owner_root() / "release-descriptor.json"
+
+
+def read_descriptor(descriptor: Path) -> tuple[str, dict] | None:
+    """(sha256 of the exact bytes, parsed document), or None: absent, a link, oversized, malformed or another
+    version. The digest binds a launch to the whole descriptor, not only its evaluator pin (#287 item 33)."""
+    try:
+        if descriptor.is_symlink() or not descriptor.is_file() or descriptor.stat().st_size > 1_048_576:
+            return None
+        raw = descriptor.read_bytes()
+        value = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("version") != DESCRIPTOR_VERSION:
+        return None
+    return hashlib.sha256(raw).hexdigest(), value
+
+
+def _pin(value: dict) -> str | None:
+    pin = value.get("evaluator_sha")
+    return pin if isinstance(pin, str) and len(pin) == 40 and all(c in "0123456789abcdef" for c in pin) else None
+
+
 def report_digest(report: dict) -> str:
     return hashlib.sha256(json.dumps(report, sort_keys=True, separators=(",", ":"),
                                      allow_nan=False).encode()).hexdigest()
 
 
-def _receipt_path(nonce: str) -> Path:
+def _receipt_path(nonce: str, root: Path | None = None) -> Path:
     if not isinstance(nonce, str) or len(nonce) != 64 or any(c not in "0123456789abcdef" for c in nonce):
         raise ValueError("invalid attestation nonce")
-    return Path.home() / ".director-scorecard" / "attestations" / (nonce + ".json")
+    return (root or owner_root()) / "attestations" / (nonce + ".json")
 
 
-def read_attestation(nonce: str) -> dict | None:
-    """Owner-local receipt, never a path supplied by the candidate or environment.
+def _evaluator_root() -> Path:
+    """Inside the evaluator a launch started: always the OS-resolved owner root (#287 item 34), the identical
+    lookup the installed launcher itself performs. A forwarded DIRECTOR_SCORECARD_OWNER_HOME is never a source of
+    this root -- a caller-controlled environment must not be able to relocate the owner trust root merely by also
+    presenting a descriptor digest. A run without the launcher's descriptor digest is unattested in any case."""
+    return owner_root()
+
+
+def read_attestation(nonce: str, root: Path | None = None) -> dict | None:
+    """Owner-local receipt under the OS-resolved owner root (or the root a launch handed its evaluator), never a
+    path supplied by the candidate. The receipt must name the digest of the descriptor installed now.
 
     The owner installation and receipt directory are the trust boundary. As with the
     descriptor, an actor able to rewrite those owner files is outside this boundary.
     """
     try:
-        path = _receipt_path(nonce)
+        path = _receipt_path(nonce, root)
         installed = path.parent.parent / "launcher.py"
         if any(p.is_symlink() for p in (path, path.parent, path.parent.parent, installed)):
             return None
@@ -64,8 +121,10 @@ def read_attestation(nonce: str) -> dict | None:
             return None
         receipt = json.loads(path.read_bytes())
         fields = receipt["attestation"]
-        pin = pinned_evaluator(installed.parent / "release-descriptor.json")
+        read = read_descriptor(installed.parent / "release-descriptor.json")
+        pin = _pin(read[1]) if read else None
         if (pin is None or fields["nonce"] != nonce or fields["evaluator_sha"] != pin or
+                fields["descriptor_sha256"] != read[0] or
                 fields["launcher_sha256"] != hashlib.sha256(installed.read_bytes()).hexdigest() or
                 not isinstance(fields["tree_id"], str) or len(fields["tree_id"]) != 40 or
                 any(c not in "0123456789abcdef" for c in fields["tree_id"])):
@@ -76,12 +135,13 @@ def read_attestation(nonce: str) -> dict | None:
 
 
 def run_attestation(root: Path) -> dict | None:
-    receipt = read_attestation(os.environ.get(NONCE_ENV, ""))
+    receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
     if receipt is None or receipt.get("report_sha256") is not None:
         return None
     try:
         if (Path(receipt["tree"]).resolve() != root.resolve() or
-                receipt["attestation"]["evaluator_sha"] != os.environ.get(SHA_ENV)):
+                receipt["attestation"]["evaluator_sha"] != os.environ.get(SHA_ENV) or
+                receipt["attestation"]["descriptor_sha256"] != os.environ.get(DESCRIPTOR_ENV)):
             return None
     except (KeyError, TypeError, OSError):
         return None
@@ -100,17 +160,11 @@ def report_is_attested(report: dict) -> bool:
         return False
 
 
-def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+def pinned_evaluator(descriptor: Path | None = None) -> str | None:
     """The descriptor's evaluator_sha (40 lowercase hex), or None: absent, a link, oversized, malformed, another
     version or no pin."""
-    try:
-        if descriptor.is_symlink() or not descriptor.is_file() or descriptor.stat().st_size > 1_048_576:
-            return None
-        value = json.loads(descriptor.read_bytes())
-    except (OSError, ValueError):
-        return None
-    pin = value.get("evaluator_sha") if isinstance(value, dict) and value.get("version") == DESCRIPTOR_VERSION else None
-    return pin if isinstance(pin, str) and len(pin) == 40 and all(c in "0123456789abcdef" for c in pin) else None
+    read = read_descriptor(descriptor or release_descriptor())
+    return _pin(read[1]) if read else None
 
 
 def _git_environment() -> dict[str, str]:
@@ -141,10 +195,13 @@ def _reject_git_metadata(repo: Path) -> None:
     raise ValueError("grafts metadata is not permitted")
 
 
-def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPTOR) -> int:
-    pin = pinned_evaluator(descriptor)
+def launch(repo: Path, arguments: list[str], descriptor: Path | None = None) -> int:
+    descriptor = descriptor or release_descriptor()
+    read = read_descriptor(descriptor)
+    pin = _pin(read[1]) if read else None
     if pin is None:
         return _refuse("evaluator revision not pinned")
+    descriptor_sha256 = read[0]
     try:
         _reject_git_metadata(repo)
     except ValueError as error:
@@ -170,7 +227,8 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
         except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError):
             return _refuse("the pinned evaluator tree could not be extracted")
         env = {key: value for key, value in os.environ.items() if not key.upper().startswith("PYTHON")}
-        env.update({TREE_ENV: str(tree), REPO_ENV: str(repo), SHA_ENV: pin})
+        env.update({TREE_ENV: str(tree), REPO_ENV: str(repo), SHA_ENV: pin,
+                    OWNER_HOME_ENV: str(owner_root().parent), DESCRIPTOR_ENV: descriptor_sha256})
         nonce = secrets.token_hex(32)
         receipt_path = _receipt_path(nonce)
         installed = receipt_path.parent.parent / "launcher.py"
@@ -179,7 +237,7 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
         receipt_path.parent.mkdir(exist_ok=True)
         if receipt_path.parent.is_symlink() or installed.parent.is_symlink():
             return _refuse("owner attestation directory must not be a link")
-        attestation = {"evaluator_sha": pin, "tree_id": tree_id,
+        attestation = {"evaluator_sha": pin, "descriptor_sha256": descriptor_sha256, "tree_id": tree_id,
                        "launcher_sha256": hashlib.sha256(installed.read_bytes()).hexdigest(), "nonce": nonce}
         receipt = {"attestation": attestation, "tree": str(tree), "report_sha256": None}
         with receipt_path.open("x", encoding="utf-8") as stream:
@@ -204,8 +262,11 @@ def launch(repo: Path, arguments: list[str], descriptor: Path = RELEASE_DESCRIPT
             return result
         try:
             report = json.loads(result_path.read_bytes())
+            # The whole descriptor, byte for byte, must be the one this launch pinned (#287 item 33):
+            # rotating any field mid-run (security base, workflow pin, releases) voids the report.
+            reread = read_descriptor(descriptor)
             if (report.get("attested") is not True or report.get("attestation") != attestation or
-                    pinned_evaluator(descriptor) != pin):
+                    reread is None or reread[0] != descriptor_sha256):
                 return _refuse(UNATTESTED)
             receipt["report_sha256"] = report_digest(report)
             receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -222,7 +283,10 @@ def _refuse(reason: str) -> int:
 def main(argv: list[str]) -> int:
     if not sys.flags.isolated:
         return _refuse("run the launcher with python -I so nothing on PYTHONPATH or in the checkout is imported")
-    installed = Path.home() / ".director-scorecard" / "launcher.py"
+    try:
+        installed = owner_root() / "launcher.py"
+    except OSError:
+        return _refuse("the owner account home could not be resolved")
     if Path(__file__).resolve() != installed.resolve() or installed.is_symlink():
         return _refuse("use the owner-installed launcher")
     if argv[:1] == ["--verify-report"]:
