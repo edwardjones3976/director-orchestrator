@@ -1059,6 +1059,9 @@ def resign(key, envelope):
     return {"document": envelope["document"], "signature": key.sign(signed).hex()}
 
 
+_EVALUATOR_BOOTSTRAP_DIR = tempfile.TemporaryDirectory(prefix="evaluator-bootstrap-")
+
+
 def _write_evaluator_bootstrap():
     # A plain evaluator-side bootstrap script (hop2): loads an archived director-scorecard.py by path, replaces
     # only its OS account lookup (and, where present, primary_scorecard_evidence's) with the fixture home, after
@@ -1113,8 +1116,9 @@ def _write_evaluator_bootstrap():
              "\n"
              "importlib.util.spec_from_file_location = _patched_spec_from_file_location\n"
              "sys.argv = ['director-scorecard.py'] + sys.argv[4:]\n"
-             "raise SystemExit(cli.main())\n")
-    folder = Path(tempfile.mkdtemp(prefix="evaluator-bootstrap-"))
+             "if hasattr(cli, 'main'):\n"
+             "    raise SystemExit(cli.main())\n")
+    folder = Path(_EVALUATOR_BOOTSTRAP_DIR.name)
     script = folder / "evaluator_bootstrap.py"
     script.write_text(source, encoding="utf-8")
     return script
@@ -1284,7 +1288,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "clean evaluator reached")
         cli = self.modules["director-scorecard"]
         with patch.dict(os.environ, {**hostile, cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo),
-                                     cli.SHA_ENV: self.pin}):
+                                     cli.SHA_ENV: self.pin, cli.DESCRIPTOR_ENV: self.descriptor_digest()}):
             self.assertIsNone(cli.launch_refusal(cli.ROOT, self.descriptor))
             self.assertEqual(sc._run_bytes(["git", "-C", str(self.repo), "show",
                                            f"{self.pin}:scripts/director-scorecard.py"]), self.script.read_bytes())
@@ -1427,9 +1431,11 @@ class ScorecardGitTrustTests(unittest.TestCase):
     def test_score_attestation_and_containment_limitations(self):
         nonce = "a" * 64
         fields = {"nonce": nonce, "evaluator_sha": self.pin, "tree_id": "b" * 40,
+                  "descriptor_sha256": self.descriptor_digest(),
                   "launcher_sha256": hashlib.sha256(self.installed.read_bytes()).hexdigest()}
         with self.owner_home(), patch.dict(os.environ, {
-                self.launcher.NONCE_ENV: nonce, self.launcher.SHA_ENV: self.pin}):
+                self.launcher.NONCE_ENV: nonce, self.launcher.SHA_ENV: self.pin,
+                self.launcher.DESCRIPTOR_ENV: self.descriptor_digest()}):
             receipt_path = self.launcher._receipt_path(nonce)
             receipt_path.parent.mkdir()
             receipt = {"attestation": fields, "tree": str(sc._REPO_ROOT), "report_sha256": None}
@@ -1443,7 +1449,12 @@ class ScorecardGitTrustTests(unittest.TestCase):
             self.assertIn(", ".join(sorted(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE)),
                           limitations)
             self.assertIn("#313 / PR #327", limitations)
-            for key in ("evaluator_sha", "launcher_sha256", "nonce", "tree_id"):
+            for digest in ("", "0" * 64):
+                with self.subTest(descriptor_digest=digest), patch.dict(os.environ, {
+                        self.launcher.DESCRIPTOR_ENV: digest}):
+                    self.assertIsNone(self.launcher.run_attestation(sc._REPO_ROOT))
+                    self.assertIsNone(pse.cli_release_descriptor())
+            for key in ("evaluator_sha", "launcher_sha256", "descriptor_sha256", "nonce", "tree_id"):
                 with self.subTest(field=key):
                     changed = {**receipt, "attestation": {**fields, key: "tampered"}}
                     receipt_path.write_text(json.dumps(changed))
@@ -1451,6 +1462,48 @@ class ScorecardGitTrustTests(unittest.TestCase):
                     self.assertIs(report["attested"], False)
                     self.assertEqual(report["passed"], "UNATTESTED")
                     self.assertTrue(sc.render_markdown(report).startswith(self.launcher.UNATTESTED))
+
+    def test_forged_pending_receipt_cannot_relocate_the_OS_owner_root(self):
+        fake = self.outside / "forged-owner"
+        root = fake / ".director-scorecard"
+        (root / "attestations").mkdir(parents=True)
+        (root / "launcher.py").write_bytes(self.installed.read_bytes())
+        (root / "release-descriptor.json").write_bytes(self.descriptor.read_bytes())
+        nonce = "a" * 64
+        fields = {"nonce": nonce, "evaluator_sha": self.pin, "tree_id": "b" * 40,
+                  "descriptor_sha256": self.descriptor_digest(),
+                  "launcher_sha256": hashlib.sha256(self.installed.read_bytes()).hexdigest()}
+        (root / "attestations" / (nonce + ".json")).write_text(json.dumps({
+            "attestation": fields, "tree": str(sc._REPO_ROOT), "report_sha256": None}))
+        cli = self.modules["director-scorecard"]
+        with self.owner_home(), patch.object(cli, "account_home", return_value=self.home), patch.dict(os.environ, {
+                "HOME": str(fake), "USERPROFILE": str(fake), self.launcher.OWNER_HOME_ENV: str(fake),
+                self.launcher.DESCRIPTOR_ENV: self.descriptor_digest(), self.launcher.NONCE_ENV: nonce,
+                self.launcher.SHA_ENV: self.pin, self.launcher.TREE_ENV: str(sc._REPO_ROOT),
+                self.launcher.REPO_ENV: str(self.repo)}):
+            self.assertIsNone(self.launcher.run_attestation(sc._REPO_ROOT))
+            self.assertIsNone(pse.cli_release_descriptor())
+            self.assertIsNone(cli.pinned_evaluator())
+
+    def test_non_evaluator_descriptor_rotation_prevents_sealing(self):
+        self.script.write_text(self.script.read_text() +
+            "descriptor = receipt.parent.parent / 'release-descriptor.json'\n"
+            "changed = json.loads(descriptor.read_bytes())\n"
+            "changed['security_base_sha'] = '1' * 40\n"
+            "descriptor.write_text(json.dumps(changed))\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "rotate other descriptor field during collection")
+        self.pin = self.git("rev-parse", "HEAD").decode().strip()
+        self.git("update-ref", "refs/remotes/github/main", self.pin)
+        self.descriptor.write_text(json.dumps({"version": self.launcher.DESCRIPTOR_VERSION,
+                                              "evaluator_sha": self.pin}))
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(self.launcher.UNATTESTED, result.stderr)
+        self.assertEqual(json.loads(self.descriptor.read_bytes())["evaluator_sha"], self.pin)
+        receipts = list((self.home / ".director-scorecard" / "attestations").glob("*.json"))
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(json.loads(receipts[0].read_bytes())["report_sha256"], "INVALID")
 
     def test_every_git_transport_disables_replacements_and_uses_minimal_environment(self):
         # Do not let mocks at _run_bytes conceal a missing subprocess-level defense.
@@ -2950,7 +3003,8 @@ class CompletionScorecardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             descriptor = Path(folder) / "release-descriptor.json"
             descriptor.write_text(json.dumps(EVALUATED))
-            launched = {"DIRECTOR_SCORECARD_TREE": str(cli.ROOT), "DIRECTOR_SCORECARD_REPO": str(cli.ROOT)}
+            launched = {"DIRECTOR_SCORECARD_TREE": str(cli.ROOT), "DIRECTOR_SCORECARD_REPO": str(cli.ROOT),
+                        cli.DESCRIPTOR_ENV: hashlib.sha256(descriptor.read_bytes()).hexdigest()}
             with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_EVALUATOR_SHA": "1" * 40}):
                 self.assertEqual(cli.launch_refusal(cli.ROOT, descriptor), cli.ROTATED)
             rotated = {**EVALUATED, "evaluator_sha": "1" * 40}
