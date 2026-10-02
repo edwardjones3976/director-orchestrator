@@ -3089,6 +3089,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         renewed.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(seconds=60)).isoformat()
         renewed.until = WORLD_NOW + timedelta(seconds=30)
         self.assertEqual(renewed.state("05"), "PASS")
+        # The scored evidence never outlives the lease, even inside the usual freshness window (review 4169019848).
+        evidence = row(renewed.report(), "05")["evidence"][0]
+        self.assertEqual(sc._when(evidence["expires_at"]), WORLD_NOW + timedelta(seconds=60))
 
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")

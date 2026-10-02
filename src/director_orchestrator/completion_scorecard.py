@@ -218,6 +218,9 @@ class Observation:
     _origin: object = field(default=None, repr=False, compare=False)
     # The latest stamp at which a PASS still holds (a capture's expiry less FRESH_FOR), if time-limited.
     valid_until: Any = field(default=None, repr=False, compare=False)
+    # The absolute expiry of the underlying fact (05's lease), if sooner than the usual freshness window: the scored
+    # evidence never outlives it (review 4169019848).
+    expires_cap: Any = field(default=None, repr=False, compare=False)
     # When the observation was actually made: after every read it rests on, so never backdated.
     _made: Any = field(default=None, repr=False, compare=False)
 
@@ -1540,7 +1543,7 @@ def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: 
                         _CONSISTENCY_SOURCE, facts, at, **binding,
                         # The lease must still be live at the final cutoff. Subtracting FRESH_FOR would demand a
                         # five-minute remaining lifetime the 60 s renewing lease never has (review 4168742770).
-                        valid_until=expires if owned else None)
+                        valid_until=expires if owned else None, expires_cap=expires if owned else None)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -3659,7 +3662,8 @@ def _finalize(observations: list[Observation], finished: datetime, *, live: bool
     out = []
     for item in observations:
         stamp = min(item._made, finished) if live and isinstance(item._made, datetime) else finished
-        item = replace(item, observed_at=stamp, expires_at=stamp + FRESH_FOR)
+        expires = stamp + FRESH_FOR if item.expires_cap is None else min(stamp + FRESH_FOR, item.expires_cap)
+        item = replace(item, observed_at=stamp, expires_at=expires)
         # Time-limited evidence must hold through the collection's FINAL cutoff (not only its own stamp): check 12's
         # capture expiries, check 15's UTC-day rollover.
         if item.passed is True and item.valid_until is not None and max(stamp, finished) > item.valid_until:
