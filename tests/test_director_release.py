@@ -1,5 +1,5 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:35 UTC | BEGIN]]
-"""Preparation contracts with an explicit A2 API fixture; finalized A2 integration remains separate."""
+"""Preparation contracts using the real A2 reader in isolated temporary owner roots."""
 import copy
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
@@ -105,25 +105,20 @@ class ReleasePreparationTests(unittest.TestCase):
         self.owner_descriptor = self.owner_root / "release-descriptor.json"
         (self.source / "scripts").mkdir()
         self.locator = self.source / "scripts" / "scorecard-launcher.py"
-        # API-shaped installation fixture, not a claim that finalized A2 passed.
-        # Only the installed module can read authority; the locator cannot.
-        locator = f"from pathlib import Path\ndef owner_root(): return Path({str(self.owner_root)!r})\n"
-        self.locator.write_text(locator, encoding="utf-8")
-        self.installed.write_text(locator + '''
-import hashlib, json
-def release_descriptor(): return owner_root() / "release-descriptor.json"
-def read_descriptor(path):
-    try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_048_576:
-            return None
-        raw = path.read_bytes()
-        value = json.loads(raw)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(value, dict) or value.get("version") != "director-cli-release-descriptor/v1":
-        return None
-    return hashlib.sha256(raw).hexdigest(), value
-''', encoding="utf-8")
+        # Copy the production source unchanged. Only the OS account lookup is
+        # replaced after loading; root selection and descriptor reads stay real.
+        launcher = (ROOT / "scripts" / "scorecard-launcher.py").read_bytes()
+        self.locator.write_bytes(launcher)
+        self.installed.write_bytes(launcher)
+        load = release.launcher_module
+        def fixture_account(path):
+            module, raw = load(path)
+            if callable(getattr(module, "account_home", None)):
+                module.account_home = lambda: self.owner_root.parent
+            return module, raw
+        account_patch = patch.object(release, "launcher_module", side_effect=fixture_account)
+        account_patch.start()
+        self.addCleanup(account_patch.stop)
         self.owner_spec = {"version": "director-cli-release-descriptor/v1", "evaluator_sha": "c" * 40,
                            "security_base_sha": "d" * 40, "release_preparations": {}}
         self.save()
@@ -370,6 +365,23 @@ def read_descriptor(path):
                 profiles.assert_not_called()
         self.assertEqual(self.calls, [])
         self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_actual_A2_reader_binds_exact_preparation_and_owner_bytes(self):
+        # Equal JSON values with different bytes require a new explicit pin.
+        changed = self.descriptor.read_bytes() + b"\n"
+        self.descriptor.write_bytes(changed)
+        with self.assertRaisesRegex(release.ReleaseError, "preparation_not_owner_pinned"):
+            release.Release(self.descriptor)
+        self.owner_spec["release_preparations"][self.spec["release_id"]] = release.sha(changed)
+        owner_bytes = json.dumps(self.owner_spec, indent=2).encode() + b"\n"
+        self.owner_descriptor.write_bytes(owner_bytes)
+        tool = release.Release(self.descriptor)
+        self.assertEqual(tool.owner_launcher.read_descriptor(self.owner_descriptor),
+                         (release.sha(owner_bytes), self.owner_spec))
+        self.assertEqual(tool.owner_descriptor_digest, release.sha(owner_bytes))
+        self.assertEqual(tool.owner_launcher.read_descriptor.__code__.co_filename, str(self.installed))
+        tool.verify_inputs()
+        self.assertEqual(self.calls, [])
 
     def test_owner_descriptor_mutation_with_same_evaluator_pin_blocks_before_intent(self):
         tool = release.Release(self.descriptor)

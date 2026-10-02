@@ -7,13 +7,13 @@ for a sibling Compose rehearsal. It executes no activation or provider command.
 Every result reports `release_ready: false`; a generated plan is not a completed
 drill, accepted generation, paid admission or deployment.
 
-**Draft A2 integration:** W2/#313 owns the OS-root locator and installed
-descriptor reader. This runner consumes its `owner_root`, `release_descriptor`
-and `read_descriptor` API directly. The current branch still needs finalized A2
-and validation against that exact producer before independent review. A missing
+**A2 integration:** W2/#313 owns the OS-root locator and installed descriptor
+reader. This runner consumes its `owner_root`, `release_descriptor` and
+`read_descriptor` API directly. The focused suite loads the production A2 source
+in temporary owner roots, replacing only its OS account lookup. A missing
 A2 locator or installation fails with `trusted_descriptor_consumer_unavailable`;
 missing or invalid owner evidence also blocks before profile reads, platform
-probes or preparation writes. The focused API fixture does not close this gap.
+probes or preparation writes. The tests perform no real owner installation.
 
 ## Descriptor and protected inputs
 
@@ -108,8 +108,8 @@ python -B scripts/director-release.py resume --descriptor C:\protected\r1-descri
 python -B scripts/director-release.py rehearsal --descriptor C:\protected\r1-descriptor.json
 ```
 
-These are templates for the reviewed owner setup, subject to finalized A2
-integration above. `doctor` performs read-only configuration, Git, Docker image/configuration,
+These are templates for the reviewed owner setup and require the A2 installation
+above. `doctor` performs read-only configuration, Git, Docker image/configuration,
 bridge GET, and database SELECT checks. It does not start Docker services, pull
 images, create database tables, reserve attempts, or call a model. It currently
 exits **2 even when `preparation_ready` is true**, because release authority remains
@@ -239,7 +239,7 @@ proposal's four-file scope:
 | --- | --- | --- |
 | Fresh generation authority | `primary_generation.require_generation`; `primary_generation.main` (`verify`, `reserve`); `windows-langgraph-primary-control.ps1` (`SelectGeneration`) | Extract/expose read-only validation of a new manifest with its existing acceptance, database, image, and deployment bindings. Current `verify` requires an already reserved journal; `reserve` creates it. A selector comparison must never substitute for this authority check. |
 | Individual paid admission and resume | `provider_validation_cli.main` (`validate`), called by `primary_generation.main` (`validate-providers`) and control `ValidateProviders`; `PostgresValidationStore` and the existing provider budget/meter owners | Add one-lane admission and capture readback tied to authenticated campaign and daily-dollar reservation/settlement. The current CLI iterates every lane and reports results only at the end; its validation units do not prove campaign dollars. Preserve every occupied or ambiguous slot and conservative hold. Do not treat a mutable campaign JSON or an operator `approved=true` flag as authority. |
-| Owner descriptor and trust root | W2/#313; `scorecard-launcher.py` and scorecard evidence consumers | Validate this direct installed-reader integration against finalized A2, then install the reviewed launcher and single descriptor with exact preparation pins in the owner setup slot. An absent or older API and missing owner evidence fail closed. |
+| Owner descriptor and trust root | W2/#313; `scorecard-launcher.py` and scorecard evidence consumers | Install the reviewed A2 launcher and single descriptor with exact preparation pins in the owner setup slot. An absent or older API and missing owner evidence fail closed. |
 | Sibling setup and execution | W6 operator; existing control `PrepareAcceptance`, `BootstrapDatabaseIdentity`, `SelectGeneration`, snapshot and bridge tools | Supply accepted sibling project/database identities, the unpaid protected profiles and exact candidate image. Execute and time the generated plan with durable receipts. No real rehearsal is claimed here. |
 
 Actual generation selection, staging, qualification, publication and activation
@@ -258,14 +258,17 @@ python -B -m unittest tests.test_director_release -v
 
 The focused tests use the real `ActivationIdentity`, resolved Compose digest,
 native validation binding and repository work-packet fixture. Platform I/O is
-mocked. The owner installation is an explicit fixture of A2's API, loaded from
-separate locator and installed files; it exercises whole-file pins, environment
-substitution, missing evidence, root redirection, path links, mutation and crash
-recovery. It does not prove the finalized A2 producer or its OS lookup. Real
+mocked. The production A2 launcher bytes are copied unchanged to separate
+temporary locator and installed files. Only `account_home()` is replaced with
+the temporary account root; `owner_root()`, `release_descriptor()` and
+`read_descriptor()` are the real producer. The tests exercise exact-byte pins,
+environment substitution, missing evidence, root redirection, path links,
+mutation and crash recovery. They do not test the native OS account lookup or
+the installed scorecard execution/attestation path. Real
 `docker compose config` output exercises resource isolation without starting
 containers, and the actual control script's parameter block is bound by
 PowerShell with its runtime body omitted. A short-lived Python subprocess checks
 deadline cleanup and sanitized failures. No provider, production database or
-live rehearsal is started by the suite. Finalized-A2 producer/consumer validation
-and exact-head full-suite, CI, security and Claude review evidence remain required.
+live rehearsal is started by the suite. Exact-head full-suite, CI, security and
+Claude review evidence remain required.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]] -->
