@@ -326,7 +326,7 @@ sources:
 - document: docs/native-codex-packet-transport.md
   anchor: The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`
 - document: docs/templates/project-bootstrap/provider-roles-contract.yaml
-  anchor: The configured coordinating lane keeps Moderator, Participant, and Director functions separate
+  anchor: The appointed Director keeps Moderator, Participant, and Director functions separate
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
