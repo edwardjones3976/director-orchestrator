@@ -1234,9 +1234,11 @@ def _global_task_evidence(connection, schema, usage_tables):
 
 def _intake_authority(connection, schema, expected_token) -> dict | None:
     """The persisted intake-authority row, read in the caller's snapshot. The lease
-    token is compared here with the owner-supplied setting and never returned."""
+    token is compared here with the owner-supplied setting and never returned. The lease's actual
+    absolute expiry is retained (it is not a secret) so the collector can revalidate a PASS through
+    its own FRESH_FOR/valid_until finalization path instead of trusting a single snapshot-time flag."""
     row = connection.execute(
-        f"SELECT intake_owner, owner_token, fencing_generation, legacy_new_intake_disabled,"
+        f"SELECT intake_owner, owner_token, fencing_generation, legacy_new_intake_disabled, lease_expires_at,"
         f" lease_expires_at > now() AS lease_live FROM {schema}.director_primary_intake_authority"
         " WHERE singleton").fetchone()
     if row is None:
@@ -1246,6 +1248,7 @@ def _intake_authority(connection, schema, expected_token) -> dict | None:
             "legacy_new_intake_disabled": row["legacy_new_intake_disabled"],
             "fencing_generation": _plain(row["fencing_generation"]),
             "lease_live": row["lease_live"],
+            "lease_expires_at": _plain(row["lease_expires_at"]),
             "owner_token_matches": bool(isinstance(expected_token, str) and len(expected_token) >= 32
                                         and isinstance(token, str)
                                         and hmac.compare_digest(token.encode(), expected_token.encode()))}

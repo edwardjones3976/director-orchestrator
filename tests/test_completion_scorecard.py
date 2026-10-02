@@ -316,7 +316,8 @@ def consistency_fixture():
                            "candidate_tree": "d" * 40, "adoption": adoption_fixture(), "image_id": IMAGE},
             "captured_at": "2026-09-12T20:00:00+00:00", "intake_fencing_generation": 83, "counts": counts,
             "intake_authority": {"intake_owner": "langgraph", "legacy_new_intake_disabled": True,
-                                 "fencing_generation": 83, "lease_live": True, "owner_token_matches": True},
+                                 "fencing_generation": 83, "lease_live": True, "owner_token_matches": True,
+                                 "lease_expires_at": "2026-09-13T20:00:00+00:00"},
             "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget],
                                   "approval_receipts": [],
                                   "result_artifacts": [{"assignment_id": PAID_TASK + "-A1",
@@ -1376,7 +1377,7 @@ class TrustedCollectionLaneTests(unittest.TestCase):
 
         def coordinator():
             value = fixture.PrimaryTaskCoordinator(self.primary.handle, services.handlers(),
-                owner_token="default-director-owner", checkpoint_namespace="default-director-primary-v1",
+                owner_token=self.fixtures.TEST_OWNER_TOKEN, checkpoint_namespace="default-director-primary-v1",
                 auto_execute_provider=False, application_projection_provider=services.application_projection)
             value.adopt_or_activate_new_intake()
             return value
@@ -1437,7 +1438,7 @@ class TrustedCollectionLaneTests(unittest.TestCase):
         authority = PrimaryProviderBudgetAuthority(meter_fixture.store, primary_schema=self.primary.schema)
         routing = PrimaryProviderBudgetRouting(authority=authority, pool=self.primary.handle.pool)
         coordinator = PrimaryTaskCoordinator(self.primary.handle, self.primary.coordinator_fixtures.handlers(),
-            owner_token="default-director-owner", checkpoint_namespace="default-director-primary-v1",
+            owner_token=self.fixtures.TEST_OWNER_TOKEN, checkpoint_namespace="default-director-primary-v1",
             auto_execute_provider=False)
         coordinator.adopt_or_activate_new_intake()
         task = "DIR-LG-FEED"
@@ -1537,7 +1538,7 @@ class TrustedCollectionLaneTests(unittest.TestCase):
             langgraph_primary_checkpoint_namespace=identity.checkpoint_namespace,
             langgraph_primary_pinned_commit_sha=SHA, langgraph_primary_pinned_tree_sha=world.commit_tree,
             langgraph_primary_acceptance_mode="owner-local-evidence-v1",
-            langgraph_primary_owner_token=local.owner_token,
+            langgraph_primary_owner_token=self.fixtures.TEST_OWNER_TOKEN,
             langgraph_primary_local_evidence_adoption_path="/data/adoption.json",
             langgraph_primary_local_evidence_adoption_sha256=adoption_pin,
             langgraph_primary_acceptance_journal_path="/data/selected.sqlite3",
@@ -1650,9 +1651,13 @@ class TrustedCollectionLaneTests(unittest.TestCase):
             # 05 reads the real intake-authority row in the same snapshot; the lease token never leaves the evaluator.
             authority = consistency["intake_authority"]
             self.assertEqual(set(authority), {"intake_owner", "legacy_new_intake_disabled", "fencing_generation",
-                                              "lease_live", "owner_token_matches"})
+                                              "lease_live", "owner_token_matches", "lease_expires_at"})
             self.assertNotIn("owner_token\"", json.dumps(consistency, default=str))
-            self.assertNotEqual(sc._intake_authority_observation(started, runtime, consistency).passed, None)
+            self.assertIs(sc._intake_authority_observation(started, runtime, consistency).passed, True)
+            # A token mismatch is a real FAIL, not a silent PASS: the evaluator's own compare must matter.
+            mismatched = {**consistency,
+                         "intake_authority": {**consistency["intake_authority"], "owner_token_matches": False}}
+            self.assertIs(sc._intake_authority_observation(started, runtime, mismatched).passed, False)
             observations = [sc._reconciliation_observation(started, runtime, consistency),
                             sc._acceptance_observation(started, SHA, consistency),
                             *sc._capture_observations(started, runtime, captures, None),
@@ -1742,6 +1747,10 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                     self.assertIsNone(by_check[check].passed, check)
                 self.assertIsNone(by_check["12"].passed)
                 self.assertIsNone(by_check["17"].passed)
+                # 05's underlying intake-authority read genuinely passes here (real coordinator, matching
+                # owner token, live lease) — but it stays contained pending the A3 reviewed-image admission
+                # gate, so the live collection path must still report it as UNKNOWN, never PASS.
+                self.assertIsNone(by_check["05"].passed)
             self.primary.coordinator.create_intake(self.primary.coordinator_fixtures.request("DIR-LG-FADE"))
             hostile, _ = sc._trusted_collection(runtime, ["DIR-LG-FADE"])
             verdict = sc._reconciliation_observation(started, runtime, hostile)
@@ -2906,7 +2915,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertTrue(all(name and trust in {"T", "C"} for name, trust in inputs))
         candidate = {key for key, inputs in sc.COLLECTOR_INPUTS.items()
                      if any(trust == "C" for _, trust in inputs)}
-        self.assertEqual(candidate, {"01", "03", "04", "06", "07", "08",
+        self.assertEqual(candidate, {"01", "03", "04", "05", "06", "07", "08",
                                      "09", "10", "11", "12", "15", "19", "20"})
         self.assertEqual(sc._PENDING_TRUST_PROOF, {"02", "17"})
         contained = candidate | sc._PENDING_TRUST_PROOF
@@ -3039,8 +3048,10 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_intake_owner_needs_the_live_writer_lease_05(self):
         self.assertEqual(self.world(evaluate_rules=True).state("05"), "PASS")
         # Each persisted-authority failure fails 05, even while candidate health claims ownership.
+        # An already-expired lease fails closed the same way: a live snapshot proves nothing stale.
         for field, value in (("lease_live", False), ("owner_token_matches", False), ("intake_owner", "legacy"),
-                             ("legacy_new_intake_disabled", False), ("fencing_generation", 0)):
+                             ("legacy_new_intake_disabled", False), ("fencing_generation", 0),
+                             ("lease_expires_at", (WORLD_NOW - timedelta(hours=1)).isoformat())):
             with self.subTest(field=field):
                 world = self.world(evaluate_rules=True)
                 world.consistency["intake_authority"][field] = value
@@ -3055,10 +3066,23 @@ class ScorecardCollectorTests(unittest.TestCase):
                 world = self.world(evaluate_rules=True)
                 world.consistency.update(broken)
                 self.assertEqual(world.state("05"), "UNKNOWN")
+        # A missing, malformed or timezone-naive lease expiry fails closed to UNKNOWN (never PASS),
+        # even though every other persisted-authority field is otherwise sound.
+        for broken_expiry in (None, "not-a-timestamp", "2026-09-12T20:10:00"):
+            with self.subTest(lease_expires_at=broken_expiry):
+                world = self.world(evaluate_rules=True)
+                world.consistency["intake_authority"]["lease_expires_at"] = broken_expiry
+                self.assertEqual(world.state("05"), "UNKNOWN")
         # A candidate reporting no lease cannot fail a check its own store proves either.
         unhealthy = self.world(evaluate_rules=True)
         unhealthy.payload["langgraph_primary"]["writer_lease_ready"] = False
         self.assertEqual(unhealthy.state("05"), "PASS")
+        # A lease that is live at observation time but expires before the collection finalizes cannot
+        # remain a PASS: the existing FRESH_FOR/valid_until finalization path revalidates it to UNKNOWN.
+        expiring = self.world(evaluate_rules=True)
+        expiring.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(minutes=10)).isoformat()
+        expiring.until = WORLD_NOW + timedelta(minutes=6)
+        self.assertEqual(expiring.state("05"), "UNKNOWN")
 
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")

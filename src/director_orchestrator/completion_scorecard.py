@@ -1457,7 +1457,9 @@ COLLECTOR_INPUTS = {
         ("n8n active status workflow, executions and credential update time via bound database", "T"),
         ("candidate n8n/workflows/director-status.json", "C"),),
     "05": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (
-        ("intake-authority row in the same snapshot; lease token compared with owner settings", "T"),),
+        ("intake-authority row in the same snapshot; lease token compared with owner settings; a direct read of "
+         "this Director-written row is not independent of the candidate process that authored its generation "
+         "pending the reviewed-image admission gate (A3)", "C"),),
     "06": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
     "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
     "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
@@ -1496,7 +1498,10 @@ _CONTAINED_RUNTIME = tuple(
 
 def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
     """05 from the persisted intake-authority row in the evaluator's own snapshot: LangGraph owns intake, legacy
-    intake is disabled, the fence is positive, and a live writer lease is held under this deployment's owner token."""
+    intake is disabled, the fence is positive, and a live writer lease is held under this deployment's owner token.
+    A direct read of this Director-written row does not make it independent of the candidate process that authored
+    its generation: 05 stays candidate-dependent and contained (see COLLECTOR_INPUTS) pending the separately
+    assigned reviewed-image admission gate (A3), which will establish process/store consistency."""
     binding = runtime.binding
     if consistency is None:
         return _observation("05", None, "The evaluator-owned read-only consistency snapshot was unavailable; the "
@@ -1513,17 +1518,27 @@ def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: 
         return _observation("05", None, "The snapshot has no intake-authority row.", _CONSISTENCY_SOURCE, {}, at, **binding)
     fence = authority.get("fencing_generation")
     facts = {key: authority.get(key) for key in
-             ("intake_owner", "legacy_new_intake_disabled", "fencing_generation", "lease_live", "owner_token_matches")}
+             ("intake_owner", "legacy_new_intake_disabled", "fencing_generation", "lease_live",
+              "owner_token_matches", "lease_expires_at")}
     if any(type(authority.get(key)) is not bool
            for key in ("legacy_new_intake_disabled", "lease_live", "owner_token_matches")) or type(fence) is not int:
         return _observation("05", None, "The intake-authority row is malformed.", _CONSISTENCY_SOURCE, facts, at, **binding)
+    # The lease's actual absolute expiry (never the owner token) is retained so a PASS revalidates through the
+    # collection's final cutoff via the existing FRESH_FOR/valid_until finalization path. Missing, malformed or
+    # timezone-naive values fail closed (never PASS); an already-past expiry fails closed through `owned` below.
+    try:
+        expires = _when(authority.get("lease_expires_at"))
+    except (ValueError, TypeError):
+        return _observation("05", None, "The intake-authority lease expiry is missing or malformed.",
+                            _CONSISTENCY_SOURCE, facts, at, **binding)
     owned = (authority.get("intake_owner") == "langgraph" and authority["legacy_new_intake_disabled"]
-             and authority["lease_live"] and authority["owner_token_matches"] and fence > 0)
+             and authority["lease_live"] and authority["owner_token_matches"] and fence > 0 and expires > at)
     return _observation("05", owned, "The persisted intake authority read in the evaluator's snapshot "
                         + ("shows LangGraph owning intake under this deployment's live writer lease with a positive fence."
                            if owned else "does not show LangGraph owning intake under this deployment's live writer "
                            "lease with legacy intake disabled and a positive fence."),
-                        _CONSISTENCY_SOURCE, facts, at, **binding)
+                        _CONSISTENCY_SOURCE, facts, at, **binding,
+                        valid_until=expires - FRESH_FOR if owned else None)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:

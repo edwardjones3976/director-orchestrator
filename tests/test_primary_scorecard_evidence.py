@@ -63,6 +63,10 @@ from director_orchestrator.provider_validation import binding_digest
 TEST_DSN = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
 PIN = "e" * 64
 NOW = datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)
+# Shared by every fixture coordinator and settings object in this module (and reused by
+# test_completion_scorecard.TrustedCollectionLaneTests) so the intake-authority row's owner_token
+# always matches what consistency_report's caller supplies; >=32 chars, same as production requires.
+TEST_OWNER_TOKEN = "default-director-owner-test-token-v1"
 
 
 def _load(name):
@@ -484,11 +488,12 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         self.schema = f"director_scorecard_it_{uuid.uuid4().hex[:8]}_v1"
         self.handle = open_postgres_control_plane(TEST_DSN, schema=self.schema, allow_insecure_local_transport=True)
         self.coordinator = PrimaryTaskCoordinator(self.handle, self.coordinator_fixtures.handlers(),
-                                                  owner_token="default-director-owner",
+                                                  owner_token=TEST_OWNER_TOKEN,
                                                   checkpoint_namespace="default-director-primary-v1")
         self.settings = SimpleNamespace(langgraph_primary_postgres_dsn=TEST_DSN,
                                         langgraph_primary_postgres_schema=self.schema,
-                                        langgraph_primary_acceptance_mode="provider-v2")
+                                        langgraph_primary_acceptance_mode="provider-v2",
+                                        langgraph_primary_owner_token=TEST_OWNER_TOKEN)
         from director_orchestrator.langgraph_postgres import database_binding
         storage, instance = database_binding(TEST_DSN, schema=self.schema, allow_insecure_local_transport=True)
         self.identity = SimpleNamespace(candidate_commit="a" * 40, candidate_tree="b" * 40,
