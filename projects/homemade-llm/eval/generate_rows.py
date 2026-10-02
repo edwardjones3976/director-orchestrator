@@ -1,4 +1,3 @@
-# [[OpenAI Codex | GPT-6 | 2026-10-02 | 10:48 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
 """M2-G1: bounded admitted local dispatch; opt-in teachers use one or two stages.
@@ -2139,4 +2138,3 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
-# [[OpenAI Codex | GPT-6 | 2026-10-02 | 10:48 UTC | END]]
