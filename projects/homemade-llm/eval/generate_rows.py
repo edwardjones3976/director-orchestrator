@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-10-02 | 10:48 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | BEGIN]]
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | BEGIN]]
 """M2-G1: bounded admitted local dispatch; opt-in teachers use one or two stages.
@@ -31,6 +32,7 @@ import tempfile
 import time
 import threading
 import shutil
+import stat
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -1025,17 +1027,46 @@ def _native_runtime(path: Path, release: dict[str, Any]) -> dict[str, Any]:
     return runtime
 
 
+def _native_hot_bytes(hot_root: Path) -> int:
+    """Logical entry bytes, never reparse referents; this does not validate model inputs."""
+    if os.name == "nt" and not str(hot_root).startswith("\\\\?\\"):
+        hot_root = Path("\\\\?\\" + str(hot_root.absolute()))  # Long cache paths; no resolve/follow.
+    total = 0
+    pending = [hot_root]
+    while pending:
+        path = pending.pop()
+        metadata = path.lstat()  # Unsupported LX links are not detected by is_symlink().
+        attributes = getattr(metadata, "st_file_attributes", 0)
+        tag = getattr(metadata, "st_reparse_tag", 0)
+        directory = stat.S_ISDIR(metadata.st_mode)
+        if path == hot_root and not directory:
+            raise ValueError("native hot-root is not a directory")
+        if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT or tag:
+            relative = path.relative_to(hot_root).parts
+            cache_blob = (len(relative) == 5 and relative[:2] == ("hf", "hub")
+                          and relative[2].startswith("models--") and relative[3] == "blobs"
+                          and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", relative[4]))
+            if (directory or attributes & stat.FILE_ATTRIBUTE_DIRECTORY
+                    or tag != 0xA000001D or not cache_blob or not stat.S_ISREG(metadata.st_mode)):
+                raise ValueError("native hot-root reparse requires reviewed accounting")
+            # Known HF LX_SYMLINK: count its own entry size, not its inaccessible target.
+            total += metadata.st_size
+        elif directory:
+            with os.scandir(path) as entries:
+                pending.extend(path / entry.name for entry in entries)
+        elif stat.S_ISREG(metadata.st_mode):
+            total += metadata.st_size
+        else:
+            raise ValueError("native hot-root entry unclassifiable")
+    return total
+
+
 def _native_resource_checks() -> dict[str, Any]:
     if os.name != "nt":
         raise ValueError("native owned GPU route requires the reviewed Windows resource guard")
     if shutil.disk_usage("C:/").free < 150 * 1024**3:
         raise ValueError("native C free floor")
-    total = 0
-    for root, dirs, files in os.walk("C:/llm", onerror=lambda exc: (_ for _ in ()).throw(exc)):
-        for name in dirs + files:
-            if (Path(root) / name).is_symlink() or getattr(Path(root) / name, "is_junction", lambda: False)():
-                raise ValueError("native hot-root reparse requires reviewed accounting")
-        total += sum((Path(root) / name).stat().st_size for name in files)
+    total = _native_hot_bytes(Path("C:/llm"))
     if total >= 120 * 1024**3:
         raise ValueError("native Cllm cap")
     # Print only a count, never unrelated process commands/private paths.
@@ -2105,3 +2136,4 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
 # [[Cursor | Auto | 2026-09-29 | 06:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-10-02 | 10:48 UTC | END]]
