@@ -184,10 +184,15 @@ _RECEIPTS = """SELECT r.task_id, encode(sha256(convert_to(r.command_id,'UTF8')),
  r.command_digest, r.resulting_projection_digest, r.recorded_at,
  a.nonce_digest IS NOT NULL AS authorized, a.command_digest = r.command_digest AS authorized_command_digest,
  a.writer_fencing_generation = r.writer_fencing_generation AS authorized_fence, a.proof_version, a.actor_id,
- a.claimed_at AS authorization_claimed_at, a.proof_expires_at AS authorization_proof_expires_at
+ a.claimed_at AS authorization_claimed_at, a.proof_expires_at AS authorization_proof_expires_at,
+ row_number() OVER (PARTITION BY r.task_id ORDER BY r.recorded_at, r.command_id) AS task_ordinal
 FROM {s}.director_primary_command_receipt r LEFT JOIN {s}.director_primary_command_authorization a
  ON a.task_id = r.task_id AND a.operation = r.operation AND a.command_id = r.command_id
-WHERE r.task_id = ANY(%(tasks)s) AND r.operation='approval_resume' ORDER BY r.task_id, r.recorded_at LIMIT 100"""
+WHERE r.task_id = ANY(%(tasks)s) AND r.operation='approval_resume'"""
+
+# One extra row per task proves the cap was hit; the outer query keeps the cap per task, not for the whole read.
+_RECEIPT_CAP = 100
+_RECEIPTS_BOUNDED = "SELECT * FROM (" + _RECEIPTS + ") q WHERE task_ordinal <= %(cap)s + 1 ORDER BY task_id, task_ordinal"
 
 
 _DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
@@ -1315,7 +1320,10 @@ def consistency_report(settings, identity, *, tasks=(), connection=None, environ
                         row["provider_id"] = document.get("provider_id") if isinstance(document, dict) else None
                         row["signature_verified"] = _signed_budget(document, row["authority_digest"], owner)
                         budgets.append(row)
-                receipts = [_row(r) for r in connection.execute(_RECEIPTS.format(s=schema), {"tasks": tasks}).fetchall()]
+                receipts = [_row(r) for r in connection.execute(
+                    _RECEIPTS_BOUNDED.format(s=schema), {"tasks": tasks, "cap": _RECEIPT_CAP}).fetchall()]
+                truncated_receipts = {r["task_id"] for r in receipts if r["task_ordinal"] > _RECEIPT_CAP}
+                receipts = [r for r in receipts if r.pop("task_ordinal") <= _RECEIPT_CAP]
                 # The persisted application record (task record, execution mode, effect grant): the scorecard
                 # re-renders approval prompts from it rather than from hand-picked fields.
                 applications = {r["task_id"]: r["application"] for r in connection.execute(

@@ -4871,6 +4871,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         stray.threads[ts(30000)].append({**prompt, "ts": ts(30007), "client_msg_id": "approval-client-2"})
         self.assertEqual(stray.state("08"), "FAIL")
 
+    def test_truncated_approval_receipt_read_is_unknown_not_fail_08(self):
+        """#287 item 12: a receipt list cut at its per-task cap draws neither a pass nor a fail."""
+        cut = self.world(evaluate_rules=True)
+        entry = cut.consistency["tasks"][APPROVAL_TASK]
+        entry["approval_receipts"].append({**entry["approval_receipts"][0], "command_id_sha256": "0" * 64})
+        self.assertEqual(cut.state("08"), "FAIL")  # the extra receipt alone is a contradiction
+        entry["approval_receipts_truncated"] = True
+        self.assertEqual(cut.state("08"), "UNKNOWN")
+
     def test_outcomes_and_ledger_rows_are_a_bijection_10_20(self):
         """Sweep (one-directional joins): outcomes and assignments pair one-to-one by sequence, both ways."""
         self.assertEqual([self.world(evaluate_rules=True).state(key) for key in ("10", "20")], ["PASS", "PASS"])

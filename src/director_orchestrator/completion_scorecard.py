@@ -2463,7 +2463,12 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
                "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
-    if failures:
+    if isinstance(entry, dict) and entry.get("approval_receipts_truncated") is True:
+        # The receipt read hit its per-task cap, so the joins above ran on a partial list: neither a pass nor a
+        # fail can be drawn from it.
+        facts08["approval_receipts_truncated"] = True
+        passed08, explanation08 = None, "The approval_resume receipt read reached its per-task limit and is incomplete."
+    elif failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
