@@ -274,15 +274,50 @@ finalization path used elsewhere, failing closed on any missing, malformed or ti
 and the row's lease token equals the owner-supplied `langgraph_primary_owner_token`
 (constant-time comparison inside the evaluator; the token is never in the report). The snapshot must
 be bound to the running generation pin and read inside the collection window. Candidate `/health`
-is no longer read for 05, so it can neither promote nor fail it. Check 05 remains candidate-dependent
-and contained: a direct read of a Director-written row is not independent of the candidate process
-that authored its generation, pending the separately assigned reviewed-image admission gate (A3)
-that establishes process/store consistency. Not covered: the old health predicate
-also compared the stored fence with the process's in-memory generation; the deployment checks do not
-establish that agreement, so A3 must (reviews 4168286426, 4168299362). The lease must still be live at
-the collection's final cutoff (`valid_until` is the lease expiry); a collection that outlasts one
-60-second lease period reports UNKNOWN until A3 re-reads the authority row at the final cutoff. Check 07 is unchanged and stays contained: its
+is not read to promote 05. Check 05 remains candidate-dependent and contained unless the reviewed-image
+admission gate below admits it: a direct read of a Director-written row is not independent of the
+candidate process that authored its generation. The process/store agreement the old health predicate
+compared is now a cross-check inside the observation: when the store shows the fence owned, the
+Director's own health must say this process holds that same fence (`writer_lease_ready` with an equal
+`intake_fencing_generation`). A process that denies it is a FAIL, a silent one is UNKNOWN, and health alone
+never promotes 05 (reviews 4168286426, 4168299362). The lease must still be live at the collection's final
+cutoff (`valid_until` and the scored expiry are the lease expiry), so a collection that outlasts one
+60-second lease period reports UNKNOWN: keep the final-window collection short, or run it again. Check 07 is unchanged and stays contained: its
 in-memory historical-plan and reconciliation-hold counters have no independent source yet.
+
+### Reviewed-image admission (owner ruling 2026-10-02, #313)
+
+Several contained checks rest on facts only the Director holds (task rows, delivery recovery, offline
+outcomes, usage-monitor accounting), written by the same image that runs the gateway and shares its signing
+secrets. They cannot be made independent of it, so the owner ruled that Director-written evidence counts only for
+a runtime that is exactly the release the owner reviewed. The owner release descriptor carries it:
+
+```json
+"reviewed_release": {"candidate_commit": "<40 hex>", "candidate_tree": "<40 hex>",
+                     "director_image_id": "sha256:<64 hex>"}
+```
+
+Exactly those three fields, each fully matching, or there is no pin. Evidence is admitted only when, in the same
+collection, **all** of these hold: the running Director image digest equals `director_image_id`; the candidate, the
+running commit label and `candidate_commit` are one commit; the running image's tree label equals
+`candidate_tree`; the gateway was bound to the Director's image (`--gateway`, `_gateway_bound`); and checks
+**16** (exact-head CI), **17** (independent adoption) and **18** (Security scan) pass for this candidate.
+
+- **Admitted:** the real graded observations of the contained checks replace the containment UNKNOWNs and are
+  labelled "Admitted under reviewed-image trust" in their explanation and in `facts.reviewed_image_trust` (the
+  pin, what is running and the 16/17/18 states). The report limitations then name the admitted checks
+  separately and say this is evidence about the reviewed image's behaviour, not independent proof. They
+  still go through the restart re-inspection and the usual freshness rules.
+- **Contradiction:** a cross-check that disagrees (for example the process denying the fence the store
+  shows) is FAIL and stays FAIL. An UNKNOWN keeps its own reason, and a check with no collected source is UNKNOWN,
+  never admitted as trusted.
+- **Not met, or no runtime discovered:** containment is exactly as before, with the first unmet condition in
+  `facts.reviewed_image_admission` of each contained check.
+- **17 is both an input and an admitted result.** Its own validation (the pinned owner-local adoption and the
+  real journal reader) is unchanged; the gate reads its graded original.
+- **Not checked here:** that the commit label and tree label belong together (#287 item 19). The image digest
+  covers the labels it carries, so the pin binds them to the reviewed image.
+- **The audit table's "Contained?" column** means contained unless this gate admits the check.
 
 Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
 existing `read_primary_qualification_evidence` is bounded and read-only. The
@@ -1388,7 +1423,7 @@ measurement; nothing served changes afterwards.
 Operating rule: the pinned evaluator revision (added by the author of this
 change). The evaluator must never be code the candidate controls. The owner's
 release descriptor (the check-11 shape, `director-cli-release-descriptor/v1`)
-carries `evaluator_sha`, `ci_workflow_sha256`, `security_base_sha` and the
+carries `evaluator_sha`, `ci_workflow_sha256`, `security_base_sha`, `reviewed_release` and the
 CLI releases. The scorecard grades only from the tree of `evaluator_sha`
 that the owner-installed launcher extracted, where `evaluator_sha` is a commit
 on `github/main` and an ancestor of (or equal to) the candidate
