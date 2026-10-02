@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://director.local/schemas/director-release-descriptor-v1.schema.json",
   "title": "Director R1 preparation and sibling rehearsal descriptor",
+  "description": "Preparation input only. Its exact file SHA256 must match release_preparations[release_id] in the single OS-installed owner release descriptor; this document supplies no independent authority.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "release_id", "source", "candidate", "compose_project", "image_id", "runtime_env", "bridge_env", "compose_files", "generation_manifest", "validation_manifest", "bridge_url", "bridge_ca", "snapshot", "reviewers", "executables", "output_directory", "timeout_seconds"],
   "properties": {
     "schema_version": {"const": "director-release-descriptor/v1"},
-    "release_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,47}$"},
+    "release_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,47}$", "description": "Exact key in the owner descriptor's release_preparations mapping; final and sibling preparations each need their own pin."},
     "source": {"$ref": "#/$defs/path"},
     "candidate": {
       "type": "object", "additionalProperties": false, "required": ["commit", "tree"],

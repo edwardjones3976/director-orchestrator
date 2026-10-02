@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import ModuleType
 
 from jsonschema import Draft202012Validator
 
@@ -32,7 +33,6 @@ MAX_BYTES = 4 * 1024 * 1024
 DEPENDENCIES = {
     "fresh_generation_authority": "primary_generation.require_generation has no read-only fresh-manifest verification path",
     "paid_admission": "the validation CLI has no per-lane campaign/daily-dollar reservation and settlement contract",
-    "trusted_descriptor": "W2 must publish the HOME-independent owner descriptor consumer before preparation can be trusted",
 }
 
 
@@ -89,6 +89,34 @@ def unlinked(path):
         require(not stat.S_ISLNK(metadata.st_mode) and not (
             getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)),
             "linked_path_refused")
+
+
+def launcher_module(path):
+    """Load exact source bytes without consulting or writing an installed .pyc."""
+    unlinked(path)
+    require(path.is_file(), "trusted_descriptor_consumer_unavailable")
+    raw = bounded_read(path)
+    module = ModuleType("director_release_owner_launcher")
+    module.__file__ = str(path)
+    exec(compile(raw, str(path), "exec"), module.__dict__)
+    return module, raw
+
+
+def installed_owner_launcher():
+    """Reuse A2's OS locator; only the installed copy reads owner authority."""
+    try:
+        locator, _ = launcher_module(ROOT / "scripts" / "scorecard-launcher.py")
+        require(callable(getattr(locator, "owner_root", None)), "trusted_descriptor_consumer_unavailable")
+        root = locator.owner_root()
+        require(isinstance(root, Path) and root.is_absolute(), "owner_root_invalid")
+        installed, raw = launcher_module(root / "launcher.py")
+        require(all(callable(getattr(installed, name, None)) for name in
+                    ("owner_root", "release_descriptor", "read_descriptor")), "trusted_descriptor_consumer_unavailable")
+        require(installed.owner_root() == root and
+                installed.release_descriptor() == root / "release-descriptor.json", "owner_root_changed")
+        return installed, root, raw
+    except (OSError, ValueError, TypeError, AttributeError, SyntaxError, ImportError):
+        raise ReleaseError("trusted_descriptor_consumer_unavailable") from None
 
 
 def pinned_file(pin):
@@ -199,6 +227,9 @@ class Release:
         validator = Draft202012Validator(document(SCHEMA.read_bytes()))
         require(not list(validator.iter_errors(self.spec)), "invalid_release_descriptor")
         self.descriptor_digest = sha(self.raw)
+        self.owner_descriptor_digest = None
+        self.owner_launcher, self.owner_root, self.owner_launcher_raw = installed_owner_launcher()
+        self.owner_check()  # Bind before consuming profiles or touching platform state.
         self.source = Path(self.spec["source"])
         require(self.source.is_absolute() and self.source.resolve() == ROOT.resolve(), "wrong_runner_checkout")
         self.output = Path(self.spec["output_directory"])
@@ -365,9 +396,23 @@ class Release:
                 pinned_file(self.spec["rehearsal"][key])
 
     def owner_check(self):
-        # W2 owns this authority boundary. Fail before probes/writes until its
-        # published OS-anchored, whole-descriptor consumer can be reused here.
-        raise ReleaseError("trusted_descriptor_consumer_unavailable")
+        path = self.owner_root / "release-descriptor.json"
+        require(bounded_read(self.owner_root / "launcher.py") == self.owner_launcher_raw, "owner_launcher_changed")
+        require(self.owner_launcher.owner_root() == self.owner_root and
+                self.owner_launcher.release_descriptor() == path, "owner_root_changed")
+        unlinked(path)
+        read = self.owner_launcher.read_descriptor(path)
+        require(isinstance(read, tuple) and len(read) == 2 and isinstance(read[0], str) and
+                re.fullmatch(r"[0-9a-f]{64}", read[0]) and isinstance(read[1], dict), "owner_descriptor_unavailable")
+        digest, owner = read
+        require(self.owner_descriptor_digest is None or digest == self.owner_descriptor_digest,
+                "owner_descriptor_changed")
+        pins = owner.get("release_preparations")
+        require(isinstance(pins, dict) and all(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,47}", name)
+                and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for name, value in pins.items()),
+                "owner_preparation_pins_invalid")
+        require(pins.get(self.spec["release_id"]) == self.descriptor_digest, "preparation_not_owner_pinned")
+        self.owner_descriptor_digest = digest
 
     def doctor(self):
         checks = []
@@ -385,6 +430,7 @@ class Release:
             except Exception:
                 checks.append({"check": "input_readback", "status": "FAIL", "reason": "input_changed_during_doctor"})
         return {"schema_version": "director-release-doctor/v1", "descriptor_sha256": self.descriptor_digest,
+                "owner_descriptor_sha256": self.owner_descriptor_digest,
                 "checks": checks, "preparation_ready": all(item["status"] == "PASS" for item in checks),
                 "release_ready": False, "provider_calls": 0, "dependencies": DEPENDENCIES}
 
@@ -393,7 +439,7 @@ class Release:
         journal = self.output / (self.spec["release_id"] + ".jsonl")
         target = self.output / (self.spec["release_id"] + ".activation.compose.json")
         with locked(journal.with_suffix(".lock")):
-            records = read_journal(journal, self.descriptor_digest)
+            records = read_journal(journal, self.descriptor_digest, self.owner_descriptor_digest)
             if records:
                 require(resume, "use_resume_for_existing_journal")
                 self.verify_inputs()
@@ -404,12 +450,14 @@ class Release:
                 if len(records) == 1:
                     self.complete_render(journal, records[0]["output_sha256"])
                 return {"status": "PREPARED", "resumed": True, "recovered_receipt": len(records) == 1,
+                        "owner_descriptor_sha256": self.owner_descriptor_digest,
                         "release_ready": False, "provider_calls": 0}
             require(not target.exists(), "unrecorded_output_requires_reconciliation")
             report = self.doctor()
             require(report["preparation_ready"] and self.rendered is not None, "doctor_refused_preparation")
             self.verify_inputs()
             append_record(journal, {"event": "intent", "descriptor_sha256": self.descriptor_digest,
+                                   "owner_descriptor_sha256": self.owner_descriptor_digest,
                                    "step": "render_compose", "sequence": 1, "output_sha256": sha(self.rendered)})
             try:
                 with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
@@ -417,7 +465,6 @@ class Release:
                     stream.flush()
                     os.fsync(stream.fileno())
                 require(bounded_read(target) == self.rendered, "compose_output_readback_failed")
-                self.verify_inputs()
                 self.complete_render(journal, sha(self.rendered))
             except BaseException:
                 # A pending intent is sufficient to refuse replay even if this append fails.
@@ -425,7 +472,9 @@ class Release:
             return {"status": "PREPARED", "resumed": False, "release_ready": False, "provider_calls": 0}
 
     def complete_render(self, journal, digest):
+        self.verify_inputs()  # Also required when recovering a completed local write.
         append_record(journal, {"event": "receipt", "descriptor_sha256": self.descriptor_digest,
+                               "owner_descriptor_sha256": self.owner_descriptor_digest,
                                "step": "render_compose", "sequence": 2, "status": "COMPLETE", "output_sha256": digest})
 
     def rehearsal(self):
@@ -434,6 +483,7 @@ class Release:
         self.verify_inputs()
         plan = self.spec["rehearsal"]
         sibling = Release(plan["descriptor"]["path"])
+        require(sibling.owner_descriptor_digest == self.owner_descriptor_digest, "owner_descriptor_changed")
         require("rehearsal" not in sibling.spec, "recursive_rehearsal_refused")
         require(sibling.spec["candidate"] == self.spec["candidate"] and
                 sibling.spec["image_id"] == self.spec["image_id"], "sibling_candidate_mismatch")
@@ -479,6 +529,7 @@ class Release:
         self.verify_inputs()
         sibling.verify_inputs()
         return {"schema_version": "director-release-rehearsal-plan/v1", "status": "PLANNED", "executed": False,
+                "owner_descriptor_sha256": self.owner_descriptor_digest,
                 "descriptor_sha256": self.descriptor_digest, "sibling_descriptor_sha256": sibling.descriptor_digest,
                 "compose_project": sibling.spec["compose_project"], "candidate": self.spec["candidate"],
                 "image_id": self.spec["image_id"], "cwd": str(sibling.source), "timeout_seconds": 1499,
@@ -560,7 +611,7 @@ def append_record(path, value):
         os.fsync(stream.fileno())
 
 
-def read_journal(path, descriptor_digest):
+def read_journal(path, descriptor_digest, owner_descriptor_digest):
     if not path.exists():
         return []
     raw = bounded_read(path)
@@ -568,11 +619,12 @@ def read_journal(path, descriptor_digest):
     result = [document(line) for line in raw.splitlines()]
     require(len(result) <= 2, "unexpected_journal_sequence")
     for number, entry in enumerate(result, 1):
-        fields = {"event", "descriptor_sha256", "step", "sequence", "record_sha256", "output_sha256"}
+        fields = {"event", "descriptor_sha256", "owner_descriptor_sha256", "step", "sequence", "record_sha256", "output_sha256"}
         if number == 2:
             fields |= {"status"}
         require(isinstance(entry, dict) and set(entry) == fields, "invalid_journal_record")
         require(entry["sequence"] == number and entry["descriptor_sha256"] == descriptor_digest and
+                entry["owner_descriptor_sha256"] == owner_descriptor_digest and
                 entry["step"] == "render_compose" and entry["event"] == ("intent" if number == 1 else "receipt"),
                 "journal_binding_mismatch")
         require(sha(encoded({k: v for k, v in entry.items() if k != "record_sha256"})) == entry["record_sha256"],

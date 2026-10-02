@@ -1,5 +1,5 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:35 UTC | BEGIN]]
-"""Preparation/rehearsal contracts; authority and live I/O remain explicitly mocked."""
+"""Preparation contracts with an explicit A2 API fixture; finalized A2 integration remains separate."""
 import copy
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
@@ -99,14 +99,36 @@ class ReleasePreparationTests(unittest.TestCase):
             "executables": {"python": sys.executable, "powershell": sys.executable},
             "output_directory": str(self.output), "timeout_seconds": 30}
         self.descriptor = self.root / "descriptor.json"
+        self.owner_root = self.root / "owner" / ".director-scorecard"
+        self.owner_root.mkdir(parents=True)
+        self.installed = self.owner_root / "launcher.py"
+        self.owner_descriptor = self.owner_root / "release-descriptor.json"
+        (self.source / "scripts").mkdir()
+        self.locator = self.source / "scripts" / "scorecard-launcher.py"
+        # API-shaped installation fixture, not a claim that finalized A2 passed.
+        # Only the installed module can read authority; the locator cannot.
+        locator = f"from pathlib import Path\ndef owner_root(): return Path({str(self.owner_root)!r})\n"
+        self.locator.write_text(locator, encoding="utf-8")
+        self.installed.write_text(locator + '''
+import hashlib, json
+def release_descriptor(): return owner_root() / "release-descriptor.json"
+def read_descriptor(path):
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_048_576:
+            return None
+        raw = path.read_bytes()
+        value = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("version") != "director-cli-release-descriptor/v1":
+        return None
+    return hashlib.sha256(raw).hexdigest(), value
+''', encoding="utf-8")
+        self.owner_spec = {"version": "director-cli-release-descriptor/v1", "evaluator_sha": "c" * 40,
+                           "security_base_sha": "d" * 40, "release_preparations": {}}
         self.save()
         self.calls = []
         self.reply_changes = {}
-        # W2's unpublished authority consumer is an explicit integration blocker.
-        # This stand-in permits exercising the independent W5 logic only.
-        self.owner_patch = patch.object(release.Release, "owner_check", return_value=None)
-        self.owner_patch.start()
-        self.addCleanup(self.owner_patch.stop)
         command_patch = patch.object(release, "command", side_effect=self.platform)
         command_patch.start()
         self.addCleanup(command_patch.stop)
@@ -121,6 +143,14 @@ class ReleasePreparationTests(unittest.TestCase):
 
     def save(self):
         self.descriptor.write_bytes(release.encoded(self.spec))
+        self.owner_spec["release_preparations"][self.spec["release_id"]] = release.sha(self.descriptor.read_bytes())
+        if "rehearsal" in self.spec:
+            sibling = Path(self.spec["rehearsal"]["descriptor"]["path"]).read_bytes()
+            self.owner_spec["release_preparations"][json.loads(sibling)["release_id"]] = release.sha(sibling)
+        self.owner_descriptor.write_bytes(release.encoded(self.owner_spec))
+
+    def owner_digest(self):
+        return release.sha(self.owner_descriptor.read_bytes())
 
     def platform(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
@@ -172,7 +202,9 @@ class ReleasePreparationTests(unittest.TestCase):
         output = self.output / "fixture-r1.activation.compose.json"
         self.assertEqual(json.loads(output.read_bytes()), self.compose)
         journal = self.output / "fixture-r1.jsonl"
-        self.assertEqual(len(release.read_journal(journal, release.sha(self.descriptor.read_bytes()))), 2)
+        records = release.read_journal(journal, release.sha(self.descriptor.read_bytes()), self.owner_digest())
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(row["owner_descriptor_sha256"] == self.owner_digest() for row in records))
         self.assertNotIn("fixture-protected-value", journal.read_text())
         self.assertNotIn(self.bridge["DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"], journal.read_text())
         calls = len(self.calls)
@@ -214,6 +246,7 @@ class ReleasePreparationTests(unittest.TestCase):
     def test_missing_or_partial_output_after_intent_is_never_replayed(self):
         journal = self.output / "fixture-r1.jsonl"
         release.append_record(journal, {"event": "intent", "descriptor_sha256": release.sha(self.descriptor.read_bytes()),
+            "owner_descriptor_sha256": self.owner_digest(),
             "step": "render_compose", "sequence": 1, "output_sha256": "a" * 64})
         for raw in (None, b"partial"):
             if raw is not None:
@@ -230,6 +263,7 @@ class ReleasePreparationTests(unittest.TestCase):
             tool.prepare(resume=True)
         journal.write_bytes(b"")
         release.append_record(journal, {"event": "intent", "descriptor_sha256": "0" * 64,
+            "owner_descriptor_sha256": self.owner_digest(),
             "step": "render_compose", "sequence": 1, "output_sha256": "a" * 64})
         with self.assertRaisesRegex(release.ReleaseError, "journal_binding_mismatch"):
             tool.prepare(resume=True)
@@ -286,15 +320,147 @@ class ReleasePreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "journal_binding_mismatch"):
             release.Release(self.descriptor).prepare(resume=True)
 
-    def test_unpublished_owner_consumer_fails_before_any_probe_or_write_even_with_fake_home(self):
-        self.owner_patch.stop()
-        with patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root)}):
-            tool = release.Release(self.descriptor)
-            report = tool.doctor()
-            self.assertFalse(report["preparation_ready"])
-            self.assertEqual(report["checks"][0]["reason"], "trusted_descriptor_consumer_unavailable")
-            with self.assertRaisesRegex(release.ReleaseError, "trusted_descriptor_consumer_unavailable"):
-                tool.prepare()
+    def test_missing_installation_or_A2_locator_fails_before_profiles_probes_and_writes(self):
+        installed_raw, locator_raw = self.installed.read_bytes(), self.locator.read_bytes()
+        for missing in (self.installed, self.locator):
+            with self.subTest(missing=missing.name):
+                missing.unlink()
+                with patch.object(release, "pinned_file") as profiles, self.assertRaisesRegex(
+                        release.ReleaseError, "trusted_descriptor_consumer_unavailable"):
+                    release.Release(self.descriptor)
+                profiles.assert_not_called()
+                self.installed.write_bytes(installed_raw)
+                self.locator.write_bytes(locator_raw)
+        self.locator.write_text("# Pre-A2 locator has no OS-root consumer.\n")
+        with self.assertRaisesRegex(release.ReleaseError, "trusted_descriptor_consumer_unavailable"):
+            release.Release(self.descriptor)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_caller_home_digest_and_nonce_claims_never_select_authority(self):
+        fake = self.root / "caller-home"
+        (fake / ".director-scorecard").mkdir(parents=True)
+        (fake / ".director-scorecard" / "launcher.py").write_text("raise AssertionError('caller launcher ran')\n")
+        (fake / ".director-scorecard" / "release-descriptor.json").write_bytes(self.owner_descriptor.read_bytes())
+        for digest in (None, "0" * 64):
+            with self.subTest(digest=digest), patch.dict(os.environ, {
+                    "HOME": str(fake), "USERPROFILE": str(fake), "DIRECTOR_SCORECARD_OWNER_HOME": str(fake),
+                    "DIRECTOR_SCORECARD_NONCE": "e" * 64}):
+                os.environ.pop("DIRECTOR_SCORECARD_DESCRIPTOR_SHA256", None)
+                if digest is not None:
+                    os.environ["DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"] = digest
+                tool = release.Release(self.descriptor)
+                self.assertEqual(tool.owner_descriptor_digest, self.owner_digest())
+                tool.verify_inputs()
+        self.owner_descriptor.unlink()  # The matching caller copy cannot replace missing owner evidence.
+        with patch.dict(os.environ, {"HOME": str(fake), "USERPROFILE": str(fake),
+                                    "DIRECTOR_SCORECARD_OWNER_HOME": str(fake)}):
+            with self.assertRaisesRegex(release.ReleaseError, "owner_descriptor_unavailable"):
+                release.Release(self.descriptor)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_missing_wrong_or_malformed_owner_pins_refuse_before_profiles(self):
+        for pins in (None, {}, {"fixture-r1": "0" * 64}, {"fixture-r1": True}, {"fixture-r1": "bad"}):
+            with self.subTest(pins=pins):
+                self.owner_spec["release_preparations"] = pins
+                self.owner_descriptor.write_bytes(release.encoded(self.owner_spec))
+                with patch.object(release, "pinned_file") as profiles, self.assertRaises(release.ReleaseError):
+                    release.Release(self.descriptor)
+                profiles.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_owner_descriptor_mutation_with_same_evaluator_pin_blocks_before_intent(self):
+        tool = release.Release(self.descriptor)
+        self.owner_spec["security_base_sha"] = "e" * 40
+        self.owner_descriptor.write_bytes(release.encoded(self.owner_spec))
+        with self.assertRaisesRegex(release.ReleaseError, "owner_descriptor_changed"):
+            tool.prepare()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_owner_rotation_after_intent_holds_until_exact_authority_restored_without_replay(self):
+        original_owner = self.owner_descriptor.read_bytes()
+        append = release.append_record
+        def rotate_after_intent(path, value):
+            append(path, value)
+            if value["event"] == "intent":
+                self.owner_descriptor.write_bytes(original_owner + b" ")
+        with patch.object(release, "append_record", side_effect=rotate_after_intent), self.assertRaisesRegex(
+                release.ReleaseError, "reconciliation_required_no_replay"):
+            release.Release(self.descriptor).prepare()
+        calls = len(self.calls)
+        journal = self.output / "fixture-r1.jsonl"
+        original_journal = journal.read_bytes()
+        target = self.output / "fixture-r1.activation.compose.json"
+        original_output = target.read_bytes()
+        with self.assertRaisesRegex(release.ReleaseError, "journal_binding_mismatch"):
+            release.Release(self.descriptor).prepare(resume=True)
+        self.assertEqual(journal.read_bytes(), original_journal)
+        self.owner_descriptor.write_bytes(original_owner)
+        self.assertTrue(release.Release(self.descriptor).prepare(resume=True)["recovered_receipt"])
+        self.assertEqual(target.read_bytes(), original_output)
+        self.assertEqual(len(self.calls), calls)
+
+    def test_completed_resume_refuses_rotated_authority_and_legacy_unbound_journal(self):
+        release.Release(self.descriptor).prepare()
+        calls = len(self.calls)
+        original_owner = self.owner_descriptor.read_bytes()
+        self.owner_descriptor.write_bytes(original_owner + b"\n")
+        with self.assertRaisesRegex(release.ReleaseError, "journal_binding_mismatch"):
+            release.Release(self.descriptor).prepare(resume=True)
+        self.owner_descriptor.write_bytes(original_owner)
+        journal = self.output / "fixture-r1.jsonl"
+        rows = [json.loads(line) for line in journal.read_bytes().splitlines()]
+        journal.write_bytes(b"")
+        for row in rows:
+            del row["owner_descriptor_sha256"]
+            del row["record_sha256"]
+            release.append_record(journal, row)
+        with self.assertRaisesRegex(release.ReleaseError, "invalid_journal_record"):
+            release.Release(self.descriptor).prepare(resume=True)
+        self.assertEqual(len(self.calls), calls)
+
+    def test_installed_launcher_rotation_is_not_silently_reloaded(self):
+        tool = release.Release(self.descriptor)
+        self.installed.write_bytes(self.installed.read_bytes() + b"\n")
+        with self.assertRaisesRegex(release.ReleaseError, "owner_launcher_changed"):
+            tool.prepare()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_installed_launcher_cannot_relocate_the_OS_anchor(self):
+        self.installed.write_text(f"from pathlib import Path\ndef owner_root(): return Path({str(self.root)!r})\n"
+                                  "def release_descriptor(): return owner_root() / 'release-descriptor.json'\n"
+                                  "def read_descriptor(path): raise AssertionError('must not read')\n")
+        with self.assertRaisesRegex(release.ReleaseError, "owner_root_changed"):
+            release.Release(self.descriptor)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_owner_path_reparse_points_refuse_before_loading_or_reading(self):
+        original_lstat = Path.lstat
+        from types import SimpleNamespace
+        for linked in (self.owner_root.parent, self.installed, self.owner_descriptor):
+            with self.subTest(linked=linked):
+                def lstat(path, *args, **kwargs):
+                    if path == linked:
+                        return SimpleNamespace(st_mode=0, st_file_attributes=0x400)
+                    return original_lstat(path, *args, **kwargs)
+                with patch.object(Path, "lstat", lstat), self.assertRaisesRegex(release.ReleaseError, "linked_path_refused"):
+                    release.Release(self.descriptor)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_owner_failure_after_construction_refuses_doctor_probes_and_lock(self):
+        tool = release.Release(self.descriptor)
+        self.owner_descriptor.unlink()
+        report = tool.doctor()
+        self.assertFalse(report["preparation_ready"])
+        self.assertEqual(report["checks"][0]["reason"], "owner_descriptor_unavailable")
+        with self.assertRaisesRegex(release.ReleaseError, "owner_descriptor_unavailable"):
+            tool.prepare()
         self.assertEqual(self.calls, [])
         self.assertEqual(list(self.output.iterdir()), [])
 
@@ -358,6 +524,14 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual(report["environment"]["COMPOSE_FILE"], self.spec["compose_files"][0]["path"])
         self.assertFalse(any("windows-langgraph-primary-control.ps1" in str(arg) for call, _ in self.calls for arg in call))
         self.assertEqual(list(Path(sibling["output_directory"]).iterdir()), [])
+
+    def test_sibling_also_requires_an_explicit_owner_pin(self):
+        self.sibling()
+        del self.owner_spec["release_preparations"]["fixture-sibling"]
+        self.owner_descriptor.write_bytes(release.encoded(self.owner_spec))
+        with self.assertRaisesRegex(release.ReleaseError, "preparation_not_owner_pinned"):
+            release.Release(self.descriptor).rehearsal()
+        self.assertEqual(self.calls, [])
 
     def test_rehearsal_refuses_reusing_final_identity_or_paths(self):
         sibling = self.sibling()
