@@ -21,12 +21,14 @@ from unittest.mock import patch
 from director_orchestrator.config import Settings
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.models import (
-    AssignmentKind, IntakeAuthentication, SlackIntake, TaskRecord, TaskStatus,
+    IntakeAuthentication,
+    SlackIntake,
+    TaskRecord,
+    TaskStatus,
 )
-from director_orchestrator.packet_routing import implementation_tool_grant
+from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.policy import preview_plan
 from director_orchestrator.primary_default import _live_parallel_plan
-from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.primary_transports import (
     NativeCommandPacketTransport,
     discover_local_primary_command_transports,
@@ -887,11 +889,15 @@ class CommitteeAndInteractionIdentityTests(unittest.TestCase):
 
 
 class ScopedWritePlanTests(unittest.TestCase):
-    def _planned(self, *, authorize: bool, owned_paths: tuple[str, ...] | None):
+    def test_live_composition_does_not_promote_preview_authority(self):
+        """A mutated preview is not a trusted write grant or worktree handoff."""
+
         settings = replace(
             Settings(),
             repository_allowlist=("owner/repository",),
-            trusted_provider_cost_ranks_json='{"openai":4,"claude":3,"cursor":2,"grok":5,"zai":1}',
+            trusted_provider_cost_ranks_json=(
+                '{"openai":4,"claude":3,"cursor":2,"grok":5,"zai":1}'
+            ),
         )
         intake = SlackIntake(
             source_event_id="scoped-write-event",
@@ -906,55 +912,28 @@ class ScopedWritePlanTests(unittest.TestCase):
             intake=intake,
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
         )
-        record.plan = preview_plan(intake.text, settings)
-        if authorize:
-            first = record.plan.assignments[0]
-            prestage = record.plan.prestage.model_copy(
-                update={"owned_paths": owned_paths or record.plan.prestage.owned_paths})
-            record.plan = record.plan.model_copy(update={
-                "assignments": [
-                    first.model_copy(update={"allow_draft_pr": True, "requires_approval": True}),
-                    *record.plan.assignments[1:],
-                ],
-                "prestage": prestage,
-            })
+        preview = preview_plan(intake.text, settings)
+        first = preview.assignments[0].model_copy(
+            update={"allow_draft_pr": True, "requires_approval": True}
+        )
+        record.plan = preview.model_copy(
+            update={
+                "assignments": [first, *preview.assignments[1:]],
+                "prestage": preview.prestage.model_copy(
+                    update={"owned_paths": ("src/app",)}
+                ),
+            }
+        )
+
         _live_parallel_plan(
-            record, settings, available=("openai", "claude", "cursor", "zai"), history=())
-        return record
-
-    def test_prose_does_not_grant_a_write(self):
-        record = self._planned(authorize=False, owned_paths=None)
-        self.assertFalse(any(item.allow_draft_pr for item in record.plan.assignments))
-
-    def test_placeholder_scope_does_not_grant_a_write(self):
-        record = self._planned(authorize=True, owned_paths=None)
-        self.assertFalse(any(item.allow_draft_pr for item in record.plan.assignments))
-
-    def test_authorized_scope_reaches_the_zai_edit_without_rewriting_the_plan(self):
-        record = self._planned(authorize=True, owned_paths=("src/app",))
-        producer = next(
-            item for item in record.plan.assignments
-            if item.primary_provider_lane == "zai" and item.kind is not AssignmentKind.INDEPENDENT_REVIEW)
-        self.assertTrue(producer.allow_draft_pr)
-        self.assertTrue(producer.requires_approval)
-        self.assertEqual(("src/app",), tuple(record.plan.prestage.owned_paths))
-        self.assertFalse(record.plan.assignments[-1].allow_draft_pr)
-        tools, effects = implementation_tool_grant(producer)
-        self.assertEqual(("WRITE_ISOLATED_BRANCH",), tools)
-        self.assertEqual((), effects)
-        work = work_packet(
-            allowed_tools=["READ_REPOSITORY", *tools],
-            allowed_external_effects=list(effects),
-            owned_paths=list(record.plan.prestage.owned_paths),
+            record,
+            settings,
+            available=("openai", "claude", "cursor", "zai"),
+            history=(),
         )
-        arguments = tool_arguments(work, context_for(work), allow_repository_write=True)
-        start = arguments.index("--allowedTools") + 1
-        end = next((i for i in range(start, len(arguments)) if arguments[i].startswith("--")), len(arguments))
-        allowed = [item for item in arguments[start:end] if item.startswith(("Edit", "Write"))]
-        self.assertEqual(
-            ["Edit(./src/app)", "Edit(./src/app/**)", "Write(./src/app)", "Write(./src/app/**)"],
-            allowed,
-        )
+
+        self.assertFalse(any(item.allow_draft_pr for item in record.plan.assignments))
+        self.assertFalse(any(item.requires_approval for item in record.plan.assignments))
 
 
 if __name__ == "__main__":

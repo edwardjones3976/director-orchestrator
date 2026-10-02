@@ -510,21 +510,6 @@ def validated_compact_view(work: Mapping[str, Any]) -> dict[str, Any]:
     return _required_small_view(work)
 
 
-def implementation_tool_grant(assignment: Assignment) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Tools and external effects for one already-authorized implementation assignment.
-
-    Z.ai edits inside the prestage paths and does not open a pull request or
-    take an external effect. Other lanes keep the draft-PR grant.
-    """
-
-    if not assignment.allow_draft_pr:
-        return (), ()
-    if assignment.primary_provider_lane == "zai":
-        return ("WRITE_ISOLATED_BRANCH",), ()
-    grant = ("WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST")
-    return grant, grant
-
-
 class AuthoritySnapshotResolver(Protocol):
     """Returns immutable repository evidence for one exact assignment."""
 
@@ -825,10 +810,11 @@ class DirectorPacketTaskRouter:
             else ["READ_REPOSITORY", "RUN_TESTS"]
         )
         allowed_external_effects: list[str] = []
-        extra_tools, extra_effects = implementation_tool_grant(assignment)
-        allowed_tools.extend(extra_tools)
-        if extra_effects:
-            allowed_external_effects.extend(extra_effects)
+        if assignment.allow_draft_pr:
+            allowed_tools.extend(["WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST"])
+            allowed_external_effects.extend(
+                ["WRITE_ISOLATED_BRANCH", "OPEN_DRAFT_PULL_REQUEST"]
+            )
             allowed_external_effects.extend(self._typed_effect_grant_kinds)
         constraints = list(self._BASE_CONSTRAINTS)
         if owned_paths is not None:
