@@ -4362,6 +4362,33 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(probe.call_count, 2)
         self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["PASS", "PASS"])
 
+    def test_network_change_before_final_cutoff_is_unknown(self):
+        """#287 item 21: a hop removed or a port re-published after the route read keeps no runtime PASS."""
+        real = sc._deployment_state
+
+        def detach(container):
+            networks = container.setdefault("NetworkSettings", {}).setdefault("Networks", {})
+            networks.pop(next(iter(networks), None), None)
+            networks["added-after-probe"] = {"NetworkID": "n" * 64, "IPAddress": "172.30.0.9"}
+
+        def republish(container):
+            container.setdefault("NetworkSettings", {}).setdefault("Ports", {})["8080/tcp"] = [
+                {"HostIp": "0.0.0.0", "HostPort": "9999"}]
+
+        for change in (detach, republish):
+            world, states = self.world(evaluate_rules=True), []
+
+            def mutate(project, gateway, world=world, change=change, states=states):
+                states.append(real(project, gateway))
+                change(next(item for item in world.rows if item["Id"] == DIRECTOR_ID))
+                return states[-1]
+
+            with patch.object(sc, "_deployment_state", side_effect=mutate):
+                report = world.report(only_deployment=True, gateway=GATEWAY)
+            with self.subTest(change=change.__name__):
+                self.assertEqual(len(states), 2)
+                self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["UNKNOWN", "UNKNOWN"])
+
     def test_status_run_before_the_n8n_database_was_recreated_is_unknown_04(self):
         self.assertEqual(self.world(evaluate_rules=True).state("04"), "PASS")
         recreated = self.world(evaluate_rules=True)

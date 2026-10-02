@@ -525,12 +525,20 @@ _EVIDENCE_SERVICES = ("orchestrator", "langgraph-primary-db", "n8n", "n8n-db")
 
 
 def _deployment_state(project: str, gateway: str | None) -> tuple:
-    """Identity and run state (Id, Image, Created, StartedAt, Running) of every container whose state backs
-    evidence and of the named gateway, compared whole between the deployment probe and the final cutoff."""
+    """Identity, run state (Id, Image, Created, StartedAt, Running) and network wiring (attachments and published
+    ports) of every container whose state backs evidence and of the named gateway, compared whole between the
+    deployment probe and the final cutoff: a route hop removed after the route read must not keep its PASS."""
     ids = [item for service in _EVIDENCE_SERVICES for item in _compose_ids(project, service)]
     rows = _run_json(["docker", "inspect", *ids, *([gateway] if gateway else [])])
+
+    def wiring(row: dict[str, Any]) -> str:
+        settings = row.get("NetworkSettings") or {}
+        return json.dumps({"networks": settings.get("Networks"), "ports": settings.get("Ports")},
+                          sort_keys=True, default=str)
+
     return tuple(sorted((str(row.get("Id")), str(row.get("Image")), str(row.get("Created")),
-                         str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True)
+                         str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True,
+                         wiring(row))
                         for row in rows))
 
 
