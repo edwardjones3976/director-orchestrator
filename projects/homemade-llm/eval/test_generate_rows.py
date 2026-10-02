@@ -2701,6 +2701,21 @@ class NativeHotRootAccountingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "reparse requires reviewed accounting"):
                     generate_rows._native_hot_bytes(self.root)
 
+    def test_snapshot_cache_pointers_count_own_bytes_and_bad_revision_refuses(self):
+        for revision, file, allowed in (("b" * 40, "vocab.json", True),
+                                        ("b" * 40, "tokenizer/vocab.json", True),
+                                        ("not-a-revision", "vocab.json", False)):
+            snapshot = self.blob.parent.parent / "snapshots" / revision / file
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_bytes(b"pointer fixture")
+            with self.subTest(revision=revision, file=file), self.changed_metadata(snapshot, self.metadata()):
+                if allowed:
+                    self.assertEqual(generate_rows._native_hot_bytes(self.root), 3 + self.blob.stat().st_size)
+                else:
+                    with self.assertRaisesRegex(ValueError, "reparse requires reviewed accounting"):
+                        generate_rows._native_hot_bytes(self.root)
+            snapshot.unlink()
+
     def test_directory_reparses_refuse_before_traversal(self):
         original = generate_rows.os.scandir
         for path in (self.root, self.blob.parent):

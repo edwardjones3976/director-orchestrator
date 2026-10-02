@@ -1043,11 +1043,14 @@ def _native_hot_bytes(hot_root: Path) -> int:
             raise ValueError("native hot-root is not a directory")
         if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT or tag:
             relative = path.relative_to(hot_root).parts
-            cache_blob = (len(relative) == 5 and relative[:2] == ("hf", "hub")
-                          and relative[2].startswith("models--") and relative[3] == "blobs"
-                          and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", relative[4]))
+            cache_entry = (len(relative) >= 5 and relative[:2] == ("hf", "hub")
+                           and relative[2].startswith("models--")
+                           and ((len(relative) == 5 and relative[3] == "blobs"
+                                 and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", relative[4]))
+                                or (len(relative) >= 6 and relative[3] == "snapshots"
+                                    and re.fullmatch(r"[0-9a-f]{40}", relative[4]))))
             if (directory or attributes & stat.FILE_ATTRIBUTE_DIRECTORY
-                    or tag != 0xA000001D or not cache_blob or not stat.S_ISREG(metadata.st_mode)):
+                    or tag != 0xA000001D or not cache_entry or not stat.S_ISREG(metadata.st_mode)):
                 raise ValueError("native hot-root reparse requires reviewed accounting")
             # Known HF LX_SYMLINK: count its own entry size, not its inaccessible target.
             total += metadata.st_size
