@@ -17,6 +17,7 @@
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Render the read-only twenty-check Director scorecard."""
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -27,21 +28,35 @@ from pathlib import Path
 # checkout's copy of this file is never trusted to check itself (review 4112412081). The check below is a second
 # line against a direct run, standard library only, before any repository module is imported.
 ROOT = Path(__file__).resolve().parents[1]
-# The owner-installed release descriptor (primary_scorecard_evidence.RELEASE_DESCRIPTOR), read here with json alone.
-RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
+# The owner-installed release descriptor, read here with json alone. Its location is the account home the launcher
+# resolved from the operating system and handed over (never HOME/USERPROFILE), and its exact bytes must hash to the
+# digest the launcher pinned (#287 items 33/34). A run the launcher did not start has no descriptor.
+OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"
+DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 TREE_ENV, REPO_ENV = "DIRECTOR_SCORECARD_TREE", "DIRECTOR_SCORECARD_REPO"  # set by the launcher
 SHA_ENV = "DIRECTOR_SCORECARD_EVALUATOR_SHA"  # the exact pin the launcher extracted the tree from
 ROTATED = "the release descriptor no longer pins the evaluator revision the launcher extracted"
 
 
-def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+def release_descriptor() -> Path | None:
+    home = os.environ.get(OWNER_HOME_ENV)
+    return Path(home) / ".director-scorecard" / "release-descriptor.json" if home and Path(home).is_absolute() else None
+
+
+def pinned_evaluator(descriptor: Path | None = None) -> str | None:
     """The descriptor's evaluator_sha (40 lowercase hex), or None: absent, a link, oversized, malformed, another
-    version or no pin."""
+    version, no pin, or bytes other than the ones the launcher pinned."""
+    descriptor = descriptor or release_descriptor()
+    if descriptor is None:
+        return None
     try:
         if descriptor.is_symlink() or not descriptor.is_file() or descriptor.stat().st_size > 1_048_576:
             return None
-        value = json.loads(descriptor.read_bytes())
+        raw = descriptor.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != os.environ.get(DESCRIPTOR_ENV):
+            return None
+        value = json.loads(raw)
     except (OSError, ValueError):
         return None
     pin = value.get("evaluator_sha") if isinstance(value, dict) and value.get("version") == DESCRIPTOR_VERSION else None
@@ -76,7 +91,7 @@ def _reject_git_metadata(repo: Path) -> None:
     raise ValueError("grafts metadata is not permitted")
 
 
-def launch_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+def launch_refusal(root: Path = ROOT, descriptor: Path | None = None) -> str | None:
     """None when this file runs from the launcher's archived evaluator tree and the pin is on github/main."""
     pinned = pinned_evaluator(descriptor)
     if pinned is None:

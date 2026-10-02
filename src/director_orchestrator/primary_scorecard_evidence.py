@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import hashlib
 import hmac
 import json
 import os
@@ -1398,7 +1399,16 @@ CLI_RELEASE_DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 UNATTESTED = "-unattested"
 
 
-RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
+OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"
+DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"
+
+
+def owner_home():
+    """The account home the owner-installed launcher resolved from the operating system and handed to this
+    evaluator, never HOME/USERPROFILE (#287 item 34). None when the launcher did not start this run: such runs are
+    unattested and read no owner files."""
+    value = os.environ.get(OWNER_HOME_ENV)
+    return Path(value) if value and os.environ.get(DESCRIPTOR_ENV) and Path(value).is_absolute() else None
 
 
 def cli_release_descriptor():
@@ -1415,16 +1425,23 @@ def cli_release_descriptor():
     ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
     current main's ci.yml is trusted.
 
-    It is the owner-installed file RELEASE_DESCRIPTOR (fixed, no override, the stance of the replica signer key);
-    absent, a link, oversized, malformed or of another version, there is none. The owner-installed launcher
-    (scripts/scorecard-launcher.py) and scripts/director-scorecard.py read the same file with the standard library
-    alone before any repository module is imported.
+    It is the owner-installed ``.director-scorecard/release-descriptor.json`` under owner_home() (fixed, no
+    override, the stance of the replica signer key), and its exact bytes must hash to the digest the launcher pinned
+    for this run (#287 item 33); absent, a link, oversized, malformed, of another version or other bytes, there is
+    none. The owner-installed launcher (scripts/scorecard-launcher.py) and scripts/director-scorecard.py read the
+    same file with the standard library alone before any repository module is imported.
     """
+    home = owner_home()
+    if home is None:
+        return None
+    path = home / ".director-scorecard" / "release-descriptor.json"
     try:
-        if RELEASE_DESCRIPTOR.is_symlink() or not RELEASE_DESCRIPTOR.is_file() \
-                or RELEASE_DESCRIPTOR.stat().st_size > 1_048_576:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_048_576:
             return None
-        value = json.loads(RELEASE_DESCRIPTOR.read_bytes())
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != os.environ.get(DESCRIPTOR_ENV):
+            return None
+        value = json.loads(raw)
     except (OSError, ValueError):
         return None
     return value if isinstance(value, dict) and value.get("version") == CLI_RELEASE_DESCRIPTOR_VERSION else None

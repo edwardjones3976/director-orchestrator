@@ -127,7 +127,8 @@ from .process_isolation import (
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    ci_workflow_pin, cli_release_descriptor, evaluator_pin, security_base_pin, decision_follows_prompt, delivery_settled as _delivery_settled,
+    ci_workflow_pin, cli_release_descriptor, evaluator_pin, owner_home, security_base_pin, decision_follows_prompt,
+    delivery_settled as _delivery_settled,
     lifecycle_error, missing_result_packets,
     ordered as _ordered,
     required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
@@ -157,7 +158,14 @@ _UNATTESTED = "-unattested"
 REAL_PRODUCTS = {lane: set(by_transport.values()) for lane, by_transport in _TRANSPORT_PRODUCTS.items()}
 # Fixed, owner-installed verification key with no CLI override, the same
 # stance as _native_security_index: a caller cannot nominate its own signer.
-CI_REPLICA_KEY = Path.home() / ".director-scorecard" / "ci-replica-signer.ed25519.pub"
+CI_REPLICA_KEY: Path | None = None  # in-process override only; normally the owner root the launcher handed over
+
+
+def _ci_replica_key() -> Path | None:
+    if CI_REPLICA_KEY is not None:
+        return CI_REPLICA_KEY
+    home = owner_home()
+    return None if home is None else home / ".director-scorecard" / "ci-replica-signer.ed25519.pub"
 # Any of these from a source becomes UNKNOWN. Exception text is never reported:
 # third-party errors can contain credentials or response bodies. ArithmeticError
 # covers malformed decimal timestamps; ImportError an unavailable reader module.
@@ -3145,7 +3153,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
 def _native_security_index() -> Path:
     # Native installed-plugin default, not an imported report path or CLI trust override.
     # Custom CODEX_SECURITY_STATE_DIR installations remain UNKNOWN until supported.
-    return Path.home() / ".codex/state/plugins/codex-security/workbench.sqlite3"
+    home = owner_home()
+    if home is None:  # not started by the owner-installed launcher: no owner store is consulted
+        return Path(os.devnull) / "codex-security-workbench.sqlite3"
+    return home / ".codex/state/plugins/codex-security/workbench.sqlite3"
 
 
 def _read_bounded_file(root: Path, relative: str) -> bytes:
@@ -3399,9 +3410,10 @@ def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Obs
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    if CI_REPLICA_KEY.is_symlink() or not CI_REPLICA_KEY.is_file():
+    key = _ci_replica_key()
+    if key is None or key.is_symlink() or not key.is_file():
         raise ValueError("owner replica signer key unavailable")
-    key_hex = CI_REPLICA_KEY.read_text(encoding="ascii").strip()
+    key_hex = key.read_text(encoding="ascii").strip()
     if not _HEX64.fullmatch(key_hex):
         raise ValueError("owner replica signer key is malformed")
     source = Path(path)

@@ -105,7 +105,7 @@ import re
 import tempfile
 import time
 import unittest
-from contextlib import closing, nullcontext
+from contextlib import ExitStack, closing, nullcontext
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1057,6 +1057,18 @@ def resign(key, envelope):
     return {"document": envelope["document"], "signature": key.sign(signed).hex()}
 
 
+def installed_launcher_command(installed, home, *arguments, isolated=True):
+    """Run the installed launcher file as its own module with only its OS account lookup replaced by the fixture
+    home; HOME/USERPROFILE cannot move the owner root, so tests never read or write the real one."""
+    bootstrap = ("import importlib.util, sys; from pathlib import Path; "
+                 "spec = importlib.util.spec_from_file_location('installed_launcher', sys.argv[1]); "
+                 "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                 "home = Path(sys.argv[2]); module.account_home = lambda: home; "
+                 "raise SystemExit(module.main(sys.argv[3:]))")
+    return [sys.executable, *(["-I"] if isolated else []), "-c", bootstrap, str(installed), str(home),
+            *[str(argument) for argument in arguments]]
+
+
 class ScorecardGitTrustTests(unittest.TestCase):
     """Real object databases: replacement siblings must never supply executable evaluator bytes."""
 
@@ -1083,7 +1095,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.script = self.repo / "scripts" / "director-scorecard.py"
         self.script.write_text(
             "import json, os\nfrom pathlib import Path\n"
-            "receipt = Path.home() / '.director-scorecard' / 'attestations' / (os.environ['DIRECTOR_SCORECARD_NONCE'] + '.json')\n"
+            "receipt = Path(os.environ['DIRECTOR_SCORECARD_OWNER_HOME']) / '.director-scorecard' / 'attestations' / (os.environ['DIRECTOR_SCORECARD_NONCE'] + '.json')\n"
             "attestation = json.loads(receipt.read_bytes())['attestation']\n"
             "Path(os.environ['DIRECTOR_SCORECARD_RESULT']).write_text(json.dumps({'attested': True, 'attestation': attestation}))\n"
             "print('clean evaluator reached')\n", encoding="utf-8")
@@ -1110,11 +1122,23 @@ class ScorecardGitTrustTests(unittest.TestCase):
             env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
         return env
 
-    def run_launcher(self, extra_env=None, arguments=()):
-        env = {**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
-               **(extra_env or {})}
-        return subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo), *arguments],
+    def run_launcher(self, extra_env=None, arguments=(), *, target=None):
+        # HOME/USERPROFILE no longer move the owner root (#287 item 34); only an in-process
+        # substitute for the OS lookup does, so the fixture root never touches the real one.
+        env = {**self.python_environment(), **(extra_env or {})}
+        return subprocess.run(installed_launcher_command(self.installed, self.home,
+                                                         str(self.repo) if target is None else target, *arguments),
                               env=env, cwd=self.outside, capture_output=True, text=True, timeout=120)
+
+    def owner_home(self):
+        """This process's launcher module and the scorecard's copy see the fixture home as the account home."""
+        stack = ExitStack()
+        stack.enter_context(patch.object(self.launcher, "account_home", return_value=self.home))
+        stack.enter_context(patch.object(sc, "_launcher", return_value=self.launcher))
+        return stack
+
+    def descriptor_digest(self):
+        return hashlib.sha256(self.descriptor.read_bytes()).hexdigest()
 
     def assert_metadata_refused(self, reason):
         result = self.run_launcher()
@@ -1123,7 +1147,8 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.assertNotIn("clean evaluator reached", result.stdout)
         self.assertFalse(self.marker.exists())
         cli = self.modules["director-scorecard"]
-        launched = {cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo), cli.SHA_ENV: self.pin}
+        launched = {cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo), cli.SHA_ENV: self.pin,
+                    cli.DESCRIPTOR_ENV: self.descriptor_digest()}
         with patch.dict(os.environ, launched):
             self.assertIn(reason, cli.launch_refusal(cli.ROOT, self.descriptor))
         with self.assertRaisesRegex(ValueError, reason):
@@ -1193,7 +1218,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
         with patch.object(self.launcher, "_git", wraps=self.launcher._git) as git, \
                 patch.object(self.launcher.subprocess, "run", side_effect=launch), \
                 patch.object(self.launcher.Path, "cwd", return_value=self.outside), \
-                patch.object(self.launcher.Path, "home", return_value=self.home), \
+                patch.object(self.launcher, "account_home", return_value=self.home), \
                 patch.object(self.launcher, "__file__", str(self.installed)):
             self.assertEqual(self.launcher.launch(self.repo, [], self.descriptor), 0)
         git.assert_any_call(self.repo, "rev-parse", "--verify", f"{self.pin}^{{tree}}")
