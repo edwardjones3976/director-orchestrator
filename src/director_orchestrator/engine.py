@@ -6069,30 +6069,86 @@ class OrchestrationEngine:
             and held.get("packet_only") and not held["pending"]
         )]
 
-    def _settle_provider_spend(self, record: TaskRecord, run: ProviderRun, provider: ProviderName) -> bool:
-        """A terminal run settles every reservation its own observation names, at its provider-reported cost."""
-
+    def _settle_provider_spend(self, record: TaskRecord, run: ProviderRun, provider: ProviderName,
+                               *, phase: str = "dispatch") -> bool:
+        """Settle one exact dispatch; a provider run ID is not a task-effect identity."""
+        if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED:
+            return True
+        assignment = next((item for item in record.plan.assignments
+                           if item.sequence == run.assignment_sequence and item.agent == provider), None
+                          ) if record.plan else None
+        if assignment is not None:
+            assignment = self._effective_assignment(record, assignment)
+        # Normal dispatches retain their engine-owned interaction through polling.
+        # Owner reconciliation has no interaction: recover its phase from the
+        # paired contact receipt, never from provider raw data or a reused run ID.
+        interaction_keys = None
+        reconciled = False
+        if run.interaction_id:
+            events = [item for item in record.provider_interaction_ledger
+                      if item.interaction_id == run.interaction_id
+                      and item.task_id == record.task_id and item.provider.value == provider.value
+                      and item.assignment_sequence == run.assignment_sequence
+                      and item.plan_generation == run.plan_generation]
+            phases = {item.phase.value for item in events}
+            interaction_keys = {item.effect_key for item in events}
+            if len(phases) == 1:
+                phase = phases.pop()
+            else:
+                interaction_keys = set()
+        else:
+            ambiguous = None
+            for contact in record.provider_contact_attempts:
+                if contact.assignment_sequence != run.assignment_sequence or contact.provider != provider:
+                    continue
+                if contact.outcome == "ambiguous_dispatch":
+                    ambiguous = contact
+                elif contact.phase == "reconciliation":
+                    if contact.outcome == "reconciled_created" and contact.run_id == run.run_id and ambiguous:
+                        phase = ambiguous.phase
+                        reconciled = True
+                    ambiguous = None
+        digest = assignment_approval_digest(assignment) if assignment is not None else None
+        intents = {item.effect_key for item in record.task_effect_ledger
+                   if item.kind == "provider_intent" and item.provider == provider
+                   and item.assignment_sequence == run.assignment_sequence
+                   and item.assignment_digest == digest and item.phase == phase
+                   and item.plan_generation == run.plan_generation == record.plan_generation}
+        observations = [item for item in record.task_effect_ledger
+                        if item.kind == "provider_observation" and item.effect_key in intents
+                        and item.provider == provider == run.provider
+                        and item.assignment_sequence == run.assignment_sequence
+                        and item.assignment_digest == digest and item.phase == phase
+                        and item.plan_generation == run.plan_generation]
+        if interaction_keys is not None:
+            observations = [item for item in observations if item.effect_key in interaction_keys]
         run_digest = canonical_opaque_identifier_digest(run.run_id)
-        keys = {
-            item.effect_key
-            for item in record.task_effect_ledger
-            if item.kind == "provider_observation" and item.run_id_digest == run_digest
-        }
-        if not keys:
+        # A reconciled identifier belongs to the unresolved ambiguity, even if
+        # an earlier completed attempt returned the same provider identifier.
+        if reconciled:
+            observations = [item for item in observations if item.outcome == "ambiguous"
+                            and item.run_id_digest in {None, run_digest}
+                            and not any(prior.effect_key == item.effect_key and prior.outcome == "failed_pre_submit"
+                                        for prior in record.task_effect_ledger)]
+        keys = {item.effect_key for item in observations if item.run_id_digest == run_digest}
+        if not keys and reconciled:
             # An owner-reconciled "created" run (approvals.apply_ambiguous_dispatch_resolution) carries no
             # observation of its own: it is the ambiguous dispatch of this assignment, whose reservation settles.
             keys = {
                 item.effect_key
-                for item in record.task_effect_ledger
-                if item.kind == "provider_observation" and item.outcome == "ambiguous"
-                and item.provider == run.provider and item.assignment_sequence == run.assignment_sequence
+                for item in observations
+                if item.outcome == "ambiguous"
                 and item.run_id_digest is None
                 and not any(observed.effect_key == item.effect_key and observed.outcome == "failed_pre_submit"
                             for observed in record.task_effect_ledger)
             }
+        if len(keys) != 1:
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            record.error = "spend_settlement_identity_unresolved"
+            record.message = "Provider settlement lacks one exact dispatch identity; no reservation was changed."
+            self.store.save(record)
+            return False
         cost = authoritative_reported_cost(provider, run.raw)
-        assignment = next((item for item in record.plan.assignments
-                           if item.sequence == run.assignment_sequence), None) if record.plan else None
         for key in sorted(keys):
             settled = self._spend_settlements(record, run).get(key)
             if (settled and not settled["pending"] and settled["run_id"] == run.run_id
@@ -7485,7 +7541,7 @@ class OrchestrationEngine:
             if not self._verified_plan_or_stop(record):
                 return False
             record.provider_runs[-1] = revised
-            if not self._settle_provider_spend(record, revised, assignment.agent):
+            if not self._settle_provider_spend(record, revised, assignment.agent, phase="revision"):
                 return False
             self.store.save(record)
             if not revised.result:

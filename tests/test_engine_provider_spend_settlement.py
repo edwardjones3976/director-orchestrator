@@ -96,6 +96,148 @@ def _key(label: str) -> str:
 
 
 class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
+    def test_settlement_does_not_charge_other_dispatch_identities(self):
+        from director_orchestrator.approvals import (
+            apply_ambiguous_dispatch_resolution, record_provider_effect_observation,
+            reserve_provider_effect,
+        )
+        from director_orchestrator.models import AmbiguousDispatchResolution, ProviderContactAttempt
+
+        for reused_id in (False, True):
+            with self.subTest(reused_id=reused_id), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                record.plan_generation += 1
+                engine = OrchestrationEngine(settings, store)
+                stale_keys = []
+                history = []
+                for dimension in ("generation", "assignment", "phase", "provider"):
+                    previous = record.model_copy(deep=True)
+                    previous.task_effect_ledger = []
+                    prior_assignment = assignment.model_copy(deep=True)
+                    phase = "dispatch"
+                    if dimension == "generation":
+                        previous.plan_generation -= 1
+                    elif dimension == "assignment":
+                        prior_assignment.task = "A different approved assignment"
+                    elif dimension == "phase":
+                        phase = "revision"
+                    else:
+                        prior_assignment.agent = ProviderName.PERPLEXITY
+                    key = reserve_provider_effect(previous, prior_assignment, phase=phase, max_task_budget_usd=10)
+                    record_provider_effect_observation(
+                        previous, prior_assignment, effect_key=key, phase=phase,
+                        outcome="submitted" if reused_id else "ambiguous",
+                        run_id="reused-run" if reused_id else None)
+                    history.extend(previous.task_effect_ledger)
+                    if dimension != "provider":
+                        engine._reserve_provider_daily_spend(prior_assignment, effect_key=key)
+                        engine._charge_spend(prior_assignment.agent, key, 0.01)
+                        stale_keys.append(key)
+                key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                record_provider_effect_observation(record, assignment, effect_key=key,
+                                                   phase="dispatch", outcome="ambiguous")
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                record.task_effect_ledger = history + record.task_effect_ledger
+                record.provider_contact_attempts.append(ProviderContactAttempt(
+                    assignment_sequence=assignment.sequence, provider=assignment.agent,
+                    ordinal=1, phase="dispatch", outcome="ambiguous_dispatch", error="Unknown submit outcome"))
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                    owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                    resolution="created", run_id="reused-run", note="Confirmed existing request"))
+                store.save(record)
+                # Resume from durable owner reconciliation, without another dispatch.
+                record = store.get(record.task_id)
+                run = record.provider_runs[-1]
+                run.status, run.result, run.raw = "completed", "done", {"usage": {"cost": 0.3}}
+                if reused_id:
+                    with patch.object(engine.provider_spend, "record_charge",
+                                      side_effect=sqlite3.OperationalError("interrupted settlement")):
+                        self.assertFalse(engine._settle_provider_spend(record, run, assignment.agent))
+                    engine = OrchestrationEngine(settings, store)
+                    record = store.get(record.task_id)
+                    self.assertTrue(engine._retry_spend_settlements(record))
+                    run = record.provider_runs[-1]
+                self.assertTrue(engine._settle_provider_spend(record, run, assignment.agent))
+                self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR), [])
+                self.assertAlmostEqual(engine.provider_spend.exposure(assignment.agent)[1],
+                                       0.3 + 0.01 * len(stale_keys))
+                self.assertEqual(set(engine.provider_spend.settlements(record.task_id)), {key})
+
+    def test_settlement_missing_or_conflicting_identity_preserves_reservation(self):
+        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+
+        for mismatch in ("generation", "provider", "interaction", "phase", "assignment"):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                record_provider_effect_observation(record, assignment, effect_key=key,
+                                                   phase="dispatch", outcome="submitted", run_id="same-run")
+                run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                                  plan_generation=record.plan_generation, run_id="same-run",
+                                  status="completed", raw={"usage": {"cost": 0.3}})
+                phase = "dispatch"
+                if mismatch == "generation":
+                    run.plan_generation = None
+                elif mismatch == "provider":
+                    run.provider = ProviderName.GROK
+                elif mismatch == "interaction":
+                    run.interaction_id = "missing-engine-interaction"
+                elif mismatch == "phase":
+                    phase = "revision"
+                else:
+                    record.plan.assignments[0].task = "Replacement assignment"
+                with patch.object(engine.provider_spend, "record_charge") as charge:
+                    self.assertFalse(engine._settle_provider_spend(record, run, assignment.agent, phase=phase))
+                charge.assert_not_called()
+                self.assertEqual(record.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                self.assertEqual(engine.provider_spend.settlements(record.task_id), {})
+
+    def test_resumed_revision_uses_its_interaction_or_owner_receipt_phase(self):
+        from director_orchestrator.approvals import (
+            apply_ambiguous_dispatch_resolution, record_provider_effect_observation, reserve_provider_effect,
+        )
+        from director_orchestrator.models import AmbiguousDispatchResolution, ProviderContactAttempt
+
+        for owner_reconciled in (False, True):
+            with self.subTest(owner_reconciled=owner_reconciled), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory, max_revisions=1)
+                engine = OrchestrationEngine(settings, store)
+                for index, phase in enumerate(("dispatch", "revision", "revision")):
+                    key = reserve_provider_effect(record, assignment, phase=phase, max_task_budget_usd=10)
+                    engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                    record_provider_effect_observation(
+                        record, assignment, effect_key=key, phase=phase,
+                        outcome="ambiguous" if owner_reconciled and index == 2 else "submitted",
+                        run_id=None if owner_reconciled and index == 2 else "reused-run")
+                    if index < 2:
+                        engine._charge_spend(assignment.agent, key, 0.01)
+                        record.revision_count = index
+                if owner_reconciled:
+                    record.provider_contact_attempts.append(ProviderContactAttempt(
+                        assignment_sequence=assignment.sequence, provider=assignment.agent, ordinal=1,
+                        phase="revision", outcome="ambiguous_dispatch", error="Unknown revision outcome"))
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                        owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                        resolution="created", run_id="reused-run", note="Confirmed revision request"))
+                else:
+                    interaction = engine._begin_provider_interaction(record, assignment,
+                                                                     phase="revision", attempt=1, effect_key=key)
+                    record.provider_runs.append(ProviderRun(
+                        provider=assignment.agent, assignment_sequence=assignment.sequence,
+                        plan_generation=record.plan_generation, interaction_id=interaction,
+                        run_id="reused-run", status="completed"))
+                store.save(record)
+                record = store.get(record.task_id)
+                run = record.provider_runs[-1]
+                run.status, run.result, run.raw = "completed", "done", {"usage": {"cost": 0.3}}
+                self.assertTrue(engine._settle_provider_spend(record, run, assignment.agent))
+                self.assertEqual(set(engine.provider_spend.settlements(record.task_id)), {key})
+                self.assertAlmostEqual(engine.provider_spend.exposure(assignment.agent)[1], 0.32)
+
     def test_packet_acknowledgement_read_failures_preserve_snapshot(self):
         from director_orchestrator.approvals import reserve_provider_effect
         from director_orchestrator.engine import AcknowledgementPersistencePending
@@ -608,8 +750,10 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                                            usage_check_providers=(provider.value,),
                                            perplexity_usage_probe_cost_ceiling_usd=0.01)
                         assignment = assignment.model_copy(update={"agent": provider})
+                        record.plan.assignments = [assignment]
                         engine = OrchestrationEngine(settings, store)
-                        run = ProviderRun(provider=provider, run_id="metered-run", status="completed", raw=raw)
+                        run = ProviderRun(provider=provider, run_id="metered-run", status="completed", raw=raw,
+                                          plan_generation=record.plan_generation)
                         if path == "probe":
                             adapter = AsyncMock()
                             adapter.usage_check.return_value = run
@@ -622,11 +766,14 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                         else:
                             key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
                             record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
-                                                               outcome="ambiguous")
+                                                               outcome="submitted" if path == "ordinary" else "ambiguous",
+                                                               run_id=run.run_id if path == "ordinary" else None)
                             run.assignment_sequence = assignment.sequence
                             engine._reserve_provider_daily_spend(assignment, effect_key=key)
                             record.provider_runs.append(run)
                             if path == "ordinary":
+                                run.interaction_id = engine._begin_provider_interaction(
+                                    record, assignment, phase="dispatch", attempt=1, effect_key=key)
                                 engine._settle_provider_spend(record, run, provider)
                             else:
                                 outcome = SimpleNamespace(result_packet={
@@ -1573,7 +1720,10 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
     def test_an_owner_reconciled_run_settles_its_ambiguous_dispatch(self) -> None:
         """Review 4112821088: a run the owner reconciled as created carries no observation of its own; its terminal
         settlement charges the ambiguous dispatch's reservation."""
-        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+        from director_orchestrator.approvals import (
+            apply_ambiguous_dispatch_resolution, record_provider_effect_observation, reserve_provider_effect,
+        )
+        from director_orchestrator.models import AmbiguousDispatchResolution, ProviderContactAttempt
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = self._world(directory)
             engine = OrchestrationEngine(settings, store)
@@ -1581,12 +1731,44 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
                                                outcome="ambiguous")
             engine._reserve_provider_daily_spend(assignment, effect_key=key)
-            run = ProviderRun(provider=ProviderName.GEMINI, assignment_sequence=assignment.sequence,
-                              run_id="owner-reconciled", status="completed", result="done",
-                              raw={"usage": {"cost": 0.3}})
-            engine._settle_provider_spend(record, run, ProviderName.GEMINI)
+            record.provider_contact_attempts.append(ProviderContactAttempt(
+                assignment_sequence=assignment.sequence, provider=assignment.agent, ordinal=1,
+                phase="dispatch", outcome="ambiguous_dispatch", error="Unknown submit outcome"))
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                resolution="created", run_id="owner-reconciled", note="Confirmed existing request"))
+            store.save(record)
+            record = store.get(record.task_id)
+            run = record.provider_runs[-1]
+            run.status, run.result, run.raw = "completed", "done", {"usage": {"cost": 0.3}}
+            self.assertTrue(engine._settle_provider_spend(record, run, ProviderName.GEMINI))
             self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.3)
             self.assertEqual(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR), [])
+
+    def test_unreconciled_run_cannot_claim_a_lone_ambiguous_reservation(self):
+        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            record_provider_effect_observation(record, assignment, effect_key=key,
+                                               phase="dispatch", outcome="ambiguous")
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            exposure = engine.provider_spend.exposure(assignment.agent)
+            run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                              plan_generation=record.plan_generation, run_id="some-other-run",
+                              status="completed", raw={"usage": {"cost": 0.3}})
+            with patch.object(engine.provider_spend, "record_charge") as charge:
+                self.assertFalse(engine._settle_provider_spend(record, run, assignment.agent))
+            charge.assert_not_called()
+            saved = store.get(record.task_id)
+            self.assertEqual(saved.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(saved.error, "spend_settlement_identity_unresolved")
+            self.assertEqual(engine.provider_spend.settlements(record.task_id), {})
+            self.assertEqual(engine.provider_spend.exposure(assignment.agent), exposure)
+            self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=timedelta(0)), [key])
 
     def test_missing_intent_charge_failure_preserves_hold_without_replay(self):
         with tempfile.TemporaryDirectory() as directory:
