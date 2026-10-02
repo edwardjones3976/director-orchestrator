@@ -996,6 +996,16 @@ def connect_until_deadline(
     if not _RESOLVER_SLOTS.acquire(blocking=False):
         raise TimeoutError("bridge name resolution capacity exhausted")
     found: dict[str, Any] = {}
+    slot_released = False
+    slot_lock = threading.Lock()
+
+    def release_slot() -> None:
+        nonlocal slot_released
+        with slot_lock:
+            if slot_released:
+                return
+            slot_released = True
+        _RESOLVER_SLOTS.release()
 
     def lookup() -> None:
         try:
@@ -1003,13 +1013,13 @@ def connect_until_deadline(
         except OSError as exc:
             found["error"] = exc
         finally:
-            _RESOLVER_SLOTS.release()
+            release_slot()
 
     try:
         resolver = threading.Thread(target=lookup, daemon=True)
         resolver.start()
     except BaseException:
-        _RESOLVER_SLOTS.release()
+        release_slot()
         raise
     resolver.join(remaining)
     if resolver.is_alive():
