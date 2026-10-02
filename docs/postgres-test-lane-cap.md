@@ -20,7 +20,7 @@ a private directory, owned by postgres, with the key set to mode 0600.
 are not printed. `Dsn` recovers the TLS configuration from the owned lane.
 
 ```powershell
-.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -ContainerName director-trusted-collect-test -HostPort 55434 -Python C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -TestNames tests.test_completion_scorecard.TrustedCollectionLaneTests
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -ContainerName director-trusted-collect-test -HostPort 55434 -Python <venv-python> -TestNames tests.test_completion_scorecard.TrustedCollectionLaneTests
 ```
 
 The existing ownership, port and slot refusals still apply. Stop, Test's

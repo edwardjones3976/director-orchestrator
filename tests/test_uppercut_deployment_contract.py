@@ -25,6 +25,7 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:01 UTC | BEGIN]]
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -1450,7 +1451,7 @@ class LongTableDeploymentContractTests(unittest.TestCase):
             "LANGGRAPH_RUNTIME_CHECKPOINT_PATH=/data/long-table-langgraph-runtime.sqlite3",
             "LANGGRAPH_RUNTIME_LEDGER_PATH=/data/long-table-langgraph-ledger.sqlite3",
             "COMPLETION_GATE_STORE_PATH=/data/long-table-completion-gates.sqlite3",
-            "REPOSITORY_SNAPSHOT_HOST_PATH=C:/Users/edwar/.director-snapshots/long-table-main",
+            "REPOSITORY_SNAPSHOT_HOST_PATH=<snapshot-dir>",
             "REPOSITORY_SNAPSHOT_ROOT=/repository",
         )
         for line in expected:
@@ -1538,17 +1539,163 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         self.assertIn('$text -ceq "false"', readiness)
         self.assertIn("-Values $values", self.script)
 
-    def test_snapshot_identity_matches_the_shipped_profile(self):
+    def test_snapshot_identity_accepts_operator_path_not_placeholder(self):
         snapshot_line = next(
             line
             for line in self.profile.splitlines()
             if line.startswith("REPOSITORY_SNAPSHOT_HOST_PATH=")
         )
         snapshot_path = snapshot_line.split("=", 1)[1]
-        self.assertIn(
+        self.assertEqual(snapshot_path, "<snapshot-dir>")
+        identity = self.script[
+            self.script.index("function Assert-ProfileIdentity") :
+            self.script.index("function Assert-NoProfileCollisions")
+        ]
+        self.assertNotIn(
             f'[string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "{snapshot_path}"',
-            self.script,
+            identity,
         )
+        self.assertNotIn('-cne "<snapshot-dir>"', identity)
+        self.assertIn("[System.IO.Path]::IsPathRooted($snapshotHost)", identity)
+        self.assertIn('$snapshotHost.Contains("<")', identity)
+        self.assertIn('[string]$Values["REPOSITORY_SNAPSHOT_ROOT"] -cne "/repository"', identity)
+        snapshot = self.script[
+            self.script.index("function Assert-LongTableSnapshot") :
+            self.script.index("function Assert-N8nWorkflowPublishCapability")
+        ]
+        self.assertIn("Test-Path -LiteralPath $snapshotPath -PathType Container", snapshot)
+        self.assertIn("git -C $snapshotPath remote get-url origin", snapshot)
+        self.assertIn("status --porcelain --untracked-files=all", snapshot)
+        self.assertIn("git -C $snapshotPath rev-parse origin/main", snapshot)
+        identity_call = self.script.index("Assert-ProfileIdentity -Values $values")
+        snapshot_call = self.script.index("Assert-LongTableSnapshot -Values $values")
+        self.assertLess(identity_call, snapshot_call)
+
+    def test_configured_snapshot_caller_flow_uses_real_directory(self):
+        """Exercise the shipped identity then snapshot guards, not the placeholder."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            snapshot = Path(raw) / "long-table-main"
+            snapshot.mkdir()
+            # The probe blanks global and system git config. Build the fixture
+            # under that same config, with autocrlf off, so a Windows runner
+            # whose global autocrlf is true cannot commit one way and then
+            # show a dirty tree once the probe drops that setting.
+            git_home = Path(raw) / "git-config"
+            git_home.mkdir()
+            global_config = git_home / "global"
+            system_config = git_home / "system"
+            global_config.write_text("", encoding="utf-8")
+            system_config.write_text("", encoding="utf-8")
+            git_env = os.environ.copy()
+            git_env["GIT_CONFIG_GLOBAL"] = str(global_config)
+            git_env["GIT_CONFIG_SYSTEM"] = str(system_config)
+            git_env["GIT_CONFIG_NOSYSTEM"] = "1"
+            git_env["GIT_CONFIG_COUNT"] = "1"
+            git_env["GIT_CONFIG_KEY_0"] = "safe.directory"
+            git_env["GIT_CONFIG_VALUE_0"] = "*"
+
+            def git(*args: str) -> None:
+                subprocess.run(
+                    ["git", *args],
+                    cwd=snapshot,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                )
+
+            git("init", "--quiet")
+            git("config", "user.email", "snapshot-probe@example.test")
+            git("config", "user.name", "Snapshot Probe")
+            git("config", "core.autocrlf", "false")
+            git("config", "core.safecrlf", "false")
+            git("config", "core.filemode", "false")
+            (snapshot / "README").write_bytes(b"probe\n")
+            git("add", "README")
+            git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "probe")
+            git(
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/edwardjones3976/long-table-bid-whist.git",
+            )
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+            missing = Path(raw) / "missing-snapshot"
+            probe = POWERSHELL_PRELUDE + r'''
+$env:GIT_CONFIG_GLOBAL = [IO.Path]::GetTempFileName()
+$env:GIT_CONFIG_SYSTEM = [IO.Path]::GetTempFileName()
+$env:GIT_CONFIG_NOSYSTEM = '1'
+& git config --file $env:GIT_CONFIG_GLOBAL core.autocrlf false
+& git config --file $env:GIT_CONFIG_GLOBAL core.safecrlf false
+& git config --file $env:GIT_CONFIG_GLOBAL core.filemode false
+& git config --file $env:GIT_CONFIG_GLOBAL --add safe.directory '*'
+$launcher = Get-Content -LiteralPath %s -Raw
+foreach ($name in 'Assert-ProfileIdentity', 'Assert-LongTableSnapshot') {
+    $start = $launcher.IndexOf("function $name {")
+    if ($start -lt 0) { throw "the launcher no longer defines $name" }
+    $end = $launcher.IndexOf("`nfunction ", $start + 10)
+    Invoke-Expression $launcher.Substring($start, $end - $start)
+}
+$ProfileName = 'long-table'
+$profilePath = '.env.long-table'
+$selected = [ordered]@{
+    APP_ENV = 'long-table'
+    DIRECTOR_COMPOSE_PROJECT_NAME = 'long-table-director'
+    DIRECTOR_HOST_PORT = '38080'
+    N8N_HOST_PORT = '35678'
+    SQLITE_PATH = '/data/long-table.sqlite3'
+    PROJECT_ALLOWLIST = 'long-table-bid-whist'
+    REPOSITORY_ALLOWLIST = 'edwardjones3976/long-table-bid-whist'
+    ALLOWED_STARTING_REFS = 'main'
+}
+function Invoke-CallerFlow {
+    param([string]$HostPath)
+    $values = @{
+        APP_ENV = 'long-table'
+        DIRECTOR_COMPOSE_PROJECT_NAME = 'long-table-director'
+        DIRECTOR_HOST_PORT = '38080'
+        N8N_HOST_PORT = '35678'
+        SQLITE_PATH = '/data/long-table.sqlite3'
+        PROJECT_ALLOWLIST = 'long-table-bid-whist'
+        REPOSITORY_ALLOWLIST = 'edwardjones3976/long-table-bid-whist'
+        ALLOWED_STARTING_REFS = 'main'
+        ORACLE_AUTOMERGE_ENABLED = 'false'
+        ORACLE_AUTOMERGE_KILL_SWITCH = 'true'
+        MAX_TASK_BUDGET_USD = '1.00'
+        MAX_DAILY_PROVIDER_BUDGET_USD = '5.00'
+        REPOSITORY_SNAPSHOT_ROOT = '/repository'
+        REPOSITORY_SNAPSHOT_HOST_PATH = $HostPath
+    }
+    $stage = 'identity'
+    try {
+        Assert-ProfileIdentity -Values $values
+        $stage = 'snapshot'
+        Assert-LongTableSnapshot -Values $values
+        'ok|identity+snapshot'
+    } catch {
+        $stage + '|' + $_.Exception.Message
+    }
+}
+Write-Output ('placeholder|' + (Invoke-CallerFlow '<snapshot-dir>'))
+Write-Output ('relative|' + (Invoke-CallerFlow 'snapshots/long-table-main'))
+Write-Output ('missing|' + (Invoke-CallerFlow %s))
+Write-Output ('configured|' + (Invoke-CallerFlow %s))
+''' % (
+                _ps_literal(str(ROOT / "scripts" / "windows-isolated-live-validation.ps1")),
+                _ps_literal(str(missing)),
+                _ps_literal(str(snapshot.resolve())),
+            )
+            results = dict(
+                line.split("|", 1) for line in _run_powershell(probe).splitlines() if "|" in line
+            )
+        self.assertTrue(results["placeholder"].startswith("identity|"), results["placeholder"])
+        self.assertIn("snapshot boundary", results["placeholder"])
+        self.assertTrue(results["relative"].startswith("identity|"), results["relative"])
+        self.assertIn("snapshot boundary", results["relative"])
+        self.assertTrue(results["missing"].startswith("snapshot|"), results["missing"])
+        self.assertIn("unavailable", results["missing"])
+        self.assertEqual(results["configured"], "ok|identity+snapshot")
 
     def test_early_preflight_failure_stops_previously_running_writers(self):
         self.assertIn('catch {\n    $outerFailure = $_', self.script)
