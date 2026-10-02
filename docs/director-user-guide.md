@@ -45,9 +45,10 @@ document inconsistencies, CI fixes, and provider connection or plumbing
 problems, to OpenAI Codex, handed over through the Codex CLI (`codex exec` with a
 written packet) or through the ChatGPT/Codex Director thread, with no limit on
 either channel. The owner hierarchy is Codex #1, Claude #2, then Cursor #3.
-Cursor is an administrator. Claude's 2026-09-22 deputy appointment is scoped
-to Director-Orchestrator as completion lead until revoked/replaced, and does
-not grant general authority over unrelated projects. Explicitly appointed
+Cursor is an administrator. Claude's 2026-09-22 deputy appointment remains
+current until the owner revokes or replaces it. The owner separately appointed
+Claude as Director-Orchestrator completion lead on 2026-10-02; that project
+assignment excludes Homemade LLM and unrelated projects. Explicitly appointed
 project Directors and their scopes are preserved. For the canonical scope,
 see [project leadership](project-leadership.md). Existing independent-review,
 deterministic policy and deployment gates remain. The Director still verifies, pushes,
