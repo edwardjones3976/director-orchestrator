@@ -305,41 +305,9 @@ providers:
     standing_role: "chatgpt_codex_director"
     leadership_authority: "owner_appointed_project_director_no_implicit_runtime_activation"
     investigator_responsibility: "OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority."
-    # The three canonical identities from docs/team-operating-charter.md and
-    # prompts/director-system.md. Coordination, planning, and acceptance are
-    # duties nested under these identities; they never replace or blur them,
-    # because only the identity carries the voting boundary.
-    function_separation_rule: "The configured coordinating lane keeps Moderator, Participant, and Director functions separate in every project-local record; they are never collapsed or renamed into duty buckets."
-    functions:
-      - id: "moderator"
-        votes: false
-        duties:
-          - "frame the question and bounded options neutrally"
-          - "request positions without leading language"
-          - "prevent premature cross-exposure"
-          - "run the counter-bias pass against the favored view"
-        boundary: "Moderating never removes, reduces, or defers OpenAI's vote. The counter-bias pass is vote-free only so that it cannot pre-empt synthesis, where Participant casts its one vote or records an explicit abstention."
-      - id: "participant"
-        votes: true
-        vote_count: 1
-        vote_weight: 2.5
-        duties:
-          - "record an independently formed initial position before specialist conclusions are exposed"
-          - "cast the single existing OpenAI advisory vote during synthesis or record an explicit abstention"
-        boundary: "Participant records the one authenticated OpenAI position and, at synthesis, its single advisory vote at full weight or an explicit abstention. OpenAI retains its right to vote in every debate it joins, including every debate it moderates; only OpenAI's own abstention forgoes exercising it. The votes, vote_count, and vote_weight fields describe entitlement, not mandatory participation. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a second OpenAI vote and never the first."
-      - id: "director"
-        votes: false
-        duties:
-          - "plan"
-          - "decompose"
-          - "route"
-          - "coordinate"
-          - "synthesize"
-          - "acceptance_review"
-          - "review_handoff"
-          - "milestone_reporting"
-          - "investigator"
-        boundary: "Director authority does not create a vote or a participation record that did not actually occur."
+    # The Participant vote is not an OpenAI standing grant. Appointment binds it
+    # through appointed_director, including when that provider is openai.
+    coordination_functions: "bound_by_appointed_director"
     participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
     preserved_boundaries:
       # See docs/contribution-attribution-policy.md#sole-author-rule.
@@ -375,9 +343,47 @@ this_template_does_not_change:
   - "Slack behaviour"
   - "deterministic policy in src/director_orchestrator/policy.py"
 
+# Filled in when the owner appoints the project Director. The three functions
+# and the sole Participant vote live here, not under a provider, so a non-OpenAI
+# appointment cannot inherit OpenAI's vote or weight.
+appointed_director:
+  provider: "<provider key of the owner-appointed Director>"
+  function_separation_rule: "The appointed Director keeps Moderator, Participant, and Director functions separate in every project-local record; they are never collapsed or renamed into duty buckets."
+  functions:
+    - id: "moderator"
+      votes: false
+      duties:
+        - "frame the question and bounded options neutrally"
+        - "request positions without leading language"
+        - "prevent premature cross-exposure"
+        - "run the counter-bias pass against the favored view"
+      boundary: "Moderating never removes, reduces, or defers the appointed Director's vote. The counter-bias pass is vote-free only so that it cannot pre-empt synthesis, where Participant casts its one vote or records an explicit abstention."
+    - id: "participant"
+      votes: true
+      vote_count: 1
+      vote_weight: "<charter voting_power of appointed_director.provider>"
+      duties:
+        - "record an independently formed initial position before specialist conclusions are exposed"
+        - "cast the appointed Director's single existing advisory vote during synthesis or record an explicit abstention"
+      boundary: "Participant records the one authenticated position of the appointed Director and, at synthesis, its single advisory vote at that provider's charter weight or an explicit abstention. The appointed Director retains its right to vote in every debate it joins, including every debate it moderates; only that Director's own abstention forgoes exercising it. The votes, vote_count, and vote_weight fields describe entitlement, not mandatory participation. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a second vote for the appointed Director and never the first."
+    - id: "director"
+      votes: false
+      duties:
+        - "plan"
+        - "decompose"
+        - "route"
+        - "coordinate"
+        - "synthesize"
+        - "acceptance_review"
+        - "review_handoff"
+        - "milestone_reporting"
+        - "investigator"
+      boundary: "Director authority does not create a vote or a participation record that did not actually occur."
+
 project_local_bindings:
   project_id: "<short-stable-project-id>"
   recorded_at: "<ISO-8601 timestamp>"
+  appointed_director: "<same provider key as appointed_director.provider>"
   lanes_in_use: []          # subset of providers above actually staffed this project
   deviations:
     - area: "<responsibility area>"

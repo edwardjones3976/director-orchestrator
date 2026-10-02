@@ -461,19 +461,28 @@ class CharterMirrorTests(unittest.TestCase):
         director_lane = self.directive["director"]
         self.assertEqual(director_lane, "openai")
         functions = self.profiles[director_lane]["roles"]["director_functions"]
-        expected = self.contract["providers"][director_lane]["functions"]
-        self.assertEqual(len(functions), 3)
-        for actual, contract in zip(functions, expected):
-            self.assertEqual(actual["id"], contract["id"])
-            self.assertEqual(actual["votes"], contract["votes"])
-            self.assertEqual(actual["vote_count"], contract.get("vote_count"))
-            self.assertEqual(actual["vote_weight"], contract.get("vote_weight"))
-            self.assertEqual(actual["duties"], contract["duties"])
-            self.assertEqual(actual["boundary"], contract["boundary"])
+        appointed = self.contract["appointed_director"]
+        self.assertEqual(appointed["provider"], "<provider key of the owner-appointed Director>")
+        self.assertNotIn("functions", self.contract["providers"]["openai"])
+        self.assertEqual(
+            self.contract["providers"]["openai"]["coordination_functions"],
+            "bound_by_appointed_director",
+        )
+        expected = appointed["functions"]
+        self.assertEqual([item["id"] for item in functions], [item["id"] for item in expected])
+        self.assertEqual([item["votes"] for item in functions], [item["votes"] for item in expected])
+        participant_template = next(item for item in expected if item["id"] == "participant")
+        self.assertEqual(
+            participant_template["vote_weight"],
+            "<charter voting_power of appointed_director.provider>",
+        )
+        self.assertNotIn("OpenAI", participant_template["boundary"])
+        self.assertIn("appointed Director", participant_template["duties"][1])
         director = next(item for item in functions if item["id"] == "director")
         self.assertEqual(director["duties"], self.directive["duties"])
         participant = next(item for item in functions if item["id"] == "participant")
         self.assertEqual(participant["vote_weight"], self.charter["committee"]["members"][director_lane]["voting_power"])
+        self.assertEqual(participant["vote_weight"], 2.5)
         for lane, profile in self.profiles.items():
             self.assertIsNone(profile["roles"]["openai_functions"], lane)
             if lane != director_lane:
