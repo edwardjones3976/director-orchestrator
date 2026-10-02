@@ -1538,7 +1538,9 @@ def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: 
                            if owned else "does not show LangGraph owning intake under this deployment's live writer "
                            "lease with legacy intake disabled and a positive fence."),
                         _CONSISTENCY_SOURCE, facts, at, **binding,
-                        valid_until=expires - FRESH_FOR if owned else None)
+                        # The lease must still be live at the final cutoff. Subtracting FRESH_FOR would demand a
+                        # five-minute remaining lifetime the 60 s renewing lease never has (review 4168742770).
+                        valid_until=expires if owned else None)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:

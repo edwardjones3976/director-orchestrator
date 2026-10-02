@@ -3080,9 +3080,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         # A lease that is live at observation time but expires before the collection finalizes cannot
         # remain a PASS: the existing FRESH_FOR/valid_until finalization path revalidates it to UNKNOWN.
         expiring = self.world(evaluate_rules=True)
-        expiring.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(minutes=10)).isoformat()
+        expiring.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(minutes=5)).isoformat()
         expiring.until = WORLD_NOW + timedelta(minutes=6)
         self.assertEqual(expiring.state("05"), "UNKNOWN")
+        # The production lease (PrimaryTaskCoordinator DEFAULT_LEASE_SECONDS = 60) still live at the final cutoff
+        # is a PASS in the direct-rule fixture: no five-minute remaining lifetime is demanded (review 4168742770).
+        renewed = self.world(evaluate_rules=True)
+        renewed.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(seconds=60)).isoformat()
+        renewed.until = WORLD_NOW + timedelta(seconds=30)
+        self.assertEqual(renewed.state("05"), "PASS")
 
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")

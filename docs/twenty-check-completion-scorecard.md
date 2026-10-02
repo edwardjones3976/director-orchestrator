@@ -278,8 +278,10 @@ is no longer read for 05, so it can neither promote nor fail it. Check 05 remain
 and contained: a direct read of a Director-written row is not independent of the candidate process
 that authored its generation, pending the separately assigned reviewed-image admission gate (A3)
 that establishes process/store consistency. Not covered: the old health predicate
-also compared the stored fence with the process's in-memory generation; the deployment checks (one
-Director per deployment) carry that instead. Check 07 is unchanged and stays contained: its
+also compared the stored fence with the process's in-memory generation; the deployment checks do not
+establish that agreement, so A3 must (reviews 4168286426, 4168299362). The lease must still be live at
+the collection's final cutoff (`valid_until` is the lease expiry); a collection that outlasts one
+60-second lease period reports UNKNOWN until A3 re-reads the authority row at the final cutoff. Check 07 is unchanged and stays contained: its
 in-memory historical-plan and reconciliation-hold counters have no independent source yet.
 
 Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
