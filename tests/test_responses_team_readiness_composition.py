@@ -980,6 +980,16 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             usage_count = connection.execute(
                 f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_usage").fetchone()["n"]
             self.assertEqual(1, usage_count)
+            joined = connection.execute(
+                f"SELECT u.attempt_digest, u.observed_tokens, s.task_id, s.provider_id, a.status "
+                f"FROM {self.schema}.director_primary_provider_usage u "
+                f"JOIN {self.schema}.director_primary_provider_spend s USING(attempt_digest) "
+                f"JOIN {self.schema}.director_primary_provider_attempt a USING(attempt_digest) "
+                "WHERE s.task_id=%s ORDER BY a.event_sequence", (task_id,)).fetchall()
+            self.assertEqual(["STARTED", "SUCCEEDED"], [row["status"] for row in joined])
+            self.assertEqual({(expected_attempt_digest, task_id, "openai", 150)},
+                             {(row["attempt_digest"], row["task_id"], row["provider_id"],
+                               row["observed_tokens"]) for row in joined})
 
     # --- the selection must still hold at admission and before I/O ---
 
