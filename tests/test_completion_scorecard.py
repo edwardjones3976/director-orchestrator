@@ -105,7 +105,7 @@ import re
 import tempfile
 import time
 import unittest
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -315,6 +315,8 @@ def consistency_fixture():
             "generation": {"manifest_sha256": PIN, "acceptance_mode": "owner-local-evidence-v1", "candidate_commit": SHA,
                            "candidate_tree": "d" * 40, "adoption": adoption_fixture(), "image_id": IMAGE},
             "captured_at": "2026-09-12T20:00:00+00:00", "intake_fencing_generation": 83, "counts": counts,
+            "intake_authority": {"intake_owner": "langgraph", "legacy_new_intake_disabled": True,
+                                 "fencing_generation": 83, "lease_live": True, "owner_token_matches": True},
             "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget],
                                   "approval_receipts": [],
                                   "result_artifacts": [{"assignment_id": PAID_TASK + "-A1",
@@ -743,6 +745,8 @@ class World:
         with patch.object(sc, "_runtime", side_effect=runtime_probe), \
                 patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "_http_client", client), \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack), \
+                patch.object(sc, "_trusted_collection", return_value=(self.consistency, self.captures)) \
+                if evaluate_rules else nullcontext(), \
                 patch.object(sc, "_CONTAINED_RUNTIME", tuple(
                     key for key in sc._CONTAINED_RUNTIME
                     if not evaluate_rules or key not in ("01", "02", "03", "04", "05", "09", "19"))):
@@ -1292,8 +1296,8 @@ class ScorecardGitTrustTests(unittest.TestCase):
             receipt_path.write_text(json.dumps(receipt))
             report = sc.score(SHA, runtime_observations(evaluate_rules=True), now=NOW)
             self.assertIs(report["attested"], True)
-            self.assertEqual(report["passed"], 2)
-            self.assertEqual(report["percent"], 10)
+            self.assertEqual(report["passed"], 1)
+            self.assertEqual(report["percent"], 5)
             self.assertFalse(sc.report_is_attested(report))  # not finalized by launcher
             limitations = " ".join(report["limitations"])
             self.assertIn(", ".join(sorted(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE)),
@@ -1643,6 +1647,12 @@ class TrustedCollectionLaneTests(unittest.TestCase):
             self.assertEqual(captures["lanes"]["claude"]["product"], "anthropic-claude")
             for surface in captures["lanes"]["claude"]["surfaces"].values():
                 self.assertEqual(surface["executable_sha256"], executable)
+            # 05 reads the real intake-authority row in the same snapshot; the lease token never leaves the evaluator.
+            authority = consistency["intake_authority"]
+            self.assertEqual(set(authority), {"intake_owner", "legacy_new_intake_disabled", "fencing_generation",
+                                              "lease_live", "owner_token_matches"})
+            self.assertNotIn("owner_token\"", json.dumps(consistency, default=str))
+            self.assertNotEqual(sc._intake_authority_observation(started, runtime, consistency).passed, None)
             observations = [sc._reconciliation_observation(started, runtime, consistency),
                             sc._acceptance_observation(started, SHA, consistency),
                             *sc._capture_observations(started, runtime, captures, None),
@@ -2185,7 +2195,9 @@ class CompletionScorecardTests(unittest.TestCase):
 
     def test_runtime_rules_grade_observed_fields_and_keep_capture_unknown(self):
         report = sc.score(SHA, runtime_observations(evaluate_rules=True), now=NOW, runtime_sha=SHA, image_id=IMAGE)
-        self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 2)
+        # Only 19 from health; 05 needs the evaluator's store snapshot, absent here.
+        self.assertEqual(sum(item["status"] == "PASS" for item in report["checks"]), 1)
+        self.assertEqual(report["checks"][4]["status"], "UNKNOWN")
         self.assertEqual(report["percent"], "UNATTESTED")
         self.assertEqual(report["checks"][11]["status"], "UNKNOWN")
         self.assertFalse(report["activation_authorized"])
@@ -2246,7 +2258,7 @@ class CompletionScorecardTests(unittest.TestCase):
         for binding in ({"runtime_sha": OTHER}, {"image_id": "sha256:" + "d" * 64}):
             self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(SHA, observed, now=NOW, **binding)["checks"]), 0)
         # A build candidate and runtime may legitimately differ; they stay separate.
-        self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(OTHER, observed, now=NOW, runtime_sha=SHA)["checks"]), 2)
+        self.assertEqual(sum(item["status"] == "PASS" for item in sc.score(OTHER, observed, now=NOW, runtime_sha=SHA)["checks"]), 1)
 
     def test_wrong_project_endpoint_or_container_port_is_not_observed(self):
         wrong = health()
@@ -2894,7 +2906,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertTrue(all(name and trust in {"T", "C"} for name, trust in inputs))
         candidate = {key for key, inputs in sc.COLLECTOR_INPUTS.items()
                      if any(trust == "C" for _, trust in inputs)}
-        self.assertEqual(candidate, {"01", "03", "04", "05", "06", "07", "08",
+        self.assertEqual(candidate, {"01", "03", "04", "06", "07", "08",
                                      "09", "10", "11", "12", "15", "19", "20"})
         self.assertEqual(sc._PENDING_TRUST_PROOF, {"02", "17"})
         contained = candidate | sc._PENDING_TRUST_PROOF
@@ -2958,7 +2970,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertIn("label=com.docker.compose.project=" + DEPLOYMENT, first)
         self.assertIn("label=com.docker.compose.service=orchestrator", first)
         self.assertEqual(world.opened, [HEALTH])
-        self.assertEqual(row(report, "05")["evidence"][0]["source"], HEALTH)
+        self.assertEqual(row(report, "05")["evidence"][0]["source"], sc._CONSISTENCY_SOURCE)
         cases = []
         foreign = self.world(evaluate_rules=True)
         foreign.rows[0]["Config"]["Labels"]["com.docker.compose.project"] = "director-orchestrator"
@@ -2983,8 +2995,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         # A foreign candidate health response invalidates health assertions, not
         # independently bound daemon/store facts. Live containment still applies.
         observed = wrong_env.report(only_deployment=True)
-        for key in ("05", "19"):
-            self.assertEqual(row(observed, key)["status"], "UNKNOWN")
+        self.assertEqual(row(observed, "19")["status"], "UNKNOWN")
+        self.assertEqual(row(observed, "05")["status"], "PASS")  # store-bound, not health
         self.assertEqual(row(observed, "17")["status"], "PASS")  # direct rule fixture only
 
     def test_no_committed_channel_or_legacy_endpoint(self):
@@ -3026,9 +3038,27 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_intake_owner_needs_the_live_writer_lease_05(self):
         self.assertEqual(self.world(evaluate_rules=True).state("05"), "PASS")
-        expired = self.world(evaluate_rules=True)
-        expired.payload["langgraph_primary"]["writer_lease_ready"] = False
-        self.assertEqual(expired.state("05"), "FAIL")
+        # Each persisted-authority failure fails 05, even while candidate health claims ownership.
+        for field, value in (("lease_live", False), ("owner_token_matches", False), ("intake_owner", "legacy"),
+                             ("legacy_new_intake_disabled", False), ("fencing_generation", 0)):
+            with self.subTest(field=field):
+                world = self.world(evaluate_rules=True)
+                world.consistency["intake_authority"][field] = value
+                self.assertEqual(world.state("05"), "FAIL")
+        # Health alone never establishes ownership: no snapshot, no PASS.
+        absent = self.world(evaluate_rules=True)
+        absent.consistency = None
+        self.assertEqual(absent.state("05"), "UNKNOWN")
+        for broken in ({"intake_authority": None}, {"intake_authority": {"lease_live": "true"}},
+                       {"generation": {"manifest_sha256": "f" * 64}}):
+            with self.subTest(broken=broken):
+                world = self.world(evaluate_rules=True)
+                world.consistency.update(broken)
+                self.assertEqual(world.state("05"), "UNKNOWN")
+        # A candidate reporting no lease cannot fail a check its own store proves either.
+        unhealthy = self.world(evaluate_rules=True)
+        unhealthy.payload["langgraph_primary"]["writer_lease_ready"] = False
+        self.assertEqual(unhealthy.state("05"), "PASS")
 
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")

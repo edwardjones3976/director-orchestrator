@@ -582,16 +582,7 @@ def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observat
                        f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at, end)
     binding = runtime.binding
     result = []
-    # The persisted owner row alone is not ownership: this process must hold the live writer lease.
-    owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True,
-                                  "writer_lease_ready": True})
-    generation = primary.get("intake_fencing_generation")
-    if owner is not None:
-        owner = owner and type(generation) is int and generation > 0
-    result.append(_observation("05", owner, "Observed database-derived intake owner and fencing health.",
-                               health_url, {key: primary.get(key) for key in
-                               ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation",
-                                "writer_lease_ready")}, at, **binding))
+    # 05 is graded from the evaluator's own store snapshot (_intake_authority_observation), not health.
     active = _all_fields(primary, {"primary_runtime_active": True, "effect_executor_ready": True,
                                    "reconciliation_worker_ready": True})
     if active is not None:
@@ -1465,7 +1456,8 @@ COLLECTOR_INPUTS = {
     "04": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + (
         ("n8n active status workflow, executions and credential update time via bound database", "T"),
         ("candidate n8n/workflows/director-status.json", "C"),),
-    "05": _DEPLOYMENT_INPUTS + (("/health intake owner, legacy disablement, writer lease and fence", "C"),),
+    "05": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (
+        ("intake-authority row in the same snapshot; lease token compared with owner settings", "T"),),
     "06": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
     "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
     "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
@@ -1500,6 +1492,38 @@ _CONTAINED_RUNTIME = tuple(
     if (key in _PENDING_TRUST_PROOF or any(trust == "C" for _, trust in inputs))
     and key not in _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE
 )
+
+
+def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
+    """05 from the persisted intake-authority row in the evaluator's own snapshot: LangGraph owns intake, legacy
+    intake is disabled, the fence is positive, and a live writer lease is held under this deployment's owner token."""
+    binding = runtime.binding
+    if consistency is None:
+        return _observation("05", None, "The evaluator-owned read-only consistency snapshot was unavailable; the "
+                            "candidate's health is not ownership evidence.", _CONSISTENCY_SOURCE, {}, at, **binding)
+    authority = consistency.get("intake_authority")
+    generation = consistency.get("generation") if isinstance(consistency.get("generation"), dict) else {}
+    pin = generation.get("manifest_sha256")
+    if (not isinstance(pin, str) or not _HEX64.fullmatch(pin)
+            or not runtime.read_in_window(consistency.get("captured_at"))
+            or not _same(pin, runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))):
+        return _observation("05", None, "The consistency snapshot is not bound to the running generation pin.",
+                            _CONSISTENCY_SOURCE, {}, at, **binding)
+    if not isinstance(authority, dict):
+        return _observation("05", None, "The snapshot has no intake-authority row.", _CONSISTENCY_SOURCE, {}, at, **binding)
+    fence = authority.get("fencing_generation")
+    facts = {key: authority.get(key) for key in
+             ("intake_owner", "legacy_new_intake_disabled", "fencing_generation", "lease_live", "owner_token_matches")}
+    if any(type(authority.get(key)) is not bool
+           for key in ("legacy_new_intake_disabled", "lease_live", "owner_token_matches")) or type(fence) is not int:
+        return _observation("05", None, "The intake-authority row is malformed.", _CONSISTENCY_SOURCE, facts, at, **binding)
+    owned = (authority.get("intake_owner") == "langgraph" and authority["legacy_new_intake_disabled"]
+             and authority["lease_live"] and authority["owner_token_matches"] and fence > 0)
+    return _observation("05", owned, "The persisted intake authority read in the evaluator's snapshot "
+                        + ("shows LangGraph owning intake under this deployment's live writer lease with a positive fence."
+                           if owned else "does not show LangGraph owning intake under this deployment's live writer "
+                           "lease with legacy intake disabled and a positive fence."),
+                        _CONSISTENCY_SOURCE, facts, at, **binding)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -2975,6 +2999,8 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     except _SOURCE_ERRORS:
         return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
                              "Docker Compose labels and Director /health", {}, at),
+                _observation("05", None, "Director identity could not be verified, so no store snapshot is bound to it.",
+                             _CONSISTENCY_SOURCE, {}, at),
                 *[_observation(key, None, "collector not yet trusted",
                                _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
                                {}, at, candidate_sha=candidate_sha if key == "17" else None)
@@ -3067,6 +3093,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                     put(_approval_observations(at, runtime, t, approval_task, consistency))
             except _SOURCE_ERRORS:
                 unknown(("06", "08"), "The approval task could not be read; no retry was made.", _SLACK_SOURCE)
+        try:
+            put([_intake_authority_observation(at, runtime, consistency)])
+        except _SOURCE_ERRORS:
+            unknown(("05",), "The intake-authority snapshot could not be evaluated.", _CONSISTENCY_SOURCE)
         try:
             put([_reconciliation_observation(at, runtime, consistency)])
         except _SOURCE_ERRORS:
