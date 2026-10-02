@@ -121,7 +121,11 @@ try {
     $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
         '-v', "${code}:/code:ro",
         '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision", '-e', "ADAPTER_STEPS=$Steps",
-        '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token',
+        '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $dockerArgs += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
+    }
+    $dockerArgs += @(
         '--entrypoint', 'python', $Image, '/code/train_adapter.py',
         '--rows', ("/workspace/rows/" + (Split-Path $Rows -Leaf)),
         '--base', $Base, '--revision', $Revision, '--steps', "$Steps",
@@ -129,7 +133,6 @@ try {
     if ($Winner) { $dockerArgs += '--winner' }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
         $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
-        $dockerArgs += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
     }
     if ($Probe) {
         $dockerArgs += @('--probe', '--probe-seq-len', "$ProbeSeqLen")

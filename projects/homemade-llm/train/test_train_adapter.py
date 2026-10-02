@@ -265,6 +265,53 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIn("m1-expected-qwen3-14b.json", text)
         self.assertIn("HF_HUB_OFFLINE", text)
 
+    def test_wrapper_serialized_docker_arguments_keep_offline_flags_before_image(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate Docker argument construction")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        # Evaluate only the argument-building block, never the wrapper or its setup.
+        start = source.index("    $dockerArgs = ")
+        end = source.index("    function Get-AdapterState", start)
+        construction = source[start:end]
+        for digests in ("", "dummy-digests.json"):
+            with self.subTest(expected_digests=bool(digests)):
+                command = """
+$ErrorActionPreference = 'Stop'
+$mounts = @('-v', 'dummy:/workspace/hf')
+$name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
+$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
+$Rows = 'accepted.jsonl'; $runId = 'dummy-run'
+$Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
+$PSBoundParameters = @{ ProbeRowsTotal = 96 }
+""" + f"$ExpectedDigests = '{digests}'\n" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+                completed = subprocess.run(
+                    [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                args = json.loads(completed.stdout)
+                image = args.index("dummy-image")
+                self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
+                self.assertEqual(args[image + 1], "/code/train_adapter.py")
+                options, trainer = args[:image], args[image + 2:]
+                self.assertNotIn("-e", trainer)
+                for flag in ("HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1"):
+                    if digests:
+                        self.assertEqual(args.count(flag), 1)
+                        self.assertEqual(options[options.index(flag) - 1], "-e")
+                    else:
+                        self.assertNotIn(flag, args)
+                if digests:
+                    index = trainer.index("--expected-digests")
+                    self.assertEqual(trainer[index + 1], "/workspace/expected-digests.json")
+                    self.assertNotIn("--expected-digests", options)
+                else:
+                    self.assertNotIn("--expected-digests", args)
+                self.assertIn("--winner", trainer)
+                self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
+
     def test_length_statistics_on_a_known_list(self):
         lengths = [10, 20, 30, 40, 50]
         stats = train_adapter.length_statistics(lengths)
