@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -2210,6 +2211,171 @@ class AccessibilityAdmissionTests(unittest.TestCase):
         with patch.object(generate_rows.local_transport, "utc_now", return_value="2026-09-27T11:10:00Z"), self.assertRaises(SystemExit):
             self.generate()
 
+
+
+class RustlingsSourceFactsTests(unittest.TestCase):
+    """Synthetic public fixtures and mocked pins; no live admission, target or model."""
+    blob = staticmethod(LearnyounodeAdmissionTests.blob)
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.set_a, self.set_b = write_sets(self.root)
+        self.out = self.root / "rows.jsonl"
+        self.review_root = self.root / "reviews"
+        (self.review_root / "xai").mkdir(parents=True)
+        self.pins = dict(next(iter(generate_rows.RUSTLINGS_SOURCE_FACTS.values())))
+        self.pins["sources"] = dict(self.pins["sources"])
+        self.source_bytes = {"LICENSE": b"MIT offline public fixture notice",
+            "README.md": ("Unreviewed prefix.\n" * 75 + "Run rustlings verify for learner verification.\n" * 43
+                          + "Unreviewed suffix.\n").encode()}
+        self.manifest, self.tree = [], []
+        self.review = {"packet_id": "QA-M2-RUSTLINGS3-SOURCE-FACTS-1", "verdict": "ACCEPT_SOURCE_FACTS_ONLY",
+                       "training_admission": False, "schema_support": {}, "sources": []}
+        self.share = {"packet_id": self.review["packet_id"], "repository": generate_rows.RUSTLINGS_REPOSITORY,
+            "pin": generate_rows.RUSTLINGS_COMMIT, "tree": generate_rows.RUSTLINGS_TREE,
+            "training_admission": False, "source_ids": [], "files": []}
+        for slug, (path, _) in self.pins["sources"].items():
+            raw = f"// {slug}.rs\n// Make me compile! Hints are optional.\n".encode()
+            self.source_bytes[path] = raw
+            source_id = f"rustlings/{generate_rows.RUSTLINGS_COMMIT}/{slug}"
+            self.manifest.append({"source_id": source_id, "repository": generate_rows.RUSTLINGS_REPOSITORY,
+                "pin": generate_rows.RUSTLINGS_COMMIT, "tree": generate_rows.RUSTLINGS_TREE, "path": path,
+                "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw), "git_blob_sha1": self.blob(raw),
+                "upstream_commit_utc": "2021-12-30T11:59:14Z", "capture_utc": "2026-09-27T11:00:00+00:00",
+                "intended_destination": "synthetic_training_candidates_only", "training_admission": False,
+                "independent_group": "UNKNOWN"})
+            self.pins["sources"][slug] = (path, hashlib.sha256(raw).hexdigest())
+            self.review["sources"].append({"source_id": source_id, "literal_title": slug + ".rs", "status": "OK"})
+            self.share["source_ids"].append(source_id)
+            self.share["files"].append({"path": path, "source_id": source_id,
+                                      "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)})
+        for path, raw in self.source_bytes.items():
+            file = self.root / path; file.parent.mkdir(parents=True, exist_ok=True); file.write_bytes(raw)
+            self.tree.append({"path": path, "mode": "100644", "type": "blob", "sha": self.blob(raw), "size": len(raw)})
+        for name in ("LICENSE", "README.md"):
+            self.pins[name] = hashlib.sha256(self.source_bytes[name]).hexdigest()
+        self.excerpt = b"".join(self.source_bytes["README.md"].splitlines(keepends=True)[75:118])
+        self.pins["excerpt"] = hashlib.sha256(self.excerpt).hexdigest()
+        self.share["files"].extend([{"path": "LICENSE", "sha256": self.pins["LICENSE"], "bytes": len(self.source_bytes["LICENSE"])},
+            {"path": "README.md", "full_source_sha256": self.pins["README.md"], "line_start": 76,
+             "line_end": 118, "excerpt_sha256": self.pins["excerpt"]}])
+        api = f"https://api.github.com/repos/{generate_rows.RUSTLINGS_REPOSITORY}"
+        self.official = {"sha": generate_rows.RUSTLINGS_COMMIT, "url": f"{api}/commits/{generate_rows.RUSTLINGS_COMMIT}",
+            "commit": {"committer": {"date": "2021-12-30T11:59:14Z"},
+                       "tree": {"sha": generate_rows.RUSTLINGS_TREE, "url": f"{api}/git/trees/{generate_rows.RUSTLINGS_TREE}"}}}
+        self.tree_record = {"sha": generate_rows.RUSTLINGS_TREE, "url": f"{api}/git/trees/{generate_rows.RUSTLINGS_TREE}",
+                            "truncated": False, "tree": self.tree}
+        self.receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
+                        "response_status": "completed", "response_id": "offline-source-review"}
+        self.terminal = {"state": "AUTHENTICATED_ACCEPT_SOURCE_FACTS_ONLY", "utc": "2026-09-27T11:20:00+00:00",
+            "receipt": "xai/review.json", "response_id": self.receipt["response_id"],
+            "training_admission": False, "new_rows": 0, "gpu_release": False, "semantic_groups": "UNKNOWN"}
+        pin_patch = patch.dict(generate_rows.RUSTLINGS_SOURCE_FACTS, {}, clear=True)
+        pin_patch.start(); self.addCleanup(pin_patch.stop)
+        self.write_evidence()
+
+    def write_evidence(self):
+        records = {"manifest": ("manifest.jsonl", "".join(json.dumps(e) + "\n" for e in self.manifest).encode()),
+                   "commit": ("commit.json", json.dumps(self.official).encode()),
+                   "tree": ("tree.json", json.dumps(self.tree_record).encode()),
+                   "share": ("share-record.json", json.dumps(self.share).encode())}
+        for key, (ref, raw) in records.items():
+            (self.root / ref).write_bytes(raw); self.pins[key] = hashlib.sha256(raw).hexdigest()
+        self.review["share_record_sha256"] = self.pins["share"]
+        self.receipt["answer"] = json.dumps(self.review)
+        self.pins["answer"] = hashlib.sha256(self.receipt["answer"].encode()).hexdigest()
+        raw = json.dumps(self.receipt).encode()
+        (self.review_root / "xai/review.json").write_bytes(raw)
+        self.pins["receipt"] = hashlib.sha256(raw).hexdigest()
+        self.terminal.update({key: self.review[key] for key in ("packet_id", "verdict", "share_record_sha256", "sources", "schema_support")})
+        self.terminal["receipt_sha256"] = self.pins["receipt"]
+        raw = json.dumps(self.terminal).encode()
+        (self.root / "terminal.json").write_bytes(raw)
+        self.digest = hashlib.sha256(raw).hexdigest()
+        generate_rows.RUSTLINGS_SOURCE_FACTS.clear()
+        generate_rows.RUSTLINGS_SOURCE_FACTS[self.digest] = self.pins
+
+    def scenario(self, slug="variables1"):
+        path, digest = self.pins["sources"][slug]
+        return {"split": "train", "source_group": f"licensed/{generate_rows.RUSTLINGS_REPOSITORY}/{slug}",
+            "source_provenance": {"kind": "licensed_specification", "source_id": f"rustlings/{generate_rows.RUSTLINGS_COMMIT}/{slug}",
+                "admission_ref": "terminal.json", "admission_sha256": self.digest, "manifest_ref": "manifest.jsonl",
+                "official_capture_ref": "commit.json", "official_tree_ref": "tree.json", "license_ref": "LICENSE",
+                "admitted_at": "2026-09-27T11:20:00Z"},
+            "input": {"repository": generate_rows.RUSTLINGS_REPOSITORY, "title": slug + ".rs", "objective": "Make me compile!",
+                "context": [{"kind": "assignment_packet", "source_ref": path, "source_sha256": digest,
+                             "text": self.source_bytes[path].decode()},
+                            {"kind": "assignment_packet", "source_ref": "README.md", "source_sha256": self.pins["README.md"],
+                             "text": self.excerpt.decode()}]}}
+
+    generate = LearnyounodeAdmissionTests.generate
+
+    def test_all_three_dry_run_zero_rows_receipts_and_no_runtime(self):
+        with patch.object(generate_rows, "prepare_local_model") as model, \
+                patch.object(generate_rows, "_native_process") as native, \
+                patch.object(generate_rows, "native_execution_release") as release, \
+                patch.object(generate_rows, "github_chronology") as github:
+            self.assertEqual(self.generate([self.scenario(slug) for slug in self.pins["sources"]]),
+                             {"dry_run": True, "rows": 0, "receipts": 0})
+            for mocked in (model, native, release, github): mocked.assert_not_called()
+        self.assertFalse(self.out.exists()); self.assertFalse((self.root / "receipts").exists())
+
+    def test_generation_held_before_model_even_with_valid_source_facts(self):
+        with patch.object(generate_rows, "prepare_local_model") as model, patch.object(generate_rows, "_native_process") as native:
+            with patch("sys.stderr", new_callable=io.StringIO) as errors, self.assertRaises(SystemExit) as raised:
+                self.generate(dry_run=False)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("semantic source-group admission is UNKNOWN", errors.getvalue())
+            model.assert_not_called(); native.assert_not_called()
+
+    def test_changed_bound_artifacts_fail(self):
+        for path in [self.root / ref for ref in (*self.source_bytes, "manifest.jsonl", "terminal.json", "commit.json", "tree.json", "share-record.json")] + [self.review_root / "xai/review.json"]:
+            raw = path.read_bytes(); path.write_bytes(raw + b"changed")
+            with self.subTest(path=path.name), self.assertRaises(SystemExit): self.generate()
+            path.write_bytes(raw)
+
+    def test_unknown_identity_paths_labels_and_context_refuse(self):
+        for mutation in ("digest", "fourth", "path", "title", "objective", "readme", "final_lf", "notice", "split", "group"):
+            row = self.scenario()
+            if mutation == "digest": row["source_provenance"]["admission_sha256"] = "0" * 64
+            elif mutation == "fourth": row["source_provenance"]["source_id"] += "4"
+            elif mutation == "path": row["source_provenance"]["official_tree_ref"] = "../tree.json"
+            elif mutation == "title": row["input"]["title"] = "variables1"
+            elif mutation == "objective": row["input"]["objective"] = "Invent a constraint."
+            elif mutation == "readme": row["input"]["context"][1]["text"] = self.source_bytes["README.md"].decode()
+            elif mutation == "final_lf": row["input"]["context"][1]["text"] = self.excerpt.decode().rstrip("\n")
+            elif mutation == "notice": row["source_provenance"]["license_ref"] = "README.md"
+            elif mutation == "split": row["split"] = "evaluation"
+            else: row["source_group"] += "/variant"
+            with self.subTest(mutation=mutation), self.assertRaises(SystemExit): self.generate([row])
+        dev = self.scenario(); dev["split"] = "dev"
+        self.assertEqual(self.generate([dev]), {"dry_run": True, "rows": 0, "receipts": 0})
+        with self.assertRaises(SystemExit): self.generate([self.scenario(), dev])
+        for provider in generate_rows.COMPETING_PROVIDERS:
+            with self.subTest(provider=provider), self.assertRaises(SystemExit): self.generate(provider=provider)
+        with patch.object(Path, "is_symlink", return_value=True), self.assertRaises(SystemExit): self.generate()
+
+    def test_semantic_evidence_refusals_even_with_mocked_rebound_hashes(self):
+        cases = [(self.receipt, "provider", "other"), (self.receipt, "model", "other"),
+            (self.receipt, "http_status", 0), (self.receipt, "response_status", "incomplete"),
+            (self.receipt, "response_id", "forged"), (self.review, "verdict", "ACCEPT_FOR_SOURCE_FACTS"),
+            (self.review, "training_admission", True), (self.review["sources"][0], "literal_title", "Invented title"),
+            (self.review["sources"][0], "status", "PENDING"), (self.terminal, "gpu_release", True),
+            (self.terminal, "semantic_groups", "ACCEPT"), (self.manifest[0], "pin", "0" * 40),
+            (self.manifest[0], "path", "exercises/variables/variables2.rs"),
+            (self.manifest[0], "capture_utc", "2026-09-27T11:30:00Z"),
+            (self.manifest[0], "capture_utc", "2026-09-27T11:00:00+01:00"),
+            (self.official["commit"]["tree"], "sha", "0" * 40), (self.tree_record, "truncated", True),
+            (self.tree[0], "mode", "120000")]
+        for record, key, value in cases:
+            old = record[key]; record[key] = value; self.write_evidence()
+            with self.subTest(key=key, value=value), self.assertRaises(SystemExit): self.generate()
+            record[key] = old
+        self.write_evidence()
+        with patch.object(generate_rows.local_transport, "utc_now", return_value="2026-09-27T11:10:00Z"), self.assertRaises(SystemExit): self.generate()
+        with patch.object(generate_rows.build_inputs, "validate_context", return_value=["known protected overlap"]), self.assertRaises(SystemExit): self.generate()
 
 
 class NativeSdkTransportTests(unittest.TestCase):
