@@ -1664,7 +1664,7 @@ class TrustedCollectionLaneTests(unittest.TestCase):
         root = Path(local.temporary.name)
         local.adoption_document.update(repository=sc.REPOSITORY, reviewed_source_commit=SHA,
                                        reviewed_source_tree=world.commit_tree)
-        adoption_path, adoption_pin = local.write_adoption()
+        adoption_path, adoption_pin = local.write_adoption(owner_token=self.fixtures.TEST_OWNER_TOKEN)
         provider_binding = dataclasses.replace(fixture.binding(), binding_version=root.name)
         raw_bindings = json.dumps({"claude": {key: value for key, value in dataclasses.asdict(provider_binding).items()
                                              if key != "provider_id"}})
