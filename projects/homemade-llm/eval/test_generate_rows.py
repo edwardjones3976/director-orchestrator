@@ -2327,7 +2327,7 @@ class RustlingsSourceFactsTests(unittest.TestCase):
             with patch("sys.stderr", new_callable=io.StringIO) as errors, self.assertRaises(SystemExit) as raised:
                 self.generate(dry_run=False)
             self.assertEqual(raised.exception.code, 2)
-            self.assertIn("semantic source-group admission is UNKNOWN", errors.getvalue())
+            self.assertIn("responsible-root native release required", errors.getvalue())
             model.assert_not_called(); native.assert_not_called()
 
     def test_changed_bound_artifacts_fail(self):
@@ -2376,6 +2376,203 @@ class RustlingsSourceFactsTests(unittest.TestCase):
         self.write_evidence()
         with patch.object(generate_rows.local_transport, "utc_now", return_value="2026-09-27T11:10:00Z"), self.assertRaises(SystemExit): self.generate()
         with patch.object(generate_rows.build_inputs, "validate_context", return_value=["known protected overlap"]), self.assertRaises(SystemExit): self.generate()
+
+
+class RustlingsMemberGroupTests(unittest.TestCase):
+    """Mocked public member evidence; no authenticated operator/model is created."""
+    blob = staticmethod(RustlingsSourceFactsTests.blob)
+    write_evidence = RustlingsSourceFactsTests.write_evidence
+    generate = RustlingsSourceFactsTests.generate
+
+    def setUp(self):
+        RustlingsSourceFactsTests.setUp(self)
+        self.group_pins = dict(next(iter(generate_rows.RUSTLINGS_MEMBER_GROUP_PINS.values())))
+        members = [{"source_id": e["source_id"], "sha256": e["sha256"], "upstream_path": e["path"],
+                    "pin": e["pin"]} for e in self.manifest]
+        self.mapping = {"group_id": validate_rows.RUSTLINGS_MEMBER_GROUP, "members": members,
+            "qualifying_cohort_independence": "UNKNOWN", "provisional_group_count_upper_bound": 1,
+            "accepted_group_count_added": 0, "row_training_operational_release": False}
+        self.group_share = {"actual_prepared_public_only_files": [{**e, "content_kind": "FULL_PUBLIC_UNSOLVED_ORIGINAL_TASK"}
+            for e in members], "group_or_row_admission_granted": False, "operational_or_training_release": False}
+        self.group_verdict = {"packet_id": "QA-M2-RUSTLINGS-MEMBER-GROUP-1",
+            "verdict": "ACCEPT_MEMBER_GROUP_FOR_CONSTRUCTION", "group_id": validate_rows.RUSTLINGS_MEMBER_GROUP,
+            "mapping_status": "ACCEPT_MEMBER_GROUP_FOR_CONSTRUCTION_SUBJECT_TO_ROOT_GATES",
+            "scope": "MEMBER_COLOCATION_FOR_FIRST_EXAMPLE_CONSTRUCTION_ONLY", "members": [dict(e) for e in members],
+            "qualifying_cohort_independence": "UNKNOWN", "provisional_group_count_upper_bound": 1,
+            "accepted_group_count_added": 0, "generation_release": False, "row_acceptance": False,
+            "training_acceptance": False, "operational_release": False, "group_or_row_admission_granted": False}
+        self.group_terminal = {"receipt": "xai/member.json", "response_id": "offline-member-review",
+            "verified_utc": "2026-09-27T11:25:00+00:00", "operational_release": False, "training_admission": False}
+        self.group_receipt = {"provider": "xai", "model": "grok-4.6", "http_status": 200,
+            "response_status": "completed", "response_id": "offline-member-review"}
+        patched = patch.dict(generate_rows.RUSTLINGS_MEMBER_GROUP_PINS, {}, clear=True)
+        patched.start(); self.addCleanup(patched.stop)
+        self.write_group_evidence()
+
+    def write_group_evidence(self):
+        raw = json.dumps(self.mapping).encode()
+        (self.root / "members.json").write_bytes(raw)
+        self.group_pins["mapping"] = hashlib.sha256(raw).hexdigest()
+        self.group_share["proposed_mapping_sha256"] = self.group_pins["mapping"]
+        raw = json.dumps(self.group_share).encode(); (self.root / "member-share.json").write_bytes(raw)
+        self.group_pins["share"] = hashlib.sha256(raw).hexdigest()
+        self.group_verdict.update(proposed_mapping_sha256=self.group_pins["mapping"], share_record_sha256=self.group_pins["share"])
+        self.group_receipt["answer"] = json.dumps(self.group_verdict)
+        self.group_pins["answer"] = hashlib.sha256(self.group_receipt["answer"].encode()).hexdigest()
+        raw = json.dumps(self.group_receipt).encode(); (self.review_root / "xai/member.json").write_bytes(raw)
+        self.group_pins["receipt"] = hashlib.sha256(raw).hexdigest()
+        self.group_terminal.update(verdict=self.group_verdict, share_record_sha256=self.group_pins["share"], receipt_sha256=self.group_pins["receipt"])
+        raw = json.dumps(self.group_terminal).encode(); (self.root / "member-terminal.json").write_bytes(raw)
+        self.group_digest = hashlib.sha256(raw).hexdigest()
+        generate_rows.RUSTLINGS_MEMBER_GROUP_PINS.clear()
+        generate_rows.RUSTLINGS_MEMBER_GROUP_PINS[self.group_digest] = self.group_pins
+
+    def scenario(self, slug="variables1"):
+        row = RustlingsSourceFactsTests.scenario(self, slug)
+        row["source_provenance"].update(member_group_ref="member-terminal.json", member_group_sha256=self.group_digest,
+            member_group_share_ref="member-share.json", member_group_mapping_ref="members.json")
+        return row
+
+    def check_group(self, row=None):
+        return generate_rows._validate_rustlings_member_group(row or self.scenario(), self.root, self.review_root)
+
+    def test_exact_three_member_binding_and_dry_run_preserve_unknown_independence(self):
+        for slug in self.pins["sources"]:
+            self.assertEqual(self.check_group(self.scenario(slug)), "2026-09-27T11:25:00Z")
+        with patch.object(generate_rows, "_validate_rustlings_member_group") as group, \
+                patch.object(generate_rows, "prepare_local_model") as model, \
+                patch.object(generate_rows, "native_execution_release") as release:
+            self.assertEqual(self.generate([self.scenario(slug) for slug in self.pins["sources"]]),
+                {"dry_run": True, "rows": 0, "receipts": 0})
+            for mocked in (group, model, release): mocked.assert_not_called()
+        self.assertEqual(self.group_verdict["qualifying_cohort_independence"], "UNKNOWN")
+        self.assertEqual(self.group_verdict["accepted_group_count_added"], 0)
+
+    def test_different_members_cannot_cross_splits(self):
+        for first in self.pins["sources"]:
+            for second in self.pins["sources"]:
+                if first == second: continue
+                dev = self.scenario(second); dev["split"] = "dev"
+                with self.subTest(first=first, second=second), self.assertRaises(SystemExit):
+                    self.generate([self.scenario(first), dev])
+
+    def test_missing_native_root_release_refuses_before_group_files_or_model(self):
+        for native in (False, True):
+            with patch.object(generate_rows, "_validate_rustlings_member_group") as group, \
+                    patch.object(generate_rows, "prepare_local_model") as model, \
+                    patch.object(generate_rows, "native_execution_release") as release:
+                with self.assertRaises(SystemExit): self.generate(dry_run=False, native_sdk=native)
+                for mocked in (group, model, release): mocked.assert_not_called()
+
+    def test_changed_group_artifacts_refuse(self):
+        for path in [self.root / name for name in ("members.json", "member-share.json", "member-terminal.json")] + [self.review_root / "xai/member.json"]:
+            old = path.read_bytes(); path.write_bytes(old + b"changed")
+            with self.subTest(path=path.name), self.assertRaises(SystemExit): self.check_group()
+            path.write_bytes(old)
+        for value in (None, True, "0" * 64):
+            row = self.scenario(); row["source_provenance"]["member_group_sha256"] = value
+            with self.subTest(value=value), self.assertRaises(SystemExit): self.check_group(row)
+        row = self.scenario(); row["source_provenance"]["member_group_mapping_ref"] = "../members.json"
+        with self.assertRaises(SystemExit): self.check_group(row)
+
+    def test_group_semantics_refuse_even_with_mock_rebound_pins(self):
+        for record, key, value in [(self.group_receipt, "response_status", "incomplete"),
+                (self.group_receipt, "response_id", "forged"), (self.group_receipt, "provider", "other"),
+                (self.group_verdict, "verdict", "ACCEPT"), (self.group_verdict, "generation_release", True),
+                (self.group_verdict, "qualifying_cohort_independence", "ACCEPT"),
+                (self.group_verdict, "accepted_group_count_added", 3),
+                (self.mapping["members"][0], "sha256", "0" * 64),
+                (self.mapping["members"][0], "source_id", "invented-source"),
+                (self.mapping["members"][0], "pin", "0" * 40),
+                (self.mapping["members"][0], "upstream_path", "exercises/variables/variables2.rs"),
+                (self.group_terminal, "verified_utc", "2026-09-27T11:00:00Z")]:
+            old = record[key]; record[key] = value; self.write_group_evidence()
+            with self.subTest(key=key, value=value), self.assertRaises(SystemExit): self.check_group()
+            record[key] = old
+        self.write_group_evidence()
+        self.mapping["members"].append(dict(self.mapping["members"][0])); self.write_group_evidence()
+        with self.assertRaises(SystemExit): self.check_group()
+
+    def test_explicit_native_root_composition_binds_group_before_model(self):
+        row = self.scenario()
+        runtime = self.root / "offline-runtime.json"; runtime.write_bytes(b"offline-runtime")
+        history = self.root / "offline-history.jsonl"; history.write_bytes(b"")
+        model = "offline/repo@offline-revision"
+        conversion = self.root / "offline-conversion.json"
+        conversion.write_text(json.dumps({"repo": "offline/repo", "revision": "offline-revision"}), encoding="utf-8")
+        record = {"status": "NATIVE_METHOD_RELEASE", "protocol": generate_rows.NATIVE_PROTOCOL,
+            "source_group": row["source_group"], "input_sha256": generate_rows._canonical_hash(row["input"]),
+            "model": model, "runtime_sha256": hashlib.sha256(runtime.read_bytes()).hexdigest(),
+            "attempt_history": str(history), "attempt_history_sha256": hashlib.sha256(b"").hexdigest(),
+            "attempt_ordinal": 1, "member_group_sha256": self.group_digest,
+            "member_group_id": validate_rows.RUSTLINGS_MEMBER_GROUP}
+        release_path = self.root / "OFFLINE-MOCK-not-live-release.json"
+        options = {"model": "offline", "model_gguf": self.root / "unused.gguf", "conversion_receipt": conversion,
+            "license_file": self.root / "unused-license", "base_url": "http://127.0.0.1:1234",
+            "lms_models_dir": self.root / "unused-models", "receipts_dir": self.root / "receipts"}
+        for bound in (False, True):
+            record["member_group_sha256"] = self.group_digest if bound else "0" * 64
+            raw = json.dumps(record).encode(); release_path.write_bytes(raw)
+            pin = (release_path, hashlib.sha256(raw).hexdigest())
+            with patch.object(generate_rows, "prepare_local_model", side_effect=SystemExit(2)) as prepare, \
+                    patch.object(generate_rows, "_native_process") as process:
+                with self.assertRaises(SystemExit):
+                    self.generate([row], dry_run=False, native_sdk=True, local_options=options,
+                        native_options={"runtime_manifest": runtime}, native_release_pin=pin)
+                self.assertEqual(prepare.call_count, 1 if bound else 0)
+                process.assert_not_called()
+        with patch.object(sys.modules[__name__], "UTC", "2026-09-27T11:21:00Z"), \
+                patch.object(generate_rows, "prepare_local_model") as prepare, self.assertRaises(SystemExit):
+            self.generate([row], dry_run=False, native_sdk=True, local_options=options,
+                native_options={"runtime_manifest": runtime}, native_release_pin=pin)
+        prepare.assert_not_called()
+
+
+class NativeCombinedReservationTests(unittest.TestCase):
+    """Synthetic release/history bindings only; no registry, model or actual release."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.runtime = self.root / "runtime.json"; self.runtime.write_bytes(b"offline-runtime")
+        self.history_path = self.root / "combined-history.jsonl"
+        self.release_path = self.root / "OFFLINE-MOCK-not-live-release.json"
+        self.scenario = {"source_group": "licensed/workshopper/learnyounode/http_client",
+                         "input": {"offline": True}, "source_provenance": {}}
+        self.model = "Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18"
+        self.history = [{"source_group": self.scenario["source_group"], "model": self.model,
+            "execution_reservations": 1, "confirmed_posts": posts, "attempt_kind": kind}
+            for posts, kind in [(0, "legacy_integrity_refusal"), (1, "legacy_exact_pin_recovery"), (None, "native_ordinal3")]]
+
+    def release(self, rows, ordinal):
+        raw = b"".join((json.dumps(row) + "\n").encode() for row in rows); self.history_path.write_bytes(raw)
+        record = {"status": "NATIVE_METHOD_RELEASE", "protocol": generate_rows.NATIVE_PROTOCOL,
+            "source_group": self.scenario["source_group"], "input_sha256": generate_rows._canonical_hash(self.scenario["input"]),
+            "model": self.model, "runtime_sha256": hashlib.sha256(self.runtime.read_bytes()).hexdigest(),
+            "attempt_history": str(self.history_path), "attempt_history_sha256": hashlib.sha256(raw).hexdigest(),
+            "attempt_ordinal": ordinal}
+        raw = json.dumps(record).encode(); self.release_path.write_bytes(raw)
+        return generate_rows.native_execution_release(self.scenario, self.model, self.runtime,
+            operator_pin=(self.release_path, hashlib.sha256(raw).hexdigest()))
+
+    def test_legacy_zero_post_plus_recovery_plus_native_exhausts_pair(self):
+        for ordinal in (1, 3, 4):
+            with self.subTest(ordinal=ordinal), self.assertRaises(SystemExit): self.release(self.history, ordinal)
+        for used in range(3):
+            self.assertEqual(self.release(self.history[:used], used + 1)["attempt_ordinal"], used + 1)
+        self.assertEqual(self.history[0]["confirmed_posts"], 0)
+
+    def test_invalid_counts_ordinals_and_mixed_zero_prediction_reservations_refuse(self):
+        for count in (True, -1, "1", None, 3):
+            row = dict(self.history[0]); row["execution_reservations"] = count
+            with self.subTest(count=count), self.assertRaises(SystemExit): self.release([row], 2)
+        for ordinal in (True, 0, 4, "1"):
+            with self.subTest(ordinal=ordinal), self.assertRaises(SystemExit): self.release([], ordinal)
+        mixed = [dict(row, confirmed_posts=0) for row in self.history]
+        with self.assertRaises(SystemExit): self.release(mixed, 4)
+        other = dict(self.history[0], model="different-pinned-model", execution_reservations=3)
+        self.assertEqual(self.release([other], 1)["attempt_ordinal"], 1)
+        with self.assertRaises(SystemExit):
+            generate_rows.native_execution_release(self.scenario, self.model, self.runtime)
 
 
 class NativeSdkTransportTests(unittest.TestCase):
