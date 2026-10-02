@@ -28,62 +28,6 @@ from director_orchestrator.contribution_tags import TAG_PATTERN  # noqa: E402
 
 
 ZERO_SHA = "0" * 40
-CONTRIBUTOR = re.compile(r"[^|<>\x00-\x1f\x7f]+ \| [^|<>\x00-\x1f\x7f]+")
-SOLE_AUTHOR = re.compile(
-    r"Sole author: ([^()<>\r\n]+) \(([^<>\r\n]+)\)"
-    r"(?:; assistance: ([^,<>\r\n]+(?:, [^,<>\r\n]+)*))?"
-)
-
-
-def trailer_values(message: str) -> list[str]:
-    """Return every Contributed-by trailer value in a commit message, trailers block only."""
-    lines = message.rstrip("\n").splitlines()
-    block: list[str] = []
-    for line in reversed(lines):
-        if not line.strip():
-            if block:
-                break
-            continue
-        if re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*:[ \t]+\S", line):
-            block.append(line)
-            continue
-        break
-    return [
-        line.partition(":")[2].strip()
-        for line in reversed(block)
-        if line.lower().startswith("contributed-by:")
-    ]
-
-
-def trailers_attribute(values: list[str]) -> bool:
-    return bool(values) and all(
-        CONTRIBUTOR.fullmatch(value) is not None
-        and all(field.strip() for field in value.split("|"))
-        for value in values
-    )
-
-
-def legacy_envelope_attributes(message: str) -> bool:
-    """Grandfather a pre-trailer commit: one matching BEGIN/END contribution pair in its message.
-
-    Branches opened before the trailer rule carry the envelope this repository
-    required until 2026-09-28. They are accepted as attributed so a base merge
-    does not turn them red; new commits still carry the trailer."""
-    identities: dict[tuple[str, str, str, str], set[str]] = {}
-    for match in TAG_PATTERN.finditer(message):
-        key = (match.group("contributor"), match.group("system"), match.group("date"), match.group("time"))
-        identities.setdefault(key, set()).add(match.group("boundary"))
-    return any(bounds == {"BEGIN", "END"} for bounds in identities.values())
-
-
-def message_attributed(message: str) -> bool:
-    """A commit is attributed by valid Contributed-by trailers, or, with none, a legacy envelope.
-
-    A present but malformed trailer decides the result; the envelope never rescues it."""
-    values = trailer_values(message)
-    if values:
-        return trailers_attribute(values)
-    return legacy_envelope_attributes(message)
 
 
 def _git(*args: str) -> str:
@@ -93,7 +37,7 @@ def _git(*args: str) -> str:
 
 
 def validate_commits(base: str, head: str, default_branch_ref: str = "origin/main", *, exclude_default: bool = True) -> list[str]:
-    """Check new commits outside fetched default-branch history."""
+    """Validate resolvable commit revisions and their range, excluding fetched main."""
     head = _git("rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}").strip()
     if base == ZERO_SHA:
         revision_range = head  # New ref: include the root commit too.
@@ -109,77 +53,9 @@ def validate_commits(base: str, head: str, default_branch_ref: str = "origin/mai
             "setup error: default-branch ref unavailable; fetch the repository's "
             "default branch and supply --default-branch-ref (default: origin/main)"
         ]
-    errors = []
     exclusions = ["--not", default_head] if exclude_default else []
-    for commit in _git("rev-list", revision_range, *exclusions).splitlines():
-        parents, committer, subject = _git(
-            "show", "-s", "--format=%P%n%cn <%ce>%n%s", commit
-        ).splitlines()
-        if (
-            len(parents.split()) == 2
-            and committer == "GitHub <noreply@github.com>"
-            and re.fullmatch(
-                r"Merge pull request #[0-9]+ from .+|"
-                r"Merge branch '[^']+' into .+|"  # GitHub's "Update branch" button
-                r"Merge #[0-9]+: reviewer [a-z][a-z0-9_-]* after merge-preflight \(CI [0-9]+\)",
-                subject,
-            )
-        ):
-            continue
-        trailers = _git(
-            "show", "-s", "--format=%(trailers:key=Contributed-by)", commit
-        ).splitlines()
-        values = [line.partition(":")[2].strip() for line in trailers if line.strip()]
-        if trailers_attribute(values):
-            continue
-        if not values and legacy_envelope_attributes(_git("show", "-s", "--format=%B", commit)):
-            continue  # pre-trailer commit carrying the envelope this repository then required
-        errors.append(f"{commit}: missing or malformed Contributed-by trailer")
-    return errors
-
-
-def validate_pr_body(body: str) -> list[str]:
-    """Require exactly one visible header, not a template, comment or code sample."""
-    headers = []
-    fence = None
-    comment = False
-    for line in body.splitlines():
-        if fence is not None:
-            marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", line)
-            if marker:
-                token = marker.group(1)
-                if token[0] == fence[0] and len(token) >= len(fence) and not line[marker.end():].strip():
-                    fence = None
-            continue
-        # Comment-looking text inside a fence is literal. Outside fences,
-        # comments may span lines or sit next to a visible author header.
-        visible = ""
-        while line:
-            if comment:
-                _, end, line = line.partition("-->")
-                if not end:
-                    break
-                comment = False
-            else:
-                before, start, line = line.partition("<!--")
-                visible += before
-                if not start:
-                    break
-                comment = True
-        marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", visible)
-        if marker:
-            fence = marker.group(1)
-        else:
-            if visible.startswith("**") and visible.endswith("**"):
-                visible = visible[2:-2]
-            if visible.startswith("Sole author:"):
-                headers.append(visible)
-    if len(headers) == 1:
-        match = SOLE_AUTHOR.fullmatch(headers[0])
-        if match and all(value.strip() for value in match.groups() if value is not None):
-            if match.group(3) is None or all(part.strip() for part in match.group(3).split(",")):
-                return []
-    return ["PR body requires exactly one Sole author: <assistant> (<model>) header"]
+    _git("rev-list", revision_range, *exclusions)  # Validate the actual graph/range too.
+    return []
 
 
 def _validate_github_event(path: Path) -> tuple[list[str], str | None]:
@@ -190,19 +66,27 @@ def _validate_github_event(path: Path) -> tuple[list[str], str | None]:
         pr = payload["pull_request"]
         if not isinstance(pr, dict):
             raise ValueError("invalid pull request")
-        body = pr.get("body") or ""
-        if not isinstance(body, str):
+        body = pr.get("body")
+        if body is not None and not isinstance(body, str):
             raise ValueError("invalid body")
         head = pr.get("head")
         sha = head.get("sha") if isinstance(head, dict) else None
         if not isinstance(sha, str) or re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
             raise ValueError("pull-request head must identify an exact commit SHA")
-        return validate_pr_body(body), sha
-    return [], None  # Push events, including main, require commit trailers only.
+        return [], sha
+    ref = payload.get("ref")
+    if not isinstance(ref, str) or not ref.startswith("refs/"):
+        raise ValueError("push event must identify a ref")
+    _git("check-ref-format", ref)
+    for key in ("before", "after"):
+        if key in payload and (not isinstance(payload[key], str)
+                or re.fullmatch(r"[0-9a-fA-F]{40}", payload[key]) is None):
+            raise ValueError("push event revisions must be exact SHAs")
+    return [], payload.get("after")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate commit trailers and PR authorship.")
+    parser = argparse.ArgumentParser(description="Validate Git revisions and event structure; contribution formatting is retired.")
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--default-branch-ref", default="origin/main")
@@ -230,7 +114,7 @@ def main() -> int:
         print(f"ERROR: {error}", file=sys.stderr)
     if errors:
         return 1
-    print("Contribution attribution valid: commit trailers and applicable PR header.")
+    print("Git revision range and event structure valid; contribution formatting is not required.")
     return 0
 
 
