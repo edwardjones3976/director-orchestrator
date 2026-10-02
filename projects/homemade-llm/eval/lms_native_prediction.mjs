@@ -1,4 +1,3 @@
-// [[OpenAI Codex | GPT-6 | 2026-10-01 | 21:58 UTC | BEGIN]]
 // Held library seam: generator integration and live qualification require separate review.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -236,4 +235,3 @@ export async function predictNative(input, {dryRun = false, sdkLoader = loadPinn
   evidence.elapsedMs = performance.now() - started;
   return snapshot(evidence);
 }
-// [[OpenAI Codex | GPT-6 | 2026-10-01 | 21:58 UTC | END]]
