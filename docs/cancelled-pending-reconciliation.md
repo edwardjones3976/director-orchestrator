@@ -139,7 +139,7 @@ From this worktree root, the owner runs:
 
 ```powershell
 $env:PYTHONPATH = 'src'
-& 'C:/Users/edwar/director-orchestrator/.worktrees/langgraph-primary-cutover/.venv/Scripts/python.exe' scripts/reconcile-cancelled-plan.py DIR-LG-EF9A9D4FF1 --apply
+& '<venv-python>' scripts/reconcile-cancelled-plan.py DIR-LG-EF9A9D4FF1 --apply
 ```
 
 Omit `--apply` for diagnostic-only operation. With `--apply`, the same command

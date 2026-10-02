@@ -62,7 +62,7 @@ directly. Three facts reshape the plan.
 
 | Field | Value | Source |
 | --- | --- | --- |
-| Snapshot path | `C:/Users/edwar/director-orchestrator-primary-snapshot` | `REPOSITORY_SNAPSHOT_HOST_PATH` |
+| Snapshot path | `<snapshot-dir>` | `REPOSITORY_SNAPSHOT_HOST_PATH` |
 | Snapshot HEAD | `a05237776bf4aac0f8224947cf44dea356ed8f56` (Merge PR #109, 2026-09-06 21:23 PDT) | `git log` in the snapshot |
 | Snapshot tree | `4e1d578ccbd2db1e92b81de1659884061a87d160` | `git rev-parse HEAD^{tree}` |
 | Working tree | clean, as this reader sees it | `git status --porcelain` |
@@ -174,7 +174,7 @@ intake surface still governs.
 | --- | --- | --- | --- |
 | Purpose | Stage A, provider doubles | evidence rung, then `Activate` | quarantined |
 | Source | frozen candidate | frozen candidate | `a052377` (stale) |
-| Snapshot dir | `C:/Users/edwar/director-orchestrator-sim-snapshot` | `C:/Users/edwar/director-orchestrator-candidate-snapshot` | existing |
+| Snapshot dir | `<sim-snapshot-dir>` | `<candidate-snapshot-dir>` | existing |
 | Compose project | `dirsim` | `dirlive` | existing default |
 | Env file | `.env.simulation` | `.env.candidate` | `.env` |
 | Host port | `8091` | `8092` | existing |

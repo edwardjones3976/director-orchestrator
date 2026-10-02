@@ -243,13 +243,13 @@ claim production readiness, deployment permission, or permission to merge produc
 | --- | --- |
 | Commit | `4d26680fb99abacb20ecb18807b7c8833646cfa3` |
 | Tree | `1e0db56f1e85d66c93ab64bc3dca8c237947c210` |
-| Source worktree | `C:\Users\edwar\.codex\worktrees\long-table-claude-provenance-004` |
+| Source worktree | `<worktree>` |
 
 **Canary target:**
 
 | Field | Value |
 | --- | --- |
-| Worktree | `C:\Users\edwar\.codex\worktrees\long-table-native-langgraph-canary` |
+| Worktree | `<worktree>` |
 | Branch | `codex/native-langgraph-canary` |
 
 **Prohibited canary authority:** do not use stale native-first-deal commit

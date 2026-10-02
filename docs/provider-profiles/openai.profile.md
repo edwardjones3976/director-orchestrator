@@ -328,7 +328,7 @@ Separation of duties:
 - `docs/team-operating-charter.md`: The policy target is a ChatGPT/Codex Director lane for priorities,
 - `docs/provider-setup.md`: OpenAI Responses API with Structured Outputs
 - `docs/native-codex-packet-transport.md`: The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`
-- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: The configured coordinating lane keeps Moderator, Participant, and Director functions separate
+- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: The appointed Director keeps Moderator, Participant, and Director functions separate
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->

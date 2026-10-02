@@ -135,7 +135,7 @@ surfaces:
   repositories:
     - name: "edwardjones3976/director-orchestrator"
       starting_ref: "1892b841a78580b2664236b16dcc61094bdce9c8"
-      worktree: "C:\\Users\\edwar\\director-orchestrator\\.worktrees\\homemade-llm"
+      worktree: "<worktree>"
       status: "confirmed"
   systems_and_data:
     classification: "mixed"

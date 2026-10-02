@@ -504,7 +504,14 @@ function Assert-ProfileIdentity {
         throw "$profilePath did not stage the Oracle merge gate closed."
     }
     if ($ProfileName -eq "long-table") {
-        if ([string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"] -cne "C:/Users/edwar/.director-snapshots/long-table-main" -or
+        $snapshotHost = [string]$Values["REPOSITORY_SNAPSHOT_HOST_PATH"]
+        # The example keeps a privacy-safe placeholder. A live profile must
+        # name an absolute operator-supplied directory; Assert-LongTableSnapshot
+        # then proves that directory is the Long Table worktree.
+        if ([string]::IsNullOrWhiteSpace($snapshotHost) -or
+            $snapshotHost.Contains("<") -or
+            $snapshotHost.Contains(">") -or
+            -not [System.IO.Path]::IsPathRooted($snapshotHost) -or
             [string]$Values["REPOSITORY_SNAPSHOT_ROOT"] -cne "/repository") {
             throw "$profilePath has an unexpected Long Table repository snapshot boundary."
         }
@@ -839,26 +846,43 @@ function Assert-LongTableSnapshot {
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Container)) {
         throw "The configured Long Table repository snapshot is unavailable. No service was started."
     }
-    $inside = @(& git -C $snapshotPath rev-parse --is-inside-work-tree 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $inside.Count -ne 1 -or [string]$inside[0] -cne "true") {
-        throw "The configured Long Table snapshot is not a Git worktree. No service was started."
-    }
-    $origin = [string](@(& git -C $snapshotPath remote get-url origin 2>$null) | Select-Object -Last 1)
-    if ($LASTEXITCODE -ne 0 -or
-        $origin -notmatch '^(?:https://github\.com/|git@github\.com:)edwardjones3976/long-table-bid-whist(?:\.git)?$') {
-        throw "The configured Long Table snapshot has an unexpected origin. No service was started."
-    }
-    $dirty = @(& git -C $snapshotPath status --porcelain --untracked-files=all 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
-        throw "The configured Long Table snapshot has tracked changes or could not be inspected. No service was started."
-    }
-    $head = [string](@(& git -C $snapshotPath rev-parse HEAD 2>$null) | Select-Object -Last 1)
-    if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
-        throw "The configured Long Table snapshot has no exact commit. No service was started."
-    }
-    $remoteHead = [string](@(& git -C $snapshotPath rev-parse origin/main 2>$null) | Select-Object -Last 1)
-    if ($LASTEXITCODE -ne 0 -or $remoteHead -notmatch '^[0-9a-f]{40}$' -or $head -cne $remoteHead) {
-        throw "The configured Long Table snapshot is not at the locally verified origin/main commit. No service was started."
+    # The operator already named this directory. Trust it for these reads:
+    # an emptied system git config otherwise reports dubious ownership, and
+    # Windows path spelling rarely matches a single safe.directory entry.
+    # Trim each line: Windows git.exe writes CR, and a trailing CR would fail
+    # the exact "true" and 40-hex comparisons.
+    $savedConfigCount = $env:GIT_CONFIG_COUNT
+    $savedConfigKey = $env:GIT_CONFIG_KEY_0
+    $savedConfigValue = $env:GIT_CONFIG_VALUE_0
+    $env:GIT_CONFIG_COUNT = '1'
+    $env:GIT_CONFIG_KEY_0 = 'safe.directory'
+    $env:GIT_CONFIG_VALUE_0 = '*'
+    try {
+        $inside = @(& git -C $snapshotPath rev-parse --is-inside-work-tree 2>$null | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' })
+        if ($LASTEXITCODE -ne 0 -or @($inside).Count -ne 1 -or [string]$inside[0] -cne "true") {
+            throw "The configured Long Table snapshot is not a Git worktree. No service was started."
+        }
+        $origin = [string](@(& git -C $snapshotPath remote get-url origin 2>$null | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' }) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or
+            $origin -notmatch '^(?:https://github\.com/|git@github\.com:)edwardjones3976/long-table-bid-whist(?:\.git)?$') {
+            throw "The configured Long Table snapshot has an unexpected origin. No service was started."
+        }
+        $dirty = @(& git -C $snapshotPath status --porcelain --untracked-files=all 2>$null | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' })
+        if ($LASTEXITCODE -ne 0 -or @($dirty).Count -ne 0) {
+            throw "The configured Long Table snapshot has tracked changes or could not be inspected. No service was started."
+        }
+        $head = [string](@(& git -C $snapshotPath rev-parse HEAD 2>$null | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' }) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+            throw "The configured Long Table snapshot has no exact commit. No service was started."
+        }
+        $remoteHead = [string](@(& git -C $snapshotPath rev-parse origin/main 2>$null | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' }) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or $remoteHead -notmatch '^[0-9a-f]{40}$' -or $head -cne $remoteHead) {
+            throw "The configured Long Table snapshot is not at the locally verified origin/main commit. No service was started."
+        }
+    } finally {
+        if ($null -eq $savedConfigCount) { Remove-Item Env:GIT_CONFIG_COUNT -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_COUNT = $savedConfigCount }
+        if ($null -eq $savedConfigKey) { Remove-Item Env:GIT_CONFIG_KEY_0 -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_KEY_0 = $savedConfigKey }
+        if ($null -eq $savedConfigValue) { Remove-Item Env:GIT_CONFIG_VALUE_0 -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_VALUE_0 = $savedConfigValue }
     }
 }
 

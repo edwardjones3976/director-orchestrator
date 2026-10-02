@@ -1346,32 +1346,38 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
 
     def test_contract_keeps_the_three_coordination_functions_distinct(self):
         contract = self.contract()
-        current = contract.split("\n  openai:\n", 1)[1].split("\nsupplemental_reviewers:", 1)[0]
-        self.assertIn("configured coordinating lane keeps", current)
-        self.assertIn("functions:", current)
+        appointed = contract.split("\nappointed_director:\n", 1)[1].split("\nproject_local_bindings:", 1)[0]
+        openai = contract.split("\n  openai:\n", 1)[1].split("\nsupplemental_reviewers:", 1)[0]
+        self.assertIn("appointed Director keeps", appointed)
+        self.assertIn("functions:", appointed)
+        self.assertIn('coordination_functions: "bound_by_appointed_director"', openai)
+        self.assertNotIn("votes: true", openai)
+        self.assertNotIn("vote_weight: 2.5", contract)
 
         for function_id in ("moderator", "participant", "director"):
             with self.subTest(function_id=function_id):
-                self.assertIn(f'- id: "{function_id}"', contract)
-        self.assertIn("function_separation_rule:", contract)
-        self.assertIn("never collapsed or renamed into duty buckets", contract)
+                self.assertIn(f'- id: "{function_id}"', appointed)
+        self.assertIn("function_separation_rule:", appointed)
+        self.assertIn("never collapsed or renamed into duty buckets", appointed)
+        self.assertIn('appointed_director: "<same provider key as appointed_director.provider>"', contract)
 
         # The voting boundary is what the canonical identities carry: the
         # Participant holds the one authenticated position and may vote or abstain;
-        # neither Moderator nor Director votes.
-        moderator = contract.split('- id: "moderator"', 1)[1].split("- id:", 1)[0]
-        participant = contract.split('- id: "participant"', 1)[1].split("- id:", 1)[0]
-        director = contract.split('- id: "director"', 1)[1].split("\n    participation_record_rule", 1)[0]
+        # neither Moderator nor Director votes. The weight is filled from the
+        # appointed provider's charter entry, not copied from OpenAI.
+        moderator = appointed.split('- id: "moderator"', 1)[1].split("- id:", 1)[0]
+        participant = appointed.split('- id: "participant"', 1)[1].split("- id:", 1)[0]
+        director = appointed.split('- id: "director"', 1)[1].split("\nproject_local_bindings:", 1)[0]
         self.assertIn("votes: false", moderator)
         self.assertIn("votes: true", participant)
         self.assertIn("vote_count: 1", participant)
-        self.assertIn("vote_weight: 2.5", participant)
+        self.assertIn('vote_weight: "<charter voting_power of appointed_director.provider>"', participant)
         self.assertIn("votes: false", director)
         # Moderating relocates nothing about the vote: it stays one vote, booked
         # under Participant, and the Moderator function cannot strip it.
         self.assertIn("Moderating never removes, reduces, or defers", moderator)
         self.assertIn("no additional vote", participant)
-        self.assertIn("bars a second OpenAI vote and never the first", participant)
+        self.assertIn("bars a second vote for the appointed Director and never the first", participant)
         self.assertIn("does not create a vote", director)
 
         # Coordination, planning, and acceptance survive only as nested duties.
