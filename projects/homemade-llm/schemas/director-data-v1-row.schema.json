@@ -46,9 +46,10 @@
         "real_history",
         "provider_exemplar",
         "provider_critique_repair",
-        "owner_seed"
+        "owner_seed",
+        "licensed_extraction"
       ],
-      "description": "O-019 sources. real_history rows come only from dispatched assignments that are not in either held-out set."
+      "description": "O-019 sources plus the owner-authorized licensed_extraction route. real_history rows come only from dispatched assignments that are not in either held-out set. licensed_extraction copies human proposal spans under a pinned construction-only corpus admission; it does not assert model inference or row/training acceptance."
     },
     "source_provider": {
       "type": "string",
@@ -76,7 +77,7 @@
         "owner_content",
         "repository_history"
       ],
-      "description": "PLAN.md section 4.2 tier at generation time. 'excluded' and 'unclear' tiers are intentionally not valid values."
+      "description": "PLAN.md section 4.2 tier at generation time. repository_history also covers licensed_extraction, whose corpus license and frozen policy are bound by its extraction record. 'excluded' and 'unclear' tiers are intentionally not valid values."
     },
     "terms_verified_at": {
       "type": "string",
@@ -95,12 +96,12 @@
       "minLength": 1,
       "maxLength": 512,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*(/[A-Za-z0-9._@+-]+)*$",
-      "description": "Relative path of the provider-dispatch receipt (forward slashes only), the assignment ledger key, or the owner-seed SHA-256 reference. The pattern forbids absolute host paths (no leading slash, no drive letter, no backslash) and never carries a raw seed."
+      "description": "Relative path of the provider-dispatch receipt or licensed-extraction record (forward slashes only), the assignment ledger key, or the owner-seed SHA-256 reference. The pattern forbids absolute host paths (no leading slash, no drive letter, no backslash) and never carries a raw seed."
     },
     "receipt_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "Required on local_model rows: digest of the exact completed inference receipt binding source, conversion, license, GGUF, loaded alias, prompt, schema and response."
+      "description": "Required on local_model rows: digest of the exact completed inference receipt binding source, conversion, license, GGUF, loaded alias, prompt, schema and response. Required on licensed_extraction rows: digest of the exact extraction record binding corpus admission, input and literal source/target spans; no inference receipt is implied."
     },
     "source_group": {
       "type": "string",
@@ -116,7 +117,7 @@
         "title",
         "context"
       ],
-      "description": "Revised M2 input contract (O-M2-D, D-M2-10): the M1 D-M1-1 fields objective, repository and title, plus at least one provenance-bound context item cited at inference time. Scored target text and held-out source lineage are never context.",
+      "description": "Revised M2 input contract (O-M2-D, D-M2-10): the M1 D-M1-1 fields objective, repository and title, plus at least one provenance-bound context item cited at inference time. Answer objects, grader rationales and held-out scored content/source lineage are never context. The owner-authorized licensed_extraction route may cite original target-support sections of its admitted human proposal.",
       "properties": {
         "objective": {
           "type": "string",
@@ -158,7 +159,7 @@
               "text": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The context excerpt as given to the model. Must not contain any scored target field text of any row or held-out item."
+                "description": "The original source excerpt as given to the model. No answer objects, grader rationales or held-out scored content. licensed_extraction may include the admitted human proposal's original target-support sections."
               },
               "source_ref": {
                 "type": "string",
@@ -506,11 +507,28 @@
             "const": "repository_history"
           },
           "source_kind": {
-            "const": "real_history"
+            "enum": ["real_history", "licensed_extraction"]
           },
           "source_model": {
             "const": "n/a"
           }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"source_kind": {"const": "licensed_extraction"}}},
+      "then": {
+        "required": ["receipt_sha256"],
+        "properties": {
+          "source_provider": {"const": "repository_history"},
+          "terms_tier": {"const": "repository_history"},
+          "source_model": {"const": "n/a"},
+          "target": {"properties": {
+            "non_goals": {"minItems": 1},
+            "constraints": {"minItems": 1},
+            "acceptance_checks": {"minItems": 1},
+            "evidence_requirements": {"minItems": 1}
+          }}
         }
       }
     },

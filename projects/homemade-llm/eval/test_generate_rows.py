@@ -3128,6 +3128,131 @@ class NativeHotRootAccountingTests(unittest.TestCase):
                     generate_rows._native_resource_checks()
 
 
+class LicensedExtractionTests(unittest.TestCase):
+    def test_literal_extraction_binds_source_license_policy_and_record_without_transport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            set_a, set_b = write_sets(root)
+            source = ("# KEP19: Port eligibility\n\n"
+                      "Describe the π-port eligibility proposal.\n\n"
+                      "## Non-Goals\nDo not extend the range to unrelated protocols.\n\n"
+                      "## Notes/Constraints/Caveats\nThe range might depend on CNI support when data paths are tested.\n\n"
+                      "## Alpha Graduation Criteria\nAlpha requires range validation before enabling the feature.\n\n"
+                      "## Test Plan\nTest API range operations with both endpoints, preserving the CNI caveat.\n")
+
+            def write(ref, value):
+                raw = value if isinstance(value, bytes) else (json.dumps(value, sort_keys=True) + "\n").encode("utf-8")
+                (root / ref).write_bytes(raw)
+                return hashlib.sha256(raw).hexdigest()
+
+            def span(text):
+                start = source.index(text)
+                return {"start": start, "end": start + len(text)}
+
+            source_sha = write("source.md", source.encode("utf-8"))
+            license_sha = write("LICENSE", b"Apache License\nVersion 2.0, January 2004\n")
+            policy_sha = write("selection-policy.json", {"rule": "synthetic positive KEP IDs; unchanged whole items only"})
+            manifest = {"protocol": "kep-source-manifest/v1", "repository": "kubernetes/enhancements",
+                        "commit": "a" * 40, "sources": [{"kep_number": 19,
+                        "path": "keps/sig-network/19-Port-Eligibility/README.md", "source_ref": "source.md",
+                        "source_sha256": source_sha, "source_git_blob": hashlib.sha1(
+                            b"blob " + str(len(source.encode("utf-8"))).encode("ascii") + b"\0" + source.encode("utf-8")).hexdigest()}]}
+            admission = {"protocol": "kep-corpus-admission/v1", "repository": manifest["repository"],
+                         "commit": manifest["commit"], "license": "Apache-2.0", "license_ref": "LICENSE",
+                         "license_sha256": license_sha, "selection_policy_ref": "selection-policy.json",
+                         "selection_policy_sha256": policy_sha, "manifest_ref": "source-manifest.json",
+                         "manifest_sha256": write("source-manifest.json", manifest),
+                         "policy_frozen_at": "2026-09-27T10:00:00Z", "captured_at": "2026-09-28T10:00:00Z",
+                         "recorded_at": "2026-09-28T11:00:00Z", "disposition": "construction_only"}
+            admission_sha = write("admission.json", admission)
+            target = {"non_goals": ["Do not extend the range to unrelated protocols.\n"],
+                      "constraints": ["The range might depend on CNI support when data paths are tested.\n"],
+                      "acceptance_checks": ["Alpha requires range validation before enabling the feature.\n"],
+                      "evidence_requirements": ["Test API range operations with both endpoints, preserving the CNI caveat.\n"]}
+            item = {"repository": manifest["repository"], "title": "KEP19: Port eligibility",
+                    "objective": "Describe the π-port eligibility proposal.", "context": [{
+                    "kind": "assignment_packet", "source_ref": "source.md", "source_sha256": source_sha,
+                    "text": source}]}
+            group = "licensed/kubernetes/enhancements/kep-19"
+            record = {"protocol": "kep-extraction/v1", "admission_sha256": admission_sha,
+                      "source_group": group, "kep_number": 19, "source_ref": "source.md", "source_sha256": source_sha,
+                      "generated_at": UTC, "input": item, "context_spans": [{"start": 0, "end": len(source)}],
+                      "target": target, "target_spans": {field: [span(text) for text in texts] for field, texts in target.items()}}
+            candidate = {"source_group": group, "split": "train", "input": item, "source_provenance": {
+                         "kind": "licensed_extraction", "admission_ref": "admission.json", "admission_sha256": admission_sha,
+                         "extraction_ref": "extraction.json", "extraction_sha256": write("extraction.json", record)}}
+            scenarios = root / "scenarios.jsonl"
+            out = root / "rows.jsonl"
+            deny = Mock(side_effect=AssertionError("extraction contacted inference or GitHub transport"))
+            scrub = Mock(return_value="reports/synthetic-scrub.json")
+
+            def run(row=candidate, **options):
+                write("scenarios.jsonl", row)
+                return generate_rows.generate(generate_rows.load_scenarios(scenarios, 1),
+                    provider="repository_history", set_a=set_a, set_b=set_b, out=out, source_root=root,
+                    terms_verified_at=UTC, generated_at=UTC, dry_run=options.pop("dry_run", False),
+                    scrub=scrub, **options)
+
+            with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", frozenset({admission_sha})), \
+                    patch.multiple(generate_rows, prepare_local_model=deny, local_dispatch=deny,
+                                   native_dispatch=deny, quote_dispatch=deny, live_dispatch=deny, github_chronology=deny), \
+                    patch.object(generate_rows.local_transport, "http_json", deny):
+                self.assertEqual(run(dry_run=True), {"dry_run": True, "rows": 0, "receipts": 0})
+                self.assertFalse(out.exists())
+                self.assertEqual(run(), {"dry_run": False, "rows": 1, "receipts": 0,
+                                        "extraction_records": 1, "disposition": "construction_only"})
+                row = json.loads(out.read_bytes())
+                self.assertEqual(row["target"], target)
+                self.assertEqual(row["input"], item)  # Original target-support sections remain cited context.
+                self.assertEqual((row["source_kind"], row["source_provider"], row["terms_tier"], row["source_model"]),
+                                 ("licensed_extraction", "repository_history", "repository_history", "n/a"))
+                self.assertEqual(row["receipt_sha256"], candidate["source_provenance"]["extraction_sha256"])
+                self.assertEqual(row["row_id"], validate_rows.canonical_row_id(item, target))
+                self.assertNotIn("terms_verified_at", row)
+                self.assertEqual(validate_rows.validate(["--rows", str(out), "--set-a", str(set_a), "--set-b", str(set_b),
+                                                        "--out", str(root / "validated")]), 0)
+                scrub.assert_called_once()
+                out.unlink()
+
+                for ref in ("source.md", "LICENSE", "selection-policy.json", "source-manifest.json", "admission.json", "extraction.json"):
+                    with self.subTest(changed_artifact=ref):
+                        original = (root / ref).read_bytes()
+                        (root / ref).write_bytes(original + b"changed")
+                        with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()):
+                            run()
+                        self.assertFalse(out.exists())
+                        (root / ref).write_bytes(original)
+
+                for defect in ("rewritten", "empty", "offset", "qualification", "group", "zero", "rationale"):
+                    with self.subTest(untrusted_record=defect):
+                        bad = json.loads(json.dumps(record))
+                        if defect == "rewritten":
+                            bad["target"]["constraints"][0] = "The range always works."
+                        elif defect == "empty":
+                            bad["target"]["non_goals"] = []
+                            bad["target_spans"]["non_goals"] = []
+                        elif defect == "offset":
+                            bad["target_spans"]["constraints"][0]["start"] = True
+                        elif defect == "qualification":
+                            bad["target"]["constraints"][0] = target["constraints"][0].replace("might", "will")
+                        elif defect == "group":
+                            bad["source_group"] = group + "/" + manifest["commit"]
+                        elif defect == "zero":
+                            bad["kep_number"] = 0
+                        else:
+                            bad["grader_rationale"] = "An added ACCEPT does not establish source provenance."
+                        altered = json.loads(json.dumps(candidate))
+                        altered["source_provenance"]["extraction_sha256"] = write("extraction.json", bad)
+                        with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()):
+                            run(altered)
+                        self.assertFalse(out.exists())
+                candidate["source_provenance"]["extraction_sha256"] = write("extraction.json", record)
+                with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()):
+                    run(dispatch=deny)
+                deny.assert_not_called()
+                self.assertEqual(scrub.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]

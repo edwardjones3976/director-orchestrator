@@ -29,3 +29,17 @@ First deliverable: one candidate row. Two independent whole-row primary graders 
 Preserve all protected evaluation sets; the sole custodian returns aggregate leak evidence covering Set A, historical Set B and prospective Set B. The source writer does not read protected reference bodies. One accepted row does not release training or the 96-row batch. The audit is capped at 12 proposals; later expansion keeps its separate gates and existing budget subcaps.
 
 Model manifest approval and integrity incident evidence are recorded separately. Extraction makes zero inference calls and needs no GPU. The current GPU recovery hold remains in force for baseline, probe and training operations.
+
+## First qualified source and immutable construction evidence
+
+The section check follows the frozen order and records every skip. It first qualified KEP-2079, `keps/sig-network/2079-network-policy-port-range/README.md`, after 179 earlier proposal bodies lacked one or more required sections. This is one qualified source, not a completed 12-row audit or a claim that 96 KEPs qualify.
+
+- Source SHA-256: `a17070c7d198a977fe4bb817b3426214841ce14aa25613166c441c11ba8312d3`.
+- Source Git blob: `7ea711c31f674af1db783e00105fe8bb035df790`, recomputed from the exact bytes and verified against the pinned tree.
+- Corpus candidate manifest SHA-256: `d3e82b4f9a8af3bb25e4765e5ac2f16855c52efbcbf4f65391e741d1e39c42d4`; 224 positive, unique KEP IDs from the 227 metadata candidates. Three legacy zero IDs are excluded because they cannot identify independent source groups. Capturing and hashing these candidates does not establish section qualification or row acceptance.
+- Construction-only admission SHA-256: `efaf1df009bae28ea6b57b72abc19f5c8864120e74de45e512533ab9cbc46ba9`.
+- Selected extraction-record SHA-256: `c5ee0c1a962bcff4bc106b4f9b25092530d9b2c4bb151898d80ef6d39b9f6185`.
+
+The provisional extraction has two non-goals, one caveat retaining the word “might,” three Alpha criteria, and three prerequisite test duties retaining the CNI data-path caveat. Later coverage measurements and observed flakes are not test requirements and are excluded whole. Nine of nine selected items are exact original spans also supplied in context; context is 2,884 characters. Containment is a diagnostic, not a target percentage.
+
+Public capture artifacts remain local until independent corpus review; the pinned upstream path and blob provide reproducible source evidence. Whole-row grading, three-set custodian leak clearance and training release remain unproven. No inference or grading call was made during construction. A source/schema pass cannot stand in for those gates.

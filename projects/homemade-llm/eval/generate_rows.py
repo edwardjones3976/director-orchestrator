@@ -17,6 +17,8 @@ Each scenario must pass ``build_inputs.validate_context`` (byte/path guard) and
 its source route before a dry run or provider call: GitHub issue/linked-PR
 chronology, or a pinned independent admission of a licensed specification.
 Licensed specifications are synthetic training/development sources only.
+``--provider repository_history`` constructs provisional licensed_extraction
+rows from pinned human source spans, without preparing or contacting a model.
 """
 from __future__ import annotations
 
@@ -97,6 +99,11 @@ LICENSED_SPECIFICATION_ADMISSIONS = {
     ),
 }
 LICENSED_SPECIFICATION_REPOSITORY = "exercism/problem-specifications"
+# Exact corpus-admission bytes require separate independent code/data review.
+# These pins permit construction only; source/whole-row/training gates still apply.
+LICENSED_EXTRACTION_ADMISSIONS = frozenset({
+    "efaf1df009bae28ea6b57b72abc19f5c8864120e74de45e512533ab9cbc46ba9",
+})
 # Independently reviewed learnyounode batches; not a general source registry.
 LEARNYOUNODE_SERVER_ADMISSION = "b2f150ca5bfc37f7695b7391e723f6d34b95fd52e210a4d4c6859bf69c34f774"
 LEARNYOUNODE_ADMISSIONS = {
@@ -827,6 +834,93 @@ def validate_licensed_specification(scenario: dict[str, Any], source_root: Path,
         fail(f"{label}: malformed licensed-source evidence")
 
 
+def validate_licensed_extraction(scenario: dict[str, Any], source_root: Path,
+                                label: str) -> dict[str, Any]:
+    """Bind human-selected literal spans; classification/completeness still need grading."""
+    try:
+        block = scenario["source_provenance"]
+        if (set(block) != {"kind", "admission_ref", "admission_sha256", "extraction_ref", "extraction_sha256"}
+                or block["admission_sha256"] not in LICENSED_EXTRACTION_ADMISSIONS):
+            fail(f"{label}: no pinned licensed-extraction corpus admission")
+
+        def artifact(ref: Any, digest: str) -> bytes:
+            raw = _source_artifact(source_root, ref, label)
+            if re.fullmatch(r"[0-9a-f]{64}", digest) is None or local_transport.sha256(raw) != digest:
+                fail(f"{label}: licensed-extraction artifact bytes changed")
+            return raw
+
+        admission = local_transport.strict_json(artifact(block["admission_ref"], block["admission_sha256"]))
+        repository, commit = admission["repository"], admission["commit"]
+        if (admission["protocol"] != "kep-corpus-admission/v1" or repository != "kubernetes/enhancements"
+                or re.fullmatch(r"[0-9a-f]{40}", commit) is None or admission["license"] != "Apache-2.0"
+                or admission["disposition"] != "construction_only"):
+            fail(f"{label}: corpus is not a pinned Apache-2.0 KEP construction admission")
+        artifact(admission["license_ref"], admission["license_sha256"])
+        if not artifact(admission["selection_policy_ref"], admission["selection_policy_sha256"]).strip():
+            fail(f"{label}: frozen selection policy is empty")
+        manifest = local_transport.strict_json(artifact(admission["manifest_ref"], admission["manifest_sha256"]))
+        sources = manifest["sources"]
+        if (manifest["protocol"] != "kep-source-manifest/v1" or manifest["repository"] != repository
+                or manifest["commit"] != commit or not isinstance(sources, list) or not sources
+                or any(type(entry["kep_number"]) is not int or entry["kep_number"] < 1 for entry in sources)
+                or len({entry["kep_number"] for entry in sources}) != len(sources)):
+            fail(f"{label}: manifest does not bind unique positive KEP identities at the corpus commit")
+        record = local_transport.strict_json(artifact(block["extraction_ref"], block["extraction_sha256"]))
+        if (set(record) != {"protocol", "admission_sha256", "source_group", "kep_number", "source_ref",
+                            "source_sha256", "generated_at", "input", "context_spans", "target", "target_spans"}
+                or record["protocol"] != "kep-extraction/v1"
+                or record["admission_sha256"] != block["admission_sha256"]
+                or type(record["kep_number"]) is not int or record["kep_number"] < 1
+                or record["source_group"] != f"licensed/{repository}/kep-{record['kep_number']}"
+                or record["source_group"] != scenario["source_group"] or record["input"] != scenario["input"]
+                or record["input"]["repository"] != repository):
+            fail(f"{label}: extraction record does not bind this source group and input")
+        entries = [entry for entry in sources if entry["kep_number"] == record["kep_number"]]
+        if len(entries) != 1:
+            fail(f"{label}: extracted KEP is outside the pinned manifest")
+        entry = entries[0]
+        if (re.fullmatch(rf"keps/sig-[a-z0-9-]+/{record['kep_number']}-[A-Za-z0-9._-]+/README\.md", entry["path"]) is None
+                or record["source_ref"] != entry["source_ref"] or record["source_sha256"] != entry["source_sha256"]):
+            fail(f"{label}: extracted source identity differs from the pinned KEP")
+        raw = artifact(entry["source_ref"], entry["source_sha256"])
+        if hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest() != entry["source_git_blob"]:
+            fail(f"{label}: captured source differs from the pinned Git blob")
+        text = raw.decode("utf-8")
+        if any(not record["input"][field].strip() or record["input"][field] not in text for field in ("objective", "title")):
+            fail(f"{label}: title/objective must be literal source excerpts")
+        times = [_source_utc(admission[field], label) for field in ("policy_frozen_at", "captured_at", "recorded_at")]
+        if not (times[0] < times[1] <= times[2] <= _source_utc(record["generated_at"], label)
+                <= _source_utc(local_transport.utc_now(), label)):
+            fail(f"{label}: selection/capture/record/extraction chronology differs")
+
+        def span_text(span: dict[str, Any]) -> str:
+            if (set(span) != {"start", "end"} or type(span["start"]) is not int or type(span["end"]) is not int
+                    or not 0 <= span["start"] < span["end"] <= len(text)):
+                fail(f"{label}: invalid half-open Unicode source span")
+            return text[span["start"]:span["end"]]
+
+        context, spans = record["input"]["context"], record["context_spans"]
+        if not isinstance(spans, list) or len(spans) != len(context):
+            fail(f"{label}: context must bind every source span")
+        for item, span in zip(context, spans):
+            if (item["kind"] != "assignment_packet" or item["source_ref"] != entry["source_ref"]
+                    or item["source_sha256"] != entry["source_sha256"] or item["text"] != span_text(span)):
+                fail(f"{label}: context is not the exact cited original proposal span")
+        target, spans = record["target"], record["target_spans"]
+        if set(target) != set(TARGET_FIELDS) or set(spans) != set(TARGET_FIELDS):
+            fail(f"{label}: extraction must bind exactly four target lists")
+        for field in TARGET_FIELDS:
+            if (not isinstance(target[field], list) or not target[field] or not isinstance(spans[field], list)
+                    or len(target[field]) != len(spans[field])
+                    or any(not isinstance(item, str) or not item.strip() or item != span_text(span)
+                           for item, span in zip(target[field], spans[field]))):
+                fail(f"{label}: {field} must retain nonempty literal source spans without rewriting")
+        refuse_secrets(record, label)
+        return record
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        fail(f"{label}: malformed licensed-extraction evidence")
+
+
 def validate_scenarios_for_dispatch(
     scenarios: list[dict[str, Any]],
     *,
@@ -835,8 +929,9 @@ def validate_scenarios_for_dispatch(
     set_b: Path,
     sets: list[validate_rows.HeldOutSet],
     review_receipts_root: Path | None = None,
-) -> None:
+) -> list[dict[str, Any] | None]:
     group_splits: dict[str, str] = {}
+    extractions: list[dict[str, Any] | None] = []
     for index, scenario in enumerate(scenarios, start=1):
         label = f"scenario {index} ({scenario.get('source_group', '?')})"
         validate_scenario_source_provenance(
@@ -849,16 +944,21 @@ def validate_scenarios_for_dispatch(
             fail(f"{label}: held-out input leak before dispatch: {reasons or nearest}")
         block = scenario.get("source_provenance")
         kind = block.get("kind", "github_issue") if isinstance(block, dict) else "github_issue"
+        extraction = None
         if kind == "github_issue":
             validate_chronology(scenario, source_root, label)
         elif kind == "licensed_specification":
             validate_licensed_specification(scenario, source_root, label, review_receipts_root)
+        elif kind == "licensed_extraction":
+            extraction = validate_licensed_extraction(scenario, source_root, label)
         else:
             fail(f"{label}: unsupported source-provenance kind")
         group, split = validate_rows.split_source_group(scenario["source_group"]), scenario["split"]
         if group in group_splits and group_splits[group] != split:
             fail(f"{label}: one verified source group cannot straddle train and dev")
         group_splits[group] = split
+        extractions.append(extraction)
+    return extractions
 
 
 def _strings(value: Any) -> list[str]:
@@ -2154,11 +2254,11 @@ def build_row(
     row = {
         "schema_version": SCHEMA_VERSION,
         "split": scenario["split"],
-        "source_kind": "provider_exemplar",
+        "source_kind": "licensed_extraction" if provider == "repository_history" else "provider_exemplar",
         "source_provider": provider,
         "source_model": model,
-        "terms_tier": "open_weight_license" if provider == "local_model" else "competing_only_clause",
-        "terms_verified_at": verified_at,
+        "terms_tier": "repository_history" if provider == "repository_history" else "open_weight_license" if provider == "local_model" else "competing_only_clause",
+        **({"terms_verified_at": verified_at} if provider != "repository_history" else {}),
         "generated_at": generated_at,
         "receipt_ref": receipt,
         "source_group": scenario["source_group"],
@@ -2219,6 +2319,16 @@ def generate(
     native_options: dict[str, Any] | None = None,
     native_release_pin: tuple[Path, str] | None = None,
 ) -> dict[str, Any]:
+    extraction_route = provider == "repository_history"
+    if extraction_route and (dispatch is not None or local_options is not None or native_sdk or native_options is not None
+                             or quote_first or quote_coverage or source_segments or native_release_pin is not None):
+        fail("licensed extraction accepts no inference transport, model or teacher options")
+    kinds = [block.get("kind") if isinstance(block := scenario.get("source_provenance"), dict) else None
+             for scenario in scenarios]
+    if ("licensed_extraction" in kinds) != extraction_route:
+        fail("licensed-extraction scenarios require repository_history and cannot mix with inference sources")
+    if extraction_route and any(kind != "licensed_extraction" for kind in kinds):
+        fail("licensed extraction accepts only pinned extraction scenarios")
     if native_sdk and (provider != "local_model" or dispatch is not None or quote_first or quote_coverage or source_segments or len(scenarios) != 1):
         fail("native SDK requires one ordinary local scenario and no injected dispatch/quote flags")
     if source_segments and (quote_first or quote_coverage or provider != "local_model" or dispatch is not None):
@@ -2227,7 +2337,7 @@ def generate(
         fail("quote-coverage requires quote-first")
     if quote_first and (provider != "local_model" or dispatch is not None):
         fail("quote-first requires the native pinned local_model route")
-    if provider not in COMPETING_PROVIDERS and provider != "local_model":
+    if provider not in COMPETING_PROVIDERS and provider not in ("local_model", "repository_history"):
         fail(f"provider is not a competing-only exemplar source: {provider}")
     if UTC_PATTERN.fullmatch(terms_verified_at) is None or UTC_PATTERN.fullmatch(generated_at) is None:
         fail("terms-verified-at and generated-at must be explicit UTC timestamps")
@@ -2240,9 +2350,11 @@ def generate(
     if out.exists():
         fail(f"refusing existing --out: {out}")
     root = infer_source_root(set_a, set_b, source_root)
-    validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets,
-                                    review_receipts_root=source_review_receipts_root)
-    for scenario in scenarios:
+    extractions = validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets,
+                                                review_receipts_root=source_review_receipts_root)
+    for scenario, extraction in zip(scenarios, extractions):
+        if extraction is not None and extraction["generated_at"] != generated_at:
+            fail("row generation timestamp must equal the bound extraction timestamp")
         if scenario["source_provenance"].get("kind") == "licensed_specification":
             if provider != "local_model":
                 fail("licensed-specification targets require the admitted local_model route")
@@ -2263,7 +2375,7 @@ def generate(
         reviewed_at = _validate_rustlings_member_group(scenarios[0], root, source_review_receipts_root)
         if _source_utc(generated_at, "Rustlings generation") <= _source_utc(reviewed_at, "Rustlings member review"):
             fail("Rustlings generation timestamp must follow member-group review")
-    if provider != "local_model" and dispatch is None:
+    if provider != "local_model" and dispatch is None and not extraction_route:
         fail("cloud exemplar generation is held by the M2 training-data terms gate")
     if provider == "local_model" and dispatch is None:
         if not isinstance(local_options, dict):
@@ -2289,26 +2401,32 @@ def generate(
     checker = scrub or live_scrub
     validator = _schema_validator()
     rows: list[dict[str, Any]] = []
-    for scenario in scenarios:
-        local_caller = native_dispatch if native_sdk else quote_dispatch if quote_first or source_segments else local_dispatch
-        result = (local_caller(scenario, purpose_for(scenario["source_group"]), prepared,
-                                receipts_dir=receipts_dir, verified_at=terms_verified_at,
-                                timeout=timeout, max_output=max_output,
-                                **({"runtime_path": runtime_path, "release": release, "operator_pin": native_release_pin} if native_sdk else {"segments": True} if source_segments else {"coverage": True} if quote_coverage else {}))
-                  if provider == "local_model" and dispatch is None
-                  else caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"])))
-        if not isinstance(result, DispatchResult):
-            fail("dispatch returned no result")
-        if not result.model.strip():
-            fail("receipt does not record a model")
-        target = parse_target(result.text)
+    for scenario, extraction in zip(scenarios, extractions):
+        if extraction_route:
+            target, model = extraction["target"], "n/a"
+            receipt = scenario["source_provenance"]["extraction_ref"]
+        else:
+            local_caller = native_dispatch if native_sdk else quote_dispatch if quote_first or source_segments else local_dispatch
+            result = (local_caller(scenario, purpose_for(scenario["source_group"]), prepared,
+                                  receipts_dir=receipts_dir, verified_at=terms_verified_at,
+                                  timeout=timeout, max_output=max_output,
+                                  **({"runtime_path": runtime_path, "release": release, "operator_pin": native_release_pin} if native_sdk else {"segments": True} if source_segments else {"coverage": True} if quote_coverage else {}))
+                      if provider == "local_model" and dispatch is None
+                      else caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"])))
+            if not isinstance(result, DispatchResult):
+                fail("dispatch returned no result")
+            if not result.model.strip():
+                fail("receipt does not record a model")
+            target, model, receipt = parse_target(result.text), result.model, receipt_ref(result.receipt_path)
         row = build_row(
-            scenario, target, provider=provider, model=result.model,
-            receipt=receipt_ref(result.receipt_path), verified_at=terms_verified_at,
+            scenario, target, provider=provider, model=model,
+            receipt=receipt, verified_at=terms_verified_at,
             generated_at=generated_at, sets=sets,
         )
         if provider == "local_model":
             row["receipt_sha256"] = local_receipt_hash(result, scenario, target, terms_verified_at, native_release_pin=native_release_pin) if native_sdk else local_receipt_hash(result, scenario, target, terms_verified_at)
+        elif extraction_route:
+            row["receipt_sha256"] = scenario["source_provenance"]["extraction_sha256"]
         errors = list(validator.iter_errors(row))
         if errors:
             fail(f"row failed the schema: {errors[0].message}")
@@ -2338,11 +2456,12 @@ def generate(
             os.replace(draft, out)
         except OSError as exc:
             fail(f"could not publish rows: {exc.strerror}")
-    return {"dry_run": False, "rows": len(rows), "receipts": len(rows)}
+    return {"dry_run": False, "rows": len(rows), "receipts": 0 if extraction_route else len(rows),
+            **({"extraction_records": len(rows), "disposition": "construction_only"} if extraction_route else {})}
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Generate DIRECTOR exemplar rows (M2-G1).")
+    parser = argparse.ArgumentParser(description="Construct DIRECTOR exemplar or licensed-extraction rows (M2-G1).")
     parser.add_argument("--scenarios", type=Path, required=True)
     parser.add_argument("--provider", required=True)
     parser.add_argument("--set-a", type=Path, required=True, dest="set_a")
@@ -2371,6 +2490,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--lms-models-dir", type=Path, default=Path.home() / ".lmstudio" / "models")
     args = parser.parse_args(argv)
+    if args.provider == "repository_history" and any(value is not None for value in (
+            args.model, args.model_gguf, args.conversion_receipt, args.license_file, args.receipts_dir, args.native_runtime)):
+        parser.error("licensed extraction accepts no model/inference artifact options")
     if args.source_segments and (args.quote_first or args.quote_coverage or args.provider != "local_model"):
         parser.error("--source-segments requires native local_model and no legacy quote flags")
     if args.quote_coverage and (not args.quote_first or args.provider != "local_model"):
@@ -2385,7 +2507,7 @@ def main(argv: list[str] | None = None) -> int:
             source_review_receipts_root=args.source_review_receipts_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
             quote_first=args.quote_first, quote_coverage=args.quote_coverage, source_segments=args.source_segments,
-            native_sdk=args.native_sdk, native_options={"runtime_manifest": args.native_runtime},
+            native_sdk=args.native_sdk, native_options={"runtime_manifest": args.native_runtime} if args.native_sdk else None,
             local_options={key: getattr(args, key) for key in (
                 "model", "model_gguf", "conversion_receipt", "license_file", "receipts_dir",
                 "base_url", "lms_models_dir")} if args.provider == "local_model" else None,
