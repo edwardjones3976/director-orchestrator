@@ -1093,10 +1093,11 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.marker = self.outside / "malicious-executed"
 
     def git(self, *arguments):
+        # Adding the real src tree on a busy Windows runner exceeds 30s.
         return subprocess.run(["git", "--no-replace-objects", "-C", str(self.repo),
                                "-c", "user.email=fixture@example.test", "-c", "user.name=fixture", *arguments],
                               env=self.launcher._git_environment(), check=True, capture_output=True,
-                              timeout=30).stdout
+                              timeout=120).stdout
 
     def python_environment(self):
         # Git needs no native Python extension libraries; the CI interpreter does.
