@@ -17,6 +17,9 @@ param(
     [string]$MergeRevision = 'db4e90b8359f816f09bf5c944797ce116f26da3c',
     [int]$Steps = 20,
     [switch]$Winner,
+    [switch]$Probe,
+    [int]$ProbeRowsTotal = 96,
+    [int]$ProbeSeqLen = 2048,
     [double]$TimeoutMinutes = 90
 )
 $ErrorActionPreference = 'Stop'
@@ -34,6 +37,9 @@ if ($Winner) {
     $MergeRevision = $WinnerRevision
 }
 if ($Steps -lt 1) { Write-Error '-Steps must be positive' }
+if ($ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
+if ($ProbeSeqLen -lt 1) { Write-Error '-ProbeSeqLen must be positive' }
+if ($Probe -and -not $Winner) { Write-Error '-Probe requires -Winner (D-M1-F is pinned to the Qwen3-14B winner)' }
 foreach ($r in $Revision, $MergeRevision) { if ($r -notmatch '^[0-9a-f]{40}$') { Write-Error "revision '$r' is not a full 40-hex commit" } }
 $Rows = [IO.Path]::GetFullPath($Rows)
 if ((Split-Path -Leaf $Rows) -ne 'accepted.jsonl') { Write-Error "trainer reads the validator's accepted.jsonl, not raw rows: $Rows" }
@@ -93,6 +99,9 @@ try {
         '--base', $Base, '--revision', $Revision, '--steps', "$Steps",
         '--report', "/workspace/reports/$runId.json")
     if ($Winner) { $dockerArgs += '--winner' }
+    if ($Probe) {
+        $dockerArgs += @('--probe', '--probe-rows-total', "$ProbeRowsTotal", '--probe-seq-len', "$ProbeSeqLen")
+    }
     function Get-AdapterState {
         try {
             $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)

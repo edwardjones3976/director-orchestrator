@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import io
 import shutil
 import subprocess
 import sys
@@ -249,6 +250,46 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIn(train_adapter.WINNER_REVISION, text)
         self.assertIn(train_adapter.WINNER_BASE, text)
         self.assertIn("Global\\homemade-llm-gpu", text)
+        self.assertIn("--probe", text)
+
+    def test_length_statistics_on_a_known_list(self):
+        lengths = [10, 20, 30, 40, 50]
+        stats = train_adapter.length_statistics(lengths)
+        self.assertEqual(stats["max"], 50)
+        self.assertAlmostEqual(stats["p50"], train_adapter.percentile(lengths, 50.0))
+        self.assertAlmostEqual(stats["p95"], train_adapter.percentile(lengths, 95.0))
+
+    def test_probe_timed_window_bookkeeping(self):
+        self.assertEqual(
+            train_adapter.timed_window_optimizer_updates(
+                train_adapter.PROBE_TIMED_MICROSTEPS,
+                train_adapter.PROBE_GRAD_ACCUM,
+            ),
+            5,
+        )
+        self.assertEqual(train_adapter.PROBE_WARMUP_MICROSTEPS, 10)
+        self.assertEqual(train_adapter.PROBE_TIMED_MICROSTEPS, 40)
+
+    def test_probe_extrapolation_and_contingency(self):
+        self.assertAlmostEqual(train_adapter.extrapolate_wall_seconds(96, 2.0), 576.0)
+        self.assertAlmostEqual(train_adapter.wall_seconds_with_contingency(100.0), 120.0)
+
+    def test_probe_pass_booleans_at_boundaries(self):
+        self.assertTrue(train_adapter.probe_memory_pass(10.999))
+        self.assertFalse(train_adapter.probe_memory_pass(11.0))
+        self.assertTrue(train_adapter.probe_time_pass(35999.9))
+        self.assertFalse(train_adapter.probe_time_pass(36000.0))
+
+    def test_help_lists_probe_flags(self):
+        buffer = io.StringIO()
+        with mock.patch.object(sys, "stdout", buffer):
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        help_text = buffer.getvalue()
+        self.assertIn("--probe", help_text)
+        self.assertIn("--probe-rows-total", help_text)
+        self.assertIn("--probe-seq-len", help_text)
 
 
 if __name__ == "__main__":

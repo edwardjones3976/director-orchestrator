@@ -42,6 +42,12 @@ WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
+PROBE_WARMUP_MICROSTEPS = 10
+PROBE_TIMED_MICROSTEPS = 40
+PROBE_GRAD_ACCUM = 8
+PROBE_EPOCHS = 3
+PROBE_CONTINGENCY = 0.20
+PROBE_TIME_LIMIT_S = 36_000
 IGNORED_LABEL = -100
 SEED = 7
 SEQ = 2048
@@ -176,6 +182,57 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def percentile(values: list[int], p: float) -> float:
+    """Linear-interpolation percentile on a non-empty list (``p`` is 0–100)."""
+    if not values:
+        fail("percentile requires at least one value")
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return float(ordered[0])
+    rank = (p / 100.0) * (len(ordered) - 1)
+    lower = int(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = rank - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def length_statistics(lengths: list[int]) -> dict[str, float | int]:
+    """Token-length p50, p95 and max for the D-M1-F row-length gate."""
+    return {
+        "p50": round(percentile(lengths, 50.0), 3),
+        "p95": round(percentile(lengths, 95.0), 3),
+        "max": max(lengths),
+    }
+
+
+def timed_window_optimizer_updates(timed_microsteps: int, gradient_accumulation: int) -> int:
+    """Optimizer steps inside a timed microstep window."""
+    if timed_microsteps < 0 or gradient_accumulation < 1:
+        fail("timed window counts must be non-negative with positive accumulation")
+    return timed_microsteps // gradient_accumulation
+
+
+def extrapolate_wall_seconds(rows_total: int, seconds_per_microstep: float, *, epochs: int = PROBE_EPOCHS) -> float:
+    """Three-epoch wall estimate: one microstep per row per epoch."""
+    if rows_total < 0 or seconds_per_microstep < 0 or epochs < 0:
+        fail("extrapolation inputs must be non-negative")
+    return rows_total * epochs * seconds_per_microstep
+
+
+def wall_seconds_with_contingency(wall_seconds: float, fraction: float = PROBE_CONTINGENCY) -> float:
+    if wall_seconds < 0 or fraction < 0:
+        fail("contingency inputs must be non-negative")
+    return wall_seconds * (1.0 + fraction)
+
+
+def probe_memory_pass(peak_reserved_gib: float, *, limit_gib: float = WINNER_VRAM_GIB) -> bool:
+    return peak_reserved_gib < limit_gib
+
+
+def probe_time_pass(contingency_wall_seconds: float, *, limit_seconds: float = PROBE_TIME_LIMIT_S) -> bool:
+    return contingency_wall_seconds < limit_seconds
+
+
 def encode_rows(rows: list[dict[str, Any]], tokenize) -> list[dict[str, list[int]]]:
     """tokenize(messages, add_generation_prompt) -> token ids. Dev rows are not in ``rows``."""
     encoded: list[dict[str, list[int]]] = []
@@ -232,6 +289,127 @@ def build_report(
     }
 
 
+def token_lengths(encoded: list[dict[str, list[int]]]) -> list[int]:
+    return [len(example["input_ids"]) for example in encoded]
+
+
+def prompt_token_count(labels: list[int]) -> int:
+    for index, label in enumerate(labels):
+        if label != IGNORED_LABEL:
+            return index
+    return len(labels)
+
+
+def pad_example_to_seq_len(example: dict[str, list[int]], seq_len: int, pad_token_id: int) -> dict[str, list[int]]:
+    """Right-pad or left-truncate one encoded row to exactly ``seq_len`` for the VRAM exercise."""
+    input_ids = list(example["input_ids"])
+    labels = list(example["labels"])
+    attention = list(example.get("attention_mask", [1] * len(input_ids)))
+    if len(input_ids) > seq_len:
+        input_ids = input_ids[-seq_len:]
+        labels = labels[-seq_len:]
+        attention = attention[-seq_len:]
+    if len(input_ids) < seq_len:
+        pad_count = seq_len - len(input_ids)
+        input_ids.extend([pad_token_id] * pad_count)
+        labels.extend([IGNORED_LABEL] * pad_count)
+        attention.extend([0] * pad_count)
+    prompt_tokens = prompt_token_count(labels)
+    require_response_only(labels, prompt_tokens)
+    return {"input_ids": input_ids, "attention_mask": attention, "labels": labels}
+
+
+def build_synthetic_row_from_context(row: dict[str, Any], seq_len: int, tokenize) -> dict[str, list[int]]:
+    """Lengthen context text by repetition until tokenization reaches ``seq_len``."""
+    context_items = row["input"].get("context")
+    if not isinstance(context_items, list) or not context_items:
+        fail("context repetition requires at least one context item")
+    base_text = context_items[0].get("text")
+    if not isinstance(base_text, str) or not base_text:
+        fail("context repetition requires non-empty context text")
+    repeated = dict(row)
+    repeated_input = dict(row["input"])
+    repeated_context = [dict(context_items[0])]
+    text = base_text
+    encoded = encode_rows([repeated], tokenize)[0]
+    while len(encoded["input_ids"]) < seq_len:
+        text = text + "\n" + base_text
+        repeated_context[0] = dict(repeated_context[0], text=text)
+        repeated_input["context"] = repeated_context
+        repeated["input"] = repeated_input
+        encoded = encode_rows([repeated], tokenize)[0]
+        if len(text) > seq_len * 200:
+            fail("context repetition did not reach the probe sequence length")
+    return encoded
+
+
+def prepare_probe_examples(
+    rows: list[dict[str, Any]],
+    encoded: list[dict[str, list[int]]],
+    seq_len: int,
+    tokenize,
+    pad_token_id: int,
+) -> tuple[list[dict[str, list[int]]], str]:
+    """Ensure exercise rows reach ``seq_len``; report ``pad`` or ``context_repetition``."""
+    if any(len(example["input_ids"]) < seq_len for example in encoded):
+        try:
+            return [pad_example_to_seq_len(example, seq_len, pad_token_id) for example in encoded], "pad"
+        except SystemExit:
+            synthetic = build_synthetic_row_from_context(rows[0], seq_len, tokenize)
+            return [pad_example_to_seq_len(synthetic, seq_len, pad_token_id)], "context_repetition"
+    return [pad_example_to_seq_len(example, seq_len, pad_token_id) for example in encoded], "pad"
+
+
+def build_probe_report(
+    *,
+    run: str,
+    base: str,
+    revision: str,
+    rows: int,
+    mask_coverage: float,
+    resolved_commit: str,
+    length_stats: dict[str, float | int],
+    sequence_length: int,
+    sequence_length_method: str,
+    warmup_microsteps: int,
+    timed_microsteps: int,
+    gradient_accumulation: int,
+    timed_optimizer_updates: int,
+    seconds_per_microstep: float,
+    peak_reserved_gib: float,
+    rows_total: int,
+    wall_seconds_three_epochs: float,
+    wall_seconds_three_epochs_contingency: float,
+    memory_pass: bool,
+    time_pass: bool,
+) -> dict[str, Any]:
+    return {
+        "run": run,
+        "mode": "d_m1_f_probe",
+        "base": base,
+        "base_revision": revision,
+        "base_resolved_commit": resolved_commit,
+        "rows": rows,
+        "probe_rows_total": rows_total,
+        "mask_coverage": round(mask_coverage, 6),
+        "token_lengths": length_stats,
+        "sequence_length": sequence_length,
+        "sequence_length_method": sequence_length_method,
+        "warmup_microsteps": warmup_microsteps,
+        "timed_microsteps": timed_microsteps,
+        "gradient_accumulation": gradient_accumulation,
+        "timed_optimizer_updates": timed_optimizer_updates,
+        "seconds_per_microstep": round(seconds_per_microstep, 6),
+        "peak_reserved_vram_gib": round(peak_reserved_gib, 3),
+        "wall_seconds_three_epochs": round(wall_seconds_three_epochs, 1),
+        "wall_seconds_three_epochs_contingency": round(wall_seconds_three_epochs_contingency, 1),
+        "memory_pass": memory_pass,
+        "time_pass": time_pass,
+        "gguf_sha256": None,
+        "thinking": "disabled",
+    }
+
+
 def sft_arguments(output_dir: str, steps: int) -> dict[str, Any]:
     """Trainer settings. ``remove_unused_columns`` stays off so the attention mask is not dropped before collation."""
     return {
@@ -249,6 +427,87 @@ def sft_arguments(output_dir: str, steps: int) -> dict[str, Any]:
         "report_to": "none",
         "seed": SEED,
     }
+
+
+def collate_features(features: list[dict[str, Any]]) -> dict[str, Any]:
+    if not features or "input_ids" not in features[0] or "labels" not in features[0]:
+        seen = sorted(features[0]) if features else []
+        fail(f"trainer batch is missing the response mask: {seen}")
+
+    def as_list(value: Any) -> list[int]:
+        if hasattr(value, "tolist"):
+            return [int(item) for item in value.tolist()]
+        return [int(item) for item in value]
+
+    input_ids = [as_list(feature["input_ids"]) for feature in features]
+    labels = [as_list(feature["labels"]) for feature in features]
+    if any(IGNORED_LABEL not in row for row in labels):
+        fail("trainer batch lost the prompt mask")
+    attention_mask = [
+        as_list(feature["attention_mask"]) if "attention_mask" in feature else [1] * len(row_ids)
+        for feature, row_ids in zip(features, input_ids)
+    ]
+    return {
+        "input_ids": torch.tensor(input_ids, dtype=torch.long),
+        "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+        "labels": torch.tensor(labels, dtype=torch.long),
+    }
+
+
+def run_probe_microsteps(
+    model: Any,
+    examples: list[dict[str, list[int]]],
+    *,
+    warmup_microsteps: int,
+    timed_microsteps: int,
+    gradient_accumulation: int,
+    learning_rate: float = 2e-4,
+) -> tuple[float, float]:
+    """Warm up, then time ``timed_microsteps`` microsteps at ``gradient_accumulation``."""
+    device = next(model.parameters()).device
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    model.train()
+    cursor = 0
+
+    def synchronized_now() -> float:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        return time.time()
+
+    def run_phase(count: int, *, timed: bool) -> float:
+        nonlocal cursor
+        pending = 0
+        start = synchronized_now() if timed else 0.0
+        for _ in range(count):
+            example = examples[cursor % len(examples)]
+            cursor += 1
+            batch = collate_features([example])
+            batch = {key: value.to(device) for key, value in batch.items()}
+            loss = model(**batch).loss / gradient_accumulation
+            loss.backward()
+            pending += 1
+            if pending == gradient_accumulation:
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                pending = 0
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+        if pending:
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        if timed:
+            return synchronized_now() - start
+        return 0.0
+
+    run_phase(warmup_microsteps, timed=False)
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    elapsed = run_phase(timed_microsteps, timed=True)
+    peak_gib = torch.cuda.max_memory_reserved() / 2**30 if torch.cuda.is_available() else 0.0
+    seconds_per_microstep = elapsed / timed_microsteps if timed_microsteps else 0.0
+    return seconds_per_microstep, peak_gib
 
 
 def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, report_path: Path, *, winner: bool) -> dict[str, Any]:
@@ -276,35 +535,11 @@ def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, repo
         for example in encoded
     ) / len(encoded)
 
-    def collate(features: list[dict[str, Any]]) -> dict[str, Any]:
-        if not features or "input_ids" not in features[0] or "labels" not in features[0]:
-            seen = sorted(features[0]) if features else []
-            fail(f"trainer batch is missing the response mask: {seen}")
-
-        def as_list(value: Any) -> list[int]:
-            if hasattr(value, "tolist"):
-                return [int(item) for item in value.tolist()]
-            return [int(item) for item in value]
-
-        input_ids = [as_list(feature["input_ids"]) for feature in features]
-        labels = [as_list(feature["labels"]) for feature in features]
-        if any(IGNORED_LABEL not in row for row in labels):
-            fail("trainer batch lost the prompt mask")
-        attention_mask = [
-            as_list(feature["attention_mask"]) if "attention_mask" in feature else [1] * len(row_ids)
-            for feature, row_ids in zip(features, input_ids)
-        ]
-        return {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
-        }
-
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=Dataset.from_list(encoded),
-        data_collator=collate,
+        data_collator=collate_features,
         args=SFTConfig(**sft_arguments(str(report_path.with_suffix("")) + "-trainer", steps)),
     )
     torch.cuda.reset_peak_memory_stats()
@@ -320,6 +555,96 @@ def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, repo
     return report
 
 
+def run_probe(
+    rows: list[dict[str, Any]],
+    base: str,
+    revision: str,
+    report_path: Path,
+    *,
+    probe_rows_total: int,
+    probe_seq_len: int,
+) -> dict[str, Any]:
+    """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
+    set_seed(SEED)
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        base,
+        revision=revision,
+        max_seq_length=probe_seq_len,
+        load_in_4bit=True,
+        use_exact_model_name=True,
+    )
+    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=16,
+        lora_alpha=16,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        random_state=SEED,
+    )
+
+    def tokenize(messages: list[dict[str, str]], add_generation_prompt: bool) -> list[int]:
+        return list(
+            tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=add_generation_prompt,
+                enable_thinking=False,
+            )
+        )
+
+    encoded = encode_rows(rows, tokenize)
+    length_stats = length_statistics(token_lengths(encoded))
+    mask_coverage = sum(
+        require_response_only(example["labels"], prompt_token_count(example["labels"]))
+        for example in encoded
+    ) / len(encoded)
+    pad_token_id = tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = tokenizer.eos_token_id
+    if pad_token_id is None:
+        fail("tokenizer has no pad or eos token for probe padding")
+    exercise_rows, sequence_length_method = prepare_probe_examples(
+        rows, encoded, probe_seq_len, tokenize, int(pad_token_id),
+    )
+    seconds_per_microstep, peak_gib = run_probe_microsteps(
+        model,
+        exercise_rows,
+        warmup_microsteps=PROBE_WARMUP_MICROSTEPS,
+        timed_microsteps=PROBE_TIMED_MICROSTEPS,
+        gradient_accumulation=PROBE_GRAD_ACCUM,
+    )
+    timed_updates = timed_window_optimizer_updates(PROBE_TIMED_MICROSTEPS, PROBE_GRAD_ACCUM)
+    wall_three_epochs = extrapolate_wall_seconds(probe_rows_total, seconds_per_microstep)
+    wall_contingency = wall_seconds_with_contingency(wall_three_epochs)
+    report = build_probe_report(
+        run=report_path.stem,
+        base=base,
+        revision=revision,
+        rows=len(rows),
+        mask_coverage=mask_coverage,
+        resolved_commit=resolved,
+        length_stats=length_stats,
+        sequence_length=probe_seq_len,
+        sequence_length_method=sequence_length_method,
+        warmup_microsteps=PROBE_WARMUP_MICROSTEPS,
+        timed_microsteps=PROBE_TIMED_MICROSTEPS,
+        gradient_accumulation=PROBE_GRAD_ACCUM,
+        timed_optimizer_updates=timed_updates,
+        seconds_per_microstep=seconds_per_microstep,
+        peak_reserved_gib=peak_gib,
+        rows_total=probe_rows_total,
+        wall_seconds_three_epochs=wall_three_epochs,
+        wall_seconds_three_epochs_contingency=wall_contingency,
+        memory_pass=probe_memory_pass(peak_gib),
+        time_pass=probe_time_pass(wall_contingency),
+    )
+    write_report(report_path, report)
+    return report
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train a DIRECTOR QLoRA adapter (M2-T1).")
     parser.add_argument("--rows", type=Path, required=True)
@@ -329,11 +654,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--winner", action="store_true")
     parser.add_argument("--check-only", action="store_true", help="Validate rows and exit. No GPU and no report.")
+    parser.add_argument("--probe", action="store_true", help="D-M1-F feasibility probe; writes metrics only.")
+    parser.add_argument("--probe-rows-total", type=int, default=96)
+    parser.add_argument("--probe-seq-len", type=int, default=SEQ)
     args = parser.parse_args(argv)
     if len(args.revision) != 40 or any(char not in "0123456789abcdef" for char in args.revision):
         fail(f"revision {args.revision!r} is not a full 40-hex commit")
     if args.steps < 1:
         fail("steps must be positive")
+    if args.probe_rows_total < 1:
+        fail("probe-rows-total must be positive")
+    if args.probe_seq_len < 1:
+        fail("probe-seq-len must be positive")
+    if args.probe and args.check_only:
+        fail("--probe cannot be combined with --check-only")
+    if args.probe and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
+        fail(f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
     rows = load_training_rows(args.rows)
@@ -342,7 +678,17 @@ def main(argv: list[str] | None = None) -> None:
             messages_for(row)
         print(json.dumps({"train_rows": len(rows), "check_only": True}))
         return
-    report = train(rows, args.base, args.revision, args.steps, args.report, winner=args.winner)
+    if args.probe:
+        report = run_probe(
+            rows,
+            args.base,
+            args.revision,
+            args.report,
+            probe_rows_total=args.probe_rows_total,
+            probe_seq_len=args.probe_seq_len,
+        )
+    else:
+        report = train(rows, args.base, args.revision, args.steps, args.report, winner=args.winner)
     print(json.dumps(report, indent=2))
 
 
