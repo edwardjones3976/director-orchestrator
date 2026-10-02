@@ -20,6 +20,8 @@ The owner approved cited original supporting sections at both training and infer
 
 Map Non-Goals to `non_goals`; actual Notes/Constraints/Caveats limits to `constraints`; Alpha Graduation Criteria to `acceptance_checks`; Test Plan evidence items to `evidence_requirements`. Reject a row if any field is empty after unsupported items are removed.
 
+Every target span must lie wholly inside a validated cited context span. Rows carry `promotion_status: construction_only`; the generator permits only `dev`, and the schema permits only `dev` or validator quarantine. Training promotion is not implemented by this construction route and requires a separately reviewed admission/promotion change. The bound extraction timestamp stays `generated_at`; `scrubbed_at` records the successful scan time.
+
 Use an explicit `licensed_extraction` provenance route and a hashed extraction record. No model name, inference receipt or real-history label may be fabricated. Existing source/context integrity, scrub, schema, canonical row identity and leak checks still apply.
 
 ## Acceptance and scope

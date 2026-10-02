@@ -842,6 +842,8 @@ def validate_licensed_extraction(scenario: dict[str, Any], source_root: Path,
         if (set(block) != {"kind", "admission_ref", "admission_sha256", "extraction_ref", "extraction_sha256"}
                 or block["admission_sha256"] not in LICENSED_EXTRACTION_ADMISSIONS):
             fail(f"{label}: no pinned licensed-extraction corpus admission")
+        if scenario["split"] != "dev":
+            fail(f"{label}: construction-only licensed extraction cannot enter the train split")
 
         def artifact(ref: Any, digest: str) -> bytes:
             raw = _source_artifact(source_root, ref, label)
@@ -899,10 +901,10 @@ def validate_licensed_extraction(scenario: dict[str, Any], source_root: Path,
                 fail(f"{label}: invalid half-open Unicode source span")
             return text[span["start"]:span["end"]]
 
-        context, spans = record["input"]["context"], record["context_spans"]
-        if not isinstance(spans, list) or len(spans) != len(context):
+        context, context_spans = record["input"]["context"], record["context_spans"]
+        if not isinstance(context_spans, list) or len(context_spans) != len(context):
             fail(f"{label}: context must bind every source span")
-        for item, span in zip(context, spans):
+        for item, span in zip(context, context_spans):
             if (item["kind"] != "assignment_packet" or item["source_ref"] != entry["source_ref"]
                     or item["source_sha256"] != entry["source_sha256"] or item["text"] != span_text(span)):
                 fail(f"{label}: context is not the exact cited original proposal span")
@@ -915,6 +917,9 @@ def validate_licensed_extraction(scenario: dict[str, Any], source_root: Path,
                     or any(not isinstance(item, str) or not item.strip() or item != span_text(span)
                            for item, span in zip(target[field], spans[field]))):
                 fail(f"{label}: {field} must retain nonempty literal source spans without rewriting")
+            if any(not any(context_span["start"] <= span["start"] < span["end"] <= context_span["end"]
+                           for context_span in context_spans) for span in spans[field]):
+                fail(f"{label}: every {field} target span must be wholly contained in a cited context span")
         refuse_secrets(record, label)
         return record
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -2255,6 +2260,7 @@ def build_row(
         "schema_version": SCHEMA_VERSION,
         "split": scenario["split"],
         "source_kind": "licensed_extraction" if provider == "repository_history" else "provider_exemplar",
+        **({"promotion_status": "construction_only"} if provider == "repository_history" else {}),
         "source_provider": provider,
         "source_model": model,
         "terms_tier": "repository_history" if provider == "repository_history" else "open_weight_license" if provider == "local_model" else "competing_only_clause",
@@ -2440,18 +2446,20 @@ def generate(
             encoding="utf-8", newline="\n",
         )
         report_ref = checker(folder)
-        if report_ref is not None:
-            if RECEIPT_REF_PATTERN.fullmatch(report_ref) is None:
-                fail("scrub report path is not a relative reference")
-            for row in rows:
+        scrubbed_at = local_transport.utc_now()
+        if report_ref is not None and RECEIPT_REF_PATTERN.fullmatch(report_ref) is None:
+            fail("scrub report path is not a relative reference")
+        for row in rows:
+            row["scrub"]["scrubbed_at"] = scrubbed_at
+            if report_ref is not None:
                 row["scrub"]["scan_report_ref"] = report_ref
-                errors = list(validator.iter_errors(row))
-                if errors:
-                    fail(f"row failed the schema: {errors[0].message}")
-            draft.write_text(
-                "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in rows),
-                encoding="utf-8", newline="\n",
-            )
+            errors = list(validator.iter_errors(row))
+            if errors:
+                fail(f"row failed the schema: {errors[0].message}")
+        draft.write_text(
+            "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in rows),
+            encoding="utf-8", newline="\n",
+        )
         try:
             os.replace(draft, out)
         except OSError as exc:
@@ -2490,8 +2498,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--lms-models-dir", type=Path, default=Path.home() / ".lmstudio" / "models")
     args = parser.parse_args(argv)
-    if args.provider == "repository_history" and any(value is not None for value in (
-            args.model, args.model_gguf, args.conversion_receipt, args.license_file, args.receipts_dir, args.native_runtime)):
+    if args.provider == "repository_history" and (any(value is not None for value in (
+            args.model, args.model_gguf, args.conversion_receipt, args.license_file, args.receipts_dir, args.native_runtime))
+            or args.base_url != parser.get_default("base_url")
+            or args.lms_models_dir != parser.get_default("lms_models_dir")):
         parser.error("licensed extraction accepts no model/inference artifact options")
     if args.source_segments and (args.quote_first or args.quote_coverage or args.provider != "local_model"):
         parser.error("--source-segments requires native local_model and no legacy quote flags")

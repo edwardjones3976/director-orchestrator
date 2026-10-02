@@ -3129,6 +3129,26 @@ class NativeHotRootAccountingTests(unittest.TestCase):
 
 
 class LicensedExtractionTests(unittest.TestCase):
+    def test_extraction_cli_refuses_nondefault_transport_options_before_source_read(self):
+        argv = ["--provider", "repository_history", "--scenarios", "unused.jsonl", "--set-a", "unused-a",
+                "--set-b", "unused-b", "--out", "unused-out.jsonl", "--terms-verified-at", UTC, "--dry-run"]
+        with patch.object(generate_rows, "load_scenarios", return_value=[]) as load, \
+                patch.object(generate_rows, "generate", return_value={"dry_run": True}) as generate:
+            for option, value in (("--base-url", "http://remote.invalid/v1"),
+                                  ("--lms-models-dir", "nondefault-models")):
+                with self.subTest(option=option), patch("sys.stderr", io.StringIO()) as errors:
+                    with self.assertRaises(SystemExit) as refusal:
+                        generate_rows.main(argv + [option, value])
+                    self.assertEqual(refusal.exception.code, 2)
+                    self.assertIn("licensed extraction accepts no model/inference artifact options", errors.getvalue())
+                    load.assert_not_called()
+                    generate.assert_not_called()
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(generate_rows.main(argv + ["--base-url", "http://127.0.0.1:1234/v1",
+                    "--lms-models-dir", str(Path.home() / ".lmstudio" / "models")]), 0)
+            generate.assert_called_once()
+            self.assertIsNone(generate.call_args.kwargs["local_options"])
+
     def test_literal_extraction_binds_source_license_policy_and_record_without_transport(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -3178,7 +3198,7 @@ class LicensedExtractionTests(unittest.TestCase):
                       "source_group": group, "kep_number": 19, "source_ref": "source.md", "source_sha256": source_sha,
                       "generated_at": UTC, "input": item, "context_spans": [{"start": 0, "end": len(source)}],
                       "target": target, "target_spans": {field: [span(text) for text in texts] for field, texts in target.items()}}
-            candidate = {"source_group": group, "split": "train", "input": item, "source_provenance": {
+            candidate = {"source_group": group, "split": "dev", "input": item, "source_provenance": {
                          "kind": "licensed_extraction", "admission_ref": "admission.json", "admission_sha256": admission_sha,
                          "extraction_ref": "extraction.json", "extraction_sha256": write("extraction.json", record)}}
             scenarios = root / "scenarios.jsonl"
@@ -3199,9 +3219,14 @@ class LicensedExtractionTests(unittest.TestCase):
                     patch.object(generate_rows.local_transport, "http_json", deny):
                 self.assertEqual(run(dry_run=True), {"dry_run": True, "rows": 0, "receipts": 0})
                 self.assertFalse(out.exists())
-                self.assertEqual(run(), {"dry_run": False, "rows": 1, "receipts": 0,
-                                        "extraction_records": 1, "disposition": "construction_only"})
+                scrubbed_at = "2026-10-01T12:00:00Z"
+                with patch.object(generate_rows.local_transport, "utc_now", side_effect=[UTC, scrubbed_at]):
+                    self.assertEqual(run(), {"dry_run": False, "rows": 1, "receipts": 0,
+                                            "extraction_records": 1, "disposition": "construction_only"})
                 row = json.loads(out.read_bytes())
+                self.assertEqual(row["generated_at"], UTC)
+                self.assertEqual(row["scrub"]["scrubbed_at"], scrubbed_at)
+                self.assertEqual((row["split"], row["promotion_status"]), ("dev", "construction_only"))
                 self.assertEqual(row["target"], target)
                 self.assertEqual(row["input"], item)  # Original target-support sections remain cited context.
                 self.assertEqual((row["source_kind"], row["source_provider"], row["terms_tier"], row["source_model"]),
@@ -3211,7 +3236,31 @@ class LicensedExtractionTests(unittest.TestCase):
                 self.assertNotIn("terms_verified_at", row)
                 self.assertEqual(validate_rows.validate(["--rows", str(out), "--set-a", str(set_a), "--set-b", str(set_b),
                                                         "--out", str(root / "validated")]), 0)
+                for defect in ("train", "missing_status", "caller_promoted"):
+                    with self.subTest(promotion_bypass=defect):
+                        bad = json.loads(json.dumps(row))
+                        if defect == "train":
+                            bad["split"] = "train"
+                        elif defect == "missing_status":
+                            del bad["promotion_status"]
+                        else:
+                            bad["promotion_status"] = "admitted"
+                        write("unpromoted.jsonl", bad)
+                        rejected_dir = root / f"rejected-{defect}"
+                        with patch("sys.stderr", io.StringIO()):
+                            self.assertEqual(validate_rows.validate(["--rows", str(root / "unpromoted.jsonl"),
+                                "--set-a", str(set_a), "--set-b", str(set_b), "--out", str(rejected_dir)]), 1)
+                        self.assertEqual((rejected_dir / "accepted.jsonl").read_text(), "")
                 scrub.assert_called_once()
+                out.unlink()
+                with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
+                    run({**candidate, "split": "train"}, dry_run=True)
+                self.assertIn("cannot enter the train split", errors.getvalue())
+                self.assertFalse(out.exists())
+                scrub.return_value = None
+                with patch.object(generate_rows.local_transport, "utc_now", side_effect=[UTC, scrubbed_at]):
+                    run()
+                self.assertEqual(json.loads(out.read_bytes())["scrub"]["scrubbed_at"], scrubbed_at)
                 out.unlink()
 
                 for ref in ("source.md", "LICENSE", "selection-policy.json", "source-manifest.json", "admission.json", "extraction.json"):
@@ -3223,7 +3272,7 @@ class LicensedExtractionTests(unittest.TestCase):
                         self.assertFalse(out.exists())
                         (root / ref).write_bytes(original)
 
-                for defect in ("rewritten", "empty", "offset", "qualification", "group", "zero", "rationale"):
+                for defect in ("rewritten", "empty", "offset", "qualification", "group", "zero", "disjoint", "partial", "rationale"):
                     with self.subTest(untrusted_record=defect):
                         bad = json.loads(json.dumps(record))
                         if defect == "rewritten":
@@ -3239,18 +3288,25 @@ class LicensedExtractionTests(unittest.TestCase):
                             bad["source_group"] = group + "/" + manifest["commit"]
                         elif defect == "zero":
                             bad["kep_number"] = 0
+                        elif defect in ("disjoint", "partial"):
+                            end = source.index("## Non-Goals") if defect == "disjoint" else len(source) - 1
+                            bad["context_spans"] = [{"start": 0, "end": end}]
+                            bad["input"]["context"][0]["text"] = source[:end]
                         else:
                             bad["grader_rationale"] = "An added ACCEPT does not establish source provenance."
                         altered = json.loads(json.dumps(candidate))
+                        altered["input"] = bad["input"]
                         altered["source_provenance"]["extraction_sha256"] = write("extraction.json", bad)
-                        with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()):
+                        with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
                             run(altered)
+                        if defect in ("disjoint", "partial"):
+                            self.assertIn("wholly contained in a cited context span", errors.getvalue())
                         self.assertFalse(out.exists())
                 candidate["source_provenance"]["extraction_sha256"] = write("extraction.json", record)
                 with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()):
                     run(dispatch=deny)
                 deny.assert_not_called()
-                self.assertEqual(scrub.call_count, 1)
+                self.assertEqual(scrub.call_count, 2)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,10 @@
       ],
       "description": "O-019 sources plus the owner-authorized licensed_extraction route. real_history rows come only from dispatched assignments that are not in either held-out set. licensed_extraction copies human proposal spans under a pinned construction-only corpus admission; it does not assert model inference or row/training acceptance."
     },
+    "promotion_status": {
+      "const": "construction_only",
+      "description": "Licensed-extraction rows are not promoted for training. A separately reviewed admission/promotion route is required before this status or the train-split restriction can change."
+    },
     "source_provider": {
       "type": "string",
       "enum": [
@@ -518,8 +522,9 @@
     {
       "if": {"properties": {"source_kind": {"const": "licensed_extraction"}}},
       "then": {
-        "required": ["receipt_sha256"],
+        "required": ["receipt_sha256", "promotion_status"],
         "properties": {
+          "split": {"enum": ["dev", "quarantine"]},
           "source_provider": {"const": "repository_history"},
           "terms_tier": {"const": "repository_history"},
           "source_model": {"const": "n/a"},
