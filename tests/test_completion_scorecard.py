@@ -1989,6 +1989,10 @@ class TrustedCollectionLaneTests(unittest.TestCase):
 
 
 class CompletionScorecardTests(unittest.TestCase):
+    def setUp(self):
+        # Journal pinning has its own tests (WorkloadJournalPinTests); here the selected journal stands for the pinned one.
+        self.enterContext(patch.object(sc, "_journal_pinned", return_value=True))
+
     def test_check_11_distinguishes_missing_executable_from_pinned_digest_mismatch(self):
         from director_orchestrator.primary_scorecard_evidence import _capture_product, CLI_RELEASE_DESCRIPTOR_VERSION
         world = World(self)
@@ -3092,8 +3096,49 @@ class ReviewedImageAdmissionTests(unittest.TestCase):
         self.assertIsNone(reviewed_release_pin(None))
 
 
+class WorkloadJournalPinTests(unittest.TestCase):
+    """#287 item 35: checks 13 and 14 read only the journal the owner's descriptor pins."""
+
+    def collect(self, journal, descriptor):
+        from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
+        document = {"version": CLI_RELEASE_DESCRIPTOR_VERSION, **descriptor}
+        with patch.object(sc, "cli_release_descriptor", return_value=document),                 patch.object(sc, "_run_json", side_effect=ValueError("offline")),                 patch.object(sc, "_workload_observation", return_value=[]) as read:
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=journal), now=NOW)
+        return report, read.call_count
+
+    def test_only_the_pinned_journal_is_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pinned, other = Path(folder) / "pinned.sqlite3", Path(folder) / "other.sqlite3"
+            for path in (pinned, other):
+                path.write_bytes(b"")
+            report, reads = self.collect(pinned, {"workload_journal": str(pinned)})
+            self.assertEqual(reads, 1)
+            for journal, descriptor in ((other, {"workload_journal": str(pinned)}), (pinned, {}),
+                                        (pinned, {"workload_journal": "relative/journal.sqlite3"}),
+                                        (pinned, {"workload_journal": 7})):
+                with self.subTest(journal=journal.name, descriptor=descriptor):
+                    report, reads = self.collect(journal, descriptor)
+                    self.assertEqual(reads, 0)
+                    self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+                    self.assertIn("pins as the deployment's workload journal", row(report, "13")["explanation"])
+
+    def test_a_link_to_the_pinned_journal_is_not_the_pinned_journal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pinned, link = Path(folder) / "pinned.sqlite3", Path(folder) / "link.sqlite3"
+            pinned.write_bytes(b"")
+            try:
+                link.symlink_to(pinned)
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            _, reads = self.collect(link, {"workload_journal": str(pinned)})
+            self.assertEqual(reads, 0)
+
+
 class ScorecardCollectorTests(unittest.TestCase):
     """Every collector: a positive case, a negative control and UNKNOWN on a missing source."""
+
+    def setUp(self):
+        self.enterContext(patch.object(sc, "_journal_pinned", return_value=True))
 
     def world(self, evaluate_rules=False):
         world = World(self)

@@ -128,6 +128,7 @@ from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
     ci_workflow_pin, cli_release_descriptor, evaluator_pin, owner_home, reviewed_release_pin, security_base_pin,
+    workload_journal_pin,
     decision_follows_prompt,
     delivery_settled as _delivery_settled,
     lifecycle_error, missing_result_packets,
@@ -3611,6 +3612,16 @@ def _compare_status(base: str, head: str) -> str:
     return value["status"] if isinstance(value, dict) and isinstance(value.get("status"), str) else ""
 
 
+def _journal_pinned(path: Path) -> bool:
+    """Whether ``path`` is the one journal the owner's descriptor pins, reached without a link (#287 item 35)."""
+    pin = workload_journal_pin(cli_release_descriptor())
+    try:
+        return (pin is not None and not path.is_symlink() and not pin.is_symlink()
+                and os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.realpath(pin)))
+    except OSError:
+        return False
+
+
 def _workload_observation(path: Path, at: datetime) -> list[Observation]:
     from .engineering_workload_ledger import EngineeringWorkloadLedger
 
@@ -3769,7 +3780,11 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
         except _SOURCE_ERRORS:
             result.append(_observation("16", None, "GitHub CI or the local-replica receipt could not be verified; no retry was made.",
                                        "GitHub Actions", {}, at, candidate_sha=candidate_sha))
-    if ledger_path is not None:
+    if ledger_path is not None and not _journal_pinned(ledger_path):
+        result.extend(_observation(key, None, "The selected assignment journal is not the one the owner's release descriptor "
+                                   "pins as the deployment's workload journal; it is not read.",
+                                   str(ledger_path), {}, at) for key in ("13", "14"))
+    elif ledger_path is not None:
         try:
             started = datetime.now(timezone.utc)
             result.extend(since(started, list(_workload_observation(ledger_path, collection_end()))))

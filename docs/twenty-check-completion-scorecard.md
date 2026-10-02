@@ -669,7 +669,9 @@ a container ID, never a name.
   exactly. 03 and 09 treat an edited or subtyped owner post in a drill thread
   like an altered bot reply (UNKNOWN), and 04 requires the read-back status
   text to equal the text the execution's Slack response says it posted.
-- 13, 14: the workload journal from `--ledger`.
+- 13, 14: the workload journal from `--ledger`, read only when it is the absolute path the owner's descriptor pins as
+  `workload_journal` (reached without a link; #287 item 35). Any other journal leaves both UNKNOWN and is not opened,
+  so a separately bootstrapped journal cannot award them.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`, only when
   the monitor is enabled with its paid gate open (`gate_state` `open`) and no
   configured provider is unsupported, missing or stale. A provider with spend
@@ -1423,7 +1425,7 @@ measurement; nothing served changes afterwards.
 Operating rule: the pinned evaluator revision (added by the author of this
 change). The evaluator must never be code the candidate controls. The owner's
 release descriptor (the check-11 shape, `director-cli-release-descriptor/v1`)
-carries `evaluator_sha`, `ci_workflow_sha256`, `security_base_sha`, `reviewed_release` and the
+carries `evaluator_sha`, `ci_workflow_sha256`, `security_base_sha`, `reviewed_release`, `workload_journal` and the
 CLI releases. The scorecard grades only from the tree of `evaluator_sha`
 that the owner-installed launcher extracted, where `evaluator_sha` is a commit
 on `github/main` and an ancestor of (or equal to) the candidate

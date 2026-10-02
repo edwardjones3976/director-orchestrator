@@ -1431,6 +1431,7 @@ def cli_release_descriptor():
                        "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...],
          "ci_workflow_sha256": "<optional: 64 lowercase hex, the owner-pinned .github/workflows/ci.yml content>",
          "security_base_sha": "<optional: 40 lowercase hex, check 18's reviewed security base commit>",
+         "workload_journal": "<optional: absolute path of the deployment's workload journal; checks 13 and 14 read only it>",
          "reviewed_release": {"candidate_commit": "<40 hex>", "candidate_tree": "<40 hex>",
                               "director_image_id": "sha256:<64 hex>"},
          "evaluator_sha": "<40 lowercase hex: the scorecard revision that grades; required to grade at all>"}
@@ -1487,6 +1488,17 @@ def security_base_pin(descriptor):
             or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)):
         return None
     return value
+
+
+def workload_journal_pin(descriptor):
+    """The owner-pinned location of the deployment's real workload journal (``workload_journal``, an absolute path),
+    or None. Checks 13 and 14 read only this journal, so a separately bootstrapped one cannot award them (#287 item 35)."""
+    value = descriptor.get("workload_journal") if isinstance(descriptor, dict) else None
+    if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
+            or not isinstance(value, str) or not value or len(value) > 1024 or chr(0) in value
+            or not os.path.isabs(value)):
+        return None
+    return Path(value)
 
 
 _REVIEWED_RELEASE_FIELDS = {"candidate_commit": r"[0-9a-f]{40}", "candidate_tree": r"[0-9a-f]{40}",
