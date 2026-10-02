@@ -1406,12 +1406,43 @@ OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"
 DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"
 
 
+def account_home():
+    """The account's profile directory from the operating system, never HOME or USERPROFILE (#287 item 34): the
+    identical lookup scripts/scorecard-launcher.py's account_home() performs, so this evaluator and the installed
+    launcher never disagree about which account owns the trust root."""
+    if os.name == "nt":
+        import ctypes
+        import uuid
+        folder = (ctypes.c_byte * 16).from_buffer_copy(
+            uuid.UUID("5E6C858F-0E22-4760-9AFE-EA3317B67173").bytes_le)  # FOLDERID_Profile
+        path = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(path)) != 0:
+            raise OSError("the account profile folder could not be resolved")
+        try:
+            return Path(path.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path)
+    import pwd
+    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+
+
 def owner_home():
-    """The account home the owner-installed launcher resolved from the operating system and handed to this
-    evaluator, never HOME/USERPROFILE (#287 item 34). None when the launcher did not start this run: such runs are
-    unattested and read no owner files."""
-    value = os.environ.get(OWNER_HOME_ENV)
-    return Path(value) if value and os.environ.get(DESCRIPTOR_ENV) and Path(value).is_absolute() else None
+    """The account home the OS resolves for this process (#287 item 34), never HOME/USERPROFILE and never
+    DIRECTOR_SCORECARD_OWNER_HOME merely because that env var is set: a caller-controlled environment must not be
+    able to relocate the owner trust root. None when the launcher did not start this run (no DESCRIPTOR_ENV: such
+    runs are unattested and read no owner files), the OS account could not be resolved, or a forwarded owner-home
+    claim disagrees with the OS-resolved account -- that claim may only be checked for agreement, never used to
+    pick the root."""
+    if not os.environ.get(DESCRIPTOR_ENV):
+        return None
+    try:
+        home = account_home()
+    except OSError:
+        return None
+    forwarded = os.environ.get(OWNER_HOME_ENV)
+    if forwarded is not None and Path(forwarded).resolve() != home.resolve():
+        return None
+    return home
 
 
 def cli_release_descriptor():

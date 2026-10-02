@@ -277,9 +277,10 @@ be bound to the running generation pin and read inside the collection window. Ca
 is no longer read for 05, so it can neither promote nor fail it. Check 05 remains candidate-dependent
 and contained: a direct read of a Director-written row is not independent of the candidate process
 that authored its generation, pending the separately assigned reviewed-image admission gate (A3)
-that establishes process/store consistency. Not covered: the old health predicate
-also compared the stored fence with the process's in-memory generation; the deployment checks (one
-Director per deployment) carry that instead. Check 07 is unchanged and stays contained: its
+that establishes process/store consistency. The current lease observation uses the existing full
+`FRESH_FOR` horizon and stays contained on that basis too: A3 must still establish process ownership
+and a usable bounded lease horizon, including the normal 60-second lease case, before this check can
+reach a live PASS. Check 07 is unchanged and stays contained: its
 in-memory historical-plan and reconciliation-hold counters have no independent source yet.
 
 Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
@@ -1388,7 +1389,20 @@ not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
 fails the rule. The descriptor is the owner-installed file
 `~/.director-scorecard/release-descriptor.json` (no override; absent, a link,
-over 1 MB, malformed or another version means none). A candidate can run its own
+over 1 MB, malformed or another version means none). The owner root both hops
+resolve to find it is the operating system's own account-profile directory
+(`SHGetKnownFolderPath(FOLDERID_Profile)` on Windows, the password-database
+entry on POSIX) — never the `HOME`/`USERPROFILE` environment variables or
+`Path.home()`, and never a value the launcher merely forwards. The launcher
+passes its own OS-resolved root to the archived CLI as
+`DIRECTOR_SCORECARD_OWNER_HOME`, plus a `DIRECTOR_SCORECARD_DESCRIPTOR_SHA256`
+digest of the descriptor bytes it pinned; the archived CLI (and
+`primary_scorecard_evidence.owner_home`, used by `cli_release_descriptor`)
+independently re-resolves that same OS account and only cross-checks the
+forwarded claim for agreement, refusing the run on any mismatch. Neither
+function ever selects its root from the forwarded claim merely because the
+digest variable is present (#287 item 34): a caller-controlled environment
+cannot relocate the owner trust root. A candidate can run its own
 code, but only launcher-attested reports count: a checkout cannot be trusted
 to check itself (review 4112412081). The
 owner-installed launcher (`~/.director-scorecard/launcher.py`, reviewed source

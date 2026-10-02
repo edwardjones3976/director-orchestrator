@@ -98,11 +98,10 @@ def _receipt_path(nonce: str, root: Path | None = None) -> Path:
 
 
 def _evaluator_root() -> Path:
-    """Inside the evaluator a launch started: the owner root the launcher resolved and handed over. A run without the
-    launcher's descriptor digest falls back to the OS-resolved root and is unattested in any case."""
-    home = os.environ.get(OWNER_HOME_ENV)
-    if home and os.environ.get(DESCRIPTOR_ENV) and Path(home).is_absolute():
-        return Path(home) / ".director-scorecard"
+    """Inside the evaluator a launch started: always the OS-resolved owner root (#287 item 34), the identical
+    lookup the installed launcher itself performs. A forwarded DIRECTOR_SCORECARD_OWNER_HOME is never a source of
+    this root -- a caller-controlled environment must not be able to relocate the owner trust root merely by also
+    presenting a descriptor digest. A run without the launcher's descriptor digest is unattested in any case."""
     return owner_root()
 
 
