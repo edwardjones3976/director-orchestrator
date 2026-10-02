@@ -18,6 +18,7 @@ param(
     [int]$Steps = 20,
     [switch]$Winner,
     [switch]$Probe,
+    [string]$ExpectedDigests,
     [int]$ProbeRowsTotal = 96,
     [int]$ProbeSeqLen = 2048,
     [double]$TimeoutMinutes = 90
@@ -39,7 +40,6 @@ if ($Winner) {
 if ($Steps -lt 1) { Write-Error '-Steps must be positive' }
 if ($ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
 if ($ProbeSeqLen -lt 1) { Write-Error '-ProbeSeqLen must be positive' }
-if ($Probe -and -not $Winner) { Write-Error '-Probe requires -Winner (D-M1-F is pinned to the Qwen3-14B winner)' }
 foreach ($r in $Revision, $MergeRevision) { if ($r -notmatch '^[0-9a-f]{40}$') { Write-Error "revision '$r' is not a full 40-hex commit" } }
 $Rows = [IO.Path]::GetFullPath($Rows)
 if ((Split-Path -Leaf $Rows) -ne 'accepted.jsonl') { Write-Error "trainer reads the validator's accepted.jsonl, not raw rows: $Rows" }
@@ -49,6 +49,13 @@ if ($Rows -match '\\secrets\\') { Write-Error "refusing to mount a rows path und
 
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
+if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-14b.json'
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = [IO.Path]::GetFullPath($ExpectedDigests)
+    if (-not (Test-Path -LiteralPath $ExpectedDigests -PathType Leaf)) { Write-Error "expected digests file not found: $ExpectedDigests" }
+}
 foreach ($sub in '', 'hf', 'runs', 'models', 'models\m2', 'reports') {
     for ($p = Join-Path $HotRoot $sub; $p; $p = Split-Path $p -Parent) {
         if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -87,6 +94,9 @@ try {
     }
     $rowsDir = Split-Path $Rows -Parent
     $mounts += @('-v', "${rowsDir}:/workspace/rows:ro")
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $mounts += @('-v', "${ExpectedDigests}:/workspace/expected-digests.json:ro")
+    }
     $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
     $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -99,6 +109,9 @@ try {
         '--base', $Base, '--revision', $Revision, '--steps', "$Steps",
         '--report', "/workspace/reports/$runId.json")
     if ($Winner) { $dockerArgs += '--winner' }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
+    }
     if ($Probe) {
         $dockerArgs += @('--probe', '--probe-rows-total', "$ProbeRowsTotal", '--probe-seq-len', "$ProbeSeqLen")
     }

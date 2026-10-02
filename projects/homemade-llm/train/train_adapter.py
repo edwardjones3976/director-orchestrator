@@ -18,6 +18,7 @@ Runs inside the pinned Unsloth image (see ``scripts/train-adapter.ps1``).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -56,6 +57,89 @@ TARGET_FIELDS = ("acceptance_checks", "constraints", "evidence_requirements", "n
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def is_winner_pin(base: str, revision: str) -> bool:
+    return base == WINNER_BASE and revision == WINNER_REVISION
+
+
+def is_smoke_pin(base: str, revision: str) -> bool:
+    return base == SMOKE_BASE and revision == SMOKE_REVISION
+
+
+def is_allowed_probe_pin(base: str, revision: str) -> bool:
+    return is_winner_pin(base, revision) or is_smoke_pin(base, revision)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], reads: int = 2) -> dict:
+    """Each listed file must match size and SHA-256 on ``reads`` consecutive full reads."""
+    if reads < 1:
+        fail("reads must be positive")
+    total_bytes = 0
+    for entry in expected_files:
+        rel = entry["path"]
+        expected_sha = entry["sha256"]
+        expected_size = entry["size"]
+        path = snapshot_dir / rel
+        if not path.is_file():
+            fail(f"missing expected file: {rel}")
+        actual_size = path.stat().st_size
+        if actual_size != expected_size:
+            fail(f"size mismatch for {rel}")
+        for read_index in range(1, reads + 1):
+            actual_sha = _sha256_file(path)
+            if actual_sha != expected_sha:
+                fail(f"digest mismatch for {rel} on read {read_index}")
+        total_bytes += expected_size
+    return {"files": len(expected_files), "reads": reads, "bytes": total_bytes}
+
+
+def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
+    key = f"{base}@{revision}"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"expected digests file is not usable: {exc}")
+    if not isinstance(payload, dict):
+        fail("expected digests file must be a JSON object")
+    entry = payload.get(key)
+    if entry is None:
+        fail(f"expected digests file has no entry for {key}")
+    files = entry.get("files") if isinstance(entry, dict) else None
+    if not isinstance(files, list) or not files:
+        fail(f"expected digests entry for {key} has no files")
+    return files
+
+
+def local_snapshot_dir(base: str, revision: str) -> Path:
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(repo_id=base, revision=revision, local_files_only=True))
+
+
+def digest_verification_before_load(
+    base: str,
+    revision: str,
+    expected_digests_path: Path | None,
+) -> dict | None:
+    if is_winner_pin(base, revision) and expected_digests_path is None:
+        fail("--expected-digests is required for the winner pin")
+    if expected_digests_path is None:
+        return None
+    expected_files = load_expected_digests(expected_digests_path, base, revision)
+    snapshot_dir = local_snapshot_dir(base, revision)
+    return verify_expected_digests(snapshot_dir, expected_files)
 
 
 def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
@@ -271,6 +355,7 @@ def build_report(
     wall_seconds: float,
     winner: bool,
     resolved_commit: str,
+    digest_verification: dict | None = None,
 ) -> dict[str, Any]:
     return {
         "run": run,
@@ -285,6 +370,7 @@ def build_report(
         "wall_seconds": round(wall_seconds, 1),
         "gguf_sha256": None,
         "winner_probe": winner,
+        "digest_verification": digest_verification,
         "thinking": "disabled",
     }
 
@@ -382,6 +468,8 @@ def build_probe_report(
     wall_seconds_three_epochs_contingency: float,
     memory_pass: bool,
     time_pass: bool,
+    authoritative: bool,
+    digest_verification: dict | None = None,
 ) -> dict[str, Any]:
     return {
         "run": run,
@@ -405,6 +493,8 @@ def build_probe_report(
         "wall_seconds_three_epochs_contingency": round(wall_seconds_three_epochs_contingency, 1),
         "memory_pass": memory_pass,
         "time_pass": time_pass,
+        "authoritative": authoritative,
+        "digest_verification": digest_verification,
         "gguf_sha256": None,
         "thinking": "disabled",
     }
@@ -510,8 +600,18 @@ def run_probe_microsteps(
     return seconds_per_microstep, peak_gib
 
 
-def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, report_path: Path, *, winner: bool) -> dict[str, Any]:
+def train(
+    rows: list[dict[str, Any]],
+    base: str,
+    revision: str,
+    steps: int,
+    report_path: Path,
+    *,
+    winner: bool,
+    expected_digests_path: Path | None = None,
+) -> dict[str, Any]:
     """QLoRA for ``steps`` on ``base@revision``. Thinking stays off. The mask is checked before ``trainer.train``."""
+    digest_verification = digest_verification_before_load(base, revision, expected_digests_path)
     started = time.time()
     set_seed(SEED)
     torch.cuda.reset_peak_memory_stats()
@@ -549,6 +649,7 @@ def train(rows: list[dict[str, Any]], base: str, revision: str, steps: int, repo
         run=report_path.stem, base=base, revision=revision, rows=len(rows), steps=steps,
         mask_coverage=mask_coverage, peak_reserved_gib=peak, loss=round(result.training_loss, 4),
         wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
+        digest_verification=digest_verification,
     )
     write_report(report_path, report)
     require_vram(peak, winner=winner)
@@ -563,8 +664,10 @@ def run_probe(
     *,
     probe_rows_total: int,
     probe_seq_len: int,
+    expected_digests_path: Path | None = None,
 ) -> dict[str, Any]:
     """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
+    digest_verification = digest_verification_before_load(base, revision, expected_digests_path)
     set_seed(SEED)
     model, tokenizer = FastLanguageModel.from_pretrained(
         base,
@@ -640,6 +743,8 @@ def run_probe(
         wall_seconds_three_epochs_contingency=wall_contingency,
         memory_pass=probe_memory_pass(peak_gib),
         time_pass=probe_time_pass(wall_contingency),
+        authoritative=is_winner_pin(base, revision),
+        digest_verification=digest_verification,
     )
     write_report(report_path, report)
     return report
@@ -657,6 +762,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--probe", action="store_true", help="D-M1-F feasibility probe; writes metrics only.")
     parser.add_argument("--probe-rows-total", type=int, default=96)
     parser.add_argument("--probe-seq-len", type=int, default=SEQ)
+    parser.add_argument("--expected-digests", type=Path, default=None)
     args = parser.parse_args(argv)
     if len(args.revision) != 40 or any(char not in "0123456789abcdef" for char in args.revision):
         fail(f"revision {args.revision!r} is not a full 40-hex commit")
@@ -668,8 +774,11 @@ def main(argv: list[str] | None = None) -> None:
         fail("probe-seq-len must be positive")
     if args.probe and args.check_only:
         fail("--probe cannot be combined with --check-only")
-    if args.probe and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
-        fail(f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
+    if args.probe and not is_allowed_probe_pin(args.base, args.revision):
+        fail(
+            f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION} "
+            f"or {SMOKE_BASE}@{SMOKE_REVISION}"
+        )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
     rows = load_training_rows(args.rows)
@@ -686,9 +795,18 @@ def main(argv: list[str] | None = None) -> None:
             args.report,
             probe_rows_total=args.probe_rows_total,
             probe_seq_len=args.probe_seq_len,
+            expected_digests_path=args.expected_digests,
         )
     else:
-        report = train(rows, args.base, args.revision, args.steps, args.report, winner=args.winner)
+        report = train(
+            rows,
+            args.base,
+            args.revision,
+            args.steps,
+            args.report,
+            winner=args.winner,
+            expected_digests_path=args.expected_digests,
+        )
     print(json.dumps(report, indent=2))
 
 

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import io
 import shutil
@@ -251,6 +252,10 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIn(train_adapter.WINNER_BASE, text)
         self.assertIn("Global\\homemade-llm-gpu", text)
         self.assertIn("--probe", text)
+        self.assertNotIn("-Probe requires -Winner", text)
+        self.assertIn("--expected-digests", text)
+        self.assertIn("ExpectedDigests", text)
+        self.assertIn("m1-expected-qwen3-14b.json", text)
 
     def test_length_statistics_on_a_known_list(self):
         lengths = [10, 20, 30, 40, 50]
@@ -290,6 +295,153 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIn("--probe", help_text)
         self.assertIn("--probe-rows-total", help_text)
         self.assertIn("--probe-seq-len", help_text)
+        self.assertIn("--expected-digests", help_text)
+
+    def _digest_entry(self, root: Path, name: str, data: bytes) -> dict:
+        path = root / name
+        path.write_bytes(data)
+        return {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+    def test_verify_expected_digests_passes_with_two_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entries = [self._digest_entry(root, "a.bin", b"alpha"), self._digest_entry(root, "b.bin", b"beta")]
+            result = train_adapter.verify_expected_digests(root, entries, reads=2)
+            self.assertEqual(result, {"files": 2, "reads": 2, "bytes": len(b"alpha") + len(b"beta")})
+
+    def test_verify_expected_digests_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(SystemExit):
+                train_adapter.verify_expected_digests(root, [{"path": "nope.bin", "sha256": "a" * 64, "size": 1}])
+
+    def test_verify_expected_digests_size_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "x.bin").write_bytes(b"xy")
+            with self.assertRaises(SystemExit):
+                train_adapter.verify_expected_digests(
+                    root, [{"path": "x.bin", "sha256": hashlib.sha256(b"xy").hexdigest(), "size": 99}],
+                )
+
+    def test_verify_expected_digests_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "x.bin").write_bytes(b"xy")
+            with self.assertRaises(SystemExit):
+                train_adapter.verify_expected_digests(
+                    root, [{"path": "x.bin", "sha256": "b" * 64, "size": 2}],
+                )
+
+    def test_verify_expected_digests_second_read_differs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = b"stable"
+            entry = self._digest_entry(root, "stable.bin", data)
+            calls = 0
+            real = train_adapter._sha256_file
+
+            def flaky(path: Path) -> str:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    return "c" * 64
+                return real(path)
+
+            with mock.patch.object(train_adapter, "_sha256_file", side_effect=flaky):
+                with self.assertRaises(SystemExit) as raised:
+                    train_adapter.verify_expected_digests(root, [entry], reads=2)
+                self.assertIn("read 2", str(raised.exception))
+
+    def test_load_expected_digests_returns_matching_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            files = [{"path": "config.json", "sha256": "a" * 64, "size": 3}]
+            path.write_text(json.dumps({key: {"files": files}}), encoding="utf-8")
+            loaded = train_adapter.load_expected_digests(path, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
+            self.assertEqual(loaded, files)
+
+    def test_load_expected_digests_absent_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "digests.json"
+            path.write_text("{}", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                train_adapter.load_expected_digests(path, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION)
+
+    def test_main_probe_smoke_pin_calls_run_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            with mock.patch.object(train_adapter, "run_probe", return_value={"mode": "d_m1_f_probe"}) as mocked:
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.SMOKE_BASE,
+                    "--revision", train_adapter.SMOKE_REVISION,
+                ])
+            mocked.assert_called_once()
+
+    def test_main_probe_arbitrary_base_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            with self.assertRaises(SystemExit):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", "org/other-model",
+                    "--revision", "a" * 40,
+                ])
+
+    def test_main_winner_without_expected_digests_refuses_before_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock()
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with self.assertRaises(SystemExit):
+                    train_adapter.main([
+                        "--rows", str(path),
+                        "--report", str(Path(tmp, "out.json")),
+                        "--winner",
+                        "--base", train_adapter.WINNER_BASE,
+                        "--revision", train_adapter.WINNER_REVISION,
+                    ])
+            fake_flm.from_pretrained.assert_not_called()
+
+    def _minimal_probe_report_kwargs(self) -> dict:
+        return {
+            "run": "probe",
+            "base": train_adapter.SMOKE_BASE,
+            "revision": train_adapter.SMOKE_REVISION,
+            "rows": 1,
+            "mask_coverage": 0.5,
+            "resolved_commit": train_adapter.SMOKE_REVISION,
+            "length_stats": {"p50": 1.0, "p95": 2.0, "max": 3},
+            "sequence_length": 2048,
+            "sequence_length_method": "pad",
+            "warmup_microsteps": 1,
+            "timed_microsteps": 1,
+            "gradient_accumulation": 1,
+            "timed_optimizer_updates": 1,
+            "seconds_per_microstep": 1.0,
+            "peak_reserved_gib": 1.0,
+            "rows_total": 96,
+            "wall_seconds_three_epochs": 1.0,
+            "wall_seconds_three_epochs_contingency": 1.2,
+            "memory_pass": True,
+            "time_pass": True,
+        }
+
+    def test_probe_report_authoritative_for_winner_and_smoke_pins(self):
+        kwargs = self._minimal_probe_report_kwargs()
+        winner = train_adapter.build_probe_report(**kwargs, authoritative=True)
+        smoke = train_adapter.build_probe_report(**kwargs, authoritative=False)
+        self.assertTrue(winner["authoritative"])
+        self.assertFalse(smoke["authoritative"])
+        self.assertTrue(winner["memory_pass"])
+        self.assertTrue(smoke["time_pass"])
 
 
 if __name__ == "__main__":
