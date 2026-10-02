@@ -168,11 +168,11 @@ effect or use `/dispatch-reconciliation` for a legacy probe without one.
 ### Collector containment (2026-09-27)
 
 Trusted consistency and capture collection is available, but the remaining candidate inputs keep live checks
-**01, 02, 03, 04, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20** as **UNKNOWN**, with the reason
+**01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20** as **UNKNOWN**, with the reason
 "collector not yet trusted" and a source naming the trusted-collection follow-up.
 It computes consistency and activation-capture reports with pinned code and never executes
 candidate Python through docker exec. Health, Slack, later observations and
-final collection merging cannot promote these fifteen checks to PASS. Checks 03,
+final collection merging cannot promote these sixteen checks to PASS. Checks 03,
 06, 09 and 10 retain Slack-side collection. Candidate drill readbacks from
 `/v1/slack-thread-bindings`, `/v1/tasks` and `/deliveries` cannot prove
 reserved-5xx, duplicate-input or ambiguous-post outcomes. Candidate `/v1/tasks` readback cannot
@@ -238,7 +238,7 @@ predicate. Shared inputs are expanded here once:
 | 02 | Deployment; Windows `Win32_Process` known gateway inventory | T: daemon and host inventory; pending independent proof | Yes |
 | 03 | Deployment; route; Slack; task; bounded read-only thread binding for rejection and ambiguity drills | T: deployment, route store, Slack. C: workflow, task, thread binding | Yes |
 | 04 | Deployment; Slack; bound n8n-db active status workflow/version, latest and posting executions, saved Slack response and credential update time; candidate `director-status.json` | T: deployment, n8n store, Slack. C: candidate workflow contract pending proof | Yes |
-| 05 | Deployment; consistency; persisted intake-authority row (owner, legacy disablement, fence, live lease) read in the same verified-TLS snapshot, lease token compared with the owner-supplied setting and never exported | T: deployment, consistency, authority row | No |
+| 05 | Deployment; consistency; persisted intake-authority row (owner, legacy disablement, fence, live lease and its absolute expiry) read in the same verified-TLS snapshot, lease token compared with the owner-supplied setting and never exported | T: deployment, consistency, authority row. C: the row is Director-written but not yet independent of the candidate process that authored its generation, pending A3 | Yes |
 | 06 | Deployment; route; Slack; task; renderer; consistency approval/checkpoint/resume evidence | T: deployment, route store, Slack, consistency. C: workflow, task, renderer | Yes |
 | 07 | Deployment; `/health` holds, ambiguous counts and fence; consistency generation/counts | T: deployment, consistency. C: health | Yes |
 | 08 | Deployment; route; Slack; task; renderer; consistency approval authorizations, command receipts, application and effect bindings | T: deployment, route store, Slack, consistency. C: workflow, task, renderer | Yes |
@@ -258,20 +258,26 @@ predicate. Shared inputs are expanded here once:
 **Newly contained for #313 / PR #327: 01, 02, 04, 05 and 19.** In particular,
 02 and 17 now collect independently of candidate health but retain explicit
 pending-proof holds; source decoupling alone does not admit either check. The full contained set is
-01–04, 06–12, 15, 17, 19 and 20 (05 left containment in round 5, below). Checks 13/14 assume the selected journal is maintained
+01–12, 15, 17, 19 and 20. Checks 13/14 assume the selected journal is maintained
 outside candidate control; they prove consistency of reported admissions, not
 external usage authenticity. The native Security store and installed owner keys
-likewise belong outside candidate control. Consistency and capture inputs are now T. Thirteen checks retain C inputs;
-02 and 17 retain pending-proof holds. Fifteen remain contained.
+likewise belong outside candidate control. Consistency and capture inputs are now T. Fourteen checks retain C inputs;
+02 and 17 retain pending-proof holds. Sixteen remain contained.
 
 **Round 5 increment, check 05 (2026-10-02).** Check 05 is graded from the
 `director_primary_intake_authority` row that `consistency_report` reads inside its
 one read-only REPEATABLE READ snapshot over the owner-bound verified-TLS store. It passes only
-when LangGraph owns intake, legacy intake is disabled, the fence is positive, the lease has not
-expired and the row's lease token equals the owner-supplied `langgraph_primary_owner_token`
+when LangGraph owns intake, legacy intake is disabled, the fence is positive, the lease's absolute
+expiry (read alongside the live-lease flag, never the token) is in the future and will still be in
+the future when the collection finalizes — revalidated through the same FRESH_FOR/`valid_until`
+finalization path used elsewhere, failing closed on any missing, malformed or timezone-naive expiry —
+and the row's lease token equals the owner-supplied `langgraph_primary_owner_token`
 (constant-time comparison inside the evaluator; the token is never in the report). The snapshot must
 be bound to the running generation pin and read inside the collection window. Candidate `/health`
-is no longer read for 05, so it can neither promote nor fail it. Not covered: the old health predicate
+is no longer read for 05, so it can neither promote nor fail it. Check 05 remains candidate-dependent
+and contained: a direct read of a Director-written row is not independent of the candidate process
+that authored its generation, pending the separately assigned reviewed-image admission gate (A3)
+that establishes process/store consistency. Not covered: the old health predicate
 also compared the stored fence with the process's in-memory generation; the deployment checks (one
 Director per deployment) carry that instead. Check 07 is unchanged and stays contained: its
 in-memory historical-plan and reconciliation-hold counters have no independent source yet.
@@ -1409,7 +1415,7 @@ and requires the pin to be an ancestor of the candidate. The CLI runs
 another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
 The report limitations derive the contained check IDs from the same tuples
 used to suppress their collector results, derived from the input classification:
-01, 02, 03, 04, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20,
+01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20,
 pending the trusted-collection follow-up in #313 / PR #327.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
