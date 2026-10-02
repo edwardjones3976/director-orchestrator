@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,6 +52,7 @@ from .policy import canonical_repository
 LOOPBACK_BIND_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 MAX_REQUEST_BYTES = 1_048_576
 MAX_RESPONSE_BYTES = 2_097_152
+REFUSAL_DRAIN_SECONDS = 1.0
 
 
 def _record_digest(label: str, document: object) -> str:
@@ -434,6 +436,25 @@ def build_observer_handler(service: MergeObserverService) -> type:
 
         def do_POST(self) -> None:  # noqa: N802 (http.server API)
             if self.path != "/observe":
+                # Unread POST bytes can reset TCP and discard the refusal on Windows.
+                # Bound both bytes and total time; never wait for an oversized body.
+                deadline = time.monotonic() + REFUSAL_DRAIN_SECONDS
+                previous_timeout = self.connection.gettimeout()
+                try:
+                    remaining = int(self.headers.get("Content-Length") or 0)
+                    while 0 < remaining <= MAX_REQUEST_BYTES:
+                        wait = deadline - time.monotonic()
+                        if wait <= 0:
+                            break
+                        self.connection.settimeout(wait)
+                        chunk = self.rfile.read1(min(remaining, 8192))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                except (ValueError, OSError):
+                    pass
+                finally:
+                    self.connection.settimeout(previous_timeout)
                 self._refuse("merge observer serves only /observe")
                 return
             length = int(self.headers.get("Content-Length") or 0)

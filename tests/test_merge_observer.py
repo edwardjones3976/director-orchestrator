@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +37,8 @@ from director_orchestrator.merge_observer import (
     load_observer_private_key,
     observation_document,
     observation_from_document,
+    build_observer_handler,
+    MAX_REQUEST_BYTES,
     serve_merge_observer,
 )
 from director_orchestrator.oracle_merge import (
@@ -298,13 +301,49 @@ class MergeObserverTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         base = f"http://127.0.0.1:{server.server_address[1]}"
         with httpx.Client() as client:
-            wrong_path = client.post(f"{base}/other", content=b"{}")
+            def delayed_body():
+                time.sleep(0.06)
+                yield b"{}"
+
+            wrong_path = client.post(
+                f"{base}/other", content=delayed_body(),
+                headers={"Content-Length": "2"},
+            )
             self.assertEqual(wrong_path.status_code, 400)
             self.assertNotIn(b"Traceback", wrong_path.content)
             malformed = client.post(
                 f"{base}/observe", content=b"not-json"
             )
             self.assertEqual(malformed.status_code, 400)
+
+    def test_wrong_path_drain_has_a_total_deadline_and_byte_bound(self):
+        from unittest.mock import Mock, patch
+
+        handler_type = build_observer_handler(self.service)
+        for length, ticks, reads, waits in (
+            ("10000", [0.0, 0.25, 0.75, 1.25], 2, [0.75, 0.25]),
+            (str(MAX_REQUEST_BYTES + 1), [0.0], 0, []),
+            ("invalid", [0.0], 0, []),
+        ):
+            with self.subTest(length=length):
+                handler = object.__new__(handler_type)
+                handler.path = "/other"
+                handler.headers = {"Content-Length": length}
+                handler.connection = Mock()
+                handler.connection.gettimeout.return_value = None
+                handler.rfile = Mock()
+                handler.rfile.read1.return_value = b"x"
+                handler._refuse = Mock()
+                with patch("director_orchestrator.merge_observer.time.monotonic", side_effect=ticks):
+                    handler.do_POST()
+                self.assertEqual(handler.rfile.read1.call_count, reads)
+                self.assertEqual(
+                    [call.args[0] for call in handler.connection.settimeout.call_args_list], waits + [None]
+                )
+                for call in handler.rfile.read1.call_args_list:
+                    self.assertLessEqual(call.args[0], 8192)
+                handler._refuse.assert_called_once_with("merge observer serves only /observe")
+                self.assertEqual(self.gateway.snapshot_calls, 0)
 
     def test_observation_documents_round_trip_exactly(self):
         observation, _ = self.service.signed_observe(self.action, 1, "round-trip")
