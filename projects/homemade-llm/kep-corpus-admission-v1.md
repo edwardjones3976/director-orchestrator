@@ -9,7 +9,7 @@ Work order: [#407](https://github.com/edwardjones3976/director-orchestrator/issu
 - Public source: `kubernetes/enhancements` at `f7be055669b365e9b4ab3905bda6ef385e0c84ca`.
 - Apache-2.0 LICENSE SHA-256: `b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1`.
 - Source archive SHA-256: `da037ba8c8e68aa7033d256beff5da7cf3605b83678d46b0f6c403947c574618`.
-- Metadata-only census: 648 records; 227 implemented with creation date before 2023-01-01. Section qualification has not been performed; these are not 227 admissible rows.
+- Metadata-only census: 648 records; 227 implemented with creation date before 2023-01-01. These are metadata candidates, not 227 admissible rows; the section qualification result is recorded below.
 - Selection policy, frozen before proposal target reads: `15d7d9970e8085962b2e8b0e89e23c6b39c5731ca55e01ce75a4894ee52ed3de`.
 - Sort SIG names lexicographically and KEP IDs numerically within SIG; take one candidate per SIG each round, stride 1. Preserve every skipped candidate and reason. Do not select by grading results.
 - Require nonempty Summary, Motivation, Goals, Non-Goals, Notes/Constraints/Caveats, Alpha Graduation Criteria and Test Plan. One KEP ID is one group across versions.
