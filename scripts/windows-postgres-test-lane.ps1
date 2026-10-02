@@ -45,6 +45,7 @@ $dsnVariable = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 $containerVariable = "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER"
 $caVariable = "LANGGRAPH_RUNTIME_POSTGRES_TEST_CA"
 $script:tlsDirectory = $null
+$script:laneInstanceId = $null
 $dsn = "postgresql://${databaseUser}@127.0.0.1:${HostPort}/${databaseName}?sslmode=disable"
 
 function New-LaneTls {
@@ -117,14 +118,14 @@ function Get-LaneContainer {
     # $null when absent, else @{ State; Owned }. docker ps writes nothing to
     # stderr for an absent name, so Windows PowerShell 5.1 cannot turn it into a
     # terminating error; the name filter is a substring match, so compare exactly.
-    $rows = @(& docker ps -a --filter "name=$ContainerName" --format '{{.Names}}|{{.State}}|{{.Labels}}')
+    $rows = @(& docker ps -a --filter "name=$ContainerName" --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}')
     if ($LASTEXITCODE -ne 0) { throw "Docker container listing failed." }
     foreach ($row in $rows) {
-        $parts = [string]$row -split '\|', 3
-        if ($parts.Count -lt 3) { continue }
-        if ($parts[0] -cne $ContainerName) { continue }
-        $owned = (",$($parts[2])," -like "*,$laneLabel=true,*")
-        return @{ State = $parts[1]; Owned = $owned; Tls = (",$($parts[2])," -like '*,director-orchestrator.test-lane-tls=true,*') }
+        $parts = [string]$row -split '\|', 4
+        if ($parts.Count -lt 4) { continue }
+        if ($parts[1] -cne $ContainerName) { continue }
+        $owned = (",$($parts[3])," -like "*,$laneLabel=true,*")
+        return @{ Id = $parts[0]; State = $parts[2]; Owned = $owned; Tls = (",$($parts[3])," -like '*,director-orchestrator.test-lane-tls=true,*') }
     }
     return $null
 }
@@ -212,7 +213,7 @@ function Get-SlotInventory {
             $pair = $label -split '=', 2
             if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
         }
-        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; State = $parts[2]; Owner = $labels['director-orchestrator.test-lane-slot']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
+        [pscustomobject]@{ Id = $parts[0]; Name = $parts[1]; State = $parts[2]; Owner = $labels['director-orchestrator.test-lane-slot']; Instance = $labels['director-orchestrator.test-lane-instance']; Lane = $labels['director-orchestrator.postgres-test-lane']; Managed = $labels['director-orchestrator.test-lane-managed'] }
     }
 }
 
@@ -229,6 +230,34 @@ function Remove-SlotContainer {
         throw "The PostgreSQL test lane slot could not be removed."
     }
     finally { $ErrorActionPreference = $priorErrorActionPreference }
+}
+
+function Resolve-LaneInstanceId {
+    $current = $null
+    foreach ($item in @(Get-SlotInventory)) {
+        if ($item.Name -ceq $ContainerName -and $item.Lane -eq 'true' -and $item.Managed -eq 'true') {
+            $current = [string]$item.Id
+            break
+        }
+    }
+    if ($script:laneInstanceId -and ((-not $current) -or ($script:laneInstanceId -ceq $current))) {
+        return [string]$script:laneInstanceId
+    }
+    if ($current) {
+        $script:laneInstanceId = $current
+        return $current
+    }
+    if ($script:laneInstanceId) { return [string]$script:laneInstanceId }
+    return $null
+}
+
+function Remove-LaneSqlite {
+    param([string]$Path)
+    if (-not $Path) { return }
+    foreach ($suffix in @('', '-wal', '-shm')) {
+        $target = "$Path$suffix"
+        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+    }
 }
 
 function Enter-LaneSlot {
@@ -263,14 +292,20 @@ function Enter-LaneSlot {
             $priorErrorActionPreference = $ErrorActionPreference
             try {
                 $ErrorActionPreference = 'Continue'
-                $id = & docker create --pull=never --name "director-test-lane-slot-$number" --label "director-orchestrator.test-lane-slot=$ContainerName" $image 2>$null
+                $instanceId = Resolve-LaneInstanceId
+                if (-not $instanceId) { throw "PostgreSQL test lane instance is unknown." }
+                $id = & docker create --pull=never --name "director-test-lane-slot-$number" --label "director-orchestrator.test-lane-slot=$ContainerName" --label "director-orchestrator.test-lane-instance=$instanceId" $image 2>$null
                 $created = $LASTEXITCODE -eq 0
             }
             finally { $ErrorActionPreference = $priorErrorActionPreference }
             if (-not $created) { continue }
             # High-number CI slots and legacy lanes count against local caps too.
             $inventory = @(Get-SlotInventory)
-            $occupied = @($inventory | Where-Object { $_.Owner -or ($_.Lane -eq 'true' -and $_.Managed -ne 'true') })
+            $reservationNames = @($inventory | Where-Object { $_.Name -match '^director-test-lane-slot-[1-9][0-9]*$' -and $_.Owner } | ForEach-Object { $_.Owner })
+            $orphanedManaged = @($inventory | Where-Object {
+                $_.Lane -eq 'true' -and $_.Managed -eq 'true' -and $_.State -notin @('exited', 'dead') -and ($reservationNames -notcontains $_.Name)
+            })
+            $occupied = @($inventory | Where-Object { $_.Owner -or ($_.Lane -eq 'true' -and $_.Managed -ne 'true') }) + $orphanedManaged
             if ($occupied.Count -le $limit) { return }
             Remove-SlotContainer ([string]$id)
         }
@@ -283,8 +318,18 @@ function Enter-LaneSlot {
 }
 
 function Remove-LaneSlot {
+    # The stored instance id is this process's owner. A same-name replacement
+    # has a different id, so this Stop cannot delete that reservation.
+    $instance = [string]$script:laneInstanceId
+    if (-not $instance) {
+        $existing = Get-LaneContainer
+        if ($null -ne $existing -and $existing.Contains('Id') -and $existing.Id) {
+            $instance = [string]$existing.Id
+        }
+    }
+    if (-not $instance) { return }
     foreach ($slot in @(Get-SlotInventory)) {
-        if ($slot.Owner -ceq $ContainerName -and $slot.Name -match '^director-test-lane-slot-[1-9][0-9]*$') {
+        if ($slot.Instance -ceq $instance -and $slot.Name -match '^director-test-lane-slot-[1-9][0-9]*$') {
             Remove-SlotContainer $slot.Id
         }
     }
@@ -313,8 +358,10 @@ function Start-Lane {
             $serverCommand = @('-c', 'set -eu; mkdir -p /tmp/lane-tls; cp /lane-tls/server.crt /lane-tls/server.key /tmp/lane-tls/; chown -R postgres:postgres /tmp/lane-tls; chmod 0700 /tmp/lane-tls; chmod 0600 /tmp/lane-tls/server.key; exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/lane-tls/server.crt -c ssl_key_file=/tmp/lane-tls/server.key')
         }
         # Create the owner first, but do not start PostgreSQL until admission.
-        & docker create --name $ContainerName --label "$laneLabel=true" --label "director-orchestrator.test-lane-managed=true" --publish ("127.0.0.1:" + $HostPort + ":5432") --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" @tlsOptions $image @serverCommand | Out-Null
+        $createdId = & docker create --name $ContainerName --label "$laneLabel=true" --label "director-orchestrator.test-lane-managed=true" --publish ("127.0.0.1:" + $HostPort + ":5432") --env POSTGRES_HOST_AUTH_METHOD=trust --env "POSTGRES_USER=$databaseUser" --env "POSTGRES_DB=$databaseName" @tlsOptions $image @serverCommand
         if ($LASTEXITCODE -ne 0) { throw "The disposable PostgreSQL container could not be created." }
+        $script:laneInstanceId = ([string]$createdId).Trim()
+        if (-not $script:laneInstanceId) { throw "The disposable PostgreSQL container did not return an instance id." }
         $created = $true
         Enter-LaneSlot
         & docker start $ContainerName | Out-Null
@@ -383,6 +430,7 @@ Push-Location -LiteralPath $repoRoot
 $testExit = 1
 $laneRemoved = $false
 $laneStarted = $false
+$sqlitePath = $null
 try {
     # Start inside the try so a refused, unreachable, or timed-out lane still
     # restores the caller's working directory and environment on the way out.
@@ -406,6 +454,9 @@ finally {
     }
     foreach ($entry in $originalProcessEnvironment.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+    }
+    if ($sqlitePath) {
+        try { Remove-LaneSqlite $sqlitePath } catch { Write-Warning $_.Exception.Message }
     }
     Pop-Location
 }

@@ -99,7 +99,7 @@ function docker {
             $script:encoded = $label.Split('=', 2)[1]
             $script:lastDirectory = $script:tlsDirectory
             $script:exists = $true
-            return
+            return 'tls-instance'
         }
         'start' { if ($script:failStart) { $global:LASTEXITCODE = 1 }; return }
         'inspect' { return $script:encoded }
@@ -990,14 +990,15 @@ $image = 'already-present'
 $laneLabel = 'test-label'
 $script:items = @{}
 $script:serial = 0
+$script:laneInstanceId = $null
 $script:listingFails = $false
 $script:removeFails = $false
 $script:createFails = $false
 $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
 $env:GITHUB_ACTIONS = $null
-function Item($name, $owner = '', $lane = '', $managed = '', $state = 'running') {
+function Item($name, $owner = '', $lane = '', $managed = '', $state = 'running', $instance = '') {
     $script:serial++
-    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed|$state"
+    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed|$state|$instance"
 }
 function docker {
     $global:LASTEXITCODE = 0
@@ -1012,7 +1013,7 @@ function docker {
                     if ($filter -ceq "id=$($parts[0])") { $parts[0] }
                     continue
                 }
-                "$($parts[0])|$($parts[1])|$($parts[5])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
+                "$($parts[0])|$($parts[1])|$($parts[5])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4]),director-orchestrator.test-lane-instance=$($parts[6])"
             }
             return
         }
@@ -1020,8 +1021,17 @@ function docker {
             $name = $args[[Array]::IndexOf($args, '--name') + 1]
             if ($script:createFails -or $script:items.ContainsKey($name)) { $global:LASTEXITCODE = 1; return }
             if ($args -notcontains '--pull=never') { throw 'Slot may pull image' }
-            $owner = ($args[[Array]::IndexOf($args, '--label') + 1] -split '=', 2)[1]
-            Item $name $owner
+            $labels = @{}
+            for ($i = 0; $i -lt $args.Count; $i++) {
+                if ($args[$i] -eq '--label' -and ($i + 1) -lt $args.Count) {
+                    $pair = [string]$args[$i + 1] -split '=', 2
+                    if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
+                }
+            }
+            $owner = $labels['director-orchestrator.test-lane-slot']
+            $instance = $labels['director-orchestrator.test-lane-instance']
+            if (-not $instance) { throw 'Slot is not bound to a lane instance' }
+            Item $name $owner '' '' 'running' $instance
             return [string]$script:serial
         }
         'rm' {
@@ -1063,6 +1073,8 @@ Item 'candidate' '' 'true' 'true'
 Item 'legacy' '' 'true'
 Enter-LaneSlot
 Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Missing reservation'
+$liveId = ($script:items['candidate'] -split '\|')[0]
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[6] -eq $liveId) 'Reservation is not bound to the lane instance'
 Remove-LaneSlot
 Item 'legacy-two' '' 'true'
 MustFail '*cap 2*'
@@ -1147,7 +1159,7 @@ Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed removal r
 function Remove-LaneContainer { $script:items.Remove('candidate') }
 Stop-Lane
 Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Stop retained slot'
-Item 'director-test-lane-slot-1' 'candidate'
+Item 'director-test-lane-slot-1' 'candidate' '' '' 'running' $script:laneInstanceId
 function Get-LaneContainer { return $null }
 $script:removeFails = $true
 try { Stop-Lane; throw 'Expected slot removal failure' } catch {
@@ -1157,7 +1169,7 @@ Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed slot remo
 $script:removeFails = $false
 Stop-Lane
 Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Absent lane retained slot'
-Item 'director-test-lane-slot-1' 'candidate'
+Item 'director-test-lane-slot-1' 'candidate' '' '' 'running' $script:laneInstanceId
 $removedId = [string]$script:serial
 $script:items.Remove('director-test-lane-slot-1')
 Item 'director-test-lane-slot-1' 'replacement'
@@ -1177,6 +1189,27 @@ try { Remove-SlotContainer $removedId; throw 'Expected listing failure' } catch 
 Check ($ErrorActionPreference -eq 'Stop') 'Failed removal changed error preference'
 $script:listingFails = $false
 $script:removeFails = $false
+$owned = [string]$script:laneInstanceId
+$script:items.Remove('candidate')
+Item 'candidate' '' 'true' 'true'
+Item 'director-test-lane-slot-9' 'candidate' '' '' 'running' 'replacement-id'
+$script:laneInstanceId = $owned
+Remove-LaneSlot
+Check ($script:items.ContainsKey('director-test-lane-slot-9')) 'Same-name start deleted the new reservation'
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '1'
+$script:items = @{}
+$script:laneInstanceId = $null
+Item 'candidate' '' 'true' 'true'
+Item 'orphan-owner' '' 'true' 'true' 'running'
+MustFail '*cap 1*'
+Check ($script:items.ContainsKey('orphan-owner')) 'Orphaned managed owner was removed'
+Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Rejected admission kept a reservation'
+$sqliteFile = Join-Path $base 'director-postgres-test-lane-fixture.sqlite3'
+Set-Content -LiteralPath $sqliteFile 'x'
+Set-Content -LiteralPath ($sqliteFile + '-wal') 'x'
+Remove-LaneSqlite $sqliteFile
+Check (-not (Test-Path -LiteralPath $sqliteFile)) 'Per-run SQLite was kept'
+Check (-not (Test-Path -LiteralPath ($sqliteFile + '-wal'))) 'Per-run SQLite wal was kept'
 Write-Output 'slot-checks-passed'
 """
             path = Path(directory) / "slots.ps1"
@@ -1272,6 +1305,9 @@ Write-Output 'slot-checks-passed'
         self.assertIn("try { Stop-Lane; $laneRemoved = $true } catch", test_section)
         self.assertIn("may still be running; rerun -Action Stop", test_section)
         self.assertIn("if (-not $laneRemoved) { throw", test_section)
+        self.assertIn("director-orchestrator.test-lane-instance=", text)
+        self.assertIn("Remove-LaneSqlite", test_section)
+        self.assertIn("$orphanedManaged", text)
 
     def test_stage_a_runbook_lists_every_control_action_and_the_scripted_offline_path(self) -> None:
         script = self.text("windows-langgraph-primary-control.ps1")
