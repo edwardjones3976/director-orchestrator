@@ -151,6 +151,31 @@ ACCESSIBILITY_COMMIT = "668fcff0da975a5851966b30c2cc1f11c18fb502"
 ACCESSIBILITY_PATH = "1-getting-started-lessons/3-accessibility/assignment.md"
 ACCESSIBILITY_TITLE = "Analyze an inaccessible site"
 ACCESSIBILITY_OBJECTIVE = "Identify a website that you believe is NOT accessible and create an action plan to improve its accessibility."
+# Closed authenticated source-facts review only; semantic group/generation release is held.
+RUSTLINGS_REPOSITORY = "rust-lang/rustlings"
+RUSTLINGS_COMMIT = "5002c54ffb29b3df9db7282a1ef62ce075c99748"
+RUSTLINGS_TREE = "ad7698ffbdbc2cc22513c6dcec7c9a75516220dd"
+RUSTLINGS_SOURCE_FACTS = {
+    "8e1a17857580ecfdc00c5308fb1e9bdf39b865fe93022d92ce58a89166166315": {
+        "manifest": "65e191ab5ed3f05c9ae671c20c4832deeace3ed4b058b65e1595693518defcae",
+        "commit": "25ac4719226a4a4900cf248a78b1eef5d4e5cc0bb3b075fc5ae6b9376163c99b",
+        "tree": "b3ce6f8c09f0340c4de5dd17409b7ee6f0e948ab922744c4dc1a9fb4906d82fa",
+        "share": "815aa62bc63d2a93df5d2a604fdfbd3a8796dcb9fc52895f66f5550269ef476c",
+        "receipt": "7aaf785e888220765cfbaf2decff48365d89387e24d40a90efd84a282102e225",
+        "answer": "2569b7d75c173c7013e2e93f0219e21ceb5d48e8def664a1e0ce96f8e0efa438",
+        "LICENSE": "73a94c6d29e8563b3d7bf89a118572f01b4a0a3c984b15c02b95ce2c93f71b2f",
+        "README.md": "1c8d37dcc7fc19c8b80faee904ee26e7db433c5bff67de8fdcb504481e163c33",
+        "excerpt": "ccdb4a0be869aa04e375262ba943e280d3868f6491501214651d90b42e90c74f",
+        "sources": {
+            "variables1": ("exercises/variables/variables1.rs",
+                "92996db9a18f136dd311a7614b47b3c105cfd1831b12d072582d628c94ec5f35"),
+            "functions1": ("exercises/functions/functions1.rs",
+                "3ae359a831795b7e77d5b6cb55eac13944eb884e560ea5cf560f547605bf516a"),
+            "move_semantics1": ("exercises/move_semantics/move_semantics1.rs",
+                "2852ebaf545c78a82136b153806b6ae3644b4256138a8561b0f8ee33a59a72a4"),
+        },
+    },
+}
 Dispatch = Callable[[str, str, str], "DispatchResult"]
 Scrub = Callable[[Path], str | None]
 
@@ -384,11 +409,143 @@ def _source_utc(value: Any, label: str) -> datetime:
         fail(f"{label}: invalid source timestamp")
 
 
+def _validate_rustlings_source_facts(scenario: dict[str, Any], source_root: Path,
+                                   label: str, review_receipts_root: Path | None) -> None:
+    """Validate the three retained originals, without granting group/generation admission."""
+    block = scenario["source_provenance"]
+    pins = RUSTLINGS_SOURCE_FACTS[block["admission_sha256"]]
+    try:
+        def artifact(ref: Any, digest: str) -> bytes:
+            raw = _source_artifact(source_root, ref, label)
+            if hashlib.sha256(raw).hexdigest() != digest:
+                fail(f"{label}: Rustlings source-facts artifact bytes changed")
+            return raw
+
+        terminal = local_transport.strict_json(artifact(block.get("admission_ref"), block["admission_sha256"]))
+        manifest_raw = artifact(block.get("manifest_ref"), pins["manifest"])
+        manifest = [local_transport.strict_json(line) for line in manifest_raw.splitlines() if line.strip()]
+        prefix = block["manifest_ref"].rsplit("/", 1)[0] + "/" if "/" in block["manifest_ref"] else ""
+        share = local_transport.strict_json(artifact(prefix + "share-record.json", pins["share"]))
+        official = local_transport.strict_json(artifact(block.get("official_capture_ref"), pins["commit"]))
+        tree = local_transport.strict_json(artifact(block.get("official_tree_ref"), pins["tree"]))
+        api = f"https://api.github.com/repos/{RUSTLINGS_REPOSITORY}"
+        upstream = official["commit"]["committer"]["date"]
+        if (official["sha"] != RUSTLINGS_COMMIT or official["url"] != f"{api}/commits/{RUSTLINGS_COMMIT}"
+                or official["commit"]["tree"] != {"sha": RUSTLINGS_TREE, "url": f"{api}/git/trees/{RUSTLINGS_TREE}"}
+                or tree["sha"] != RUSTLINGS_TREE or tree["url"] != f"{api}/git/trees/{RUSTLINGS_TREE}"
+                or tree["truncated"] is not False):
+            fail(f"{label}: Rustlings official commit/tree binding differs")
+        expected_ids = {f"rustlings/{RUSTLINGS_COMMIT}/{slug}" for slug in pins["sources"]}
+        if (len(manifest) != 3 or {entry["source_id"] for entry in manifest} != expected_ids
+                or share["repository"] != RUSTLINGS_REPOSITORY or share["pin"] != RUSTLINGS_COMMIT
+                or share["tree"] != RUSTLINGS_TREE or len(share["source_ids"]) != 3
+                or set(share["source_ids"]) != expected_ids or share["training_admission"] is not False
+                or len(share["files"]) != 5 or len({item["path"] for item in share["files"]}) != 5):
+            fail(f"{label}: Rustlings source-facts scope is not the closed three originals")
+        receipt_ref = terminal["receipt"].replace("\\", "/").rsplit("/receipts/", 1)[-1]
+        receipt_raw = _source_artifact(review_receipts_root or DISPATCH_PY.parent / "receipts", receipt_ref, label)
+        if hashlib.sha256(receipt_raw).hexdigest() != pins["receipt"]:
+            fail(f"{label}: Rustlings independent receipt bytes changed")
+        receipt = local_transport.strict_json(receipt_raw)
+        review = local_transport.strict_json(receipt["answer"])
+        if (receipt["provider"] != "xai" or receipt["model"] != "grok-4.6" or receipt["http_status"] != 200
+                or receipt["response_status"] != "completed" or not receipt["response_id"]
+                or receipt["response_id"] != terminal["response_id"]
+                or hashlib.sha256(receipt["answer"].encode("utf-8")).hexdigest() != pins["answer"]
+                or terminal["receipt_sha256"] != pins["receipt"]
+                or terminal["state"] != "AUTHENTICATED_ACCEPT_SOURCE_FACTS_ONLY"
+                or terminal["verdict"] != review["verdict"] or review["verdict"] != "ACCEPT_SOURCE_FACTS_ONLY"
+                or terminal["packet_id"] != review["packet_id"] or review["packet_id"] != share["packet_id"]
+                or terminal["share_record_sha256"] != review["share_record_sha256"]
+                or review["share_record_sha256"] != pins["share"]
+                or terminal["sources"] != review["sources"] or len(review["sources"]) != 3
+                or {item["source_id"] for item in review["sources"]} != expected_ids
+                or any(item["status"] != "OK" for item in review["sources"])
+                or terminal["schema_support"] != review["schema_support"]
+                or review["training_admission"] is not False or terminal["training_admission"] is not False
+                or terminal["new_rows"] != 0 or terminal["gpu_release"] is not False
+                or terminal["semantic_groups"] != "UNKNOWN"):
+            fail(f"{label}: Rustlings has no exact bound source-facts-only review")
+        reviewed_at = terminal["utc"]
+        if reviewed_at.endswith("+00:00"):
+            reviewed_at = reviewed_at[:-6] + "Z"
+        if block.get("admitted_at") != reviewed_at:
+            fail(f"{label}: Rustlings source-facts review timestamp differs")
+        selected = None
+        for entry in manifest:
+            slug = entry["source_id"].rsplit("/", 1)[-1]
+            path, digest = pins["sources"][slug]
+            if (entry["repository"] != RUSTLINGS_REPOSITORY or entry["pin"] != RUSTLINGS_COMMIT
+                    or entry["tree"] != RUSTLINGS_TREE or entry["path"] != path
+                    or entry["sha256"] != digest or entry["upstream_commit_utc"] != upstream
+                    or entry["intended_destination"] != "synthetic_training_candidates_only"
+                    or entry["training_admission"] is not False or entry["independent_group"] != "UNKNOWN"):
+                fail(f"{label}: Rustlings original identity or disposition differs")
+            captured_at = entry["capture_utc"]
+            if captured_at.endswith("+00:00"):
+                captured_at = captured_at[:-6] + "Z"
+            if not (_source_utc(upstream, label) < _source_utc(captured_at, label)
+                    < _source_utc(reviewed_at, label) < _source_utc(local_transport.utc_now(), label)):
+                fail(f"{label}: Rustlings source/capture/review chronology is invalid")
+            original = artifact(prefix + path, digest)
+            blob = hashlib.sha1(b"blob " + str(len(original)).encode("ascii") + b"\0" + original).hexdigest()
+            records = [item for item in tree["tree"] if item["path"] == path]
+            shared = [item for item in share["files"] if item["path"] == path]
+            fact = next(item for item in review["sources"] if item["source_id"] == entry["source_id"])
+            if (len(records) != 1 or records[0]["type"] != "blob" or records[0]["mode"] != "100644"
+                    or records[0]["sha"] != blob or records[0]["size"] != len(original)
+                    or entry["git_blob_sha1"] != blob or entry["bytes"] != len(original)
+                    or len(shared) != 1 or shared[0]["source_id"] != entry["source_id"]
+                    or shared[0]["sha256"] != digest or shared[0]["bytes"] != len(original)
+                    or fact["literal_title"] != path.rsplit("/", 1)[-1]
+                    or original.decode("utf-8").splitlines()[0] != "// " + fact["literal_title"]):
+                fail(f"{label}: Rustlings original differs from reviewed source/blob")
+            if entry["source_id"] == block.get("source_id"):
+                selected = (slug, path, digest, original)
+        support = {}
+        for name in ("LICENSE", "README.md"):
+            support[name] = artifact(prefix + name, pins[name])
+            raw = support[name]
+            blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+            records = [item for item in tree["tree"] if item["path"] == name]
+            if (len(records) != 1 or records[0]["type"] != "blob" or records[0]["mode"] != "100644"
+                    or records[0]["sha"] != blob or records[0]["size"] != len(raw)):
+                fail(f"{label}: Rustlings notice/README differs from captured blob")
+        license_record = next(item for item in share["files"] if item["path"] == "LICENSE")
+        readme_record = next(item for item in share["files"] if item["path"] == "README.md")
+        excerpt = b"".join(support["README.md"].splitlines(keepends=True)[75:118])
+        if (license_record["sha256"] != pins["LICENSE"] or license_record["bytes"] != len(support["LICENSE"])
+                or readme_record["full_source_sha256"] != pins["README.md"]
+                or readme_record["line_start"] != 76 or readme_record["line_end"] != 118
+                or readme_record["excerpt_sha256"] != pins["excerpt"]
+                or hashlib.sha256(excerpt).hexdigest() != pins["excerpt"]
+                or block.get("license_ref", prefix + "LICENSE") != prefix + "LICENSE" or selected is None):
+            fail(f"{label}: Rustlings exact reviewed learner passage/source is missing")
+        slug, path, digest, original = selected
+        context = scenario["input"]["context"]
+        expected_context = [{"kind": "assignment_packet", "source_ref": prefix + path,
+                             "source_sha256": digest, "text": original.decode("utf-8")},
+                            {"kind": "assignment_packet", "source_ref": prefix + "README.md",
+                             "source_sha256": pins["README.md"], "text": excerpt.decode("utf-8")}]
+        if (scenario["split"] not in ("train", "dev")
+                or scenario["source_group"] != f"licensed/{RUSTLINGS_REPOSITORY}/{slug}"
+                or scenario["input"]["repository"] != RUSTLINGS_REPOSITORY
+                or scenario["input"]["title"] != path.rsplit("/", 1)[-1]
+                or context != expected_context or not scenario["input"]["objective"].strip()
+                or " ".join(scenario["input"]["objective"].split()) not in " ".join(original.decode("utf-8").split())):
+            fail(f"{label}: Rustlings input is not the exact reviewed original and learner context")
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError, StopIteration):
+        fail(f"{label}: malformed Rustlings source-facts evidence")
+
+
 def validate_licensed_specification(scenario: dict[str, Any], source_root: Path, label: str,
                                    review_receipts_root: Path | None = None) -> None:
     """Bind a reviewed public description to its official capture and license."""
     block = scenario["source_provenance"]
     digest = block.get("admission_sha256")
+    if isinstance(digest, str) and digest in RUSTLINGS_SOURCE_FACTS:
+        _validate_rustlings_source_facts(scenario, source_root, label, review_receipts_root)
+        return
     learnyounode = isinstance(digest, str) and digest in LEARNYOUNODE_ADMISSIONS
     markdown = isinstance(digest, str) and digest in MARKDOWN_ADMISSIONS
     accessibility = isinstance(digest, str) and digest in ACCESSIBILITY_ADMISSIONS
@@ -1999,6 +2156,9 @@ def generate(
                 fail(str(exc))
     if dry_run:
         return {"dry_run": True, "rows": 0, "receipts": 0}
+    if any(scenario["source_provenance"].get("admission_sha256") in RUSTLINGS_SOURCE_FACTS
+           for scenario in scenarios):
+        fail("Rustlings generation is held: independent semantic source-group admission is UNKNOWN")
     if provider != "local_model" and dispatch is None:
         fail("cloud exemplar generation is held by the M2 training-data terms gate")
     if provider == "local_model" and dispatch is None:
