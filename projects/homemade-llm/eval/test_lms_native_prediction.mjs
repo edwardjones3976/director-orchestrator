@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { predictNative, validateNativeRequest, loadPinnedSdk, SDK_PIN } from './lms_native_prediction.mjs';
+import { predictNative, predictOwnedNative, validateNativeRequest, loadPinnedSdk, SDK_PIN } from './lms_native_prediction.mjs';
 
 let networkAttempts = 0;
 const deny = () => { networkAttempts++; throw new Error('offline network denied'); };
@@ -139,6 +139,9 @@ await check('raw unknown keys and unchecked values preserved; one pinned predict
   const f = fixture(); const raw = result(); f.setResult(raw);
   const outcome = await predictNative(request(), {sdkLoader: f.loader});
   assert.equal(outcome.status, 'NATIVE_COMPLETED'); assert.equal(f.calls.respond, 1);
+  assert.equal(outcome.roundIndex, 0); assert.equal(outcome.reasoningContent, '');
+  assert.equal(outcome.nonReasoningContent, outcome.content);
+  assert.equal(outcome.requestedPredictionConfig.contextOverflowPolicy, 'stopAtLimit');
   assert.equal(f.calls.alias, 1); assert.equal(f.calls.pinned, 1); assert.equal(f.calls.forbidden, 0);
   assert.deepEqual(outcome.predictionConfig.value, raw.predictionConfig);
   assert.deepEqual(outcome.loadConfig.value, raw.loadConfig);
@@ -214,6 +217,88 @@ await check('prediction errors retain unknown backend stop and no second call', 
   assert.equal(out.status, 'REFUSED'); assert.equal(f.calls.respond, 1); assert.equal(f.calls.abort, 1);
   assert.ok(!JSON.stringify(out).includes('private exception')); unknownCleanup(out);
 });
+
+function ownedFixture(overrides = {}) {
+  const f = fixture(overrides);
+  const calls = {load: 0, unload: 0, inventory: 0};
+  let loaded = false;
+  const loader = async () => {
+    const source = await f.loader();
+    class OwnedMockClient extends source.sdk.LMStudioClient {
+      constructor(opts) {
+        super(opts);
+        this.embedding = {listLoaded: async () => overrides.embeddingModels ?? []};
+        this.system.listDownloadedModels = async domain => {
+          assert.equal(domain, 'llm');
+          return [{modelKey: request().expectedModel.modelKey, path: request().expectedModel.path,
+            sizeBytes: request().expectedModel.sizeBytes, deviceIdentifier: null}];
+        };
+        this.llm.listLoaded = async () => {
+          calls.inventory++;
+          return loaded ? [{getModelInfo: async () => info()}] : [];
+        };
+        this.llm.load = async (key, options) => {
+          calls.load++;
+          assert.equal(key, request().expectedModel.modelKey);
+          assert.equal(options.identifier, request().alias);
+          assert.equal(options.deviceIdentifier, null);
+          assert.deepEqual(options.config, {contextLength: 8192, gpu: {ratio: 'max'}});
+          if (overrides.load) return overrides.load();
+          loaded = true;
+          return {getModelInfo: async () => overrides.loadedInfo ?? info()};
+        };
+        this.llm.unload = async (alias, options) => {
+          calls.unload++;
+          assert.equal(alias, request().alias);
+          assert.deepEqual(options, {deviceIdentifier: null});
+          if (overrides.unload) return overrides.unload();
+          loaded = false;
+        };
+      }
+    }
+    return {...source, sdk: {...source.sdk, LMStudioClient: OwnedMockClient}};
+  };
+  return {f, calls, loader};
+}
+await check('owned lifecycle dry run has no SDK calls', async () => {
+  const o = ownedFixture();
+  const outcome = await predictOwnedNative(request(), {dryRun: true, sdkLoader: o.loader});
+  assert.equal(outcome.status, 'DRY_RUN');
+  assert.ok(Object.values(o.calls).every(n => n === 0));
+  assert.ok(Object.values(o.f.calls).every(n => n === 0));
+});
+await check('one owned load/prediction/unload and absence observed; backend stop unknown', async () => {
+  const o = ownedFixture();
+  const out = await predictOwnedNative(request(), {sdkLoader: o.loader});
+  assert.equal(out.status, 'NATIVE_COMPLETED');
+  assert.equal(o.calls.load, 1); assert.equal(o.f.calls.respond, 1); assert.equal(o.calls.unload, 1);
+  assert.equal(out.lifecycle.ownedAliasUnloaded, 'ABSENCE_OBSERVED');
+  assert.equal(out.lifecycle.clientDisposal, 'CONNECTIONS_CLOSED');
+  assert.equal(out.lifecycle.backendStopped, 'UNKNOWN');
+  unknownCleanup(out);
+});
+await check('owned loaded reference pins prediction; replacement forbids foreign unload', async () => {
+  const o = ownedFixture({loadedInfo: {...info(), instanceReference: 'loaded-other-instance'}});
+  const out = await predictOwnedNative(request(), {sdkLoader: o.loader});
+  assert.equal(out.status, 'REFUSED'); assert.equal(o.f.calls.respond, 0);
+  assert.equal(o.calls.load, 1); assert.equal(o.calls.unload, 0);
+  assert.equal(out.lifecycle.ownedAliasUnloaded, 'UNKNOWN');
+});
+await check('owned load shares deadline; unload error is unknown and cannot replay', async () => {
+  const occupied = ownedFixture({embeddingModels: [{}]});
+  const occupiedResult = await predictOwnedNative(request(), {sdkLoader: occupied.loader});
+  assert.equal(occupiedResult.status, 'REFUSED'); assert.equal(occupied.calls.load, 0);
+  const slow = ownedFixture({load: never}); const r = request(); r.deadlineMs = 60;
+  const out = await predictOwnedNative(r, {sdkLoader: slow.loader});
+  assert.equal(out.status, 'TIMEOUT'); assert.equal(slow.calls.load, 1);
+  assert.equal(slow.f.calls.respond, 0); assert.equal(slow.calls.unload, 0);
+  assert.equal(out.lifecycle.ownedAliasUnloaded, 'UNKNOWN');
+  const failed = ownedFixture({unload: () => Promise.reject(new Error('no raw exception'))});
+  const other = await predictOwnedNative(request(), {sdkLoader: failed.loader});
+  assert.equal(other.status, 'CLEANUP_UNKNOWN'); assert.ok(!Object.hasOwn(other, 'content'));
+  assert.equal(failed.calls.unload, 1); assert.equal(failed.f.calls.respond, 1);
+});
+
 assert.equal(networkAttempts, 0);
 console.log(JSON.stringify({status: 'PASS', checks, names, networkAttempts,
   realSdkImportAndChat: real ? 'PASS_PINNED_2.0.0_NETWORK_DENIED' : 'NOT_RUN_PACKAGE_NOT_STAGED',

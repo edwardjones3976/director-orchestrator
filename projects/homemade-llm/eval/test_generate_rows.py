@@ -2210,6 +2210,234 @@ class AccessibilityAdmissionTests(unittest.TestCase):
         with patch.object(generate_rows.local_transport, "utc_now", return_value="2026-09-27T11:10:00Z"), self.assertRaises(SystemExit):
             self.generate()
 
+
+
+class NativeSdkTransportTests(unittest.TestCase):
+    """Mocked model lifecycle; actual harmless contained child tests. No SDK client."""
+    setUp = GenerateRowsTests.setUp
+    default_scenario = GenerateRowsTests.default_scenario
+    local_options = GenerateRowsTests.local_options
+    generate_local = GenerateRowsTests.generate_local
+
+    def native_fixture(self):
+        options = self.local_options()
+        options["model"] = "m2-native-offline"
+        runtime_path = self.root / "runtime.json"
+        runtime_path.write_text('{"offline_fixture":true}', encoding="utf-8")
+        runtime = {"node": sys.executable, "sdk_entry": str(self.root / "dist" / "index.mjs"),
+                   "model_key": "fixture/catalog", "lms_models_dir": str(options["lms_models_dir"])}
+        self.operator_pin = (self.root / "OFFLINE-MOCK-not-a-live-release", "f" * 64)
+        release = {"attempt_ordinal": 3, "release_sha256": "f" * 64,
+                   "runtime_sha256": hashlib.sha256(runtime_path.read_bytes()).hexdigest()}
+        for name, value in (("NATIVE_GPU_MARKER", self.root / "owned-marker.json"),
+                            ("NATIVE_GPU_LOCK", self.root / "gpu.lock"),
+                            ("NATIVE_ATTEMPT_ROOT", self.root / "attempts")):
+            patched = patch.object(generate_rows, name, value); patched.start(); self.addCleanup(patched.stop)
+        for name, value in (("native_execution_release", release), ("_native_runtime", runtime),
+                            ("_native_resource_checks", {"offline_mock": True})):
+            patched = patch.object(generate_rows, name, return_value=value)
+            patched.start(); self.addCleanup(patched.stop)
+        original = generate_rows.native_execution_release
+        def checked_release(*args, operator_pin=None):
+            self.assertIs(operator_pin, self.operator_pin)
+            return release
+        original.side_effect = checked_release
+        process = patch.object(generate_rows, "_native_process", side_effect=self.child_response)
+        self.native_child = process.start(); self.addCleanup(process.stop)
+        self.runtime_path = runtime_path
+        return options
+
+    @staticmethod
+    def response(request):
+        # Deliberately mocked result carrying the production-shaped provenance contract.
+        # This fixture does not authenticate a live SDK/backend.
+        info = {"identifier": request["alias"], "instanceReference": "offline-owned-instance",
+                **{key: request["expectedModel"][key] for key in ("modelKey", "path", "sizeBytes")}, "deviceIdentifier": None}
+        predicted = {"llm.prediction.temperature": 0,
+                     "llm.prediction.maxPredictedTokens": {"checked": True, "value": request["maxOutput"]},
+                     "llm.prediction.reasoning.enableThinking": False,
+                     "llm.prediction.contextOverflowPolicy": "stopAtLimit",
+                     "llm.prediction.structured": {"type": "json", "jsonSchema": request["schema"]},
+                     "future.opaque": {"checked": False, "value": 42}}
+        loaded = {"llm.load.contextLength": 8192, "llm.load.llama.acceleration.offloadRatio": "max",
+                  "llm.load.llama.autoFit": False}
+        return {"protocol": generate_rows.NATIVE_PROTOCOL, "status": "NATIVE_COMPLETED", "inferenceCalls": 1,
+                "requestSha256": generate_rows.local_transport.sha256(generate_rows._sdk_json(request)),
+                "messagesSha256": generate_rows.local_transport.sha256(generate_rows._sdk_json(request["messages"])),
+                "schemaSha256": generate_rows.local_transport.sha256(generate_rows._sdk_json(request["schema"])),
+                "server": request["expectedServer"], "sdkProvenance": "PINNED_PUBLIC_PACKAGE",
+                "returnedModel": info, "roundIndex": 0, "stats": {"stopReason": "eosFound"},
+                "content": json.dumps(TARGET), "reasoningContent": "", "nonReasoningContent": json.dumps(TARGET),
+                "requestedPredictionConfig": {"temperature": 0, "maxTokens": request["maxOutput"],
+                    "enableThinking": False, "contextOverflowPolicy": "stopAtLimit",
+                    "structured": {"type": "json", "jsonSchema": request["schema"]}},
+                "predictionConfig": {"state": "RETURNED_RAW_UNINTERPRETED",
+                                     "value": {"fields": [{"key": k, "value": v} for k, v in predicted.items()]}},
+                "loadConfig": {"state": "RETURNED_RAW_UNINTERPRETED",
+                               "value": {"fields": [{"key": k, "value": v} for k, v in loaded.items()]}},
+                "lifecycle": {"ownedInstance": info, "loadCalls": 1, "unloadCalls": 1,
+                    "requestedLoadConfig": {"contextLength": 8192, "gpu": {"ratio": "max"}},
+                    "ownedAliasUnloaded": "ABSENCE_OBSERVED", "clientDisposal": "CONNECTIONS_CLOSED",
+                    "backendStopped": "UNKNOWN"}}
+
+    def child_response(self, argv, payload, deadline):
+        self.assertTrue(generate_rows.NATIVE_GPU_MARKER.exists())
+        attempts = list(generate_rows.NATIVE_ATTEMPT_ROOT.glob("*.json"))
+        self.assertEqual(len(attempts), 1)
+        request = generate_rows.local_transport.strict_json(payload)
+        self.assertEqual(request["temperature"], 0)
+        self.assertEqual(request["enableThinking"], False)
+        self.assertIn("generationDeadlineUnixMs", request)
+        response = self.response(request)
+        if hasattr(self, "mutation"):
+            self.mutation(response)
+        return generate_rows._sdk_json(response), {"pid": 0, "exit_code": 0, "child_tree_closed": True,
+                                                   "evidence": "OFFLINE_MOCK_ONLY"}
+
+    def test_operator_bootstrap_hash_graph_is_non_circular_and_cli_cannot_supply_pin(self):
+        # Graph proof only: no production release A or launch B is created/configured.
+        # Complete candidate bytes remain frozen while downstream evidence is built.
+        candidate = Path(generate_rows.__file__).read_bytes()
+        candidate_hash = hashlib.sha256(candidate).hexdigest()
+        runtime = {"proof_scope": "OFFLINE_GRAPH_ONLY_NOT_A_RUNTIME",
+                   "code_sha256": {"eval/generate_rows.py": candidate_hash}}
+        runtime_hash = generate_rows._canonical_hash(runtime)
+        release = {"proof_scope": "OFFLINE_GRAPH_ONLY_NOT_A_RELEASE",
+                   "runtime_sha256": runtime_hash, "attempt_ordinal": 3,
+                   "preserved_history_sha256": "a" * 64}
+        release_hash = generate_rows._canonical_hash(release)
+        launch = {"proof_scope": "OFFLINE_GRAPH_ONLY_NOT_A_LAUNCH",
+                  "candidate_sha256": candidate_hash, "runtime_sha256": runtime_hash,
+                  "release_sha256": release_hash}
+        self.assertEqual(launch["candidate_sha256"], hashlib.sha256(Path(generate_rows.__file__).read_bytes()).hexdigest())
+        self.assertEqual(launch["release_sha256"], generate_rows._canonical_hash(release))
+        self.assertNotIn("NATIVE_RELEASE_PIN", candidate.decode("utf-8"))
+        with patch.object(generate_rows, "_native_process") as process:
+            with self.assertRaises(SystemExit):
+                generate_rows.native_execution_release(self.default_scenario(), "not-a-release", self.root / "not-runtime")
+            with self.assertRaises(SystemExit):
+                generate_rows.main(["--scenarios", "unused", "--provider", "local_model", "--set-a", "unused", "--set-b", "unused",
+                                    "--out", "unused", "--terms-verified-at", UTC, "--native-release-pin", "caller-GO"])
+            process.assert_not_called()
+        self.assertEqual(candidate, Path(generate_rows.__file__).read_bytes())
+
+    def test_native_dry_run_has_zero_effects_and_preserves_refs(self):
+        before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for root in (self.set_a, self.set_b) for p in root.glob("*.json")}
+        with patch.object(generate_rows, "prepare_local_model") as prepare, patch.object(generate_rows, "_native_process") as child, patch.object(generate_rows, "native_execution_release") as release:
+            report = self.generate_local({}, native_sdk=True, dry_run=True)
+            self.assertEqual(report, {"dry_run": True, "rows": 0, "receipts": 0})
+            prepare.assert_not_called(); child.assert_not_called(); release.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.root / "receipts").exists())
+        after = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for root in (self.set_a, self.set_b) for p in root.glob("*.json")}
+        self.assertEqual(before, after)
+
+    def test_native_held_release_and_incompatible_modes_have_no_probes(self):
+        options = self.local_options()
+        with patch.object(generate_rows, "prepare_local_model") as prepare, patch.object(generate_rows, "_native_process") as child:
+            with self.assertRaises(SystemExit):
+                self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.root / "missing"})
+            with self.assertRaises(SystemExit):
+                self.generate_local(options, native_sdk=True, quote_first=True, dry_run=True)
+            prepare.assert_not_called(); child.assert_not_called()
+        self.local_probe.assert_not_called(); self.local_http.assert_not_called()
+
+    def test_native_success_exact_contract_receipt_and_collision(self):
+        options = self.native_fixture()
+        report = self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path}, native_release_pin=self.operator_pin)
+        self.assertEqual(report["rows"], 1); self.native_child.assert_called_once()
+        self.local_probe.assert_not_called(); self.local_http.assert_not_called()
+        receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
+        expected = generate_rows.prompt_template.render_messages(self.default_scenario()["input"])
+        expected[0]["content"] += generate_rows.local_transport.QWEN3_PROMPT
+        self.assertEqual(receipt["request"]["messages"], expected)
+        self.assertEqual(receipt["request"]["schema"], generate_rows._schema_validator().schema["properties"]["target"])
+        self.assertNotEqual(receipt["request_sha256"], receipt["sdk_request_utf8_sha256"])
+        self.assertEqual(receipt["response"]["lifecycle"]["backendStopped"], "UNKNOWN")
+        self.assertFalse(generate_rows.NATIVE_GPU_MARKER.exists())
+        self.assertEqual(len(list(generate_rows.NATIVE_ATTEMPT_ROOT.glob("*.json"))), 1)
+        self.out = self.root / "second.jsonl"
+        with self.assertRaises(FileExistsError):
+            self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path}, native_release_pin=self.operator_pin)
+        self.native_child.assert_called_once()
+
+    def test_native_config_refusal_preserves_failure_without_replay(self):
+        options = self.native_fixture()
+        self.mutation = lambda r: r["predictionConfig"]["value"]["fields"].append(r["predictionConfig"]["value"]["fields"][0])
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path}, native_release_pin=self.operator_pin)
+        self.native_child.assert_called_once(); self.assertFalse(self.out.exists())
+        receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["response"]["predictionConfig"]["value"]["fields"][-2]["value"], {"checked": False, "value": 42})
+        self.assertFalse(generate_rows.NATIVE_GPU_MARKER.exists())
+
+    def test_native_independent_result_refusals(self):
+        options = self.native_fixture()
+        self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path}, native_release_pin=self.operator_pin)
+        record = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
+        changes = [lambda r: r.update(roundIndex=1), lambda r: r.update(reasoningContent="hidden"),
+                   lambda r: r["stats"].update(stopReason="contextLengthReached"),
+                   lambda r: r["returnedModel"].update(instanceReference="different"),
+                   lambda r: r["lifecycle"].update(ownedAliasUnloaded="UNKNOWN"),
+                   lambda r: r["predictionConfig"].update(state="UNKNOWN"),
+                   lambda r: r["predictionConfig"]["value"]["fields"].pop(0),
+                   lambda r: r["predictionConfig"]["value"]["fields"][1].update(value={"checked": False, "value": 2048}),
+                   lambda r: r["loadConfig"]["value"]["fields"].pop(0)]
+        for change in changes:
+            response = json.loads(json.dumps(record["response"]))
+            change(response)
+            with self.assertRaises(ValueError):
+                generate_rows._native_answer(response, record["request"])
+
+    def test_native_cleanup_unknown_retains_owned_marker(self):
+        options = self.native_fixture()
+        self.mutation = lambda r: r["lifecycle"].update(ownedAliasUnloaded="UNKNOWN")
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path}, native_release_pin=self.operator_pin)
+        self.assertTrue(generate_rows.NATIVE_GPU_MARKER.exists())
+        self.assertFalse(self.out.exists()); self.native_child.assert_called_once()
+
+    def test_actual_contained_child_success_timeout_overflow_and_no_threads(self):
+        import time
+        import threading
+        before = {thread.ident for thread in threading.enumerate()}
+        raw, proof = generate_rows._native_process([sys.executable, "-c", "print('{}',end='')"], b"", time.monotonic() + 3)
+        self.assertEqual(raw, b"{}"); self.assertTrue(proof["child_tree_closed"])
+        for code, delay in (("import time;time.sleep(10)", .3), ("print('x'*1100000)", 3),
+                            ("import sys;sys.stderr.write('private text');sys.exit(2)", 3)):
+            with self.assertRaises(ValueError) as caught:
+                generate_rows._native_process([sys.executable, "-c", code], b"", time.monotonic() + delay)
+            self.assertNotIn("private text", str(caught.exception))
+            self.assertTrue(caught.exception.child["child_tree_closed"])
+        self.assertEqual({thread.ident for thread in threading.enumerate()}, before)
+
+    def test_actual_contained_child_descendant_is_dead(self):
+        import time
+        code = "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);print(p.pid,flush=True)"
+        raw, proof = generate_rows._native_process([sys.executable, "-c", code], b"", time.monotonic() + 3)
+        self.assertTrue(proof["child_tree_closed"])
+        pid = int(raw.strip())
+        if generate_rows.os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = kernel.OpenProcess(0x00100000, False, pid)
+            if handle:
+                try:
+                    self.assertEqual(kernel.WaitForSingleObject(handle, 1000), 0)
+                finally:
+                    kernel.CloseHandle(handle)
+        else:
+            # POSIX killed child may remain a zombie until its OS parent reaps it.
+            proc = Path(f"/proc/{pid}/stat")
+            self.assertTrue(not proc.exists() or proc.read_text().split()[2] == "Z")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]

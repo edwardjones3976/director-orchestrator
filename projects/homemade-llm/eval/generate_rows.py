@@ -28,6 +28,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+import threading
+import shutil
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import secrets
@@ -42,6 +46,7 @@ import build_inputs  # noqa: E402
 import generate_candidates as local_transport  # noqa: E402
 import prompt_template  # noqa: E402
 import validate_rows  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
 MAX_ROWS_PER_CALL = 8
 MAX_OUTPUT_TOKENS = 2048
@@ -802,7 +807,7 @@ def _schema_validator() -> jsonschema.Draft202012Validator:
 
 def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Path,
                         license_file: Path, base_url: str, lms_models_dir: Path,
-                        timeout: int) -> dict[str, Any]:
+                        timeout: int, probe_loaded: bool = True) -> dict[str, Any]:
     """Verify the admitted model artifacts before probing the local loaded alias."""
     if (not isinstance(model, str) or not model.strip()
             or any(not isinstance(path, Path) for path in
@@ -840,7 +845,7 @@ def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Pat
             fail("license bytes do not match the admitted model license")
         args = argparse.Namespace(base_url=base_url, model=model,
                                   lms_models_dir=lms_models_dir, item_timeout=timeout)
-        binding = local_transport.loaded_model_binding(args, gguf)
+        binding = local_transport.loaded_model_binding(args, gguf) if probe_loaded else None
     except (OSError, ValueError, KeyError, TypeError) as exc:
         fail(f"local model verification failed: {type(exc).__name__}: {exc}")
     return {"model": identity, "alias": model, "base_url": base_url.rstrip("/"),
@@ -849,6 +854,410 @@ def prepare_local_model(*, model: str, model_gguf: Path, conversion_receipt: Pat
             "license_file": str(license_file.resolve()), "license_sha256": license_hash,
             "loaded_model_binding": binding, **gguf}
 
+
+
+
+NATIVE_PROTOCOL = "lms-native-prediction-v1"
+# Release authority is supplied only by a separately reviewed responsible-operator
+# launch composition, outside these fully hashed candidate bytes. No CLI, scenario
+# or runtime data can supply it. A self-written record/Python call is not authority;
+# no live operator launch/release exists. The default below remains closed.
+NATIVE_GPU_MARKER = Path("C:/llm/runs/m2/native-generation.owner.json")
+NATIVE_GPU_LOCK = Path("C:/llm/runs/m2/local-inference.gpu.lock")
+NATIVE_ATTEMPT_ROOT = Path("C:/llm/runs/m2/native-attempt-reservations")
+NATIVE_MAX_BYTES = 1024 * 1024
+
+
+def _canonical_hash(value: Any) -> str:
+    return local_transport.sha256(json.dumps(value, sort_keys=True).encode("utf-8"))
+
+
+def _sdk_json(value: Any) -> bytes:
+    # Compact insertion-order UTF-8 serialization, deliberately distinct from receipt hashes.
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def native_execution_release(scenario: dict[str, Any], model: str, runtime: Path, *,
+                             operator_pin: tuple[Path, str] | None = None) -> dict[str, Any]:
+    """Validate bytes after trusted operator composition; not an authority issuer.
+
+    Only a separately assigned, exact-byte independently reviewed launch artifact
+    and actual responsible-operator verification may supply operator_pin. That
+    artifact binds candidate/runtime/release/source/model/history/ordinal evidence.
+    Presenting an arbitrary record or calling Python does not establish release.
+    The production CLI never supplies this parameter, even if a record exists.
+    """
+    if operator_pin is None:
+        fail("native ordinary route HELD: no independently verified root method/ordinal release")
+    path, digest = operator_pin
+    raw = path.read_bytes()
+    if len(raw) > NATIVE_MAX_BYTES or local_transport.sha256(raw) != digest:
+        fail("native method release bytes changed")
+    record = local_transport.strict_json(raw)
+    if (record.get("status") != "NATIVE_METHOD_RELEASE" or record.get("protocol") != NATIVE_PROTOCOL
+            or record.get("source_group") != scenario["source_group"]
+            or record.get("input_sha256") != _canonical_hash(scenario["input"])
+            or record.get("model") != model
+            or record.get("runtime_sha256") != local_transport.sha256(runtime.read_bytes())):
+        fail("native release does not bind this exact source/model/runtime")
+    history_raw = Path(record["attempt_history"]).read_bytes()
+    if len(history_raw) > NATIVE_MAX_BYTES or local_transport.sha256(history_raw) != record["attempt_history_sha256"]:
+        fail("native attempt history changed")
+    history = [local_transport.strict_json(line) for line in history_raw.splitlines() if line]
+    used = sum(row["execution_reservations"] for row in history
+               if row.get("source_group") == scenario["source_group"] and row.get("model") == model)
+    ordinal = record.get("attempt_ordinal")
+    if type(ordinal) is not int or ordinal != used + 1:
+        fail("native ordinal must preserve all source/model reservations, including zero-prediction failures")
+    return {**record, "release_path": str(path), "release_sha256": digest}
+
+
+def _native_process(argv: list[str], payload: bytes, deadline: float) -> tuple[bytes, dict[str, Any]]:
+    """One real contained child; bounded pipes, deadline and joined non-daemon readers."""
+    from director_orchestrator.process_isolation import launch_contained_process, stop_contained_process, trusted_neutral_cwd
+    if len(payload) > 65536 or time.monotonic() >= deadline:
+        raise ValueError("native child input/deadline bound")
+    env = {key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATH") if key in os.environ}
+    child, guard = launch_contained_process(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, cwd=trusted_neutral_cwd(), env=env)
+    chunks: list[bytes] = []
+    overflow = threading.Event()
+    failures: list[str] = []
+    counts = {"stdout": 0, "stderr": 0}
+    def read(stream, name):
+        try:
+            while data := stream.read(4096):
+                counts[name] += len(data)
+                if counts[name] > (NATIVE_MAX_BYTES if name == "stdout" else 65536):
+                    overflow.set()
+                if name == "stdout" and not overflow.is_set():
+                    chunks.append(data)
+        except (OSError, ValueError):
+            failures.append("pipe")
+        finally:
+            stream.close()
+    def write():
+        try:
+            child.stdin.write(payload)
+            child.stdin.close()
+        except (OSError, ValueError):
+            failures.append("stdin")
+    threads = [threading.Thread(target=read, args=(child.stdout, "stdout")),
+               threading.Thread(target=read, args=(child.stderr, "stderr")),
+               threading.Thread(target=write)]
+    reason = None
+    started_threads = []
+    cleanup = None
+    cleanup_failed = False
+    try:
+        for thread in threads:
+            thread.start()
+            started_threads.append(thread)
+        while child.poll() is None or any(thread.is_alive() for thread in threads):
+            if overflow.is_set():
+                reason = "native child output bound"
+                break
+            if time.monotonic() >= deadline:
+                reason = "native child absolute deadline"
+                break
+            time.sleep(0.01)
+    except Exception:
+        reason = "native pipe/monitor setup failed"
+    finally:
+        # Shared helper attempts every cleanup step even after a previous failure.
+        try:
+            cleanup = stop_contained_process(child, guard, grace_seconds=5)
+        except Exception:
+            cleanup_failed = True  # No raw helper/OS exception text retained.
+        finally:
+            reader_end = time.monotonic() + 5
+            for thread in started_threads:
+                thread.join(timeout=max(0, reader_end - time.monotonic()))
+    closed = bool(cleanup and all(cleanup.get(key) for key in
+                  ("tree_terminated", "child_stopped", "guard_closed", "pipes_closed")))
+    if cleanup_failed or any(thread.is_alive() for thread in started_threads) or not closed:
+        reason = "native child cleanup UNKNOWN"
+    metadata = {"pid": child.pid, "exit_code": child.returncode, "child_tree_closed": closed,
+                "containment_cleanup": cleanup if cleanup is not None else "UNKNOWN",
+                "stdout_bytes": counts["stdout"], "stderr_bytes_dropped": counts["stderr"]}
+    if reason or failures or child.returncode != 0:
+        error = ValueError(reason or "native child failed")
+        error.child = metadata
+        raise error
+    return b"".join(chunks), metadata
+
+
+def _native_runtime(path: Path, release: dict[str, Any]) -> dict[str, Any]:
+    raw = path.read_bytes()
+    if len(raw) > NATIVE_MAX_BYTES or local_transport.sha256(raw) != release["runtime_sha256"]:
+        raise ValueError("native runtime manifest changed")
+    runtime = local_transport.strict_json(raw)
+    node = Path(runtime["node"]).resolve(strict=True)
+    if local_transport.sha256(node.read_bytes()) != runtime["node_sha256"]:
+        raise ValueError("native Node executable changed")
+    sdk = Path(runtime["sdk_entry"]).resolve(strict=True)
+    # Root's exact inventory binds the complete installed dependency closure.
+    modules = sdk.parents[3]
+    if modules.name != "node_modules" or sdk.name != "index.mjs":
+        raise ValueError("native SDK path")
+    inventory = runtime["dependency_files"]
+    actual = {}
+    for root, dirs, files in os.walk(modules, onerror=lambda exc: (_ for _ in ()).throw(exc)):
+        for name in dirs + files:
+            if (Path(root) / name).is_symlink() or getattr(Path(root) / name, "is_junction", lambda: False)():
+                raise ValueError("native dependency reparse/symlink refused")
+        for name in files:
+            file = Path(root) / name
+            actual[file.relative_to(modules).as_posix()] = local_transport.sha256(file.read_bytes())
+    if not actual or actual != inventory:
+        raise ValueError("native dependency closure changed/incomplete")
+    project = Path(__file__).resolve().parents[1]
+    required = {"eval/generate_rows.py", "eval/lms_native_prediction.mjs", "eval/lms_native_stdio.mjs",
+                "eval/generate_candidates.py", "train/prompt_template.py", "schemas/director-data-v1-row.schema.json"}
+    if set(runtime["code_sha256"]) != required:
+        raise ValueError("native code binding incomplete")
+    for relative, digest in runtime["code_sha256"].items():
+        if local_transport.sha256((project / relative).read_bytes()) != digest:
+            raise ValueError("native code changed")
+    import director_orchestrator.process_isolation as containment
+    if local_transport.sha256(Path(containment.__file__).read_bytes()) != runtime["containment_sha256"]:
+        raise ValueError("native containment helper changed")
+    return runtime
+
+
+def _native_resource_checks() -> dict[str, Any]:
+    if os.name != "nt":
+        raise ValueError("native owned GPU route requires the reviewed Windows resource guard")
+    if shutil.disk_usage("C:/").free < 150 * 1024**3:
+        raise ValueError("native C free floor")
+    total = 0
+    for root, dirs, files in os.walk("C:/llm", onerror=lambda exc: (_ for _ in ()).throw(exc)):
+        for name in dirs + files:
+            if (Path(root) / name).is_symlink() or getattr(Path(root) / name, "is_junction", lambda: False)():
+                raise ValueError("native hot-root reparse requires reviewed accounting")
+        total += sum((Path(root) / name).stat().st_size for name in files)
+    if total >= 120 * 1024**3:
+        raise ValueError("native Cllm cap")
+    # Print only a count, never unrelated process commands/private paths.
+    command = ("$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Where-Object { "
+               "$_.ProcessId -ne " + str(os.getpid()) + " -and $_.CommandLine -match "
+               "'generate_rows\\.py|generate_candidates\\.py|train_adapter\\.py|convert_bases\\.py|lms_native_stdio\\.mjs' }).Count")
+    raw, _ = _native_process(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+                             b"", time.monotonic() + 10)
+    if int(raw.strip()) != 0:
+        raise ValueError("native competing producer")
+    return {"free_floor_bytes": 150 * 1024**3, "hot_bytes": total, "competing_producers": 0}
+
+
+@contextmanager
+def _native_resources(owner: dict[str, Any]):
+    # FileShare.None interoperates with existing PowerShell GPU runners.
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                      ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        handle = kernel.CreateFileW(str(NATIVE_GPU_LOCK), 0xC0000000, 0, None, 4, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ValueError("native GPU lock occupied")
+        gpu = os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDWR), "r+b")
+    else:
+        # Used only by harmless offline fixtures; production resource checks refuse POSIX.
+        gpu = NATIVE_GPU_LOCK.open("xb")
+    marker = None
+    try:
+        marker = NATIVE_GPU_MARKER.open("x", encoding="utf-8", newline="\n")
+        json.dump(owner, marker, sort_keys=True); marker.write("\n"); marker.flush(); os.fsync(marker.fileno())
+        marker.close()
+        yield
+    finally:
+        gpu.close()
+        if owner.get("cleanup_confirmed"):
+            existing = local_transport.strict_json(NATIVE_GPU_MARKER.read_bytes())
+            if existing.get("owner_token") != owner["owner_token"]:
+                raise ValueError("native marker ownership changed")
+            NATIVE_GPU_MARKER.unlink()  # Only our exact ephemeral owner marker.
+
+
+def _native_answer(response: Any, request: dict[str, Any]) -> dict[str, Any]:
+    if (request.get("protocol") != NATIVE_PROTOCOL or request.get("baseUrl") != "ws://127.0.0.1:1234"
+            or request.get("temperature") != 0 or type(request.get("temperature")) is not int
+            or request.get("enableThinking") is not False
+            or type(request.get("maxOutput")) is not int or not 1 <= request["maxOutput"] <= MAX_OUTPUT_TOKENS
+            or type(request.get("deadlineMs")) is not int or not 1 <= request["deadlineMs"] <= 300000):
+        raise ValueError("native ordinary parameters")
+    if not isinstance(response, dict) or response.get("status") != "NATIVE_COMPLETED" or response.get("inferenceCalls") != 1:
+        raise ValueError("native prediction incomplete")
+    for key, value in (("requestSha256", request), ("messagesSha256", request["messages"]), ("schemaSha256", request["schema"])):
+        if response.get(key) != local_transport.sha256(_sdk_json(value)):
+            raise ValueError("native SDK serialization binding")
+    if response.get("server") != request["expectedServer"] or response.get("sdkProvenance") != "PINNED_PUBLIC_PACKAGE":
+        raise ValueError("native server/SDK provenance")
+    life = response["lifecycle"]
+    owned = life["ownedInstance"]
+    returned = response["returnedModel"]
+    expected = request["expectedModel"]
+    for info in (owned, returned):
+        if (info.get("identifier") != request["alias"] or not info.get("instanceReference")
+                or info.get("deviceIdentifier") is not None
+                or any(info.get(key) != expected[key] for key in ("modelKey", "path", "sizeBytes"))):
+            raise ValueError("native model/instance identity")
+    if returned["instanceReference"] != owned["instanceReference"]:
+        raise ValueError("native loaded instance changed")
+    if (life["loadCalls"] != 1 or life["unloadCalls"] != 1
+            or life["ownedAliasUnloaded"] != "ABSENCE_OBSERVED" or life["clientDisposal"] != "CONNECTIONS_CLOSED"):
+        raise ValueError("native owned cleanup UNKNOWN")
+    if (response.get("roundIndex") != 0 or response.get("stats", {}).get("stopReason") not in {"eosFound", "stopStringFound"}
+            or response.get("reasoningContent") != "" or response.get("nonReasoningContent") != response.get("content")):
+        raise ValueError("native incomplete/reasoning result")
+    fields = {}
+    load_fields = {}
+    for config in (response["predictionConfig"], response["loadConfig"]):
+        if config.get("state") != "RETURNED_RAW_UNINTERPRETED" or not isinstance(config["value"].get("fields"), list):
+            raise ValueError("native raw config UNKNOWN")
+        seen = set()
+        for field in config["value"]["fields"]:
+            if not isinstance(field.get("key"), str) or "value" not in field or field["key"] in seen:
+                raise ValueError("native raw config duplicate/malformed")
+            seen.add(field["key"])
+        if config is response["predictionConfig"]:
+            fields = {field["key"]: field["value"] for field in config["value"]["fields"]}
+        else:
+            load_fields = {field["key"]: field["value"] for field in config["value"]["fields"]}
+    # Official SDK2.0.0 global llm.prediction schema and conversion (index.mjs 8714+).
+    required = {"llm.prediction.temperature": 0,
+                "llm.prediction.maxPredictedTokens": {"checked": True, "value": request["maxOutput"]},
+                "llm.prediction.reasoning.enableThinking": False,
+                "llm.prediction.contextOverflowPolicy": "stopAtLimit",
+                "llm.prediction.structured": {"type": "json", "jsonSchema": request["schema"]}}
+    if any(key not in fields or _canonical_hash(fields[key]) != _canonical_hash(value) for key, value in required.items()):
+        raise ValueError("native required returned config missing/mismatch")
+    load_required = {"llm.load.contextLength": 8192, "llm.load.llama.acceleration.offloadRatio": "max",
+                     "llm.load.llama.autoFit": False}
+    if any(key not in load_fields or _canonical_hash(load_fields[key]) != _canonical_hash(value) for key, value in load_required.items()):
+        raise ValueError("native required load config missing/mismatch")
+    if life.get("requestedLoadConfig") != {"contextLength": 8192, "gpu": {"ratio": "max"}}:
+        raise ValueError("native requested load config changed")
+    requested = {"temperature": 0, "maxTokens": request["maxOutput"], "enableThinking": False,
+                 "contextOverflowPolicy": "stopAtLimit", "structured": {"type": "json", "jsonSchema": request["schema"]}}
+    if response.get("requestedPredictionConfig") != requested:
+        raise ValueError("native requested config changed")
+    return _clean_local_target(response["content"], request["schema"])
+
+
+def native_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, Any], *,
+                    receipts_dir: Path, verified_at: str, timeout: int, max_output: int,
+                    runtime_path: Path, release: dict[str, Any],
+                    operator_pin: tuple[Path, str] | None = None) -> DispatchResult:
+    if native_execution_release(scenario, prepared["model"], runtime_path, operator_pin=operator_pin) != release:
+        fail("native trusted operator release changed before dispatch")
+    runtime = _native_runtime(runtime_path, release)
+    root = Path(runtime["lms_models_dir"]).resolve(strict=True)
+    file = Path(prepared["model_gguf_path"]).resolve(strict=True)
+    relative = file.relative_to(root).as_posix()
+    schema = _schema_validator().schema["properties"]["target"]
+    generated, rewrites = local_transport.generation_schema(schema)
+    if generated != schema:
+        raise ValueError("native full schema equivalence requires new review")
+    messages = prompt_template.render_messages(scenario["input"])
+    if prepared["model"].startswith("Qwen/"):
+        messages[0]["content"] += local_transport.QWEN3_PROMPT
+    request = {"protocol": NATIVE_PROTOCOL, "baseUrl": "ws://127.0.0.1:1234", "alias": prepared["alias"],
+               "sdkEntryUrl": Path(runtime["sdk_entry"]).resolve().as_uri(), "messages": messages, "schema": schema,
+               "temperature": 0, "enableThinking": False, "maxOutput": max_output, "deadlineMs": timeout * 1000,
+               "expectedServer": {"version": "0.4.25", "build": 1},
+               "expectedModel": {"modelKey": runtime["model_key"], "path": relative,
+                                 "sizeBytes": prepared["model_gguf_bytes"], "ggufSha256": prepared["model_gguf_sha256"]}}
+    payload = _sdk_json(request)
+    record = {**prepared, "protocol": NATIVE_PROTOCOL, "provider": "local_model", "purpose": purpose,
+              "terms_verified_at": verified_at, "input": scenario["input"], "source_group": scenario["source_group"],
+              "source_provenance": scenario["source_provenance"], "request": request,
+              "request_sha256": _canonical_hash(request), "sdk_request_utf8_sha256": local_transport.sha256(payload),
+              "prompt_sha256": _canonical_hash(messages), "schema_sha256": _canonical_hash(schema),
+              "runtime_path": str(runtime_path), "runtime_sha256": release["runtime_sha256"], "release": release,
+              "api_cost_usd": 0, "local_compute": "not metered as API spend", "temperature": 0,
+              "start_utc": local_transport.utc_now(), "status": "reserved", "cleanup": "UNKNOWN"}
+    if scenario["source_provenance"].get("kind") == "licensed_specification":
+        if _source_utc(scenario["source_provenance"]["admitted_at"], "licensed source") >= _source_utc(record["start_utc"], "native inference"):
+            fail("licensed source admission must precede native inference; no request sent")
+    owner = {"owner_token": secrets.token_hex(16), "source_group": scenario["source_group"],
+             "model": prepared["model"], "attempt_ordinal": release["attempt_ordinal"]}
+    pair = _canonical_hash([scenario["source_group"], prepared["model"]])
+    NATIVE_ATTEMPT_ROOT.mkdir(parents=True, exist_ok=True)
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    reservation = NATIVE_ATTEMPT_ROOT / f"{pair}-{release['attempt_ordinal']}.json"
+    path = receipts_dir / f"native-{pair}-{release['attempt_ordinal']}.json"
+    resource = _native_resource_checks()
+    record["resource_checks"] = resource
+    with reservation.open("x", encoding="utf-8", newline="\n") as attempt:
+        json.dump({**owner, "release_sha256": release["release_sha256"], "start_utc": record["start_utc"]}, attempt, sort_keys=True)
+        attempt.write("\n"); attempt.flush(); os.fsync(attempt.fileno())
+    with path.open("x+", encoding="utf-8", newline="\n") as handle:
+        json.dump(record, handle, sort_keys=True); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+        try:
+            with _native_resources(owner):
+                start = time.monotonic()  # Absolute budget starts before any owned SDK load.
+                request["generationDeadlineUnixMs"] = int(time.time() * 1000) + timeout * 1000
+                payload = _sdk_json(request)
+                record.update(request_sha256=_canonical_hash(request), sdk_request_utf8_sha256=local_transport.sha256(payload), sdk_request_utf8=payload.decode("utf-8"))
+                handle.seek(0); handle.truncate()
+                json.dump(record, handle, sort_keys=True); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+                raw, child = _native_process([runtime["node"], str(Path(__file__).with_name("lms_native_stdio.mjs"))],
+                                             payload, start + timeout + 16)
+                record.update(child=child, response_utf8_sha256=local_transport.sha256(raw))
+                response = local_transport.strict_json(raw)
+                refuse_secrets(response, "native response and raw metadata")
+                record.update(response=response, response_sha256=_canonical_hash(response), sdk_response_utf8=raw.decode("utf-8"))
+                life = response.get("lifecycle", {})
+                owner["cleanup_confirmed"] = (child["child_tree_closed"] and life.get("clientDisposal") == "CONNECTIONS_CLOSED"
+                    and life.get("ownedAliasUnloaded") in {"ABSENCE_OBSERVED", "NO_LOAD_ATTEMPTED"})
+                record["cleanup"] = "OWNED_ABSENCE_AND_CHILD_DEATH_OBSERVED" if owner["cleanup_confirmed"] else "UNKNOWN"
+                target = _native_answer(response, request)
+                record.update(status="completed", target=target)
+        except (Exception, SystemExit) as exc:
+            record.update(status="failed", error=type(exc).__name__)
+            if getattr(exc, "child", None) is not None:
+                record["child"] = exc.child
+            fail("native inference failed; retained reservation/receipt; no automatic replay")
+        finally:
+            record["end_utc"] = local_transport.utc_now()
+            handle.seek(0); handle.truncate()
+            json.dump(record, handle, sort_keys=True, ensure_ascii=False, allow_nan=False)
+            handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
+    return DispatchResult(response["content"], path, prepared["model"])
+
+
+def _verify_native_receipt(record: dict[str, Any], scenario: dict[str, Any], target: dict[str, Any], *,
+                           operator_pin: tuple[Path, str] | None = None) -> None:
+    request_raw = record["sdk_request_utf8"].encode("utf-8")
+    request = local_transport.strict_json(request_raw)
+    response_raw = record["sdk_response_utf8"].encode("utf-8")
+    if (request != record["request"] or local_transport.strict_json(response_raw) != record["response"]
+            or record["response_utf8_sha256"] != local_transport.sha256(response_raw)
+            or record["request_sha256"] != _canonical_hash(request)
+            or record["sdk_request_utf8_sha256"] != local_transport.sha256(_sdk_json(request))
+            or record["response_sha256"] != _canonical_hash(record["response"])
+            or request["alias"] != record["alias"]
+            or request["expectedModel"]["ggufSha256"] != record["model_gguf_sha256"]
+            or request["expectedModel"]["sizeBytes"] != record["model_gguf_bytes"]
+            or record["cleanup"] != "OWNED_ABSENCE_AND_CHILD_DEATH_OBSERVED"
+            or not record["child"]["child_tree_closed"]
+            or record["runtime_sha256"] != local_transport.sha256(Path(record["runtime_path"]).read_bytes())):
+        raise ValueError("native receipt binding")
+    release = native_execution_release(scenario, record["model"], Path(record["runtime_path"]), operator_pin=operator_pin)
+    if release != record["release"]:
+        raise ValueError("native root release changed")
+    runtime = _native_runtime(Path(record["runtime_path"]), release)
+    expected_path = Path(record["model_gguf_path"]).resolve().relative_to(Path(runtime["lms_models_dir"]).resolve()).as_posix()
+    if (request["expectedModel"]["path"] != expected_path or request["expectedModel"]["modelKey"] != runtime["model_key"]
+            or request["sdkEntryUrl"] != Path(runtime["sdk_entry"]).resolve().as_uri()
+            or request["expectedServer"] != {"version": "0.4.25", "build": 1}):
+        raise ValueError("native artifact catalog mapping")
+    if _native_answer(record["response"], request) != target:
+        raise ValueError("native target binding")
 
 
 QUOTE_PROTOCOL = "source-quotes/v1"
@@ -1230,7 +1639,10 @@ def _local_answer(response: Any, prepared: dict[str, Any], schema: dict[str, Any
     if (not isinstance(details, dict) or details.get("reasoning_tokens", 0) != 0
             or message.get("reasoning") or message.get("reasoning_content")):
         raise ValueError("response contains reasoning")
-    text = message["content"]
+    return _clean_local_target(message["content"], schema)
+
+
+def _clean_local_target(text: Any, schema: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(text, str) or re.search(r"<\s*think\b", text, re.I):
         raise ValueError("completion content is not clean text")
     target = local_transport.strict_json(text)
@@ -1298,13 +1710,14 @@ def local_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, A
 
 
 def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target: dict[str, Any],
-                       verified_at: str) -> str:
+                       verified_at: str, *, native_release_pin: tuple[Path, str] | None = None) -> str:
     """A local row must bind the completed receipt, not merely a model alias."""
     try:
         raw = result.receipt_path.read_bytes()
         record = local_transport.strict_json(raw)
         gguf_hash, license_hash = LOCAL_MODELS[result.model]
-        binding = record["loaded_model_binding"]
+        native = record.get("protocol") == NATIVE_PROTOCOL
+        binding = record["loaded_model_binding"] if not native else None
         if (record["status"] != "completed" or record["provider"] != "local_model"
                 or record["model"] != result.model or record["input"] != scenario["input"]
                 or record["source_group"] != scenario["source_group"] or record["target"] != target
@@ -1312,9 +1725,9 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
                 or record["purpose"] != purpose_for(scenario["source_group"])
                 or record["terms_verified_at"] != verified_at or record["api_cost_usd"] != 0
                 or record["model_gguf_sha256"] != gguf_hash or record["license_sha256"] != license_hash
-                or binding["sha256"] != gguf_hash or binding["identifier"] != record["alias"]
-                or record["response_model"] not in {record["alias"], binding["model_key"]}
-                or not binding["model_key"] or record["model_gguf_bytes"] <= 0
+                or (not native and (binding["sha256"] != gguf_hash or binding["identifier"] != record["alias"]
+                    or record["response_model"] not in {record["alias"], binding["model_key"]} or not binding["model_key"]))
+                or record["model_gguf_bytes"] <= 0
                 or not record["conversion_receipt"] or not record["license_file"]
                 or not record["model_gguf_path"]):
             fail("local receipt does not bind this row and admitted model")
@@ -1331,6 +1744,13 @@ def local_receipt_hash(result: DispatchResult, scenario: dict[str, Any], target:
                 fail("local receipt violates licensed-source admission chronology")
         if record.get("protocol") in {QUOTE_PROTOCOL, QUOTE_COVERAGE_PROTOCOL, SEGMENT_COVERAGE_PROTOCOL, SOURCE_RECORDS_PROTOCOL}:
             messages = _verify_quote_chain(record, scenario, target)
+        elif native:
+            _verify_native_receipt(record, scenario, target, operator_pin=native_release_pin)
+            messages = prompt_template.render_messages(scenario["input"])
+            if result.model.startswith("Qwen/"):
+                messages[0]["content"] += local_transport.QWEN3_PROMPT
+            if record["request"]["messages"] != messages or record["request"]["schema"] != _schema_validator().schema["properties"]["target"]:
+                fail("native ordinary contract changed")
         elif "protocol" in record:
             fail("unknown local receipt protocol")
         else:
@@ -1434,7 +1854,12 @@ def generate(
     quote_first: bool = False,
     quote_coverage: bool = False,
     source_segments: bool = False,
+    native_sdk: bool = False,
+    native_options: dict[str, Any] | None = None,
+    native_release_pin: tuple[Path, str] | None = None,
 ) -> dict[str, Any]:
+    if native_sdk and (provider != "local_model" or dispatch is not None or quote_first or quote_coverage or source_segments or len(scenarios) != 1):
+        fail("native SDK requires one ordinary local scenario and no injected dispatch/quote flags")
     if source_segments and (quote_first or quote_coverage or provider != "local_model" or dispatch is not None):
         fail("source-segments requires the native local_model route and no legacy quote flags")
     if quote_coverage and not quote_first:
@@ -1481,18 +1906,27 @@ def generate(
             fail("local receipts directory must contain a receipts path segment")
         if set(options) != {"model", "model_gguf", "conversion_receipt", "license_file", "base_url", "lms_models_dir"}:
             fail("local_model requires all pinned model options")
-        prepared = prepare_local_model(timeout=timeout, **options)
+        if native_sdk:
+            if not isinstance(native_options, dict) or set(native_options) != {"runtime_manifest"} or not isinstance(native_options["runtime_manifest"], Path):
+                fail("native SDK requires the root-bound runtime manifest")
+            runtime_path = native_options["runtime_manifest"]
+            # No artifact/model/subprocess probes while the method is held.
+            identity = local_transport.strict_json(options["conversion_receipt"].read_bytes())
+            release = native_execution_release(scenarios[0], f"{identity['repo']}@{identity['revision']}", runtime_path, operator_pin=native_release_pin)
+            prepared = prepare_local_model(timeout=timeout, probe_loaded=False, **options)
+        else:
+            prepared = prepare_local_model(timeout=timeout, **options)
     caller = dispatch or (lambda name, packet, purpose: live_dispatch(
         name, packet, purpose, timeout=timeout, max_output=max_output, worktree=worktree))
     checker = scrub or live_scrub
     validator = _schema_validator()
     rows: list[dict[str, Any]] = []
     for scenario in scenarios:
-        local_caller = quote_dispatch if quote_first or source_segments else local_dispatch
+        local_caller = native_dispatch if native_sdk else quote_dispatch if quote_first or source_segments else local_dispatch
         result = (local_caller(scenario, purpose_for(scenario["source_group"]), prepared,
                                 receipts_dir=receipts_dir, verified_at=terms_verified_at,
                                 timeout=timeout, max_output=max_output,
-                                **({"segments": True} if source_segments else {"coverage": True} if quote_coverage else {}))
+                                **({"runtime_path": runtime_path, "release": release, "operator_pin": native_release_pin} if native_sdk else {"segments": True} if source_segments else {"coverage": True} if quote_coverage else {}))
                   if provider == "local_model" and dispatch is None
                   else caller(provider, exemplar_packet(scenario["input"]), purpose_for(scenario["source_group"])))
         if not isinstance(result, DispatchResult):
@@ -1506,7 +1940,7 @@ def generate(
             generated_at=generated_at, sets=sets,
         )
         if provider == "local_model":
-            row["receipt_sha256"] = local_receipt_hash(result, scenario, target, terms_verified_at)
+            row["receipt_sha256"] = local_receipt_hash(result, scenario, target, terms_verified_at, native_release_pin=native_release_pin) if native_sdk else local_receipt_hash(result, scenario, target, terms_verified_at)
         errors = list(validator.iter_errors(row))
         if errors:
             fail(f"row failed the schema: {errors[0].message}")
@@ -1559,6 +1993,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quote-first", action="store_true", help="Two-stage local teacher; final input/target contract unchanged.")
     parser.add_argument("--quote-coverage", action="store_true", help="Quote-first teacher coverage ledger; not semantic acceptance.")
     parser.add_argument("--source-segments", action="store_true", help="One local coverage map of exact original paragraphs; no quote extraction.")
+    parser.add_argument("--native-sdk", action="store_true", help="Held ordinary-only native SDK method; no execution release implied.")
+    parser.add_argument("--native-runtime", type=Path)
     parser.add_argument("--model")
     parser.add_argument("--model-gguf", type=Path)
     parser.add_argument("--conversion-receipt", type=Path)
@@ -1581,6 +2017,7 @@ def main(argv: list[str] | None = None) -> int:
             source_review_receipts_root=args.source_review_receipts_root,
             timeout=args.timeout, max_output=args.max_output, worktree=args.worktree,
             quote_first=args.quote_first, quote_coverage=args.quote_coverage, source_segments=args.source_segments,
+            native_sdk=args.native_sdk, native_options={"runtime_manifest": args.native_runtime},
             local_options={key: getattr(args, key) for key in (
                 "model", "model_gguf", "conversion_receipt", "license_file", "receipts_dir",
                 "base_url", "lms_models_dir")} if args.provider == "local_model" else None,
