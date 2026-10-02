@@ -20,7 +20,7 @@ param(
     [switch]$Fallback,
     [switch]$Probe,
     [string]$ExpectedDigests,
-    [int]$ProbeRowsTotal = 96,
+    [int]$ProbeRowsTotal,
     [int]$ProbeSeqLen = 2048,
     [double]$TimeoutMinutes = 90
 )
@@ -53,7 +53,7 @@ if ($Fallback) {
     $MergeRevision = $FallbackRevision
 }
 if ($Steps -lt 1) { Write-Error '-Steps must be positive' }
-if ($ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
+if ($PSBoundParameters.ContainsKey('ProbeRowsTotal') -and $ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
 if ($ProbeSeqLen -lt 1) { Write-Error '-ProbeSeqLen must be positive' }
 foreach ($r in $Revision, $MergeRevision) { if ($r -notmatch '^[0-9a-f]{40}$') { Write-Error "revision '$r' is not a full 40-hex commit" } }
 $Rows = [IO.Path]::GetFullPath($Rows)
@@ -131,7 +131,10 @@ try {
         $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
     }
     if ($Probe) {
-        $dockerArgs += @('--probe', '--probe-rows-total', "$ProbeRowsTotal", '--probe-seq-len', "$ProbeSeqLen")
+        $dockerArgs += @('--probe', '--probe-seq-len', "$ProbeSeqLen")
+        if ($PSBoundParameters.ContainsKey('ProbeRowsTotal')) {
+            $dockerArgs += @('--probe-rows-total', "$ProbeRowsTotal")
+        }
     }
     function Get-AdapterState {
         try {

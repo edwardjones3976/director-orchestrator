@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import io
@@ -305,9 +306,20 @@ class TrainAdapterTests(unittest.TestCase):
     def test_verify_expected_digests_passes_with_two_reads(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            entries = [self._digest_entry(root, "a.bin", b"alpha"), self._digest_entry(root, "b.bin", b"beta")]
+            entries = [
+                self._digest_entry(root, "a.bin", b"alpha"),
+                self._digest_entry(root, "b.bin", b"beta"),
+            ]
             result = train_adapter.verify_expected_digests(root, entries, reads=2)
-            self.assertEqual(result, {"files": 2, "reads": 2, "bytes": len(b"alpha") + len(b"beta")})
+            self.assertEqual(
+                result,
+                {
+                    "files": 2,
+                    "reads": 2,
+                    "bytes": len(b"alpha") + len(b"beta"),
+                    "weight_files": 2,
+                },
+            )
 
     def test_verify_expected_digests_missing_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -332,6 +344,36 @@ class TrainAdapterTests(unittest.TestCase):
                 train_adapter.verify_expected_digests(
                     root, [{"path": "x.bin", "sha256": "b" * 64, "size": 2}],
                 )
+
+    def test_verify_expected_digests_uncovered_weight_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "extra.safetensors").write_bytes(b"shard")
+            entry = self._digest_entry(root, "listed.bin", b"listed")
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry])
+            self.assertIn("weight file not covered", str(raised.exception))
+
+    def test_verify_expected_digests_duplicate_manifest_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self._digest_entry(root, "w.bin", b"w")
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry, dict(entry)])
+            self.assertIn("duplicate path", str(raised.exception))
+
+    def test_verify_expected_digests_requires_manifest_weight_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text("{}", encoding="utf-8")
+            entry = {
+                "path": "config.json",
+                "sha256": hashlib.sha256(b"{}").hexdigest(),
+                "size": 2,
+            }
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry])
+            self.assertIn("no weight file", str(raised.exception))
 
     def test_verify_expected_digests_second_read_differs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -505,7 +547,7 @@ class TrainAdapterTests(unittest.TestCase):
     def test_probe_mode_and_authoritative_matrix(self):
         def report_for(base: str, revision: str, seq_len: int) -> dict:
             pin = train_adapter.probe_pin_name(base, revision)
-            authoritative = train_adapter.probe_is_authoritative(base, revision, seq_len)
+            authoritative = train_adapter.probe_is_authoritative(base, revision, seq_len, 1, 1)
             mode = "d_m1_f_probe" if authoritative else "diagnostic_probe"
             kwargs = self._minimal_probe_report_kwargs()
             kwargs.update({
@@ -577,7 +619,7 @@ class TrainAdapterTests(unittest.TestCase):
             "length_stats": {"p50": 1.0, "p95": 2.0, "max": 3},
             "length_gate_passed": True,
             "sequence_length": 2048,
-            "sequence_length_method": "pad",
+            "sequence_length_method": "attended_prompt_repeat",
             "warmup_microsteps": 1,
             "timed_microsteps": 1,
             "gradient_accumulation": 1,
@@ -591,6 +633,200 @@ class TrainAdapterTests(unittest.TestCase):
             "time_pass": True,
             "authoritative": False,
         }
+
+    def test_probe_exercise_rows_use_attended_prompt_repeat(self):
+        seq_len = 12
+        example = {
+            "input_ids": [10, 11, 12, 20, 21],
+            "attention_mask": [1, 1, 1, 1, 1],
+            "labels": [-100, -100, -100, 20, 21],
+        }
+        original_response_labels = example["labels"][-2:]
+        exercise = train_adapter.extend_probe_example_to_seq_len(example, seq_len)
+        self.assertEqual(len(exercise["input_ids"]), seq_len)
+        self.assertEqual(exercise["attention_mask"], [1] * seq_len)
+        self.assertEqual(exercise["labels"][-2:], original_response_labels)
+        self.assertEqual(exercise["input_ids"][-2:], [20, 21])
+        fill_labels = exercise["labels"][3:-2]
+        self.assertTrue(fill_labels)
+        self.assertTrue(all(label == train_adapter.IGNORED_LABEL for label in fill_labels))
+        train_adapter.require_response_only(exercise["labels"], 3)
+
+    def test_probe_authoritative_fails_memory_gate_after_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            self._run_probe_with_gate_outcome(
+                rows_path, report_path, memory_pass=False, time_pass=True, authoritative=True,
+                expect_exit=True, message="memory gate",
+            )
+
+    def test_probe_authoritative_fails_time_gate_after_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            self._run_probe_with_gate_outcome(
+                rows_path, report_path, memory_pass=True, time_pass=False, authoritative=True,
+                expect_exit=True, message="time gate",
+            )
+
+    def test_probe_diagnostic_failed_gate_exits_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            self._run_probe_with_gate_outcome(
+                rows_path, report_path, memory_pass=False, time_pass=False, authoritative=False,
+                expect_exit=False,
+            )
+
+    def test_probe_is_authoritative_only_when_projection_matches_loaded_rows(self):
+        self.assertTrue(train_adapter.probe_is_authoritative(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 2048, 96, 96,
+        ))
+        self.assertFalse(train_adapter.probe_is_authoritative(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 2048, 1, 96,
+        ))
+        self.assertFalse(train_adapter.probe_is_authoritative(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 1024, 1, 1,
+        ))
+
+    def test_main_probe_default_rows_total_is_authoritative_on_winner_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            captured: dict = {}
+
+            def fake_run_probe(rows, base, revision, report_path, **kwargs):
+                loaded = len(rows)
+                projection = kwargs["probe_rows_total"]
+                if projection is None:
+                    projection = loaded
+                captured["projection"] = projection
+                captured["authoritative"] = train_adapter.probe_is_authoritative(
+                    base, revision, kwargs["probe_seq_len"], loaded, projection,
+                )
+                return {"authoritative": captured["authoritative"], "mode": "d_m1_f_probe"}
+
+            with mock.patch.object(train_adapter, "run_probe", side_effect=fake_run_probe):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.WINNER_BASE,
+                    "--revision", train_adapter.WINNER_REVISION,
+                    "--expected-digests", str(digest_path),
+                ])
+            self.assertEqual(captured["projection"], 1)
+            self.assertTrue(captured["authoritative"])
+
+    def test_main_probe_explicit_rows_total_mismatch_is_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            captured: dict = {}
+
+            def fake_run_probe(rows, base, revision, report_path, **kwargs):
+                loaded = len(rows)
+                projection = kwargs["probe_rows_total"] or loaded
+                captured["authoritative"] = train_adapter.probe_is_authoritative(
+                    base, revision, kwargs["probe_seq_len"], loaded, projection,
+                )
+                return {"authoritative": captured["authoritative"], "mode": "diagnostic_probe"}
+
+            with mock.patch.object(train_adapter, "run_probe", side_effect=fake_run_probe):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.WINNER_BASE,
+                    "--revision", train_adapter.WINNER_REVISION,
+                    "--expected-digests", str(digest_path),
+                    "--probe-rows-total", "96",
+                ])
+            self.assertFalse(captured["authoritative"])
+
+    def test_wrapper_passes_probe_rows_total_only_when_bound(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        text = script.read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"\$ProbeRowsTotal\s*=\s*96")
+        self.assertIn("ContainsKey('ProbeRowsTotal')", text)
+        self.assertIn("'--probe-rows-total', \"$ProbeRowsTotal\"", text)
+
+    def _run_probe_with_gate_outcome(
+        self,
+        rows_path: Path,
+        report_path: Path,
+        *,
+        memory_pass: bool,
+        time_pass: bool,
+        authoritative: bool,
+        expect_exit: bool,
+        message: str = "",
+    ) -> None:
+        digest_path = rows_path.parent / "digests.json"
+        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+        fake_tokenizer = mock.MagicMock()
+        fake_tokenizer.apply_chat_template = mock.MagicMock(return_value=[1, 2, 3, 4, 5])
+        base = train_adapter.WINNER_BASE if authoritative else train_adapter.SMOKE_BASE
+        revision = train_adapter.WINNER_REVISION if authoritative else train_adapter.SMOKE_REVISION
+        fake_model = mock.MagicMock()
+        fake_model.config._commit_hash = revision
+        fake_model.parameters = mock.MagicMock(return_value=iter([mock.MagicMock(device="cpu")]))
+        fake_flm = mock.MagicMock()
+        fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+        fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+        encoded = [{
+            "input_ids": [1, 2, 3, 4, 5],
+            "attention_mask": [1, 1, 1, 1, 1],
+            "labels": [-100, -100, -100, 4, 5],
+        }]
+        exercise = [{
+            "input_ids": list(range(train_adapter.SEQ)),
+            "attention_mask": [1] * train_adapter.SEQ,
+            "labels": [-100] * (train_adapter.SEQ - 2) + [4, 5],
+        }]
+        peak = 10.0 if memory_pass else 12.0
+        seconds = 1.0 if time_pass else 12_000.0
+        argv = [
+            "--rows", str(rows_path),
+            "--report", str(report_path),
+            "--probe",
+            "--base", base,
+            "--revision", revision,
+        ]
+        if authoritative:
+            argv.extend(["--expected-digests", str(digest_path)])
+        patches = [
+            mock.patch.object(train_adapter, "FastLanguageModel", fake_flm),
+            mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None),
+            mock.patch.object(train_adapter, "encode_rows", return_value=encoded),
+            mock.patch.object(train_adapter, "prepare_probe_examples", return_value=(exercise, "attended_prompt_repeat")),
+            mock.patch.object(train_adapter, "run_probe_microsteps", return_value=(seconds, peak)),
+        ]
+        if expect_exit:
+            with contextlib.ExitStack() as stack:
+                for item in patches:
+                    stack.enter_context(item)
+                with self.assertRaises(SystemExit) as raised:
+                    train_adapter.main(argv)
+                if message:
+                    self.assertIn(message, str(raised.exception))
+            self.assertTrue(report_path.is_file())
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["memory_pass"], memory_pass)
+            self.assertEqual(payload["time_pass"], time_pass)
+            self.assertEqual(payload["authoritative"], authoritative)
+        else:
+            with contextlib.ExitStack() as stack:
+                for item in patches:
+                    stack.enter_context(item)
+                train_adapter.main(argv)
+            self.assertTrue(report_path.is_file())
 
     def test_probe_report_authoritative_for_winner_and_smoke_pins(self):
         kwargs = self._minimal_probe_report_kwargs()

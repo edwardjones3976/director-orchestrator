@@ -95,8 +95,35 @@ def length_gate_pass(p95: float, limit: int = SEQ) -> bool:
     return p95 <= limit
 
 
-def probe_is_authoritative(base: str, revision: str, probe_seq_len: int) -> bool:
-    return (is_winner_pin(base, revision) or is_fallback_pin(base, revision)) and probe_seq_len == SEQ
+def probe_is_authoritative(
+    base: str,
+    revision: str,
+    probe_seq_len: int,
+    loaded_row_count: int,
+    projection_row_count: int,
+) -> bool:
+    return (
+        (is_winner_pin(base, revision) or is_fallback_pin(base, revision))
+        and probe_seq_len == SEQ
+        and projection_row_count == loaded_row_count
+    )
+
+
+def _is_weight_manifest_path(rel: str) -> bool:
+    return rel.endswith(".safetensors") or rel.endswith(".bin")
+
+
+def _collect_snapshot_weight_files(snapshot_dir: Path) -> list[str]:
+    """Relative paths of weight shards under ``snapshot_dir`` (symlinks resolved for existence)."""
+    found: list[str] = []
+    for path in snapshot_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        name = path.name
+        if not (name.endswith(".safetensors") or name.endswith(".bin")):
+            continue
+        found.append(path.relative_to(snapshot_dir).as_posix())
+    return sorted(found)
 
 
 def _sha256_file(path: Path) -> str:
@@ -114,6 +141,22 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
     """Each listed file must match size and SHA-256 on ``reads`` consecutive full reads."""
     if reads < 1:
         fail("reads must be positive")
+    seen_paths: set[str] = set()
+    manifest_weight_paths: list[str] = []
+    for entry in expected_files:
+        rel = entry["path"]
+        if rel in seen_paths:
+            fail(f"duplicate path in digest manifest: {rel}")
+        seen_paths.add(rel)
+        if _is_weight_manifest_path(rel):
+            manifest_weight_paths.append(rel)
+    if not manifest_weight_paths:
+        fail("digest manifest lists no weight file")
+    on_disk_weights = _collect_snapshot_weight_files(snapshot_dir)
+    manifest_weight_set = set(manifest_weight_paths)
+    for rel in on_disk_weights:
+        if rel not in manifest_weight_set:
+            fail(f"weight file not covered by the digest manifest: {rel}")
     total_bytes = 0
     for entry in expected_files:
         rel = entry["path"]
@@ -130,7 +173,12 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
             if actual_sha != expected_sha:
                 fail(f"digest mismatch for {rel} on read {read_index}")
         total_bytes += expected_size
-    return {"files": len(expected_files), "reads": reads, "bytes": total_bytes}
+    return {
+        "files": len(expected_files),
+        "reads": reads,
+        "bytes": total_bytes,
+        "weight_files": len(manifest_weight_paths),
+    }
 
 
 def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
@@ -416,22 +464,29 @@ def prompt_token_count(labels: list[int]) -> int:
     return len(labels)
 
 
-def pad_example_to_seq_len(example: dict[str, list[int]], seq_len: int, pad_token_id: int) -> dict[str, list[int]]:
-    """Right-pad or left-truncate one encoded row to exactly ``seq_len`` for the VRAM exercise."""
+def extend_probe_example_to_seq_len(example: dict[str, list[int]], seq_len: int) -> dict[str, list[int]]:
+    """Lengthen or truncate one probe row to ``seq_len`` with full attention on every position."""
     input_ids = list(example["input_ids"])
     labels = list(example["labels"])
-    attention = list(example.get("attention_mask", [1] * len(input_ids)))
     if len(input_ids) > seq_len:
         input_ids = input_ids[-seq_len:]
         labels = labels[-seq_len:]
-        attention = attention[-seq_len:]
     if len(input_ids) < seq_len:
-        pad_count = seq_len - len(input_ids)
-        input_ids.extend([pad_token_id] * pad_count)
-        labels.extend([IGNORED_LABEL] * pad_count)
-        attention.extend([0] * pad_count)
+        prompt_tokens = prompt_token_count(labels)
+        prompt_ids = input_ids[:prompt_tokens]
+        response_ids = input_ids[prompt_tokens:]
+        response_labels = labels[prompt_tokens:]
+        if not prompt_ids:
+            fail("probe sequence extension requires prompt token ids to repeat")
+        deficit = seq_len - len(input_ids)
+        fill_ids = [prompt_ids[index % len(prompt_ids)] for index in range(deficit)]
+        input_ids = prompt_ids + fill_ids + response_ids
+        labels = [IGNORED_LABEL] * prompt_tokens + [IGNORED_LABEL] * deficit + response_labels
     prompt_tokens = prompt_token_count(labels)
     require_response_only(labels, prompt_tokens)
+    attention = [1] * len(input_ids)
+    if len(input_ids) != seq_len:
+        fail("probe exercise row length does not match the target sequence length")
     return {"input_ids": input_ids, "attention_mask": attention, "labels": labels}
 
 
@@ -464,16 +519,16 @@ def prepare_probe_examples(
     encoded: list[dict[str, list[int]]],
     seq_len: int,
     tokenize,
-    pad_token_id: int,
 ) -> tuple[list[dict[str, list[int]]], str]:
-    """Ensure exercise rows reach ``seq_len``; report ``pad`` or ``context_repetition``."""
+    """Ensure exercise rows reach ``seq_len`` with attended prompt-token fill or context repetition."""
+    method = "attended_prompt_repeat"
     if any(len(example["input_ids"]) < seq_len for example in encoded):
         try:
-            return [pad_example_to_seq_len(example, seq_len, pad_token_id) for example in encoded], "pad"
+            return [extend_probe_example_to_seq_len(example, seq_len) for example in encoded], method
         except SystemExit:
             synthetic = build_synthetic_row_from_context(rows[0], seq_len, tokenize)
-            return [pad_example_to_seq_len(synthetic, seq_len, pad_token_id)], "context_repetition"
-    return [pad_example_to_seq_len(example, seq_len, pad_token_id) for example in encoded], "pad"
+            return [extend_probe_example_to_seq_len(synthetic, seq_len)], "context_repetition"
+    return [extend_probe_example_to_seq_len(example, seq_len) for example in encoded], method
 
 
 def build_probe_report(
@@ -702,7 +757,7 @@ def run_probe(
     revision: str,
     report_path: Path,
     *,
-    probe_rows_total: int,
+    probe_rows_total: int | None,
     probe_seq_len: int,
     expected_digests_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -745,7 +800,11 @@ def run_probe(
         for example in encoded
     ) / len(encoded)
     pin = probe_pin_name(base, revision)
-    authoritative = probe_is_authoritative(base, revision, probe_seq_len)
+    loaded_rows = len(rows)
+    projection_rows = probe_rows_total if probe_rows_total is not None else loaded_rows
+    authoritative = probe_is_authoritative(
+        base, revision, probe_seq_len, loaded_rows, projection_rows,
+    )
     mode = "d_m1_f_probe" if authoritative else "diagnostic_probe"
     gate_passed = length_gate_pass(float(length_stats["p95"]))
     if pin in ("winner", "fallback") and not gate_passed:
@@ -755,7 +814,7 @@ def run_probe(
             mode=mode,
             base=base,
             revision=revision,
-            rows=len(rows),
+            rows=loaded_rows,
             mask_coverage=mask_coverage,
             resolved_commit=resolved,
             length_stats=length_stats,
@@ -768,7 +827,7 @@ def run_probe(
             timed_optimizer_updates=None,
             seconds_per_microstep=None,
             peak_reserved_gib=None,
-            rows_total=probe_rows_total,
+            rows_total=projection_rows,
             wall_seconds_three_epochs=None,
             wall_seconds_three_epochs_contingency=None,
             memory_pass=None,
@@ -778,13 +837,8 @@ def run_probe(
         )
         write_report(report_path, report)
         fail("row-length p95 exceeds 2048; D-M1-F length gate failed")
-    pad_token_id = tokenizer.pad_token_id
-    if pad_token_id is None:
-        pad_token_id = tokenizer.eos_token_id
-    if pad_token_id is None:
-        fail("tokenizer has no pad or eos token for probe padding")
     exercise_rows, sequence_length_method = prepare_probe_examples(
-        rows, encoded, probe_seq_len, tokenize, int(pad_token_id),
+        rows, encoded, probe_seq_len, tokenize,
     )
     seconds_per_microstep, peak_gib = run_probe_microsteps(
         model,
@@ -794,7 +848,7 @@ def run_probe(
         gradient_accumulation=PROBE_GRAD_ACCUM,
     )
     timed_updates = timed_window_optimizer_updates(PROBE_TIMED_MICROSTEPS, PROBE_GRAD_ACCUM)
-    wall_three_epochs = extrapolate_wall_seconds(probe_rows_total, seconds_per_microstep)
+    wall_three_epochs = extrapolate_wall_seconds(projection_rows, seconds_per_microstep)
     wall_contingency = wall_seconds_with_contingency(wall_three_epochs)
     report = build_probe_report(
         run=report_path.stem,
@@ -802,7 +856,7 @@ def run_probe(
         mode=mode,
         base=base,
         revision=revision,
-        rows=len(rows),
+        rows=loaded_rows,
         mask_coverage=mask_coverage,
         resolved_commit=resolved,
         length_stats=length_stats,
@@ -815,7 +869,7 @@ def run_probe(
         timed_optimizer_updates=timed_updates,
         seconds_per_microstep=seconds_per_microstep,
         peak_reserved_gib=peak_gib,
-        rows_total=probe_rows_total,
+        rows_total=projection_rows,
         wall_seconds_three_epochs=wall_three_epochs,
         wall_seconds_three_epochs_contingency=wall_contingency,
         memory_pass=probe_memory_pass(peak_gib),
@@ -824,6 +878,11 @@ def run_probe(
         digest_verification=digest_verification,
     )
     write_report(report_path, report)
+    if authoritative:
+        if not report["memory_pass"]:
+            fail("authoritative probe failed memory gate")
+        if not report["time_pass"]:
+            fail("authoritative probe failed time gate")
     return report
 
 
@@ -837,7 +896,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--winner", action="store_true")
     parser.add_argument("--check-only", action="store_true", help="Validate rows and exit. No GPU and no report.")
     parser.add_argument("--probe", action="store_true", help="D-M1-F feasibility probe; writes metrics only.")
-    parser.add_argument("--probe-rows-total", type=int, default=96)
+    parser.add_argument("--probe-rows-total", type=int, default=None)
     parser.add_argument("--probe-seq-len", type=int, default=SEQ)
     parser.add_argument("--expected-digests", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -845,7 +904,7 @@ def main(argv: list[str] | None = None) -> None:
         fail(f"revision {args.revision!r} is not a full 40-hex commit")
     if args.steps < 1:
         fail("steps must be positive")
-    if args.probe_rows_total < 1:
+    if args.probe_rows_total is not None and args.probe_rows_total < 1:
         fail("probe-rows-total must be positive")
     if args.probe_seq_len < 1:
         fail("probe-seq-len must be positive")
