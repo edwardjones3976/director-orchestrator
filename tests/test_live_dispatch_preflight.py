@@ -721,25 +721,17 @@ class ConstructionAndVariableDisclosureTests(unittest.TestCase):
         withheld entirely.
         """
 
-        import subprocess
-        import sys
+        import contextlib
+        import io
 
         secret = "SYNTHETIC_SECRET_VALUE_1234567890"
-        environment = {
-            **os.environ,
-            "LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES": secret,
-            "ORCHESTRATOR_SHARED_SECRET": secret,
-            "PYTHONPATH": str(ROOT / "src"),
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
-        completed = subprocess.run(
-            [sys.executable, "-B", str(ROOT / "scripts" / "live-dispatch-preflight.py")],
-            capture_output=True, text=True, env=environment, cwd=str(ROOT), timeout=120,
-        )
-        self.assertNotIn(secret, completed.stdout)
-        self.assertNotIn(secret, completed.stderr)
-        self.assertIn("withheld", completed.stdout)
-        self.assertNotEqual(completed.returncode, 0)
+        output = io.StringIO()
+        with patch.object(PREFLIGHT, "Settings", side_effect=ValueError(secret)), \
+                contextlib.redirect_stdout(output):
+            returncode = PREFLIGHT.main()
+        self.assertNotIn(secret, output.getvalue())
+        self.assertIn("withheld", output.getvalue())
+        self.assertNotEqual(returncode, 0)
 
     def test_a_secret_shaped_like_a_variable_name_is_not_echoed_as_one(self):
         """Redaction cleaned the prose and the name list reprinted the token.
@@ -792,24 +784,32 @@ class RemainingDisclosurePathsTests(unittest.TestCase):
         printed that value on stderr. MAX_AGENT_HOPS was the reproduction.
         """
 
-        import subprocess
-        import sys
+        import builtins
+        import contextlib
+        import io
+        import runpy
 
         secret = "SYNTHETIC_SECRET_VALUE_1234567890"
-        completed = subprocess.run(
-            [sys.executable, "-B", str(ROOT / "scripts" / "live-dispatch-preflight.py")],
-            capture_output=True, text=True, timeout=120, cwd=str(ROOT),
-            env={
-                **os.environ,
-                "MAX_AGENT_HOPS": secret,
-                "ORCHESTRATOR_SHARED_SECRET": secret,
-                "PYTHONPATH": str(ROOT / "src"),
-                "PYTHONDONTWRITEBYTECODE": "1",
-            },
-        )
-        self.assertNotIn(secret, completed.stdout)
-        self.assertNotIn(secret, completed.stderr)
-        self.assertNotEqual(completed.returncode, 0)
+        original_import = builtins.__import__
+
+        def fail_config_import(name, *args, **kwargs):
+            if name == "director_orchestrator.config":
+                raise ValueError(secret)
+            return original_import(name, *args, **kwargs)
+
+        output = io.StringIO()
+        error_output = io.StringIO()
+        with patch.object(builtins, "__import__", side_effect=fail_config_import), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(error_output), \
+                self.assertRaises(SystemExit) as raised:
+            runpy.run_path(
+                str(ROOT / "scripts" / "live-dispatch-preflight.py"),
+                run_name="__main__",
+            )
+        self.assertEqual(raised.exception.code, 1)
+        self.assertNotIn(secret, output.getvalue())
+        self.assertNotIn(secret, error_output.getvalue())
+        self.assertIn("withheld", output.getvalue())
 
     def test_a_one_or_two_character_secret_withholds_the_whole_message(self):
         """Substitution cannot redact "Z"; replacing every Z shreds the text.
