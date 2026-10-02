@@ -96,6 +96,65 @@ def _key(label: str) -> str:
 
 
 class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
+    def test_settlement_does_not_charge_other_dispatch_identities(self):
+        from director_orchestrator.approvals import (
+            apply_ambiguous_dispatch_resolution, record_provider_effect_observation,
+            reserve_provider_effect,
+        )
+        from director_orchestrator.models import AmbiguousDispatchResolution, ProviderContactAttempt
+
+        for reused_id in (False, True):
+            with self.subTest(reused_id=reused_id), tempfile.TemporaryDirectory() as directory:
+                settings, store, record, assignment = self._world(directory)
+                engine = OrchestrationEngine(settings, store)
+                stale_keys = []
+                history = []
+                for dimension in ("generation", "assignment", "phase", "provider"):
+                    previous = record.model_copy(deep=True)
+                    previous.task_effect_ledger = []
+                    prior_assignment = assignment.model_copy(deep=True)
+                    phase = "dispatch"
+                    if dimension == "generation":
+                        previous.plan_generation += 1
+                    elif dimension == "assignment":
+                        prior_assignment.task = "A different approved assignment"
+                    elif dimension == "phase":
+                        phase = "revision"
+                    else:
+                        prior_assignment.agent = ProviderName.PERPLEXITY
+                    key = reserve_provider_effect(previous, prior_assignment, phase=phase, max_task_budget_usd=10)
+                    record_provider_effect_observation(
+                        previous, prior_assignment, effect_key=key, phase=phase,
+                        outcome="submitted" if reused_id else "ambiguous",
+                        run_id="reused-run" if reused_id else None)
+                    history.extend(previous.task_effect_ledger)
+                    if dimension != "provider":
+                        engine._reserve_provider_daily_spend(prior_assignment, effect_key=key)
+                        engine._charge_spend(prior_assignment.agent, key, 0.01)
+                        stale_keys.append(key)
+                key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+                record_provider_effect_observation(record, assignment, effect_key=key,
+                                                   phase="dispatch", outcome="ambiguous")
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                record.task_effect_ledger = history + record.task_effect_ledger
+                record.provider_contact_attempts.append(ProviderContactAttempt(
+                    assignment_sequence=assignment.sequence, provider=assignment.agent,
+                    ordinal=1, phase="dispatch", outcome="ambiguous_dispatch", error="Unknown submit outcome"))
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                    owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                    resolution="created", run_id="reused-run", note="Confirmed existing request"))
+                store.save(record)
+                # Resume from durable owner reconciliation, without another dispatch.
+                record = store.get(record.task_id)
+                run = record.provider_runs[-1]
+                run.status, run.result, run.raw = "completed", "done", {"usage": {"cost": 0.3}}
+                self.assertTrue(engine._settle_provider_spend(record, run, assignment.agent))
+                self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=HOUR), [])
+                self.assertAlmostEqual(engine.provider_spend.exposure(assignment.agent)[1],
+                                       0.3 + 0.01 * len(stale_keys))
+                self.assertEqual(set(engine.provider_spend.settlements(record.task_id)), {key})
+
     def test_packet_acknowledgement_read_failures_preserve_snapshot(self):
         from director_orchestrator.approvals import reserve_provider_effect
         from director_orchestrator.engine import AcknowledgementPersistencePending
