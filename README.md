@@ -365,8 +365,13 @@ tool, repository, delegation, merge, deployment, or purchasing authority. See
 
 ## Reaching the other providers: the provider-dispatch MCP server
 
-Every AI platform this project works with is reachable from any agent host on the
-owner's PC through one stdio MCP server, `provider-dispatch`
+Owners and providers can use the shared [provider roster and contact
+guide](docs/team-staff-and-briefings.md#provider-roster) to find all 11 documented
+provider/contact entries, including native CLI, cloud, GUI and research routes.
+
+The six shared MCP tools (`provider_status`, `perplexity_search`,
+`perplexity_ask`, `xai_ask`, `zai_ask`, `zai_ping`) are exposed on configured
+agent hosts through the stdio MCP server, `provider-dispatch`
 (`~/.claude/skills/provider-dispatch/mcp_server.py`, Python 3.12 standard library
 only). It wraps the same calls as the `dispatch.py` CLI beside it, so a tool call
 and a CLI call obey identical caps, receipts, secret markers and the Z.ai trial
