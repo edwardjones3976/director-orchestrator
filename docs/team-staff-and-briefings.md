@@ -6,6 +6,18 @@ cost. A status update is not a reason to launch another model or repeat QA.
 
 ## Leadership and succession
 
+**Administrators: ChatGPT/Codex (#1), Claude (#2), Cursor (#3).** The owner
+is above the three-provider administrator team. Cursor must not be grouped with
+non-admin providers. Codex may overrule/delegate to both; Claude may
+overrule/delegate to Cursor. Administrative status persists while another lead
+is active; the table's absence rules govern succession, not membership.
+
+For current Director-Orchestrator completion, **Claude is the appointed
+completion Director** and Codex supports that plan while remaining overall
+Director. That scope excludes Homemade LLM and other projects. Follow
+[the canonical appointment and approval responsibilities](project-leadership.md#administrators-and-chain-of-command)
+when assigning work or preparing pass-downs.
+
 | Order | Provider | Responsibility |
 | --- | --- | --- |
 | 1 | ChatGPT / Codex | Director and site foreman; owns outcomes, priorities, routing, evidence and continuity. |

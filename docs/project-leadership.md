@@ -29,6 +29,52 @@ decomposition, routing, review orchestration, completion reporting, and owner
 escalation. This policy update does not claim that a deployed runtime provider
 changed in production.
 
+## Administrators and chain of command
+
+Owner clarification, 2026-10-02: **the three provider administrators are
+ChatGPT/Codex, Claude and Cursor. Cursor is an administrator, not a non-admin
+provider.** The owner sits above the administrator team.
+
+| Order | Position | Authority and responsibility |
+| --- | --- | --- |
+| Owner | Overall authority | Approves overall/macro plans and changes to owner-reserved scope or limits; appoints the administrators and project Directors. |
+| 1 | ChatGPT/Codex — overall Director and administrator | Owns overall outcomes and coordination; may overrule and delegate to Claude and Cursor within owner direction. |
+| 2 | Claude — second-in-command and administrator | May overrule and delegate to Cursor; carries all Director duties when Codex is unavailable, and leads explicitly appointed projects. |
+| 3 | Cursor — third-in-command and administrator | Performs delegated administrative and project work; carries all Director duties when both Codex and Claude are unavailable. |
+| Assigned providers | Non-administrator specialists and workers | Execute, research, test or independently review their assigned work and return evidence to its responsible administrator. |
+
+Administrators make individual assignment and subordinate plan decisions within
+the owner's approved macro plan and existing delegation. They keep one accountable
+lead for each scope, answer provider questions, assign work once, reconcile
+handoffs, and arrange QA and independent review. Technical questions still require
+Perplexity or Firecrawl research before an answer. Leadership and approval routing
+do not grant operating-system elevation or bypass deterministic policy, security,
+budget, exact-head review or merge gates.
+
+"Non-admin" means outside these three appointed administrator positions; it
+does not mean "not currently acting as Director". Grok and Z.ai are non-admin
+providers; Perplexity and Firecrawl are non-admin research providers. Separately
+assigned workers, including Astra Light, Codex Cloud Worker and Copilot, retain
+their own identities and assignments rather than gaining an administrator seat
+from a provider-family name. Project participation and provider availability are
+separate from administrator status.
+
+### Current Director-Orchestrator completion appointment
+
+The owner appointed **Claude as Director for completing Director-Orchestrator**
+through 20/20 plus issue #81. Claude directs that completion plan, assignments,
+sequence and integration. Codex remains overall Director and supports Claude's
+completion work; Codex and its assigned helpers do not run a competing completion
+plan. Cursor remains administrator #3 and accepts delegated work in that plan.
+The general hierarchy remains in force; overrides are communicated through Claude
+so the team still has one completion lead. This assignment excludes Homemade LLM
+and every other project; their appointments are unchanged.
+
+This specific appointment governs completion even while Codex is available and
+supersedes general deputy-only or no-standing-assignment wording for that scope.
+The [completion appointment record](https://github.com/edwardjones3976/director-orchestrator/issues/299#issuecomment-5957464094)
+and the owner's subsequent direct clarification establish this arrangement.
+
 ## Owner-appointed succession and daily briefing
 
 Owner direction, 2026-09-30: **Codex is #1, Claude is #2, and Cursor is the
@@ -98,9 +144,9 @@ removes no gate. The canonical rule is the charter's
 
 | Responsibility | Current owner |
 | --- | --- |
-| Project priorities, scope, sequence, and design decisions | ChatGPT/Codex Director lane |
-| Work decomposition, allocation, bounded dispatch, and overlap prevention | ChatGPT/Codex Director lane |
-| Review orchestration, evidence reconciliation, and delivery reporting | ChatGPT/Codex Director lane |
+| Director-Orchestrator completion priorities, scope, sequence, and design within the approved macro plan | Claude, completion Director; Codex retains overall accountability |
+| Completion work decomposition, allocation, dispatch, and overlap prevention | Claude and explicitly assigned administrators/helpers |
+| Completion review orchestration, evidence reconciliation, and delivery reporting | Claude with assigned Codex/Cursor support; one eligible final reviewer per candidate |
 | Bounded implementation, debugging, testing, and verification | Any capable assigned non-exempt lane under bounded authority; maintenance goes to OpenAI Codex (see Director maintenance routing) |
 | Independent review | An eligible provider that did not materially author the candidate |
 | Owner-reserved decisions | The owner, under the existing deterministic gates |
