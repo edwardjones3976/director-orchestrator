@@ -3019,8 +3019,6 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     except _SOURCE_ERRORS:
         return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
                              "Docker Compose labels and Director /health", {}, at),
-                _observation("05", None, "Director identity could not be verified, so no store snapshot is bound to it.",
-                             _CONSISTENCY_SOURCE, {}, at),
                 *[_observation(key, None, "collector not yet trusted",
                                _CAPTURES_SOURCE if key in ("11", "12") else _CONSISTENCY_SOURCE,
                                {}, at, candidate_sha=candidate_sha if key == "17" else None)

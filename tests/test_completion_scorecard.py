@@ -3093,6 +3093,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         evidence = row(renewed.report(), "05")["evidence"][0]
         self.assertEqual(sc._when(evidence["expires_at"]), WORLD_NOW + timedelta(seconds=60))
 
+    def test_runtime_discovery_failure_reports_each_check_once(self):
+        # Review 4169163932: 05 is contained, so the containment list already reports it; no duplicate entry.
+        with patch.object(sc, "_runtime", side_effect=ValueError("no single running Director")):
+            observations = sc.collect(SHA, now=NOW, deployment=DEPLOYMENT)
+        ids = [item.check_id for item in observations]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertIsNone(next(item for item in observations if item.check_id == "05").passed)
+
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")
         dormant = self.world(evaluate_rules=True)
