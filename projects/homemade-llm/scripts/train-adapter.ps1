@@ -129,6 +129,7 @@ try {
     if ($Winner) { $dockerArgs += '--winner' }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
         $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
+        $dockerArgs += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
     }
     if ($Probe) {
         $dockerArgs += @('--probe', '--probe-seq-len', "$ProbeSeqLen")

@@ -47,7 +47,8 @@ WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
 PROBE_WARMUP_MICROSTEPS = 10
 PROBE_TIMED_MICROSTEPS = 40
-PROBE_GRAD_ACCUM = 8
+TRAIN_GRAD_ACCUM = 8
+PROBE_GRAD_ACCUM = TRAIN_GRAD_ACCUM
 PROBE_EPOCHS = 3
 PROBE_CONTINGENCY = 0.20
 PROBE_TIME_LIMIT_S = 36_000
@@ -137,6 +138,20 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _index_weight_map_shards(snapshot_dir: Path) -> tuple[set[str], bool]:
+    index_path = snapshot_dir / "model.safetensors.index.json"
+    if not index_path.is_file():
+        return set(), False
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"model.safetensors.index.json is not usable: {exc}")
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        fail("model.safetensors.index.json has no weight_map object")
+    return {str(shard) for shard in weight_map.values()}, True
+
+
 def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], reads: int = 2) -> dict:
     """Each listed file must match size and SHA-256 on ``reads`` consecutive full reads."""
     if reads < 1:
@@ -152,8 +167,16 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
             manifest_weight_paths.append(rel)
     if not manifest_weight_paths:
         fail("digest manifest lists no weight file")
-    on_disk_weights = _collect_snapshot_weight_files(snapshot_dir)
+    index_shards, weight_map_checked = _index_weight_map_shards(snapshot_dir)
     manifest_weight_set = set(manifest_weight_paths)
+    if weight_map_checked:
+        for shard in sorted(index_shards):
+            if shard not in manifest_weight_set:
+                fail(f"digest manifest does not list index shard: {shard}")
+            shard_path = snapshot_dir / shard
+            if not shard_path.is_file():
+                fail(f"index shard missing from snapshot: {shard}")
+    on_disk_weights = _collect_snapshot_weight_files(snapshot_dir)
     for rel in on_disk_weights:
         if rel not in manifest_weight_set:
             fail(f"weight file not covered by the digest manifest: {rel}")
@@ -178,6 +201,7 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
         "reads": reads,
         "bytes": total_bytes,
         "weight_files": len(manifest_weight_paths),
+        "weight_map_checked": weight_map_checked,
     }
 
 
@@ -557,6 +581,8 @@ def build_probe_report(
     memory_pass: bool | None,
     time_pass: bool | None,
     authoritative: bool,
+    overlength_rows: int,
+    max_tokens: int,
     digest_verification: dict | None = None,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
@@ -584,6 +610,8 @@ def build_probe_report(
         "memory_pass": memory_pass,
         "time_pass": time_pass,
         "authoritative": authoritative,
+        "overlength_rows": overlength_rows,
+        "max_tokens": max_tokens,
         "digest_verification": digest_verification,
         "gguf_sha256": None,
         "thinking": "disabled",
@@ -604,7 +632,7 @@ def sft_arguments(output_dir: str, steps: int) -> dict[str, Any]:
         "dataset_kwargs": {"skip_prepare_dataset": True},
         "remove_unused_columns": False,
         "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 1,
+        "gradient_accumulation_steps": TRAIN_GRAD_ACCUM,
         "max_steps": steps,
         "learning_rate": 2e-4,
         "logging_steps": max(1, steps // 4),
@@ -657,7 +685,7 @@ def run_probe_microsteps(
     def synchronized_now() -> float:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        return time.time()
+        return time.perf_counter()
 
     def run_phase(count: int, *, timed: bool) -> float:
         nonlocal cursor
@@ -710,8 +738,17 @@ def train(
     started = time.time()
     set_seed(SEED)
     torch.cuda.reset_peak_memory_stats()
+    load_kwargs: dict[str, Any] = {}
+    if digest_verification is not None:
+        load_kwargs["local_files_only"] = True
     model, tokenizer = FastLanguageModel.from_pretrained(
-        base, revision=revision, max_seq_length=SEQ, load_in_4bit=True, use_exact_model_name=True)
+        base,
+        revision=revision,
+        max_seq_length=SEQ,
+        load_in_4bit=True,
+        use_exact_model_name=True,
+        **load_kwargs,
+    )
     resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
     model = FastLanguageModel.get_peft_model(
         model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
@@ -725,6 +762,13 @@ def train(
             messages, tokenize=True, add_generation_prompt=add_generation_prompt, enable_thinking=False))
 
     encoded = encode_rows(rows, tokenize)
+    lengths = token_lengths(encoded)
+    overlength = [length for length in lengths if length > SEQ]
+    if overlength:
+        fail(
+            f"{len(overlength)} training row(s) exceed SEQ={SEQ}; "
+            f"maximum length {max(overlength)}"
+        )
     mask_coverage = sum(
         require_response_only(example["labels"], example["labels"].count(IGNORED_LABEL))
         for example in encoded
@@ -764,12 +808,16 @@ def run_probe(
     """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
     digest_verification = digest_verification_before_load(base, revision, expected_digests_path)
     set_seed(SEED)
+    load_kwargs: dict[str, Any] = {}
+    if digest_verification is not None:
+        load_kwargs["local_files_only"] = True
     model, tokenizer = FastLanguageModel.from_pretrained(
         base,
         revision=revision,
         max_seq_length=probe_seq_len,
         load_in_4bit=True,
         use_exact_model_name=True,
+        **load_kwargs,
     )
     resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
     model = FastLanguageModel.get_peft_model(
@@ -794,7 +842,10 @@ def run_probe(
         )
 
     encoded = encode_rows(rows, tokenize)
-    length_stats = length_statistics(token_lengths(encoded))
+    raw_lengths = token_lengths(encoded)
+    length_stats = length_statistics(raw_lengths)
+    max_tokens = int(length_stats["max"])
+    overlength_rows = sum(1 for length in raw_lengths if length > probe_seq_len)
     mask_coverage = sum(
         require_response_only(example["labels"], prompt_token_count(example["labels"]))
         for example in encoded
@@ -805,6 +856,10 @@ def run_probe(
     authoritative = probe_is_authoritative(
         base, revision, probe_seq_len, loaded_rows, projection_rows,
     )
+    if pin in ("winner", "fallback") and overlength_rows:
+        authoritative = False
+    if authoritative:
+        overlength_rows = 0
     mode = "d_m1_f_probe" if authoritative else "diagnostic_probe"
     gate_passed = length_gate_pass(float(length_stats["p95"]))
     if pin in ("winner", "fallback") and not gate_passed:
@@ -833,6 +888,8 @@ def run_probe(
             memory_pass=None,
             time_pass=None,
             authoritative=authoritative,
+            overlength_rows=overlength_rows,
+            max_tokens=max_tokens,
             digest_verification=digest_verification,
         )
         write_report(report_path, report)
@@ -875,6 +932,8 @@ def run_probe(
         memory_pass=probe_memory_pass(peak_gib),
         time_pass=probe_time_pass(wall_contingency),
         authoritative=authoritative,
+        overlength_rows=overlength_rows,
+        max_tokens=max_tokens,
         digest_verification=digest_verification,
     )
     write_report(report_path, report)

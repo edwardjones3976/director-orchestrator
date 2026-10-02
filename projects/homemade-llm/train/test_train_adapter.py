@@ -199,6 +199,12 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertEqual(args["dataset_kwargs"], {"skip_prepare_dataset": True})
         self.assertIs(args["packing"], False)
 
+    def test_sft_arguments_matches_probe_gradient_accumulation(self):
+        args = train_adapter.sft_arguments("out", 20)
+        self.assertEqual(args["gradient_accumulation_steps"], train_adapter.PROBE_GRAD_ACCUM)
+        self.assertEqual(train_adapter.PROBE_GRAD_ACCUM, 8)
+        self.assertEqual(train_adapter.TRAIN_GRAD_ACCUM, 8)
+
     def test_pinned_revision_must_match_the_loaded_commit(self):
         pin = "a" * 40
         self.assertEqual(train_adapter.resolve_commit(pin, "org/model", pin), pin)
@@ -257,6 +263,7 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIn("--expected-digests", text)
         self.assertIn("ExpectedDigests", text)
         self.assertIn("m1-expected-qwen3-14b.json", text)
+        self.assertIn("HF_HUB_OFFLINE", text)
 
     def test_length_statistics_on_a_known_list(self):
         lengths = [10, 20, 30, 40, 50]
@@ -318,6 +325,7 @@ class TrainAdapterTests(unittest.TestCase):
                     "reads": 2,
                     "bytes": len(b"alpha") + len(b"beta"),
                     "weight_files": 2,
+                    "weight_map_checked": False,
                 },
             )
 
@@ -344,6 +352,21 @@ class TrainAdapterTests(unittest.TestCase):
                 train_adapter.verify_expected_digests(
                     root, [{"path": "x.bin", "sha256": "b" * 64, "size": 2}],
                 )
+
+    def test_verify_expected_digests_index_shard_missing_from_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shard_a = "model-00001-of-00002.safetensors"
+            shard_b = "model-00002-of-00002.safetensors"
+            (root / shard_a).write_bytes(b"only-a")
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"weight_map": {"layer.0": shard_a, "layer.1": shard_b}}),
+                encoding="utf-8",
+            )
+            entry = self._digest_entry(root, shard_a, b"only-a")
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry])
+            self.assertIn(shard_b, str(raised.exception))
 
     def test_verify_expected_digests_uncovered_weight_on_disk(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -632,7 +655,118 @@ class TrainAdapterTests(unittest.TestCase):
             "memory_pass": True,
             "time_pass": True,
             "authoritative": False,
+            "overlength_rows": 0,
+            "max_tokens": 3,
         }
+
+    def test_train_refuses_overlength_row_before_trainer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "out.json"
+            fake_tokenizer = mock.MagicMock()
+            fake_tokenizer.apply_chat_template = mock.MagicMock(return_value=list(range(10)))
+            fake_model = mock.MagicMock()
+            fake_model.config._commit_hash = train_adapter.SMOKE_REVISION
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+            fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+            long_encoded = [{
+                "input_ids": list(range(train_adapter.SEQ + 5)),
+                "attention_mask": [1] * (train_adapter.SEQ + 5),
+                "labels": [-100] * train_adapter.SEQ + list(range(5)),
+            }]
+            cuda = mock.MagicMock()
+            cuda.reset_peak_memory_stats = mock.MagicMock()
+            with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
+                with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                    with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                        with mock.patch.object(train_adapter, "encode_rows", return_value=long_encoded):
+                            with mock.patch.object(train_adapter, "SFTTrainer") as trainer_mock:
+                                with self.assertRaises(SystemExit) as raised:
+                                    train_adapter.train(
+                                        [row()],
+                                        train_adapter.SMOKE_BASE,
+                                        train_adapter.SMOKE_REVISION,
+                                        20,
+                                        report_path,
+                                        winner=False,
+                                    )
+            self.assertIn("exceed SEQ", str(raised.exception))
+            trainer_mock.assert_not_called()
+
+    def test_from_pretrained_uses_local_files_only_when_digests_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "out.json"
+            digest_path = Path(tmp) / "digests.json"
+            digest_info = {"files": 1, "reads": 2, "bytes": 1, "weight_files": 1, "weight_map_checked": False}
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
+            cuda = mock.MagicMock()
+            cuda.reset_peak_memory_stats = mock.MagicMock()
+            with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
+                with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                    with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=digest_info):
+                        with self.assertRaises(SystemExit):
+                            train_adapter.train(
+                                [row()],
+                                train_adapter.WINNER_BASE,
+                                train_adapter.WINNER_REVISION,
+                                20,
+                                report_path,
+                                winner=True,
+                                expected_digests_path=digest_path,
+                            )
+            _, kwargs = fake_flm.from_pretrained.call_args
+            self.assertTrue(kwargs.get("local_files_only"))
+
+    def test_probe_overlength_row_is_diagnostic_on_winner_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            seq = train_adapter.SEQ
+            at_limit = {
+                "input_ids": list(range(seq)),
+                "attention_mask": [1] * seq,
+                "labels": [-100] * (seq - 2) + [4, 5],
+            }
+            over = {
+                "input_ids": list(range(seq + 1)),
+                "attention_mask": [1] * (seq + 1),
+                "labels": [-100] * (seq - 1) + [4, 5],
+            }
+            encoded = [at_limit] * 99 + [over]
+            fake_tokenizer = mock.MagicMock()
+            fake_model = mock.MagicMock()
+            fake_model.config._commit_hash = train_adapter.WINNER_REVISION
+            fake_model.parameters = mock.MagicMock(return_value=iter([mock.MagicMock(device="cpu")]))
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+            fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+            exercise = [at_limit]
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                    with mock.patch.object(train_adapter, "encode_rows", return_value=encoded):
+                        with mock.patch.object(
+                            train_adapter, "prepare_probe_examples", return_value=(exercise, "attended_prompt_repeat"),
+                        ):
+                            with mock.patch.object(train_adapter, "run_probe_microsteps", return_value=(1.0, 9.0)):
+                                train_adapter.run_probe(
+                                    [row()],
+                                    train_adapter.WINNER_BASE,
+                                    train_adapter.WINNER_REVISION,
+                                    report_path,
+                                    probe_rows_total=100,
+                                    probe_seq_len=seq,
+                                    expected_digests_path=digest_path,
+                                )
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["mode"], "diagnostic_probe")
+            self.assertFalse(payload["authoritative"])
+            self.assertEqual(payload["overlength_rows"], 1)
+            self.assertEqual(payload["max_tokens"], seq + 1)
 
     def test_probe_exercise_rows_use_attended_prompt_repeat(self):
         seq_len = 12
