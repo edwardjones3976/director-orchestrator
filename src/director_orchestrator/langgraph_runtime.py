@@ -421,6 +421,46 @@ class LangGraphPacketRuntime:
         self._legacy_database = Path(legacy_database_path).resolve()
         self._validate_storage_isolation()
         self._setup_ledger()
+        # Activated production packets share the canonical task's privacy lifecycle.
+        # Standalone offline/test runtimes retain their isolated fixture ledger.
+        self._result_store = None
+        if self.require_packet_boundary_adapter:
+            from .store import TaskStore
+            self._result_store = TaskStore(str(self._legacy_database))
+            self._migrate_result_payloads()
+
+    def _migrate_result_payloads(self) -> None:
+        """Move still-needed legacy content, erase reset/consumed copies before activation."""
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT idempotency_key, task_id, work_packet_json, result_packet_json, "
+                "work_packet_digest, result_packet_digest "
+                "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1001"
+            ).fetchall()
+            if len(rows) > 1000:
+                raise RuntimeContractError("legacy result cleanup requires bounded maintenance")
+            for key, task_id, work_json, encoded, work_digest, result_digest in rows:
+                record = self._result_store.get(task_id)
+                if (record is not None and record.plan is not None
+                        and key.startswith(f"{task_id}:{record.plan_generation}:")):
+                    work = validate_packet("work", json.loads(work_json))
+                    result = validate_packet("result", json.loads(encoded))
+                    build_replay_run(work, result)
+                    if (work["task_id"] != task_id or work["idempotency_key"] != key
+                            or document_digest(work) != work_digest
+                            or document_digest(result) != result_digest):
+                        raise RuntimeContractError("legacy result cleanup identity mismatch")
+                    if work["correlation"]["correlation_id"] not in record.consumed_packet_results:
+                        self._result_store.reserve_runtime_result(work)
+                        self._result_store.save_runtime_result(work, encoded)
+                connection.execute(
+                    "UPDATE runtime_dispatch_ledger SET result_packet_json=NULL WHERE idempotency_key=?", (key,))
+        # Legacy writers may have left copies in WAL frames. Refuse activation
+        # until those frames can be truncated; never claim logical deletion is physical cleanup.
+        with closing(sqlite3.connect(self._ledger_database, timeout=0.2)) as connection:
+            busy, _, _ = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if busy:
+                raise RuntimeContractError("runtime result privacy cleanup is pending")
 
     def readiness(self) -> RuntimeReadiness:
         """Return honest readiness without claiming provider availability."""
@@ -523,6 +563,7 @@ class LangGraphPacketRuntime:
         )
         try:
             connection.execute("PRAGMA busy_timeout = 30000")
+            connection.execute("PRAGMA secure_delete = ON")
             connection.execute("BEGIN IMMEDIATE")
             yield connection
             connection.commit()
@@ -615,7 +656,9 @@ class LangGraphPacketRuntime:
         provider: str,
     ) -> RuntimeExecutionOutcome:
         try:
-            result = json.loads(str(row[7]))
+            encoded = (self._result_store.read_runtime_result(str(work["idempotency_key"]))
+                       if self._result_store is not None else row[7])
+            result = json.loads(str(encoded))
             validated = validate_packet("result", result)
         except Exception as exc:
             raise RuntimeContractError("persisted provider result is invalid") from exc
@@ -667,6 +710,8 @@ class LangGraphPacketRuntime:
         execution_mode: RuntimeExecutionMode,
         writer_token: WriterOwnershipToken | None,
     ) -> RuntimeExecutionOutcome | None:
+        if self._result_store is not None:
+            self._result_store.reserve_runtime_result(dict(work))
         writer_digest = writer_token.digest if writer_token is not None else None
         with self._transaction() as connection:
             if writer_token is not None:
@@ -799,6 +844,9 @@ class LangGraphPacketRuntime:
                 raise PacketContractError("result-reported cost exceeds the work-packet budget")
         result_digest = document_digest(validated_result)
         encoded_result = canonical_json_bytes(validated_result).decode("utf-8")
+        if self._result_store is not None:
+            self._result_store.save_runtime_result(dict(work), encoded_result)
+            encoded_result = None
         placeholders = ",".join("?" for _ in allowed_statuses)
         with self._transaction() as connection:
             if writer_token is not None:

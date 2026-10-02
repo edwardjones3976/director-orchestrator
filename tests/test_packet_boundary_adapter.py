@@ -174,8 +174,11 @@ class BoundaryAdapterInRuntimeTests(unittest.TestCase):
         root = Path(self.directory.name)
         self.work = load_json_document(SCHEMAS / "model-work-packet-v1.example.json")
         self.result = load_json_document(SCHEMAS / "model-result-packet-v1.example.json")
-        legacy = root / "legacy.sqlite3"
-        legacy.touch()
+        from tests.test_engine_provider_spend_settlement import ProviderSpendSettlementTests
+        _, store, record, _ = ProviderSpendSettlementTests()._world(str(root))
+        legacy = Path(store.path)
+        for packet in (self.work, self.result):
+            packet["task_id"] = record.task_id
         self.connection = sqlite3.connect(
             root / "runtime.sqlite3", check_same_thread=False
         )
