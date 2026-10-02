@@ -6131,7 +6131,7 @@ class OrchestrationEngine:
                             and not any(prior.effect_key == item.effect_key and prior.outcome == "failed_pre_submit"
                                         for prior in record.task_effect_ledger)]
         keys = {item.effect_key for item in observations if item.run_id_digest == run_digest}
-        if not keys:
+        if not keys and reconciled:
             # An owner-reconciled "created" run (approvals.apply_ambiguous_dispatch_resolution) carries no
             # observation of its own: it is the ambiguous dispatch of this assignment, whose reservation settles.
             keys = {

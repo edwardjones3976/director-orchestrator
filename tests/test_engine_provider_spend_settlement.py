@@ -766,11 +766,14 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
                         else:
                             key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
                             record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
-                                                               outcome="ambiguous")
+                                                               outcome="submitted" if path == "ordinary" else "ambiguous",
+                                                               run_id=run.run_id if path == "ordinary" else None)
                             run.assignment_sequence = assignment.sequence
                             engine._reserve_provider_daily_spend(assignment, effect_key=key)
                             record.provider_runs.append(run)
                             if path == "ordinary":
+                                run.interaction_id = engine._begin_provider_interaction(
+                                    record, assignment, phase="dispatch", attempt=1, effect_key=key)
                                 engine._settle_provider_spend(record, run, provider)
                             else:
                                 outcome = SimpleNamespace(result_packet={
@@ -1717,7 +1720,10 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
     def test_an_owner_reconciled_run_settles_its_ambiguous_dispatch(self) -> None:
         """Review 4112821088: a run the owner reconciled as created carries no observation of its own; its terminal
         settlement charges the ambiguous dispatch's reservation."""
-        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+        from director_orchestrator.approvals import (
+            apply_ambiguous_dispatch_resolution, record_provider_effect_observation, reserve_provider_effect,
+        )
+        from director_orchestrator.models import AmbiguousDispatchResolution, ProviderContactAttempt
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = self._world(directory)
             engine = OrchestrationEngine(settings, store)
@@ -1725,13 +1731,44 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
                                                outcome="ambiguous")
             engine._reserve_provider_daily_spend(assignment, effect_key=key)
-            run = ProviderRun(provider=ProviderName.GEMINI, assignment_sequence=assignment.sequence,
-                              run_id="owner-reconciled", status="completed", result="done",
-                              plan_generation=record.plan_generation,
-                              raw={"usage": {"cost": 0.3}})
-            engine._settle_provider_spend(record, run, ProviderName.GEMINI)
+            record.provider_contact_attempts.append(ProviderContactAttempt(
+                assignment_sequence=assignment.sequence, provider=assignment.agent, ordinal=1,
+                phase="dispatch", outcome="ambiguous_dispatch", error="Unknown submit outcome"))
+            record.status = TaskStatus.OWNER_DECISION_REQUIRED
+            apply_ambiguous_dispatch_resolution(record, AmbiguousDispatchResolution(
+                owner_user_id=record.intake.user_id, assignment_sequence=assignment.sequence,
+                resolution="created", run_id="owner-reconciled", note="Confirmed existing request"))
+            store.save(record)
+            record = store.get(record.task_id)
+            run = record.provider_runs[-1]
+            run.status, run.result, run.raw = "completed", "done", {"usage": {"cost": 0.3}}
+            self.assertTrue(engine._settle_provider_spend(record, run, ProviderName.GEMINI))
             self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.3)
             self.assertEqual(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR), [])
+
+    def test_unreconciled_run_cannot_claim_a_lone_ambiguous_reservation(self):
+        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            record_provider_effect_observation(record, assignment, effect_key=key,
+                                               phase="dispatch", outcome="ambiguous")
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            exposure = engine.provider_spend.exposure(assignment.agent)
+            run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                              plan_generation=record.plan_generation, run_id="some-other-run",
+                              status="completed", raw={"usage": {"cost": 0.3}})
+            with patch.object(engine.provider_spend, "record_charge") as charge:
+                self.assertFalse(engine._settle_provider_spend(record, run, assignment.agent))
+            charge.assert_not_called()
+            saved = store.get(record.task_id)
+            self.assertEqual(saved.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(saved.error, "spend_settlement_identity_unresolved")
+            self.assertEqual(engine.provider_spend.settlements(record.task_id), {})
+            self.assertEqual(engine.provider_spend.exposure(assignment.agent), exposure)
+            self.assertEqual(engine.provider_spend.unreconciled(assignment.agent, stale_after=timedelta(0)), [key])
 
     def test_missing_intent_charge_failure_preserves_hold_without_replay(self):
         with tempfile.TemporaryDirectory() as directory:
