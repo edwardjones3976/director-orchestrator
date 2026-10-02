@@ -2668,6 +2668,103 @@ class NativeSharedGpuGuardTests(unittest.TestCase):
         self.assertEqual(actual, Path(expected.stdout.strip()))
 
 
+class NativeHotRootAccountingTests(unittest.TestCase):
+    """Offline metadata accounting only; no real cache, mutex or model operation."""
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / "regular").write_bytes(b"123")
+        self.blob = self.root / "hf" / "hub" / "models--fixture" / "blobs" / ("a" * 64)
+        self.blob.parent.mkdir(parents=True)
+        self.blob.write_bytes(b"pointer fixture")
+
+    def metadata(self, *, tag=0xA000001D, directory=False, size=0):
+        return Mock(st_mode=generate_rows.stat.S_IFDIR if directory else generate_rows.stat.S_IFREG,
+                    st_size=size, st_file_attributes=0x400 | (0x10 if directory else 0),
+                    st_reparse_tag=tag)
+
+    def changed_metadata(self, path, metadata):
+        original = Path.lstat
+        return patch.object(Path, "lstat", lambda item: metadata if str(item).removeprefix("\\\\?\\") == str(path) else original(item))
+
+    def test_regular_files_and_recognized_cache_pointer_count_own_bytes_once(self):
+        with self.changed_metadata(self.blob, self.metadata(size=7)):
+            self.assertEqual(generate_rows._native_hot_bytes(self.root), 10)
+        with self.changed_metadata(self.blob, self.metadata(size=0)):
+            self.assertEqual(generate_rows._native_hot_bytes(self.root), 3)
+
+    def test_unknown_tag_and_pointer_outside_cache_refuse(self):
+        for path, tag in ((self.blob, 0xA000000C), (self.root / "regular", 0xA000001D)):
+            with self.subTest(path=path, tag=tag), self.changed_metadata(path, self.metadata(tag=tag)):
+                with self.assertRaisesRegex(ValueError, "reparse requires reviewed accounting"):
+                    generate_rows._native_hot_bytes(self.root)
+
+    def test_snapshot_cache_pointers_count_own_bytes_and_bad_revision_refuses(self):
+        for revision, file, allowed in (("b" * 40, "vocab.json", True),
+                                        ("b" * 40, "tokenizer/vocab.json", True),
+                                        ("not-a-revision", "vocab.json", False)):
+            snapshot = self.blob.parent.parent / "snapshots" / revision / file
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_bytes(b"pointer fixture")
+            with self.subTest(revision=revision, file=file), self.changed_metadata(snapshot, self.metadata()):
+                if allowed:
+                    self.assertEqual(generate_rows._native_hot_bytes(self.root), 3 + self.blob.stat().st_size)
+                else:
+                    with self.assertRaisesRegex(ValueError, "reparse requires reviewed accounting"):
+                        generate_rows._native_hot_bytes(self.root)
+            snapshot.unlink()
+
+    def test_directory_reparses_refuse_before_traversal(self):
+        original = generate_rows.os.scandir
+        for path in (self.root, self.blob.parent):
+            with self.subTest(path=path), self.changed_metadata(path, self.metadata(directory=True)), \
+                    patch.object(generate_rows.os, "scandir", wraps=original) as scan:
+                with self.assertRaisesRegex(ValueError, "reparse requires reviewed accounting"):
+                    generate_rows._native_hot_bytes(self.root)
+                self.assertNotIn(str(path), [str(call.args[0]).removeprefix("\\\\?\\") for call in scan.call_args_list])
+
+    @unittest.skipUnless(generate_rows.os.name == "nt", "Windows extended-length path accounting")
+    def test_long_regular_path_counts_without_cache_mutation(self):
+        long_path = self.root / ("d" * 120) / ("e" * 120) / "regular"
+        extended = Path("\\\\?\\" + str(long_path))
+        extended.parent.mkdir(parents=True)
+        self.addCleanup(extended.parent.rmdir)
+        self.addCleanup(extended.unlink)
+        extended.write_bytes(b"12345")
+        self.assertGreater(len(str(long_path)), 260)
+        self.assertEqual(generate_rows._native_hot_bytes(self.root), 3 + self.blob.stat().st_size + 5)
+
+    def test_inaccessible_metadata_and_directory_scan_propagate(self):
+        with patch.object(Path, "lstat", side_effect=PermissionError("offline inaccessible")):
+            with self.assertRaises(PermissionError):
+                generate_rows._native_hot_bytes(self.root)
+        with patch.object(generate_rows.os, "scandir", side_effect=PermissionError("offline inaccessible")):
+            with self.assertRaises(PermissionError):
+                generate_rows._native_hot_bytes(self.root)
+
+    def test_unclassifiable_entries_and_file_root_refuse(self):
+        unknown = Mock(st_mode=generate_rows.stat.S_IFIFO, st_size=0,
+                       st_file_attributes=0, st_reparse_tag=0)
+        with self.changed_metadata(self.blob, unknown):
+            with self.assertRaisesRegex(ValueError, "entry unclassifiable"):
+                generate_rows._native_hot_bytes(self.root)
+        with self.assertRaisesRegex(ValueError, "not a directory"):
+            generate_rows._native_hot_bytes(self.root / "regular")
+
+    def test_resource_floors_cap_and_competing_producer_remain_refusals(self):
+        for free, hot, producers, refusal in (
+                (149 * 1024**3, 0, b"0", "C free floor"),
+                (150 * 1024**3, 120 * 1024**3, b"0", "Cllm cap"),
+                (150 * 1024**3, 3, b"1", "competing producer")):
+            with self.subTest(refusal=refusal), patch.object(generate_rows.os, "name", "nt"), \
+                    patch.object(generate_rows.shutil, "disk_usage", return_value=Mock(free=free)), \
+                    patch.object(generate_rows, "_native_hot_bytes", return_value=hot), \
+                    patch.object(generate_rows, "_native_process", return_value=(producers, {})):
+                with self.assertRaisesRegex(ValueError, refusal):
+                    generate_rows._native_resource_checks()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Cursor | Auto | 2026-09-29 | 05:32 UTC | END]]
