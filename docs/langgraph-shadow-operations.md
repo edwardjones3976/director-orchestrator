@@ -6,7 +6,7 @@ This path is no longer the operations authority.
 **Intended authority:** [langgraph-primary-operations.md](langgraph-primary-operations.md)
 
 **Historical archive (pre-primary, non-authoritative):**
-[archive/langgraph-shadow-operations-pre-primary.md](archive/langgraph-shadow-operations-pre-primary.md)
+[archive/langgraph-pre-primary/langgraph-shadow-operations-pre-primary.md](archive/langgraph-pre-primary/langgraph-shadow-operations-pre-primary.md)
 
 The canonical document is an **implementation candidate**. It does not change
 legacy ownership or runtime behavior merely because it exists in a branch or
