@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 17:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
@@ -343,7 +344,9 @@ class DirectorGenerationIdentityTests(unittest.TestCase):
         self.assertEqual([vote.member for vote in captured_votes].count('claude'), 1)
         self.assertEqual(persisted.debate_tally['option_weights'], {'A': 2.5, 'B': 2.0})
         self.assertEqual(persisted.debate_tally['cast_weight_total'], 4.5)
-        self.assertEqual(persisted.debate_tally['configured_weight_total'], 8.5)
+        # New debates tally under the charter's 10.0 total (owner decision
+        # 2026-09-27: Z.ai weighs 1.5); recorded 8.5 tallies are never re-tallied.
+        self.assertEqual(persisted.debate_tally['configured_weight_total'], 10.0)
         self.assertFalse(persisted.debate_tally['authorizes_external_action'])
         self.assertNotIn(ProviderName.OPENAI, engine.providers)
 
@@ -355,3 +358,4 @@ if __name__ == '__main__':
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 17:58 UTC | END]]

@@ -44,6 +44,7 @@ from typing import Any, Callable, Mapping, Protocol
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from .langgraph_postgres import PostgresCheckpointBinding, PostgresCheckpointHandle
+from .store import AcknowledgementPersistencePending
 from .packet_contracts import (
     PacketContractError,
     build_replay_run,
@@ -1014,6 +1015,8 @@ class LangGraphPacketRuntime:
                 ),
                 type(exc).__name__,
             )
+            if isinstance(exc, AcknowledgementPersistencePending):
+                raise  # Keep the durable ambiguous intent; no task FAILED write.
             return RuntimeExecutionOutcome(
                 (
                     RuntimeExecutionStatus.OWNER_DECISION_REQUIRED

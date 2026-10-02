@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -348,15 +351,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 name: member["voting_power"]
                 for name, member in charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0},
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0, "zai": 1.5},
         )
         self.assertEqual(charter["committee"]["voting"]["mode"], "advisory")
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
         self.assertEqual(directive["default_allocation_profile"], "engineering")
-        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [40, 25, 15, 10, 10, 0, 0, 0])
-        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 8)
+        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [33, 21, 12, 8, 8, 0, 0, 0, 18])
+        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
         self.assertEqual(
             directive["workload_accounting"]["ledgers"]["overall_effort"],
             "prospective_observed_effort_guard",
@@ -837,7 +840,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tally.option_weights, {"A": 2.0})
         self.assertEqual(tally.cast_weight_total, 2.0)
-        self.assertEqual(tally.configured_weight_total, 8.5)
+        # New debates tally under the owner's 10.0 total (8.5 before Z.ai's weight).
+        self.assertEqual(tally.configured_weight_total, 10.0)
         self.assertFalse(tally.authorizes_external_action)
 
     def test_ties_route_to_claude_or_owner_without_authorizing_action(self):
@@ -1083,6 +1087,7 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(moderator=moderator, abstain=abstain), tempfile.TemporaryDirectory() as directory:
                     settings = replace(
                         Settings(), workload_policy_enabled=False, allow_paid_runs=True,
+                        grok_input_usd_per_mtok=1.0, grok_output_usd_per_mtok=1.0,
                         openai_api_key="test-openai", claude_routine_url="https://claude.invalid/fire",
                         claude_routine_token="test-claude", cursor_api_key="test-cursor",
                         grok_enabled=True, grok_api_key="test-grok", project_allowlist=("demo",),
@@ -1135,7 +1140,7 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     tally = completed.debate_tally
                     self.assertEqual(tally["option_weights"].get("A", 0.0), 0.0 if abstain else 2.0)
                     self.assertEqual("claude" in tally["abstaining"], abstain)
-                    self.assertEqual(tally["configured_weight_total"], 8.5)
+                    self.assertEqual(tally["configured_weight_total"], 10.0)
                     self.assertFalse(tally["authorizes_external_action"])
                     messages = "\n".join(post["message"] for post in engine.notifier.posts)
                     self.assertIn("casts its single advisory vote or records an explicit abstention", messages)
@@ -1193,10 +1198,10 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         contract = self.contract()
         for field in (
             'default_profile: "engineering"',
-            'engineering: [40, 25, 15, 10, 10, 0, 0, 0]',
-            'mixed: [27, 33, 10, 10, 5, 5, 5, 5]',
-            'public_research: [20, 25, 5, 5, 5, 25, 15, 0]',
-            'enterprise: [32, 38, 5, 5, 5, 0, 5, 10]',
+            'engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]',
+            'mixed: [22, 27, 9, 8, 4, 4, 4, 4, 18]',
+            'public_research: [16, 21, 4, 4, 4, 21, 12, 0, 18]',
+            'enterprise: [27, 31, 4, 4, 4, 0, 4, 8, 18]',
             'total_effort_status: "separate_telemetry_not_production_credit"',
         ):
             with self.subTest(field=field):
@@ -1341,32 +1346,38 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
 
     def test_contract_keeps_the_three_coordination_functions_distinct(self):
         contract = self.contract()
-        current = contract.split("\n  openai:\n", 1)[1].split("\nsupplemental_reviewers:", 1)[0]
-        self.assertIn("configured coordinating lane keeps", current)
-        self.assertIn("functions:", current)
+        appointed = contract.split("\nappointed_director:\n", 1)[1].split("\nproject_local_bindings:", 1)[0]
+        openai = contract.split("\n  openai:\n", 1)[1].split("\nsupplemental_reviewers:", 1)[0]
+        self.assertIn("appointed Director keeps", appointed)
+        self.assertIn("functions:", appointed)
+        self.assertIn('coordination_functions: "bound_by_appointed_director"', openai)
+        self.assertNotIn("votes: true", openai)
+        self.assertNotIn("vote_weight: 2.5", contract)
 
         for function_id in ("moderator", "participant", "director"):
             with self.subTest(function_id=function_id):
-                self.assertIn(f'- id: "{function_id}"', contract)
-        self.assertIn("function_separation_rule:", contract)
-        self.assertIn("never collapsed or renamed into duty buckets", contract)
+                self.assertIn(f'- id: "{function_id}"', appointed)
+        self.assertIn("function_separation_rule:", appointed)
+        self.assertIn("never collapsed or renamed into duty buckets", appointed)
+        self.assertIn('appointed_director: "<same provider key as appointed_director.provider>"', contract)
 
         # The voting boundary is what the canonical identities carry: the
         # Participant holds the one authenticated position and may vote or abstain;
-        # neither Moderator nor Director votes.
-        moderator = contract.split('- id: "moderator"', 1)[1].split("- id:", 1)[0]
-        participant = contract.split('- id: "participant"', 1)[1].split("- id:", 1)[0]
-        director = contract.split('- id: "director"', 1)[1].split("\n    participation_record_rule", 1)[0]
+        # neither Moderator nor Director votes. The weight is filled from the
+        # appointed provider's charter entry, not copied from OpenAI.
+        moderator = appointed.split('- id: "moderator"', 1)[1].split("- id:", 1)[0]
+        participant = appointed.split('- id: "participant"', 1)[1].split("- id:", 1)[0]
+        director = appointed.split('- id: "director"', 1)[1].split("\nproject_local_bindings:", 1)[0]
         self.assertIn("votes: false", moderator)
         self.assertIn("votes: true", participant)
         self.assertIn("vote_count: 1", participant)
-        self.assertIn("vote_weight: 2.5", participant)
+        self.assertIn('vote_weight: "<charter voting_power of appointed_director.provider>"', participant)
         self.assertIn("votes: false", director)
         # Moderating relocates nothing about the vote: it stays one vote, booked
         # under Participant, and the Moderator function cannot strip it.
         self.assertIn("Moderating never removes, reduces, or defers", moderator)
         self.assertIn("no additional vote", participant)
-        self.assertIn("bars a second OpenAI vote and never the first", participant)
+        self.assertIn("bars a second vote for the appointed Director and never the first", participant)
         self.assertIn("does not create a vote", director)
 
         # Coordination, planning, and acceptance survive only as nested duties.
@@ -1641,3 +1652,6 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]

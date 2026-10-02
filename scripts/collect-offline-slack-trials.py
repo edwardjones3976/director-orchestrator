@@ -1,3 +1,20 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -14,6 +31,7 @@ import base64
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
+import hmac
 import html
 import csv
 import json
@@ -72,26 +90,29 @@ def validate_observations(report):
     jsonschema.Draft202012Validator(json.loads(schema.read_bytes())).validate(report)
 
 
+def _run(arguments, timeout):
+    """Every collector command through the scorecard's one contained runner (completion_scorecard._run_bytes): the
+    whole process tree ends by an independent wall clock, and a nonzero exit or oversized output raises."""
+    from director_orchestrator.completion_scorecard import _run_bytes
+    return _run_bytes(arguments, timeout)
+
+
 def protect_directory(directory):
     """Create a new private directory using only platform tools, before writes."""
     directory.mkdir(mode=0o700, parents=False, exist_ok=False)
     if os.name == "nt":
-        result = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"],
-                                capture_output=True, timeout=10, check=True)
-        sid = list(csv.reader(result.stdout.decode().splitlines()))[0][1]
+        sid = list(csv.reader(_run(["whoami", "/user", "/fo", "csv", "/nh"], 10).decode().splitlines()))[0][1]
         if not re.fullmatch(r"S-1-[0-9-]+", sid):
             raise ValueError("Private directory identity unavailable")
-        subprocess.run(["icacls", str(directory), "/inheritance:r", "/grant:r",
-                        f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F",
-                        "*S-1-5-32-544:(OI)(CI)F"],
-                       capture_output=True, timeout=10, check=True)
+        _run(["icacls", str(directory), "/inheritance:r", "/grant:r",
+              f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F"], 10)
 
 
 def inspect_runtime(expected_head):
-    result = subprocess.run(["docker", "inspect", SERVICE], capture_output=True, timeout=15)
-    if result.returncode or len(result.stdout) > MAX_BYTES:
+    stdout = _run(["docker", "inspect", SERVICE], 15)
+    if len(stdout) > MAX_BYTES:
         raise ValueError("Canonical runtime inspection failed")
-    item = json.loads(result.stdout)[0]
+    item = json.loads(stdout)[0]
     labels = item.get("Config", {}).get("Labels") or {}
     ports = item.get("NetworkSettings", {}).get("Ports", {}).get("8080/tcp") or []
     if (labels.get("org.director.candidate.commit") != expected_head
@@ -146,17 +167,9 @@ class Collector:
         else:
             raise ValueError("Unsupported source")
         started = utc()
-        end = min(self.deadline, time.monotonic() + 10)
-        with self.client.stream("GET", url, params=params,
-                headers={"Authorization": "Bearer " + token}) as response:
-            body = bytearray()
-            for chunk in response.iter_bytes(8192):
-                body.extend(chunk)
-                if len(body) > MAX_BYTES or time.monotonic() >= end:
-                    raise ValueError("Read exceeded byte/time bound")
-            headers = {key: value for key, value in response.headers.items()
-                       if key.lower().startswith("x-primary-") or key.lower() == "x-task-engine-owner"}
-            status = response.status_code
+        status, raw_headers, body = self.drain(url, params, token)
+        headers = {key: value for key, value in raw_headers.items()
+                   if key.lower().startswith("x-primary-") or key.lower() == "x-task-engine-owner"}
         finished = utc()
         reference = {"file": None, "source": url, "http_status": status,
             "body_sha256": digest(body), "original_sha256": None,
@@ -175,6 +188,13 @@ class Collector:
         if status != 200:
             raise ValueError("Source did not return HTTP 200")
         return json.loads(body), headers
+
+    def drain(self, url, params, token, cap=10):
+        """One streamed GET through the scorecard's single read path (completion_scorecard.bounded_get), ending by
+        the earlier of its own cap and the collection deadline."""
+        from director_orchestrator.completion_scorecard import bounded_get
+        return bounded_get(self.client, url, params=params, headers={"Authorization": "Bearer " + token},
+                           end=min(self.deadline, time.monotonic() + cap))
 
     def replies(self, thread):
         messages, cursors = {}, set()
@@ -207,16 +227,44 @@ class Collector:
             return list(messages.values()), False, "replies_incomplete_or_unavailable"
 
 
+def unedited(message):
+    """A Slack message as originally posted: no edit metadata and no subtype.
+
+    Slack keeps an edited message's ts but returns its new text, so every Slack
+    text read as evidence (collector and completion scorecard) goes through this.
+    """
+    return "edited" not in message and not message.get("subtype")
+
+
+BEGIN_TAG = re.compile(r"\*?\[\[[^\]\n]*\|\s*BEGIN\]\]\*?")
+RECEIPT_HEADER = re.compile(r"\*?(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\*?")
+
+
+def reply_header(text):
+    """A bot reply's leading line, after the contribution BEGIN tag the gateway wraps replies in.
+
+    A receipt or BLOCKED notice is the reply's header; the same words quoted in a body (for example
+    inside an untrusted provider result) are not one. The scorecard's drill parser uses this too.
+    """
+    lines = [line.strip() for line in html.unescape(str(text)).strip().splitlines() if line.strip()]
+    if lines and BEGIN_TAG.fullmatch(lines[0]):
+        lines = lines[1:]
+    return lines[0] if lines else ""
+
+
 def task_from_accepted(thread, messages, complete, bot):
     if not complete:
         raise ValueError("Task lookup requires complete thread readback")
     # slack_bot.py:658 sends the current "REQUEST RECEIVED" wording; "ACCEPTED" is
     # the retained legacy wording. Either binds a task ID the same way, and any
     # duplicate or mixed-wording match within the thread stays ambiguous.
-    pattern = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\b")
-    matches = [match.group(1) for message in messages
-        if message.get("user") == bot and message.get("thread_ts") == thread
-        for match in pattern.finditer(html.unescape(str(message.get("text", ""))))]
+    replies = [message for message in messages if message.get("user") == bot and message.get("thread_ts") == thread]
+    # The bot never edits its replies; an edited one may have gained or lost a receipt.
+    if not all(unedited(message) for message in replies):
+        raise ValueError("Edited or subtyped bot reply in the thread")
+    # Only a reply whose leading header is the receipt counts; receipt text anywhere else does not.
+    matches = [match.group(1) for message in replies
+        if (match := RECEIPT_HEADER.fullmatch(reply_header(message.get("text", ""))))]
     if len(matches) != 1:
         raise ValueError("Exactly one native task receipt required")
     return matches[0]
@@ -255,7 +303,7 @@ READBACK_QUERY = {"include_qualification_evidence": "true"}
 READBACK_SCHEMA = "director-qualification-readback/v1"
 STATUS_RECEIPT_DEPENDENCY = "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
 SECTIONS = ("assignments", "provider_attempts", "effects", "reconciliation_events",
-            "slack_deliveries", "status_receipts", "provider_usage")
+            "slack_deliveries", "status_receipts", "intake_auth_claims", "provider_usage")
 DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 
@@ -268,8 +316,6 @@ def _typed_list(task, key):
     return task.get(key) if isinstance(task.get(key), list) else None
 
 
-ATTEMPT_STATUSES = ("STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS")
-DELIVERY_STATES = ("PENDING", "POSTING", "ACKNOWLEDGED", "DELIVERED", "AMBIGUOUS", "REFUSED", "SUPPRESSED", "SUPERSEDED")
 IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
 # The exact top-level shape of the typed response-only readback; any other
 # key, or a missing one, means the response is not the contract this
@@ -279,7 +325,7 @@ READBACK_KEYS = frozenset({
     "execution_mode", "terminal_classification", "terminal_reason_code", "task_created_at", "task_updated_at",
     "captured_at", "task_scope_counters", "snapshot", "bounds", "truncated", "absent", "complete",
     "assignments", "provider_attempts", "effects", "reconciliation_events", "slack_deliveries",
-    "status_receipts", "provider_usage",
+    "status_receipts", "intake_auth_claims", "provider_usage",
 })
 COUNTER_KEYS = ("thread_tasks", "assignments", "provider_attempts", "attempt_ordinals", "started_attempts",
                 "status_receipts", "effect_reservations")
@@ -304,173 +350,10 @@ def _when(value):
     return parsed if parsed.tzinfo is not None else None
 
 
-def _validate_attempts(assignments, attempts):
-    """Bind every attempt event to its assignment/provider and its immutable attempt.
-
-    Returns (latest_valid_event_per_attempt, error). Events of one attempt
-    (assignment, ordinal) must share digest, idempotency/budget identity,
-    provider, format and transport; event sequences are unique and within the
-    producer's 1..3 contract; a digest never names two attempts. The latest
-    valid event settles the attempt, so an authenticated later SUCCEEDED
-    callback (event 3) supersedes an earlier AMBIGUOUS event 2.
-    """
-    by_assignment = {}
-    for row in assignments:
-        if (not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1
-                or not _is_id(row.get("provider_id")) or row["assignment_id"] in by_assignment
-                or row.get("status") not in ("PENDING", "ACTIVE", "AMBIGUOUS", "SUCCEEDED", "FAILED",
-                                             "OWNER_DECISION_REQUIRED")):
-            return None, "malformed or duplicate assignment row"
-        for field in ("reservation_digest", "result_digest"):
-            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
-                return None, "malformed assignment digest"
-        by_assignment[row["assignment_id"]] = row
-    grouped = {}
-    for row in attempts:
-        key = (row.get("assignment_id"), row.get("attempt_ordinal"))
-        assignment = by_assignment.get(row.get("assignment_id"))
-        if assignment is None:
-            return None, "attempt does not join a listed assignment"
-        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= 3
-                or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
-                or not _is_count(row.get("assignment_sequence"))
-                or row.get("status") not in ATTEMPT_STATUSES
-                or not DIGEST.fullmatch(str(row.get("attempt_digest", "")))
-                or not DIGEST.fullmatch(str(row.get("idempotency_key_digest", "")))
-                or not DIGEST.fullmatch(str(row.get("budget_evidence_digest", "")))
-                or not _is_id(row.get("provider_id")) or not _is_id(row.get("format_id"))
-                or not _is_id(row.get("transport_id")) or not _is_id(row.get("reason_code"))
-                or _when(row.get("recorded_at")) is None):
-            return None, "malformed attempt event"
-        if row["provider_id"] != assignment["provider_id"] or row["assignment_sequence"] != assignment["sequence"]:
-            return None, "attempt provider/sequence disagrees with its assignment"
-        for field in ("result_digest", "outcome_evidence_digest", "provider_run_id_digest"):
-            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
-                return None, "malformed attempt digest"
-        # Event positions carry meaning: event 1 is the STARTED record; later
-        # events are settlements or ambiguity, and a settlement carries its
-        # outcome evidence (and, when SUCCEEDED, a result digest).
-        if row["event_sequence"] == 1 and row["status"] != "STARTED":
-            return None, "event 1 is not the STARTED record"
-        if row["event_sequence"] > 1 and row["status"] == "STARTED":
-            return None, "a later event repeats STARTED"
-        if row["status"] in ("SUCCEEDED", "FAILED") and row.get("outcome_evidence_digest") is None:
-            return None, "terminal event lacks outcome evidence"
-        if row["status"] == "SUCCEEDED" and row.get("result_digest") is None:
-            return None, "SUCCEEDED event lacks a result digest"
-        grouped.setdefault(key, []).append(row)
-    digests = {}
-    latest = {}
-    for key, events in grouped.items():
-        identity = {(e["attempt_digest"], e["idempotency_key_digest"], e["budget_evidence_digest"],
-                     e["provider_id"], e["format_id"], e["transport_id"]) for e in events}
-        sequences = [e["event_sequence"] for e in events]
-        if len(identity) != 1 or len(set(sequences)) != len(sequences):
-            return None, "attempt identity changed across its events or duplicate events"
-        digest_value = events[0]["attempt_digest"]
-        if digests.setdefault(digest_value, key) != key:
-            return None, "attempt digest reused by another attempt"
-        ordered = sorted(events, key=lambda e: e["event_sequence"])
-        if ordered[0]["event_sequence"] != 1:
-            return None, "attempt history lacks its STARTED event 1"
-        # Event 3 (authenticated callback settlement) may legitimately follow
-        # event 1 directly; event 2 is not fabricated to satisfy this check.
-        if any(_when(a["recorded_at"]) > _when(b["recorded_at"]) for a, b in zip(ordered, ordered[1:])):
-            return None, "attempt events are not recorded in sequence order"
-        latest[key] = ordered[-1]
-    return latest, None
-
-
-def _validate_effects(effects):
-    keys = set()
-    for row in effects:
-        if (not DIGEST.fullmatch(str(row.get("reservation_key", ""))) or not DIGEST.fullmatch(str(row.get("claim_key", "")))
-                or not DIGEST.fullmatch(str(row.get("effect_key_digest", "")))
-                or not DIGEST.fullmatch(str(row.get("effect_attempt_digest", "")))
-                or not _is_id(row.get("writer_owner_id")) or not _is_count(row.get("fencing_generation"))
-                or not _is_count(row.get("reserved_units")) or _when(row.get("reserved_at")) is None):
-            return "malformed external-effect reservation identity"
-        if row["reservation_key"] in keys:
-            return "duplicate external-effect reservation"
-        keys.add(row["reservation_key"])
-        if (row.get("remote_identifier") is None) != (row.get("remote_system") is None):
-            return "remote binding lacks its system or identifier"
-        if row.get("remote_identifier") is not None and (not _is_id(row["remote_system"])
-                                                          or not isinstance(row["remote_identifier"], str)
-                                                          or not row["remote_identifier"].strip()
-                                                          or _when(row.get("bound_at")) is None):
-            return "malformed remote binding"
-        if row.get("terminal_disposition") is not None and (
-                not _is_id(row["terminal_disposition"]) or not DIGEST.fullmatch(str(row.get("terminal_evidence_digest", "")))
-                or _when(row.get("terminal_recorded_at")) is None):
-            return "terminal evidence lacks its digest or time"
-        for field in ("execution_started_at", "bound_at", "terminal_recorded_at"):
-            if row.get(field) is not None and _when(row[field]) is None:
-                return "malformed external-effect timestamp"
-    return None
-
-
-# Notification-key families exactly as the delivery producer builds them
-# (primary_slack_delivery.enqueue): the fixed terminal key, hold:<state digest>
-# and approval:<request digest>:<projection digest>, each digest being one
-# sha256-prefixed value. Generic identity bounds are not widened for these.
-NOTIFICATION_KEY_FAMILIES = (
-    ("terminal", re.compile(r"terminal\Z")),
-    ("hold", re.compile(r"hold:sha256:[a-f0-9]{64}\Z")),
-    ("approval", re.compile(r"approval:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}\Z")),
-)
-
-
-def notification_key_family(value):
-    """Return the producer family of a notification key, or None when malformed."""
-    if not isinstance(value, str):
-        return None
-    for family, pattern in NOTIFICATION_KEY_FAMILIES:
-        if pattern.fullmatch(value):
-            return family
-    return None
-
-
-def _validate_deliveries_and_receipts(deliveries, receipts):
-    if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
-        return "duplicate Slack delivery identity"
-    if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
-        return "duplicate Slack notification key"
-    for row in deliveries:
-        if (not _is_id(row.get("client_msg_id")) or notification_key_family(row.get("notification_key")) is None
-                or row.get("state") not in DELIVERY_STATES or not _is_count(row.get("readback_attempts"))
-                or _when(row.get("created_at")) is None):
-            return "malformed Slack delivery row"
-        if row.get("owner_decision") not in (None, "approve", "reject"):
-            return "malformed Slack delivery row"
-        if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
-            return "owner decision recorded on a non-approval notification"
-        for field in ("claimed_at", "acknowledged_at", "delivered_at", "owner_decision_at"):
-            if row.get(field) is not None and _when(row[field]) is None:
-                return "malformed Slack delivery timestamp"
-        if row.get("slack_ts") is not None and not TS.fullmatch(str(row["slack_ts"])):
-            return "malformed Slack delivery timestamp"
-    if len({r.get("receipt_id") for r in receipts}) != len(receipts):
-        return "duplicate status receipt identity"
-    for row in receipts:
-        if not _is_id(row.get("receipt_id")) or not isinstance(row.get("source_event_id"), str) \
-                or not row["source_event_id"] or _when(row.get("created_at")) is None:
-            return "malformed status receipt row"
-    return None
-
-
-def _validate_usage(usage_rows, latest):
-    """Usage joins exactly one valid attempt of the same provider, never twice."""
-    seen = set()
-    for row in usage_rows:
-        digest_value = row.get("attempt_digest")
-        owner = next((e for e in latest.values() if e["attempt_digest"] == digest_value), None)
-        if (owner is None or digest_value in seen or row.get("provider_id") != owner["provider_id"]
-                or not all(_is_count(row.get(k)) for k in ("actual_microusd", "observed_tokens",
-                                                            "reserved_microusd", "token_limit"))):
-            return "usage is orphaned, duplicated, provider-mismatched or non-integer"
-        seen.add(digest_value)
-    return None
+# The per-task evidence rules live in the package, shared with the in-image consistency command
+# (primary_scorecard_evidence.task_evidence_errors runs them over every task).
+from director_orchestrator.primary_scorecard_evidence import (  # noqa: E402
+    NOTIFICATION_KEY_FAMILIES, notification_key_family, task_evidence_errors)
 
 
 def _has_nonfinite(value):
@@ -513,6 +396,10 @@ def _typed_readback_error(readback, task_id):
         return "readback rejected by the typed model at " + (",".join(places) or "document")
     if typed.task_id != task_id or typed.schema_version != READBACK_SCHEMA:
         return "readback shape/task binding mismatch"
+    # Every binding the snapshot declares must hold: one REPEATABLE READ, read-only transaction that also covered the
+    # task record served beside it (the model fixes the first three), owned by the LangGraph engine.
+    if typed.snapshot.covers_task_record is not True or typed.engine_owner != "langgraph":
+        return "readback snapshot does not cover the served task record or is not the LangGraph engine's"
     if set(readback["task_scope_counters"]) != set(COUNTER_KEYS) \
             or not all(_is_count(readback["task_scope_counters"][k]) for k in COUNTER_KEYS):
         return "readback counter contract mismatch"
@@ -553,21 +440,24 @@ def _counter_consistency_error(readback):
     return None
 
 
-def _readback(task_id, task):
-    """Accept the typed opt-in readback only when it is bound and internally consistent."""
+def _readback(task_id, task, owner=None):
+    """Accept the typed opt-in readback only when it is bound and internally consistent. Status receipts are bound
+    to the task's own intake thread and to ``owner``, the owner the evaluator is configured with."""
     readback = task.get("qualification_evidence")
     if readback is None:
         return None, None, "absent", "opt-in readback not present in the task response"
     error = _typed_readback_error(readback, task_id)
     if error is not None:
         return None, None, "rejected", error
-    latest, error = _validate_attempts(readback["assignments"], readback["provider_attempts"])
-    if error is None:
-        error = _validate_usage(readback["provider_usage"], latest)
-    if error is None:
-        error = _validate_effects(readback["effects"])
-    if error is None:
-        error = _validate_deliveries_and_receipts(readback["slack_deliveries"], readback["status_receipts"])
+    # The shared per-task validation (the in-image consistency command runs the same over every task): attempt
+    # histories, usage, effects, deliveries and receipts, lifecycle order and settlement.
+    # In-flight rows (a delivery still posting, usage not yet recorded) are not errors; the checks that read them
+    # grade what has settled.
+    intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
+    latest, errors, _ = task_evidence_errors({**readback, "source_channel_id": intake.get("channel_id") or "",
+                                              "source_thread_ts": intake.get("thread_ts") or "",
+                                              "source_owner_user_id": owner or ""})
+    error = next((value for value in errors.values() if value is not None), None)
     if error is None:
         error = _counter_consistency_error(readback)
     if error is not None:
@@ -575,6 +465,39 @@ def _readback(task_id, task):
     if not readback["complete"]:
         return readback, latest, "incomplete", "readback truncated: " + ",".join(map(str, readback.get("truncated", [])))
     return readback, latest, "collected", None
+
+
+def intake_claim_matches(task, readback, input_ts):
+    """The gateway attestation joined to its append-only claim, never the mutable projection label alone.
+
+    True only when the task says slack_gateway_attested and the complete readback carries exactly one
+    director_primary_intake_auth_claim row of that class for this task whose payload digest is main.py's
+    digest of this very intake (approvals.verify_slack_intake_attestation) and whose idempotency digest is
+    primary_default._request's over its source event, channel and thread. The claim's own time is a durable
+    moment too: timezone-aware, no earlier than the correlated Slack input (input_ts; the gateway forwards a
+    post it has seen), and no later than the task's creation (create_intake claims before the graph exists)
+    or the readback's capture. Anything else is not attested.
+    """
+    from director_orchestrator.approvals import _canonical_digest
+    intake = task.get("intake")
+    claims = (readback or {}).get("intake_auth_claims")
+    if (not isinstance(intake, dict) or not isinstance(claims, list) or len(claims) != 1
+            or not isinstance(claims[0], dict) or task.get("intake_authentication") != "slack_gateway_attested"
+            or claims[0].get("authentication_class") != "slack_gateway_attested"):
+        return False
+    expected = ("sha256:" + _canonical_digest(intake),
+                "sha256:" + _canonical_digest({key: intake.get(key) for key in ("source_event_id", "channel_id",
+                                                                                "thread_ts")}))
+    observed = (claims[0].get("payload_digest"), claims[0].get("idempotency_key_digest"))
+    claimed, created, captured = (_when(claims[0].get("created_at")), _when(readback.get("task_created_at")),
+                                  _when(readback.get("captured_at")))
+    try:
+        posted = datetime.fromtimestamp(float(Decimal(str(input_ts))), timezone.utc) if input_ts else None
+    except (ArithmeticError, ValueError, OverflowError):
+        posted = None
+    return (None not in (claimed, created, captured, posted) and posted <= claimed <= created <= captured
+            and all(isinstance(value, str) and hmac.compare_digest(value.encode(), wanted.encode())
+                    for value, wanted in zip(observed, expected)))
 
 
 def _provider_effect_state(latest):
@@ -617,7 +540,8 @@ def _external_effect_state(effects):
 
 
 def qualification_evidence(task_id, task, rows, rows_bound, input_message, final, *, baseline=None, receipt_id=None,
-                           baseline_authority="caller-supplied-file", before_binding=None, after_binding=None):
+                           baseline_authority="caller-supplied-file", before_binding=None, after_binding=None,
+                           owner=None):
     """Section 4 correlation chain derived from the typed opt-in readback.
 
     Identities come from real persisted keys: assignment_id/sequence, attempt
@@ -630,7 +554,7 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
     outcomes = _typed_list(task, "assignment_outcomes") or []
     history = _typed_list(task, "provider_run_history")
     contacts = _typed_list(task, "provider_contact_attempts")
-    readback, latest, state, reason = _readback(task_id, task)
+    readback, latest, state, reason = _readback(task_id, task, owner)
     collected = state == "collected"
     # Only a complete, validated readback yields derived identities, states or
     # amounts: the chain below never falls back to the ordinary TaskRecord
@@ -669,7 +593,11 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
         effect_state = "PROVIDER_EFFECT_RECORDED"
     else:
         effect_state = None
-    if usage_rows:
+    if usage_rows and any(r["actual_microusd"] is None for r in usage_rows):
+        # A reservation whose usage is not recorded yet (spend outer-joined to usage): the cost is unknown, never
+        # the sum of what happens to be recorded.
+        measured_cost, cost_basis, usage = None, UNKNOWN, None
+    elif usage_rows:
         # Validated in _readback: unique, joined to a valid attempt of the same
         # provider, exact non-negative integers. Amount families stay separate.
         measured_cost, cost_basis = sum(r["actual_microusd"] for r in usage_rows) / 1_000_000, "authenticated_usage_table"
@@ -991,14 +919,18 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     rows = deliveries if rows_ok else []
     rows_bound = rows_ok and all(row.get("task_id") == task_id for row in rows)
     raw = lambda message: html.unescape(str(message.get("text", "")))
-    clean = lambda text: re.sub(r"<@[A-Z0-9]+>", "", text).strip()
+    clean = lambda text: re.sub(r"<@[A-Z0-9]+>", "", text).strip()  # slack_bot._clean_text
     messages = [m for m in messages if isinstance(m, dict) and isinstance(m.get("ts"), str)
         and TS.fullmatch(m["ts"]) and (m["ts"] == thread or m.get("thread_ts") == thread)]
+    from director_orchestrator.models import canonical_slack_source_event_id
+    # The gateway's own identity for the owner's message (slack_bot._forward and _forward_thread_reply:
+    # the canonical `<channel>:<ts>`, else client_msg_id, event_ts or ts), computed by the same function.
+    source_of = lambda m: (canonical_slack_source_event_id({"channel": channel, "ts": m.get("ts")})
+        or m.get("client_msg_id") or m.get("event_ts") or m.get("ts"))
     inputs = [m for m in messages if isinstance(intake.get("source_event_id"), str)
-        and intake["source_event_id"] and (intake["source_event_id"] in
-        (m.get("client_msg_id"), m.get("event_ts"), m.get("ts")))
+        and intake["source_event_id"] and intake["source_event_id"] == source_of(m)
         and m.get("user") == owner and not m.get("bot_id")
-        and not m.get("subtype") and clean(str(m.get("text", ""))) == intake.get("text")]
+        and unedited(m) and clean(str(m.get("text", ""))) == intake.get("text")]
     bound = (task.get("task_id") == task_id and intake.get("channel_id") == channel
         and intake.get("thread_ts") == thread and intake.get("user_id") == owner
         and headers.get("x-task-engine-owner") == "langgraph")
@@ -1006,9 +938,19 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     bound = bool(bound and input_message)
     terminal_rows = [r for r in rows if r.get("notification_key") == "terminal"] if rows_bound else []
     ids = {r.get("client_msg_id") for r in terminal_rows if r.get("client_msg_id")}
-    # Count additional bot final messages too, not just the first ledger match.
-    final_pattern = re.compile(re.escape(task_id) + r"\s+—\s+(?:SUCCEEDED|FAILED|CANCELLED|POLICY_STOPPED|COMPLETED)\b")
-    finals = [m for m in messages if bot and m.get("user") == bot and
+    # Count additional bot final messages too, not just the first ledger match: any of the Director's own
+    # terminal classifications (primary_slack_delivery.render_notification renders `<task> — <classification>`).
+    # The producer (PrimarySlackDelivery.scan) keys a notification by family: 'approval:' for a pending prompt,
+    # 'hold:' for an OWNER_DECISION_REQUIRED or RECONCILIATION_REQUIRED classification, and 'terminal' only for
+    # every other one. So only those settled classifications can head a final reply, and a message that is a
+    # known approval or hold delivery is never one, whatever its header says.
+    from director_orchestrator.langgraph_primary import TerminalClassification
+    held = {TerminalClassification.OWNER_DECISION_REQUIRED, TerminalClassification.RECONCILIATION_REQUIRED}
+    final_pattern = re.compile(re.escape(task_id) + r"\s+—\s+(?:"
+        + "|".join(re.escape(str(item)) for item in TerminalClassification if item not in held) + r")\b")
+    not_final = {r.get("client_msg_id") for r in rows
+                 if notification_key_family(r.get("notification_key")) in ("approval", "hold")} if rows_bound else set()
+    finals = [m for m in messages if bot and m.get("user") == bot and m.get("client_msg_id") not in not_final and
               (m.get("client_msg_id") in ids or final_pattern.search(raw(m)))]
     final = finals[0] if complete and len(finals) == 1 else None
     correlated = bool(bound and final and len(terminal_rows) == 1 and terminal_rows[0].get("state") == "DELIVERED"
@@ -1027,6 +969,9 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     zero_recorded = (bound and all(task.get(key) == [] for key in empty_fields)
         if all(isinstance(task.get(key), list) for key in empty_fields) else None)
     approval_rows = [r for r in rows if str(r.get("notification_key", "")).startswith("approval:")]
+    claim_readback, _, claim_state, _ = _readback(task_id, task, owner)
+    claim_attested = (claim_state == "collected" and input_message is not None
+                      and intake_claim_matches(task, claim_readback, input_message.get("ts")))
     pause, machine = owner_pause(rows, wall, input_message["ts"], final["ts"]) if (
         correlated and input_message and rows_bound and len(rows) < 100) else (None, None)
     safe_receipts = [{key: row.get(key) for key in ("notification_key", "projection_digest", "client_msg_id",
@@ -1040,13 +985,18 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "source_event_id_sha256": digest(encode(intake["source_event_id"]))
             if isinstance(intake.get("source_event_id"), str) and intake["source_event_id"] else None,
         "owner_account_input_matched": bool(input_message), "human_typing_attested": None,
-        "task_api_gateway_attested": task.get("intake_authentication") == "slack_gateway_attested",
+        # Joined to the append-only intake claim in a complete readback, not read from the projection label.
+        "task_api_gateway_attested": claim_attested,
         "projection_digest": headers.get("x-primary-projection-digest"),
         "slack_thread_complete_at_read": complete, "observed_final_message_count": len(finals),
         "terminal_reply_count": len(finals) if complete else None,
+        # Slack keeps an edited message's ts but returns its new text, so an edited or
+        # subtyped terminal reply cannot show the label or cost text it was posted with.
         "terminal_messages": [{"ts": m["ts"], "client_msg_id": m.get("client_msg_id"),
-            "body_sha256": digest(encode(m)), "simulation_label_present": LABEL in raw(m),
-            "actual_cost_not_recorded_present": "Actual USD cost: not recorded" in raw(m)} for m in finals],
+            "body_sha256": digest(encode(m)),
+            "simulation_label_present": unedited(m) and LABEL in raw(m),
+            "actual_cost_not_recorded_present": unedited(m) and "Actual USD cost: not recorded" in raw(m)}
+            for m in finals],
         "final_receipt_matches_native_message": correlated,
         "delivery_receipt_list_complete": rows_bound and len(rows) < 100,
         "delivery_receipts": safe_receipts, "owner_pause_seconds": pause, "machine_seconds": machine,
@@ -1066,7 +1016,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "qualification_evidence": qualification_evidence(task_id, task, rows, rows_bound, input_message, final,
                                                          baseline=baseline, receipt_id=receipt_id,
                                                          baseline_authority=baseline_authority,
-                                                         before_binding=before_binding, after_binding=after_binding)}
+                                                         before_binding=before_binding, after_binding=after_binding,
+                                                         owner=owner)}
 
 
 RUBRIC_REQUIREMENTS = {
@@ -1104,8 +1055,12 @@ def evaluate_rubric(row, rubric, rubric_digest):
         declared_before = (datetime.fromisoformat(rubric["declared_at"]).timestamp()
                            <= float(row["input_message_ts"]))
     checks = {
-        "predeclared": declared_before and row.get("input_rubric_sha256") == rubric_digest,
-        "task_bound": row.get("task_record_bound") is True,
+        "predeclared": declared_before and isinstance(row.get("input_rubric_sha256"), str)
+            and hmac.compare_digest(row["input_rubric_sha256"].encode(), str(rubric_digest).encode()),
+        # The task came from its trial's root post: an owner reply inside the thread that triggered a task is not a
+        # trial's source event (review 4110671087).
+        "task_bound": row.get("task_record_bound") is True and row.get("input_message_ts") is not None
+            and row.get("input_message_ts") == row.get("thread_ts"),
         "one_terminal": type(row.get("terminal_reply_count")) is int and row["terminal_reply_count"] == 1,
         "task_done": row.get("task_status") == "DONE",
         "offline_outcomes": row.get("all_recorded_outcomes_are_offline_doubles") is True,
@@ -1272,3 +1227,20 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

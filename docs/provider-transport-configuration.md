@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:19 UTC | BEGIN]] -->
 # Provider transport configuration
@@ -52,6 +53,22 @@ checked before dispatch, not by health/challenge.
 
 See `host_provider_bridge.py`, `host_provider_bridge_server.py` and the launcher.
 Firecrawl is not a host-bridge lane.
+
+### Z.ai (GLM) over the bridge
+
+Like native Codex, the `zai` entry configures an in-process transport rather
+than a generic child command. It is exactly
+`[<absolute claude.exe>, <GLM model>, <max turns>, "read-only" | "owned-path-writes",
+"sha256:<SHA-256 of the key's ID part>"]`. Forward `ZAI_API_KEY` from the bridge
+profile by naming it in `DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES`; the bridge
+process reads it, refuses it if its key ID does not match the digest, and passes
+it to the CLI only as `ANTHROPIC_AUTH_TOKEN` for Z.ai's Coding Plan endpoint.
+The authenticated challenge reports the entry, and the Director client
+(`ZAI_TRANSPORT=host_bridge`, `ZAI_MODEL`, no local key or CLI) builds the lane
+only when the reported model equals its own. Preflight checks the executable
+path only; the entry's shape, the key-ID match and the executable file are
+checked when the server starts and on every challenge. See
+`docs/provider-setup.md#z-ai-production-lane`.
 
 ## Owner-only ChatGPT Slack alias
 
@@ -115,3 +132,4 @@ qualification, bounded execution and accepted provider bindings. Merely adding
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->

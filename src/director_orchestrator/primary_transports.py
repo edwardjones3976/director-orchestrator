@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -131,6 +133,10 @@ _PROVIDER_AUTH_ENVIRONMENT: dict[str, frozenset[str]] = {
     "github-copilot": frozenset(
         {"GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"}
     ),
+    # Nothing is inherited for Z.ai: its transport injects only the configured
+    # ZAI_API_KEY (as the child's ANTHROPIC_AUTH_TOKEN) and Z.ai's endpoint, so a
+    # host Anthropic or Claude credential can never reach a GLM run.
+    "zai": frozenset(),
 }
 
 
@@ -258,6 +264,7 @@ PRIMARY_PROVIDER_LANES = (
     "perplexity",
     "firecrawl",
     "github-copilot",
+    "zai",
 )
 
 
@@ -1316,6 +1323,8 @@ def _normalize_host_native_result(
 class NativeCommandPacketTransport:
     """Normalize one authenticated native CLI envelope into a bound result packet."""
 
+    _zai_native = False
+
     def __init__(
         self,
         provider_id: str,
@@ -1329,6 +1338,10 @@ class NativeCommandPacketTransport:
     ) -> None:
         if provider_id not in PRIMARY_PROVIDER_LANES:
             raise ValueError("native command provider lane is unsupported")
+        if (provider_id == "zai") != self._zai_native:
+            # Z.ai runs the Claude Code executable against its own endpoint; only
+            # its dedicated transport binds that endpoint, key, model and tools.
+            raise ValueError("the zai lane requires its dedicated native transport")
         if prompt_mode not in {"stdin", "argument", "grok-prompt-file"}:
             raise ValueError("unsupported native command prompt mode")
         if payload_mode not in {"work-packet", "antigravity-closed-directive"}:
@@ -1366,14 +1379,7 @@ class NativeCommandPacketTransport:
     ) -> dict[str, Any]:
         return normalize_native_provider_envelope(self.provider_id, work, native)
 
-    def send(
-        self, work_packet_json: bytes, *, context: ProviderAdapterContext
-    ) -> Mapping[str, object]:
-        if context.fencing_generation < 1:
-            raise RuntimeError("native transport lacks primary writer fencing")
-        # Fixed before the prompt exists: the prompt document, a prompt file
-        # and the spawn are all charged to it.
-        cutoff = _command_cutoff(context, self.maximum_timeout_seconds, "native transport")
+    def _prompt(self, work_packet_json: bytes) -> bytes:
         fields = ("outcome", "status", "artifacts", "checks", "acceptance", "risks",
                   "blockers", "requested_decisions", "side_effects", "usage", "revision_recommended")
         properties = _validators()["result"].schema["properties"]
@@ -1405,6 +1411,17 @@ class NativeCommandPacketTransport:
                 b"Do not widen its authority. " + instructions
                 + canonical_json_bytes(validated_compact_view(json.loads(work_packet_json)))
             )
+        return prompt
+
+    def send(
+        self, work_packet_json: bytes, *, context: ProviderAdapterContext
+    ) -> Mapping[str, object]:
+        if context.fencing_generation < 1:
+            raise RuntimeError("native transport lacks primary writer fencing")
+        # Fixed before the prompt exists: the prompt document, a prompt file
+        # and the spawn are all charged to it.
+        cutoff = _command_cutoff(context, self.maximum_timeout_seconds, "native transport")
+        prompt = self._prompt(work_packet_json)
         argv = list(self.command)
         input_bytes: bytes | None = prompt
         temporary_path: str | None = None
@@ -1660,8 +1677,19 @@ def discover_local_primary_command_transports(
     host_bridge_writer_owner_token_digest: str = "",
     host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
     host_bridge_attested_argv: Mapping[str, str] | None = None,
+    zai: Any = None,
+    zai_bridge: Any = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
-    """Discover documented noninteractive CLIs; never launch or authenticate them."""
+    """Discover documented noninteractive CLIs; never launch or authenticate them.
+
+    ``zai`` is the deployment's local ``ZaiNativeConfig`` or None. Z.ai is never
+    found on PATH: the same executable is the Claude lane there, so the Z.ai
+    lane exists only from its explicit configuration and readiness.
+    ``zai_bridge`` is the Director's ``ZaiBridgeExpectation`` or None: the lane
+    is bridged only when the signed challenge reports a Z.ai host command for
+    exactly that GLM model, so a Linux container needs neither the Windows CLI
+    nor the Z.ai key.
+    """
 
     if openai_transport not in {"responses-api", "native-codex-host"}:
         raise ValueError("OpenAI primary transport must be explicit")
@@ -1732,6 +1760,15 @@ def discover_local_primary_command_transports(
             transport_kind="responses-api", executable_observed=True,
             authenticated_observed=True,
         )
+    if zai is not None and bool(observed_auth.get("zai", False)):
+        from .zai_native import ZaiNativePacketTransport
+
+        transports["zai"] = ZaiNativePacketTransport(zai, cwd=root)
+        capabilities["zai"] = PrimaryProviderCapability(
+            provider_id="zai", backend_identity="zai",
+            transport_kind="zai-native-cli", executable_observed=True,
+            authenticated_observed=True,
+        )
     if pplx is not None and bool(observed_auth.get("perplexity", False)):
         transports["perplexity"] = PublicSearchCommandTransport(
             "perplexity", pplx, cwd=root,
@@ -1757,6 +1794,26 @@ def discover_local_primary_command_transports(
             if provider_id == "openai" and openai_transport != "native-codex-host":
                 continue
             if provider_id not in host_bridge_challenge.configured_providers:
+                continue
+            if provider_id == "zai":
+                # Disabled here, or a host serving another model: no transport,
+                # so the lane stays unavailable and nothing is ever sent.
+                if zai_bridge is None or not zai_bridge.matches(
+                        (host_bridge_challenge.lane_argv or {}).get("zai")):
+                    continue
+                from .zai_native import normalize_zai_bridge_result, zai_bridge_guard
+                transports["zai"] = HostBridgePacketTransport(
+                    "zai", host_bridge_endpoint, host_bridge_secret,
+                    writer_owner_token_digest=host_bridge_writer_owner_token_digest,
+                    result_normalizer=partial(normalize_zai_bridge_result, zai_bridge.model),
+                    request_guard=partial(
+                        zai_bridge_guard, allow_repository_write=zai_bridge.allow_repository_write),
+                )
+                capabilities["zai"] = PrimaryProviderCapability(
+                    provider_id="zai", backend_identity="zai",
+                    transport_kind="authenticated-windows-host-bridge",
+                    executable_observed=True, authenticated_observed=True,
+                )
                 continue
             # The Antigravity lane keeps its closed-directive contract when the
             # host bridge replaces its native transport: the bridge posts the
@@ -1946,3 +2003,5 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

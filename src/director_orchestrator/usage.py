@@ -1,3 +1,15 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
@@ -28,7 +40,9 @@ from .models import (
     UsageCheckStatus,
 )
 from .providers import (
+    ProviderDailyLimitExceeded,
     GeminiAdapter,
+    GrokAdapter,
     ProviderAdapter,
     ProviderDailySpendLedger,
     ProviderError,
@@ -112,6 +126,7 @@ def _token_value(usage: dict[str, Any], *names: str) -> int | None:
 
 
 def normalize_usage(payload: dict[str, Any]) -> tuple[dict[str, Any], int | None, int | None, int | None]:
+    # Recursive token discovery is not spend authority and must never feed a charge.
     usage = _usage_payload(payload)
     input_tokens = _token_value(usage, "input_tokens", "prompt_tokens", "prompt_token_count")
     output_tokens = _token_value(
@@ -139,6 +154,41 @@ def normalize_reported_cost(usage: dict[str, Any]) -> float | None:
         if parsed >= 0 and math.isfinite(parsed):
             return parsed
     return None
+
+
+def authoritative_reported_cost(provider: ProviderName | str, raw: Any) -> float | None:
+    """Read native envelope metering only, never model or tool content."""
+    # Gemini Interactions, Grok Responses and Perplexity adapters store the native
+    # response verbatim. All use top-level usage, not generateContent usageMetadata.
+    if provider not in {"gemini", "grok", "xai", "perplexity"} or not isinstance(raw, dict):
+        return None
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    # Match the native Grok Responses conversion in primary_transports.py.
+    if provider in {"grok", "xai"} and "cost_in_usd_ticks" in usage:
+        ticks = usage["cost_in_usd_ticks"]
+        if type(ticks) is not int or ticks < 0:
+            return None
+        try:
+            return normalize_reported_cost({"cost": ticks / 10_000_000_000})
+        except OverflowError:
+            return None
+    try:
+        return normalize_reported_cost(usage)
+    except OverflowError:
+        return None
+
+
+# The most attempts one usage check may make (GeminiAdapter.usage_check bounds its own at five).
+_PROBE_ATTEMPTS_MAX = 5
+
+
+def _probe_key(cycle_id: str, provider: str, attempt: int = 1) -> str:
+    """The spend-ledger effect key of one usage-check probe attempt (run_once reserves every attempt before
+    dispatch). The first attempt keeps the original per-cycle key."""
+    suffix = "" if attempt == 1 else f":{attempt}"
+    return hashlib.sha256(f"usage:{cycle_id}:{provider}{suffix}".encode("utf-8")).hexdigest()
 
 
 class UsageMonitor:
@@ -226,6 +276,14 @@ class UsageMonitor:
             )
         return {
             "request_count": request_count,
+            # Kept apart (review of check 15): the monitor's own USAGE_CHECK_PROMPT probes, and real provider
+            # (work) requests. request_count stays as it was for the limits above.
+            "usage_check_count": sum(record.attempt_count for record in attempted),
+            "provider_request_count": self._provider_request_count(provider, records, now),
+            # Settled real requests whose provider reported no cost (review 4112533824): they count at their
+            # reservation, a lower bound, so check 15 cannot pass while any exists. None: not ledger-accounted.
+            "unreconciled_request_count": self._unreconciled_request_count(provider, records, now),
+            "exposure_usd": self._exposure_usd(provider, attempted, now),
             "retry_count": retry_count,
             "quota_failure_count": quota_failures,
             "total_tokens": total_tokens,
@@ -237,6 +295,92 @@ class UsageMonitor:
             "reserved_cost_usd": reserved_cost_usd,
         }
 
+    def _provider_request_count(self, provider: str, records: list[UsageCheckRecord], now: datetime) -> int | None:
+        """Real provider requests reserved today in the durable spend ledger, excluding this monitor's own probes
+        (their effect key is sha256("usage:<cycle>:<provider>"), one per usage-check cycle). None for a provider
+        the ledger does not account (its real requests are not visible to the monitor)."""
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            return None
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return None
+        probes = {_probe_key(record.cycle_id, provider, attempt)
+                  for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
+        return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now, include_released=False))
+
+    def _unreconciled_request_count(self, provider: str, records: list[UsageCheckRecord], now: datetime) -> int | None:
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            return None
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return None
+        probes = {_probe_key(record.cycle_id, provider, attempt)
+                  for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
+        # A reservation still unsettled after the provider timeout counts too (review 4112697677).
+        stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
+        return sum(key not in probes for key in self.provider_spend.unreconciled(name, stale_after=stale_after, now=now))
+
+    def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
+        """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts
+        at its actual charge when known, otherwise its reservation; a work reservation with no
+        actual charge yet counts at its reservation; a probe the ledger does not reserve counts at its reported cost.
+        max(total reported, total reserved) would understate a probe that cost more than its floor beside work."""
+        actual = {_probe_key(record.cycle_id, provider): record.reported_cost_usd or 0.0 for record in attempted}
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            name = None
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return round(sum(actual.values()), 8)
+        # The ledger's own reconciliation (the admission gate's), plus any probe charge not yet in it.
+        keys = {key for key, _ in self.provider_spend.reservations(name, now=now)}
+        _, exposure = self.provider_spend.exposure(name, now=now)
+        return round(exposure + sum(cost for key, cost in actual.items() if key not in keys), 8)
+
+    def _probe_reserver(self, cycle_id: str, provider: str, now: datetime):
+        """The usage check's attempt bound and a ``reserve(attempt)`` that reserves ONE attempt, under its own
+        effect key, through the ledger's atomic reserve(). It is called immediately before that attempt's request is
+        sent, never ahead (review 4111996174): a probe that succeeds first time holds one slot, and a refused
+        reservation raises before its request, so nothing unreserved is dispatched and no reservation outlives a
+        request that was not sent. Returns (None, None) for a provider the ledger does not account (it has no cap)."""
+        # Probes share admission with work; a floor cannot let them bypass an
+        # outstanding serialized request or under-reserve concurrent API calls.
+        limits = {
+            "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd),
+            "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd),
+            "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd),
+        }
+        if provider not in limits:
+            return None, None
+        request_limit, budget_usd = limits[provider]
+        floor_usd = self.settings.request_cost_bound_usd(provider)
+        self.settings.provider_token_prices(provider)
+        bound = None
+        if provider == "grok":
+            body = GrokAdapter(self.settings).request_body(USAGE_CHECK_PROMPT)
+            bound = self.settings.token_request_cost_bound_usd(provider, body, body["max_output_tokens"])
+        # Gemini's stateless probe has no enforced output cap; Perplexity's
+        # preset may add search charges. Neither is bounded by token prices alone.
+        attempts = 1
+
+        def reserve(attempt: int) -> None:
+            if not 1 <= attempt <= attempts:
+                raise ProviderDailyLimitExceeded(f"{provider} usage check attempt {attempt} exceeds its bound")
+            self.provider_spend.reserve(
+                provider=ProviderName(provider),
+                effect_key=_probe_key(cycle_id, provider, attempt),
+                estimated_cost_usd=max(bound, floor_usd or 0.0) if bound is not None else 0.0,
+                request_limit=request_limit,
+                budget_usd=budget_usd,
+                # The accounting day of THIS request, read immediately before it (review 4112206672).
+                now=datetime.now(timezone.utc),
+                serialize=bound is None,
+            )
+
+        return attempts, reserve
+
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
         if provider not in {"gemini", "grok", "perplexity"}:
             return None
@@ -245,11 +389,8 @@ class UsageMonitor:
         if isinstance(request_limit, int) and accounting["request_count"] >= request_limit:
             return "Provider daily request limit reached"
         budget = accounting["daily_budget_usd"]
-        accounted_cost = (
-            accounting["reserved_cost_usd"]
-            if accounting["reserved_cost_usd"] is not None
-            else accounting["reported_cost_usd"]
-        )
+        # Known actual charges replace reservations; unknown charges retain them.
+        accounted_cost = accounting["exposure_usd"]
         if isinstance(budget, (int, float)) and accounted_cost >= budget:
             return "Provider daily cost limit reached"
         return None
@@ -431,17 +572,22 @@ class UsageMonitor:
         return current
 
     async def _prompt(
-        self, provider: str, *, remaining_requests: int | None = None
+        self, provider: str, *, remaining_requests: int | None = None, before_attempt=None
     ) -> ProviderRun:
         if provider == "openai":
             return await self._openai_usage_check()
         adapter = self.adapters[ProviderName(provider)]
         if provider == "gemini" and isinstance(adapter, GeminiAdapter):
+            # The adapter reserves each retry itself, immediately before sending it.
             run = await adapter.usage_check(
                 USAGE_CHECK_PROMPT,
                 max_attempts=remaining_requests,
+                before_attempt=before_attempt,
             )
         else:
+            # A single-request usage check: its one attempt is reserved immediately before it is sent.
+            if before_attempt is not None:
+                before_attempt(1)
             run = await adapter.usage_check(USAGE_CHECK_PROMPT)
         return await self._wait(adapter, run)
 
@@ -459,7 +605,7 @@ class UsageMonitor:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
-            reported_cost_usd=normalize_reported_cost(raw_usage),
+            reported_cost_usd=authoritative_reported_cost(provider, run.raw),
             attempt_count=run.attempt_count,
             raw_usage=raw_usage,
             error=f"Provider ended with status {run.status}" if failed else None,
@@ -571,24 +717,9 @@ class UsageMonitor:
                         )
                     else:
                         try:
-                            if provider == "grok":
-                                effect_key = hashlib.sha256(
-                                    f"usage:{cycle_id}:{provider}".encode("utf-8")
-                                ).hexdigest()
-                                self.provider_spend.reserve(
-                                    provider=ProviderName.GROK,
-                                    effect_key=effect_key,
-                                    estimated_cost_usd=self.settings.grok_request_cost_floor_usd,
-                                    request_limit=self.settings.grok_daily_request_limit,
-                                    budget_usd=self.settings.grok_daily_budget_usd,
-                                    now=now,
-                                )
-                            run = await self._prompt(
-                                provider,
-                                remaining_requests=self._supplemental_remaining_requests(
-                                    provider, now
-                                ),
-                            )
+                            attempts, reserve = self._probe_reserver(cycle_id, provider, now)
+                            run = await self._prompt(provider, remaining_requests=attempts,
+                                                     before_attempt=reserve)
                             record = self._record_from_run(cycle_id, provider, run)
                         except Exception as exc:
                             record = UsageCheckRecord(
@@ -606,6 +737,16 @@ class UsageMonitor:
                                 error=f"{type(exc).__name__}: {exc}"[:2_000],
                             )
                     self.store.add_usage_check(record)
+                    # Settle against the probe reservation, including unknown costs (unreconciled)
+                    # and authoritative zero costs. Skipped probes incurred no request.
+                    if (provider in {"gemini", "grok", "perplexity"}
+                            and record.status != UsageCheckStatus.SKIPPED):
+                        self.provider_spend.record_charge(
+                            provider=ProviderName(provider),
+                            effect_key=_probe_key(cycle_id, provider),
+                            actual_cost_usd=record.reported_cost_usd,
+                            now=datetime.now(timezone.utc),
+                        )
                     records.append(record)
                     if index < len(providers) - 1:
                         await asyncio.sleep(
@@ -687,6 +828,9 @@ class UsageMonitor:
                 if provider not in current_signals
                 or provider not in latest_by_provider
             ],
+            # The UTC day every daily_accounting entry covers, from the same `now`, so a
+            # reader never has to guess it from its own clock across midnight.
+            "accounting_day": self._utc_day_start(now).date().isoformat(),
             "daily_accounting": {
                 provider: self._daily_accounting(provider, now)
                 for provider in configured
@@ -699,3 +843,15 @@ class UsageMonitor:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:37 UTC | END]]

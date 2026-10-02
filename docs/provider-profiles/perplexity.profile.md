@@ -1,3 +1,12 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -70,7 +79,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 
 | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | --- | --- | --- |
-| 5 | 0 | 25 | 0 |
+| 4 | 0 | 21 | 0 |
 
 ## Roles and responsibilities
 
@@ -138,8 +147,11 @@ Strengths:
 
 | Variable | Kind | Settings field | Default | In .env.example | Value recorded |
 | --- | --- | --- | --- | --- | --- |
+| `PERPLEXITY_INPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `perplexity_input_usd_per_mtok` | - | yes | no |
+| `PERPLEXITY_OUTPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `perplexity_output_usd_per_mtok` | - | yes | no |
 | `PERPLEXITY_DAILY_BUDGET_USD` | daily_budget_usd | `perplexity_daily_budget_usd` | `2.0` | yes | no |
 | `PERPLEXITY_DAILY_REQUEST_LIMIT` | daily_request_limit | `perplexity_daily_request_limit` | `100` | yes | no |
+| `PERPLEXITY_USAGE_PROBE_COST_CEILING_USD` | per_request_cost_floor_usd | `perplexity_usage_probe_cost_ceiling_usd` | - | yes | no |
 | `PERPLEXITY_MAX_RESULTS` | max_results | `perplexity_max_results` | `10` | yes | no |
 | `PERPLEXITY_TIMEOUT_SECONDS` | timeout_seconds | `perplexity_timeout_seconds` | `180` | yes | no |
 | `PERPLEXITY_SEARCH_CONTEXT_SIZE` | search_context_size | `perplexity_search_context_size` | `high` | yes | no |
@@ -268,6 +280,7 @@ Separation of duties:
 | `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `provider-usage-checks`, `owner-manual-recovery` |
 | `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `zai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -303,3 +316,12 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | END]] -->

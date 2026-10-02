@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
@@ -755,7 +756,7 @@ if ($missing.Count -gt 0) {
 }
 $requiredProviders = @(
     "openai", "claude", "cursor", "grok", "antigravity", "perplexity",
-    "firecrawl", "github-copilot"
+    "firecrawl", "github-copilot", "zai"
 )
 $configuredProviders = @(([string]$values["LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS"]).Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $coreProviders = @("openai", "claude", "cursor", "grok")
@@ -1273,3 +1274,4 @@ if ($Action -eq "Rollback") {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

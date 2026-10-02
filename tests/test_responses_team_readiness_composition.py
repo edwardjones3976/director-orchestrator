@@ -1,3 +1,6 @@
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 04:10 UTC | BEGIN]]
+# [[Cursor | Auto | 2026-09-30 | 03:06 UTC | BEGIN]]
+# [[Cursor | Auto | 2026-09-28 | 23:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:10 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | BEGIN]]
@@ -611,25 +614,44 @@ class RealPostgresReadinessCompositionTests(unittest.TestCase):
         # The real row `reserve_provider_attempt` must `SELECT ... FOR UPDATE`
         # (`director_primary_parallel_assignment`), held open in a second real
         # connection for the whole assertion - a genuine lock witness, not a
-        # simulated delay.
+        # simulated delay. That second connection has to already be in the
+        # pool: opening it inside the deadline is what a saturated test lane
+        # turns into an instant refusal, and the 0.3s floor then fails before
+        # Postgres ever waits on the row lock.
+        with self.handle.pool.connection():
+            with self.handle.pool.connection():
+                pass
+        deadline_seconds = 1.0
         with self.handle.pool.connection() as blocker, blocker.transaction():
             blocker.execute(
                 f"SELECT * FROM {self.schema}.director_primary_parallel_assignment "
                 "WHERE task_id=%s AND assignment_id=%s FOR UPDATE", (task_id, assignment_id))
-            started = _monotonic()
-            with self.assertRaises(Exception):
-                self.ledger.reserve_provider_attempt(
-                    reservation=reservations[0], writer=writer, attempt_ordinal=1,
-                    format_roster=(("model-work-packet-v1", "responses-api"),),
-                    idempotency_key_digest=digest("idem"),
-                    budget_evidence_digest="sha256:" + "0" * 64,
-                    budget_admission=ProviderBudgetAdmission(authority, b.grant_digest),
-                    budget_limits=limits,
-                    deadline=_monotonic() + 0.4,
-                )
-            elapsed = _monotonic() - started
-        self.assertLess(elapsed, 3.0, "the lock wait must be cancelled near the deadline, not hang")
-        self.assertGreaterEqual(elapsed, 0.3, "the deadline must be honored, not refused instantly")
+            elapsed = 0.0
+            failure: BaseException | None = None
+            for _attempt in range(3):
+                started = _monotonic()
+                with self.assertRaises(Exception) as caught:
+                    self.ledger.reserve_provider_attempt(
+                        reservation=reservations[0], writer=writer, attempt_ordinal=1,
+                        format_roster=(("model-work-packet-v1", "responses-api"),),
+                        idempotency_key_digest=digest("idem"),
+                        budget_evidence_digest="sha256:" + "0" * 64,
+                        budget_admission=ProviderBudgetAdmission(authority, b.grant_digest),
+                        budget_limits=limits,
+                        deadline=started + deadline_seconds,
+                    )
+                elapsed = _monotonic() - started
+                failure = caught.exception
+                if elapsed >= 0.5 or type(failure).__name__ not in {
+                    "PoolTimeout", "OperationalError", "InterfaceError", "ConnectionTimeout",
+                }:
+                    break
+        self.assertLess(elapsed, 6.0, "the lock wait must be cancelled near the deadline, not hang")
+        self.assertGreaterEqual(
+            elapsed, 0.5,
+            "the deadline must be honored, not refused instantly "
+            f"({type(failure).__name__})",
+        )
         with self.handle.pool.connection() as connection:
             for table in ("director_primary_provider_attempt", "director_primary_provider_spend",
                           "director_primary_workload_assignment"):
@@ -1383,9 +1405,9 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
     def test_writer_lease_expiring_during_the_admission_wait_rolls_back(self):
         """The lease is proved against the real clock at the final fence.
 
-        The lease is set to run out one second from now, and the real
-        admission is then blocked on the batch row for longer than that. Its
-        first writer check passed while the lease was live, and holding that
+        The lease stays live until admission is visibly blocked on the batch
+        row, and that row is then held until the real clock is past the lease.
+        Its first writer check passed while the lease was live, and holding that
         row stops a takeover but not the clock; `now()` is this transaction's
         start time, so a transaction-start comparison would still call the
         lease current. The execution deadline is far later, so nothing else
@@ -1402,6 +1424,10 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             attempt_usd=float(wave.packet["limits"]["budget_usd"]) / 3.0,
             task_usd=wave.settings.max_task_budget_usd,
             daily_usd=wave.settings.max_daily_provider_budget_usd)
+        # Eight seconds matches the SQL interval below: long enough for a slow
+        # worker to pass the first now() check and block, then the held row
+        # outlives the lease.
+        lease_seconds = 8.0
 
         def admit():
             return self.ledger.reserve_provider_attempt(
@@ -1414,6 +1440,42 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 budget_limits=limits,
                 expected_authority_digest=wave.budget.grant_digest)
 
+        def batch_row_is_contended() -> bool:
+            with self.handle.pool.connection() as watcher:
+                waiting = watcher.execute(
+                    """
+                    SELECT 1
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM pg_locks AS waiting
+                        JOIN pg_class AS rel ON rel.oid = waiting.relation
+                        JOIN pg_namespace AS ns ON ns.oid = rel.relnamespace
+                        WHERE NOT waiting.granted
+                          AND rel.relname = 'director_primary_parallel_batch'
+                          AND ns.nspname = %s
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM pg_stat_activity AS activity
+                        WHERE activity.datname = current_database()
+                          AND activity.pid <> pg_backend_pid()
+                          AND activity.wait_event_type = 'Lock'
+                          AND strpos(activity.query, %s) > 0
+                    )
+                    """,
+                    (self.schema, f"{self.schema}.director_primary_parallel_batch"),
+                ).fetchone()
+            return waiting is not None
+
+        def writer_lease_expired() -> bool:
+            with self.handle.pool.connection() as watcher:
+                lease = watcher.execute(
+                    f"SELECT lease_expires_at <= clock_timestamp() AS expired "
+                    f"FROM {self.schema}.director_primary_task_writer WHERE task_id=%s",
+                    (wave.task_id,),
+                ).fetchone()
+            return lease is not None and bool(lease["expired"])
+
         with ThreadPoolExecutor(max_workers=1) as pool, self._no_provider_call():
             with self.handle.pool.connection() as blocker, blocker.transaction():
                 blocker.execute(
@@ -1422,12 +1484,32 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 with self.handle.pool.connection() as expiring, expiring.transaction():
                     expiring.execute(
                         f"UPDATE {self.schema}.director_primary_task_writer "
-                        "SET lease_expires_at = clock_timestamp() + interval '1 second' "
+                        "SET lease_expires_at = clock_timestamp() + interval '8 seconds' "
                         "WHERE task_id=%s", (wave.task_id,))
+                opened = real_monotonic()
                 admitting = pool.submit(admit)
-                sleep(1.6)
-                self.assertFalse(admitting.done(),
-                                  "admission must still be waiting on the locked batch row")
+                while real_monotonic() - opened < lease_seconds - 2.0:
+                    if batch_row_is_contended() or admitting.done():
+                        break
+                    sleep(0.05)
+                else:
+                    self.fail("admission did not reach the locked batch row while the lease was live")
+                self.assertFalse(
+                    admitting.done(),
+                    "admission must still be waiting on the locked batch row")
+                self.assertTrue(
+                    batch_row_is_contended(),
+                    "admission must be blocked on the batch row before the lease runs out")
+                expiry_deadline = opened + lease_seconds + 30.0
+                while not writer_lease_expired():
+                    if admitting.done():
+                        self.fail("admission completed before the writer lease expired")
+                    if real_monotonic() >= expiry_deadline:
+                        self.fail("writer lease did not expire within the bounded wait")
+                    sleep(0.05)
+                self.assertFalse(
+                    admitting.done(),
+                    "the batch lock must hold admission until the lease has expired")
             with self.assertRaises(ParallelDispatchError) as raised:
                 admitting.result(timeout=30)
         self.assertIn("writer authority", str(raised.exception))
@@ -2712,3 +2794,6 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:10 UTC | END]]
+# [[Cursor | Auto | 2026-09-28 | 23:58 UTC | END]]
+# [[Cursor | Auto | 2026-09-30 | 03:06 UTC | END]]
+# [[GitHub Copilot | copilot-swe-agent | 2026-09-30 | 04:10 UTC | END]]

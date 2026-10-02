@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -82,19 +83,26 @@ project-local eight responsibility areas and the Cursor, Antigravity,
 Perplexity, Claude, and OpenAI boundaries in
 [`provider-roles-contract.yaml`](provider-roles-contract.yaml); keep the acting Director's
 three canonical functions distinct — Moderator, Participant, and Director.
-Only Participant votes, casting the single existing Claude advisory vote at
-weight 2.0 or recording an explicit abstention; Moderator and Director add no second vote
-on top of it. Claude holds all three functions at once and retains its right to vote
-in every debate it joins, including every
-debate it moderates. Only Claude's own abstention forgoes exercising that right;
-separating the functions decides where a cast vote is recorded, never whether Claude
+Only Participant votes, casting the directing provider's single existing advisory vote
+at its configured full weight or recording an explicit abstention;
+Moderator and Director add no second vote on top of it. The directing provider
+retains its right to vote in every debate it joins, including every
+debate it moderates. Only that provider's own abstention forgoes exercising that right;
+separating the functions decides where a cast vote is recorded, never whether it
 retains the right to vote. Coordination, planning, and
 acceptance review are Director duties, not separate functions.
 
+Choose bounded assignments from the
+[provider-fit menu](../../project-bootstrap-protocol.md#provider-fit-menu), using
+verified capability, independence, capacity, and current availability. This template
+creates no standing provider assignment. The ChatGPT/Codex Director retains project
+coordination authority unless the owner explicitly appoints another project Director;
+record that appointment separately from the actual runtime provider.
+
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
-| Acting project Director | Claude | none | <Moderator, Participant, and Director kept distinct; Participant records Claude's one vote at full weight or an explicit abstention; moderating preserves the right to vote> |
-| Primary | <OpenAI/Codex, Cursor, or Grok> | <skill name or none> | <bounded contribution> |
+| Acting project Director | <ChatGPT/Codex Director or owner-appointed project Director> | none | <assignment authority; Moderator, Participant, and Director kept distinct; Participant records the provider's one vote at full configured weight or an explicit abstention; moderating preserves the right to vote> |
+| Primary | <eligible provider selected from the provider-fit menu> | <skill name or none> | <bounded contribution> |
 | Independent | <different provider> | <skill name or none> | <research, reproduction, QA, or review> |
 | Supplemental | <Antigravity, Perplexity, Firecrawl, or none> | <skill name or none> | <bounded contribution> |
 
@@ -140,3 +148,4 @@ changes authority, scope, cost, privacy, repository target, or risk.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]] -->

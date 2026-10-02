@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -122,13 +124,16 @@ team:
   # docs/templates/project-bootstrap/provider-roles-contract.yaml
   provider_roles_contract: "provider-roles-contract.yaml"
   director:
-    provider: "claude"
+    provider: "<openai | claude | canonical provider key from provider-roles-contract.yaml>"
+    appointment: "<owner appointment reference (date/record), or none>"
+    # Select bounded roles from docs/project-bootstrap-protocol.md#provider-fit-menu.
+    # This template creates no standing provider assignment; record owner appointment.
     # Acting leadership is separate from the actual runtime provider.
     # Keep Moderator, Participant and Director distinct per the roles contract.
     responsibilities: ["framing", "routing", "synthesis", "acceptance"]
   lanes:
     - id: "<lane-id>"
-      provider: "<claude | cursor | grok | gemini_antigravity | perplexity | other>"
+      provider: "<eligible provider selected from the provider-fit menu>"
       role: "<producer | researcher | verifier | reviewer | operator>"
       workflow_skill: "<catalog skill name or none>"
       responsibilities:
@@ -152,10 +157,13 @@ coordination:
 
 contribution_attribution:
   enabled: true
-  canonical_format: "[[Contributor | System | YYYY-MM-DD | HH:MM UTC | BEGIN|END]]"
-  preserve_prior_valid_tags: true
-  safe_human_text: "matching_inline_or_message_envelope"
-  structured_or_syntax_sensitive_artifacts: "external_submission_envelope"
+  commit_trailer: "Contributed-by: <Assistant or Tool> | <Complete Model or System>"
+  preserve_co_authored_by: true
+  pr_header: "Sole author: <assistant> (<model>); assistance: <id>[, <id>...]"
+  assistance_required_when_assisted: true
+  sole_author_rule: "https://github.com/edwardjones3976/director-orchestrator/pull/284"
+  new_in_file_tags: false
+  existing_tags: "historical_pending_mechanical_cleanup"
   authentication_or_authority_effect: "none"
 
 controls:
@@ -230,3 +238,5 @@ next:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:17 UTC | END]]

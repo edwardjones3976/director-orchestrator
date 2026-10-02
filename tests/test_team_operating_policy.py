@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -588,8 +592,9 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "investigator",
         ])
         profiles = self.directive["allocation_profiles"]
-        self.assertEqual(profiles["weights"]["engineering"], [40,25,15,10,10,0,0,0])
-        self.assertEqual(len(profiles["lane_order"]), 8)
+        self.assertEqual(profiles["weights"]["engineering"], [33,21,12,8,8,0,0,0,18])
+        self.assertEqual(len(profiles["lane_order"]), 9)
+        self.assertEqual(profiles["lane_order"][-1], "zai")
         for targets in profiles["weights"].values():
             self.assertEqual(sum(targets), 100)
         self.assertEqual(
@@ -927,8 +932,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
                 name: member["voting_power"]
                 for name, member in self.charter["committee"]["members"].items()
             },
-            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0},
+            # Owner decision 2026-09-27: Z.ai 1.5, others unchanged, total 10.0.
+            {"antigravity": 1.0, "cursor": 1.5, "grok": 1.5, "openai": 2.5, "claude": 2.0, "zai": 1.5},
         )
+        self.assertEqual(self.charter["committee"]["voting"]["configured_weight_total"], 10.0)
         review = self.directive["review"]
         self.assertEqual(review["reviewer"], "different_non_author")
         self.assertEqual(review["binding"], "exact_candidate")
@@ -2199,3 +2206,7 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

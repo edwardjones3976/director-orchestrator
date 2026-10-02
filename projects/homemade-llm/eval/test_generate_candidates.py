@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
@@ -60,7 +61,7 @@ class GenerateCandidatesTests(unittest.TestCase):
             refs_manifest=gen.manifest(self.refs), inputs_manifest=gen.manifest(self.inputs),
             model="fixture-model", label="fixture-base", base_url="http://127.0.0.1:1234/v1",
             model_gguf=self.gguf, lms_models_dir=self.root,
-            qwen3=False, control_prompt=None, item_timeout=180,
+            qwen3=False, control_prompt=None, item_timeout=180, max_tokens=4096,
         )
         self.loaded = [{"identifier": "fixture-model", "path": "fixture.gguf"}]
         self.catalog = [{"modelKey": "fixture-key", "path": "fixture.gguf"}]
@@ -108,6 +109,16 @@ class GenerateCandidatesTests(unittest.TestCase):
                     gen.run(self.args, self.transport)
                 self.transport.assert_not_called()
 
+    def test_input_without_id_is_rejected_before_any_request(self):
+        # The shared template tolerates a training row's id-less input block; an
+        # evaluation input file still needs its id to name the candidate.
+        (self.inputs / "p1.json").write_text(
+            json.dumps({k: v for k, v in self.item.items() if k != "id"}), encoding="utf-8")
+        self.args.inputs_manifest = gen.manifest(self.inputs)
+        with self.assertRaisesRegex(ValueError, "must carry id"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+
     def test_both_manifest_mismatches_stop_before_any_request(self):
         for name in ("refs_manifest", "inputs_manifest"):
             with self.subTest(name=name), mock.patch.object(self.args, name, "0" * 64):
@@ -144,6 +155,9 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertEqual(record["base_url"], self.args.base_url)
         self.assertEqual(record["lm_studio_version"], "unknown")
         self.assertEqual(record["schema_sha256"], gen.sha256(self.args.schema.read_bytes()))
+        self.assertEqual(record["decision"], "O-044")
+        self.assertEqual(record["max_tokens"], 4096)
+        self.assertNotIn("reasoning_effort", record)
         self.assertEqual(record["reference_manifest"], self.args.refs_manifest)
         self.assertEqual(record["input_manifest"], self.args.inputs_manifest)
         candidate_hash = gen.sha256((self.out / "p1.json").read_bytes())
@@ -157,6 +171,9 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertLessEqual(datetime.fromisoformat(record["start_utc"]), datetime.fromisoformat(record["end_utc"]))
         self.assertEqual(len(self.posts()), 1)
         body = self.posts()[0].args[2]
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["max_tokens"], 4096)
+        self.assert_generation_schema(body, record)
         user_message = json.loads(body["messages"][1]["content"])
         self.assertIsInstance(user_message, dict)
         self.assertEqual(set(user_message), {"objective", "repository", "title"})
@@ -258,20 +275,99 @@ class GenerateCandidatesTests(unittest.TestCase):
 
     def test_qwen3_request_contract(self):
         self.args.qwen3 = True
+        self.args.max_tokens = 2048
         record = gen.run(self.args, self.transport)
         method, url, body, timeout = self.posts()[0].args
         self.assertEqual((method, url, timeout), ("POST", self.args.base_url + "/chat/completions", 180))
         self.assertEqual(body["temperature"], 0)
         self.assertEqual(body["n"], 1)
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual(body["reasoning_effort"], "none")
+        self.assertEqual(body["max_tokens"], 2048)
+        self.assertEqual(record["reasoning_effort"], "none")
+        self.assertEqual(record["max_tokens"], 2048)
+        expected_schema = self.assert_generation_schema(body, record)
         self.assertEqual(body["response_format"], {"type": "json_schema", "json_schema": {
             "name": "model_work_packet_v1", "strict": True,
-            "schema": json.loads(self.args.schema.read_bytes()),
+            "schema": expected_schema,
         }})
         self.assertNotIn("$defs", body["response_format"]["json_schema"]["schema"])
         self.assertIn("Do not think", body["messages"][0]["content"])
         self.assertTrue(record["qwen3"])
         self.assertEqual(record["chat_template_kwargs"], {"enable_thinking": False})
+
+    def assert_generation_schema(self, body, record):
+        expected = json.loads(self.args.schema.read_bytes())
+        original_pattern = expected["properties"]["repository"]["pattern"]
+        escaped_pattern = r"^[^\/]+\/[^\/]+$"
+        expected["properties"]["repository"]["pattern"] = escaped_pattern
+        self.assertEqual(body["response_format"]["json_schema"]["schema"], expected)
+        self.assertEqual(record["schema_rewrites"], [{
+            "path": "/properties/repository/pattern", "from": original_pattern, "to": escaped_pattern,
+        }])
+        self.assertEqual(record["generation_schema_sha256"], gen.sha256(json.dumps(
+            expected, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")))
+        self.assertEqual(json.loads((self.out / "run.json").read_text()), record)
+        return expected
+
+    def test_generation_schema_preserves_escapes_and_nested_patterns(self):
+        original = {"description": "a/b", "allOf": [
+            {"pattern": r"^a/b$"}, {"pattern": r"^a\/b$"}, {"pattern": r"^a\\/b$"},
+        ]}
+        before = json.dumps(original)
+        generated, rewrites = gen.generation_schema(original)
+        self.assertEqual(generated, {"description": "a/b", "allOf": [
+            {"pattern": r"^a\/b$"}, {"pattern": r"^a\/b$"}, {"pattern": r"^a\\\/b$"},
+        ]})
+        self.assertEqual([entry["path"] for entry in rewrites], ["/allOf/0/pattern", "/allOf/2/pattern"])
+        self.assertEqual(json.dumps(original), before)
+        self.assertEqual(gen.generation_schema(generated), (generated, []))
+
+    def test_original_schema_patterns_still_validate_candidates(self):
+        original = json.loads(self.args.schema.read_bytes())
+        validator_type = type(gen.schema_validator(self.args.schema))
+        is_valid = validator_type.is_valid
+
+        def validate(validator, candidate):
+            self.assertEqual(validator.schema, original)
+            return is_valid(validator, candidate)
+
+        packet = dict(_minimal_ref(), repository="org/repo/extra")
+        self.response = self.completion(json.dumps(packet))
+        with mock.patch.object(validator_type, "is_valid", autospec=True, side_effect=validate) as checked:
+            self.assert_failed("schema-invalid")
+        checked.assert_called_once()
+
+    def test_reasoning_fields_fail_without_retry(self):
+        self.args.qwen3 = True
+        for field in ("reasoning_content", "reasoning"):
+            with self.subTest(field=field):
+                self.args.out = self.root / field
+                self.out = self.args.out
+                self.transport.reset_mock()
+                self.response = self.completion(json.dumps(_minimal_ref()))
+                self.response["choices"][0]["message"][field] = "hidden thought"
+                self.assert_failed("contains reasoning")
+
+    def test_reasoning_tokens_fail_without_retry(self):
+        self.args.qwen3 = True
+        self.response["usage"] = {"completion_tokens_details": {"reasoning_tokens": 1}}
+        self.assert_failed("reasoning tokens")
+
+    def test_empty_reasoning_and_zero_reasoning_tokens_succeed(self):
+        self.args.qwen3 = True
+        self.response["choices"][0]["message"].update(reasoning_content="", reasoning=None)
+        self.response["usage"] = {"completion_tokens_details": {"reasoning_tokens": 0}}
+        self.assertEqual(gen.run(self.args, self.transport)["counts"], {"ok": 1, "failed": 0})
+
+    def test_nonpositive_token_cap_sends_no_requests(self):
+        for cap in (0, -1):
+            with self.subTest(cap=cap):
+                self.args.max_tokens = cap
+                with self.assertRaisesRegex(ValueError, "max-tokens must be positive"):
+                    gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
 
     def test_invalid_json_is_failure(self):
         self.response = self.completion('{"objective":')
@@ -298,7 +394,7 @@ class GenerateCandidatesTests(unittest.TestCase):
 
     def test_truncated_but_parseable_completion_is_failure(self):
         self.response["choices"][0]["finish_reason"] = "length"
-        self.assert_failed("incomplete")
+        self.assert_failed("max_tokens reached")
 
     def test_server_error_envelope_is_failure(self):
         self.response = {"error": {"message": "fixture error"}}
@@ -363,6 +459,11 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.transport.assert_not_called()
         args.extend(["--model-gguf", str(self.gguf), "--lms-models-dir", str(self.root)])
         self.assertEqual(gen.main(args, transport=self.transport), 0)
+        self.assertEqual(self.posts()[0].args[2]["max_tokens"], 4096)
+        args.extend(["--qwen3", "--max-tokens", "1024", "--out", str(self.root / "custom-out")])
+        self.assertEqual(gen.main(args, transport=self.transport), 0)
+        self.assertEqual(self.posts()[-1].args[2]["max_tokens"], 1024)
+        self.assertEqual(self.posts()[-1].args[2]["reasoning_effort"], "none")
 
     def test_http_transport_uses_single_connection_and_rejects_redirect(self):
         with mock.patch.object(http.client, "HTTPConnection") as factory:
@@ -381,9 +482,144 @@ class GenerateCandidatesTests(unittest.TestCase):
             connection.request.assert_called_once()
 
 
+class GenerateCandidatesContextTests(GenerateCandidatesTests):
+    """Packet M2-C1: the D-M2-10 input contract, re-checked before any request."""
+
+    SOURCE_TEXT = "The owner wants the mirror log kept nightly.\n"
+    SHA = hashlib.sha256(SOURCE_TEXT.encode("utf-8")).hexdigest()
+
+    def context_item(self, **overrides):
+        item = {"kind": "assignment_packet", "text": "The owner wants the mirror log kept nightly.",
+                "source_ref": "packets/p1-source.md", "source_sha256": self.SHA}
+        item.update(overrides)
+        return item
+
+    def write_input(self, name, item):
+        (self.inputs / f"{name}.json").write_text(json.dumps(item), encoding="utf-8")
+        self.args.inputs_manifest = gen.manifest(self.inputs)
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "packets").mkdir()
+        (self.root / "packets" / "p1-source.md").write_bytes(self.SOURCE_TEXT.encode("utf-8"))
+        (self.refs / "metadata").mkdir()
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_file": "packets/p1-source.md", "source_sha256": self.SHA}),
+            encoding="utf-8")
+        self.item = dict(self.item, context=[self.context_item()])
+        self.write_input("p1", self.item)
+
+    def test_valid_response_and_complete_run_record(self):
+        # The parent's record test fixes the D-M1-1 user-message keys; every
+        # other inherited test re-runs unchanged against context inputs.
+        self.test_context_is_rendered_through_the_shared_template()
+
+    def test_context_is_rendered_through_the_shared_template(self):
+        record = gen.run(self.args, self.transport)
+        self.assertEqual(record["counts"], {"ok": 1, "failed": 0})
+        self.assertEqual(record["input_contract"], "D-M2-10")
+        body = self.posts()[0].args[2]
+        self.assertEqual(body["messages"][0]["content"], gen.SYSTEM_PROMPT_CONTEXT)
+        self.assertEqual(record["prompt_template"], gen.SYSTEM_PROMPT_CONTEXT)
+        self.assertEqual(body["messages"][1]["content"], gen.prompt_template.render_user_message(self.item))
+        user_message = json.loads(body["messages"][1]["content"])
+        self.assertEqual(set(user_message), {"objective", "repository", "title", "context"})
+        self.assertEqual(user_message["context"], [{
+            "kind": "assignment_packet", "source_ref": "packets/p1-source.md",
+            "text": "The owner wants the mirror log kept nightly.",
+        }])
+        self.assertNotIn(self.SHA, body["messages"][1]["content"])
+
+    def test_legacy_inputs_still_record_the_m1_contract(self):
+        self.write_input("p1", {k: v for k, v in self.item.items() if k != "context"})
+        record = gen.run(self.args, self.transport)
+        self.assertEqual(record["input_contract"], "D-M1-1")
+        self.assertEqual(self.posts()[0].args[2]["messages"][0]["content"], gen.SYSTEM_PROMPT)
+
+    def test_context_leaking_a_scored_field_stops_before_any_request(self):
+        reference = _minimal_ref()
+        leaks = {
+            "whole short string": reference["non_goals"][0] if len(reference["non_goals"][0].split()) >= 4
+            else "skip unrelated work now please",
+            "eight word shingle": "one two three four five six seven eight nine",
+        }
+        (self.refs / "p1.json").write_text(json.dumps(dict(
+            reference, constraints=["one two three four five six seven eight nine ten"],
+            non_goals=["skip unrelated work now please"],
+        )), encoding="utf-8")
+        self.args.refs_manifest = gen.manifest(self.refs)
+        for name, leaked in leaks.items():
+            with self.subTest(name=name):
+                excerpt = f"Note: {leaked}."
+                policy = self.root / "policy.md"
+                policy.write_text(excerpt, encoding="utf-8")
+                self.write_input("p1", dict(self.item, context=[self.context_item(
+                    kind="project_policy", text=excerpt, source_ref="policy.md",
+                    source_sha256=hashlib.sha256(policy.read_bytes()).hexdigest())]))
+                with self.assertRaisesRegex(ValueError, "overlaps scored field of p1"):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+
+    def test_context_citing_a_held_out_item_stops_before_any_request(self):
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_file": "packets/p1-source.md", "source_title": "Frozen Source Title",
+                        "source_sha256": self.SHA}),
+            encoding="utf-8")
+        for source_ref in ("p1", "heldout/set-a/p1.json", "Frozen Source Title"):
+            with self.subTest(source_ref=source_ref):
+                self.write_input("p1", dict(self.item, context=[self.context_item(source_ref=source_ref)]))
+                with self.assertRaisesRegex(ValueError, "resolves to a held-out item"):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+
+    def test_forged_or_changed_source_stops_before_any_request(self):
+        cases = {
+            "nonexistent": (self.context_item(source_ref="packets/missing.md"),
+                            "does not resolve to a source file"),
+            "wrong hash": (self.context_item(source_sha256="0" * 64),
+                           "does not match source bytes"),
+            "invented text": (self.context_item(text="Not present in the frozen assignment."),
+                              "not an excerpt of source_ref"),
+        }
+        for name, (entry, expected) in cases.items():
+            with self.subTest(name=name):
+                self.write_input("p1", dict(self.item, context=[entry]))
+                with self.assertRaisesRegex(ValueError, expected):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+
+    def test_reconstructed_pr_has_no_verified_task_time_source(self):
+        (self.refs / "metadata" / "p1.meta.json").write_text(
+            json.dumps({"source_pr": 103, "source_title": "Fixture PR"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no verified assignment-time source"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+
+    def test_malformed_context_and_mixed_contracts_stop_before_any_request(self):
+        cases = {
+            "empty context": (dict(self.item, context=[]), "at least one"),
+            "bad kind": (dict(self.item, context=[self.context_item(kind="reference")]), "kind must be"),
+            "scored field inside item": (dict(self.item, context=[dict(self.context_item(), constraints=["x"])]),
+                                         "exactly kind"),
+            "context plus scored field": (dict(self.item, constraints=["x"]), "exactly"),
+        }
+        for name, (item, fragment) in cases.items():
+            with self.subTest(name=name):
+                self.write_input("p1", item)
+                with self.assertRaisesRegex(ValueError, fragment):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+        self.write_input("p1", self.item)
+        self.write_input("z", {k: v for k, v in self.item.items() if k != "context"} | {"id": "z"})
+        with self.assertRaisesRegex(ValueError, "mix the D-M1-1 and D-M2-10"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 00:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:32 UTC | END]]

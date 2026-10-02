@@ -1,3 +1,28 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
@@ -66,7 +91,9 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import re
+import sqlite3
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -81,6 +108,7 @@ from .config import Settings
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .director import build_director
 from .approvals import (
+    apply_ambiguous_dispatch_resolution,
     EffectAlreadyClaimed,
     PAID_REARM_MESSAGE,
     StaleApproval,
@@ -88,6 +116,7 @@ from .approvals import (
     assignment_approval_digest,
     assignment_is_approved,
     oracle_recovery_matches,
+    orphaned_provider_intent,
     pending_assignment,
     record_oracle_merge_success,
     record_oracle_recovery,
@@ -100,6 +129,7 @@ from .approvals import (
     unresolved_ambiguous_dispatch,
 )
 from .models import (
+    AmbiguousDispatchResolution,
     Assignment,
     AssignmentKind,
     AssignmentOutcome,
@@ -113,6 +143,7 @@ from .models import (
     ReviewDecision,
     ReviewVerdict,
     TaskRecord,
+    TaskEffectEvidence,
     TaskStatus,
 )
 from .interactions import (
@@ -150,10 +181,13 @@ from .policy import (
     trusted_work_kind,
     trusted_openai_debate_phase_cost_usd,
 )
+from .models import canonical_opaque_identifier_digest
+from .usage import authoritative_reported_cost
 from .providers import (
     PreSubmitProviderError,
     ProviderDailyLimitExceeded,
     ProviderDailySpendLedger,
+    assignment_request_cost_bound,
     ProviderError,
     ProviderReservationIdentityConflict,
     ProviderRun,
@@ -168,8 +202,10 @@ from .langgraph_runtime import (
     RuntimeExecutionMode,
     RuntimeExecutionStatus,
 )
+from .packet_contracts import document_digest
 from .scheduling import SchedulingError, dependency_ready_decision
 from .store import (
+    AcknowledgementPersistencePending,
     PrivacyCleanupPending,
     StaleTaskWrite,
     TaskStore,
@@ -223,6 +259,7 @@ _STANDING_PROVIDER_LABELS = {
     ProviderName.GROK: None,
     ProviderName.PERPLEXITY: "Research Programmers",
     ProviderName.FIRECRAWL: "Authorized public web retrieval",
+    ProviderName.ZAI: None,
     ProviderName.OWNER: None,
 }
 _PROVIDER_LABELS = {
@@ -233,6 +270,7 @@ _PROVIDER_LABELS = {
     ProviderName.GROK: "Grok",
     ProviderName.PERPLEXITY: "Perplexity",
     ProviderName.FIRECRAWL: "Firecrawl",
+    ProviderName.ZAI: "Z.ai (GLM)",
     ProviderName.OWNER: "Owner",
 }
 _STANDING_PROVIDER_ROLES = _STANDING_PROVIDER_LABELS
@@ -278,6 +316,16 @@ _TRUSTED_ROUTING_CAPABILITIES: dict[
     WorkloadProvider.PERPLEXITY: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.FIRECRAWL: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.GITHUB_COPILOT: frozenset({WorkloadKind.IMPLEMENTATION}),
+    # Enrolled 2026-09-27. The legacy engine registers no Z.ai worker, so it is
+    # not a legacy trusted reviewer; the LangGraph primary roster routes it.
+    WorkloadProvider.ZAI: frozenset(
+        {
+            WorkloadKind.IMPLEMENTATION,
+            WorkloadKind.REVIEW,
+            WorkloadKind.RESEARCH,
+            WorkloadKind.VALIDATION,
+        }
+    ),
 }
 _TRUSTED_PRIMARY_REVIEWERS = frozenset(
     {WorkloadProvider.OPENAI, WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
@@ -1091,6 +1139,59 @@ class OrchestrationEngine:
             )
         return stored, reserved_key, reserved_here
 
+    def _settle_packet_spend(self, record: TaskRecord, assignment: Assignment, effect_key: str, outcome, *,
+                             unsent: bool = False, plan_generation: int | None = None) -> bool:
+        """Every exit of a packet run settles its reservation: the provider-reported cost of the run its result
+        names, else none (unreconciled). ``unsent`` only where the runtime key was provably closed pre-submit."""
+
+        # Capture the caller's dispatch snapshot before reloading callback state.
+        if plan_generation is None:
+            plan_generation = record.plan_generation
+        snapshot_runs = record.provider_runs
+        latest, journal = self.store.read_spend_acknowledgement(record.task_id, self.provider_spend)
+        latest = latest or record
+        generation_current = (
+            latest.plan is not None and plan_generation == latest.plan_generation)
+        if self.provider_spend is None or assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
+            return generation_current
+        if unsent:
+            return self._charge_spend(assignment.agent, effect_key, 0.0)
+        # Resolve the known response before replacing the dispatch snapshot.
+        packet = getattr(outcome, "result_packet", None)
+        run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
+        run = next((item for item in reversed(latest.provider_runs)
+                    if run_id and item.run_id == run_id and item.provider == assignment.agent
+                    and item.plan_generation in (None, plan_generation)
+                    and item.assignment_sequence in (None, assignment.sequence)), None)
+        if run is None:
+            run = next((item for item in reversed(snapshot_runs)
+                        if run_id and item.run_id == run_id and item.provider == assignment.agent
+                        and item.plan_generation in (None, plan_generation)
+                        and item.assignment_sequence in (None, assignment.sequence)), None)
+        cost = authoritative_reported_cost(assignment.agent, run.raw) if run is not None else None
+        if latest._store_version != record._store_version:
+            for field_name in type(record).model_fields:
+                setattr(record, field_name, copy.deepcopy(getattr(latest, field_name)))
+            record._store_version = latest._store_version
+        packet_only = run is None and bool(run_id)
+        if run is None and run_id:
+            run = ProviderRun(provider=assignment.agent, assignment_sequence=assignment.sequence,
+                              run_id=run_id, status="RECONCILIATION_REQUIRED",
+                              result=str(packet.get("outcome", "")))
+        if run is not None:
+            if plan_generation is not None:
+                run = run.model_copy(update={"plan_generation": plan_generation})
+            held = journal.get(effect_key)
+            if (generation_current and held and not held["pending"] and held["cost"] == cost
+                    and held["provider"] == run.provider.value and held["run_id"] == run.run_id
+                    and held.get("plan_generation") == record.plan_generation
+                    and held.get("result_packet_digest") == document_digest(packet)):
+                return True
+        settled = self._charge_spend(assignment.agent, effect_key, cost, record=record,
+                                    assignment=assignment, run=run, result_packet=packet,
+                                    packet_outcome=outcome, packet_only=packet_only)
+        return settled and generation_current
+
     @staticmethod
     def _record_packet_effect_outcome(
         record: TaskRecord,
@@ -1141,6 +1242,8 @@ class OrchestrationEngine:
         packet stops for owner acceptance instead of advancing the plan.
         """
 
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            return False
         activation = self.runtime_activation
         if activation is None:
             return None
@@ -1226,10 +1329,13 @@ class OrchestrationEngine:
             if workload_reservation is None:
                 return False
         try:
-            self._reserve_provider_daily_spend(
-                assignment,
-                effect_key=task_effect_key,
-            )
+            # A bound packet already crossed admission. Recovery must retain its
+            # original reservation even after a UTC rollover or price change.
+            if bound_packet is None:
+                self._reserve_provider_daily_spend(
+                    assignment,
+                    effect_key=task_effect_key,
+                )
         except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
             identity_conflict = isinstance(
                 exc, ProviderReservationIdentityConflict
@@ -1296,6 +1402,10 @@ class OrchestrationEngine:
                     runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
             return False
+        packet_outcome = None
+        provably_unsent = False
+        acknowledgement_pending = False
+        packet_generation = record.plan_generation
         try:
             outcome = await asyncio.to_thread(
                 runtime.run_packet,
@@ -1305,6 +1415,10 @@ class OrchestrationEngine:
                 adapter=adapter,
                 writer_token=writer_token,
             )
+            packet_outcome = outcome
+        except AcknowledgementPersistencePending:
+            acknowledgement_pending = True
+            raise
         except Exception as exc:
             # An exception escaping `run_packet` can occur on either side of its
             # durable runtime claim. Close the exact runtime key before calling it
@@ -1327,6 +1441,7 @@ class OrchestrationEngine:
                     reserved_by_caller=task_effect_reserved_here,
                     runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
+            provably_unsent = bool(closed_pre_submit)
             if not closed_pre_submit:
                 current = self.store.get(record.task_id) or record
                 self._record_packet_effect_outcome(
@@ -1345,6 +1460,20 @@ class OrchestrationEngine:
                 f"{assignment.sequence}; no duplicate dispatch was attempted.",
                 error=f"{type(exc).__name__}: {exc}",
             )
+            return False
+        finally:
+            # Review 4112697677: every exit after the packet ran settles its reservation (a later readback that
+            # reconciles a result raises it to the actual charge).
+            if not acknowledgement_pending:
+                settlement_ok = self._settle_packet_spend(
+                    record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent,
+                    plan_generation=packet_generation)
+        if not settlement_ok:
+            if workload_reservation is not None:
+                await self._finalize_workload_dispatch(
+                    record, workload_reservation,
+                    self._packet_workload_outcome(outcome.status, outcome.reason, workload_reservation),
+                )
             return False
         if outcome.status == RuntimeExecutionStatus.OWNER_DECISION_REQUIRED:
             latest = self.store.get(record.task_id) or record
@@ -1378,6 +1507,18 @@ class OrchestrationEngine:
                         provider=assignment.agent.value,
                         writer_token=writer_token,
                     )
+                    # Review 4112821088: the reconciled result replaces the outcome the finally above settled; it
+                    # settles again, before anything consumes it (record_charge only raises a charge).
+                    if not self._settle_packet_spend(
+                        record, assignment, task_effect_key, outcome,
+                        plan_generation=packet_generation,
+                    ):
+                        if workload_reservation is not None:
+                            await self._finalize_workload_dispatch(
+                                record, workload_reservation,
+                                self._packet_workload_outcome(outcome.status, outcome.reason, workload_reservation),
+                            )
+                        return False
                 except Exception as exc:
                     await self._stop_for_owner(
                         latest,
@@ -1412,6 +1553,9 @@ class OrchestrationEngine:
             # the packet thread waited. Carry that exact state forward before
             # binding the result packet, rather than overwriting it with a stale
             # in-memory record.
+            if (latest.plan is None or assignment not in latest.plan.assignments
+                    or latest.plan_generation != packet_generation):
+                return False
             for field_name in type(record).model_fields:
                 setattr(
                     record,
@@ -1431,6 +1575,7 @@ class OrchestrationEngine:
                 ),
             )
             try:
+                self._prepare_packet_consumption(record, task_effect_key)
                 progression = consumer.consume(
                     record, assignment, dict(work_packet), outcome
                 )
@@ -1496,6 +1641,8 @@ class OrchestrationEngine:
         has its own isolated ledger.
         """
 
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            return False
         readiness = self.settings.parallel_dispatch_readiness()
         activation = self.runtime_activation
         ledger = self.parallel_dispatch
@@ -1523,6 +1670,9 @@ class OrchestrationEngine:
                 continue
             if any(
                 item.assignment_sequence == planned.sequence
+                and (item.raw.get("packet_result_digest") or not any(
+                    held.get("result_packet_digest") for held in self._spend_settlements(record, item).values()
+                ))
                 for item in record.provider_runs
             ):
                 continue
@@ -1828,9 +1978,10 @@ class OrchestrationEngine:
                     continue
                 state = MemberState.DISPATCHING
             try:
-                self._reserve_provider_daily_spend(
-                    assignment, effect_key=task_effect_key
-                )
+                if activation.runtime.bound_work_packet(str(work["idempotency_key"])) is None:
+                    self._reserve_provider_daily_spend(
+                        assignment, effect_key=task_effect_key
+                    )
             except (ProviderDailyLimitExceeded, ProviderReservationIdentityConflict) as exc:
                 identity_conflict = isinstance(
                     exc, ProviderReservationIdentityConflict
@@ -1992,6 +2143,9 @@ class OrchestrationEngine:
                 )
             )
 
+        settlements = []
+        packet_generation = record.plan_generation
+
         async def dispatch_one(item):
             (
                 member,
@@ -2003,6 +2157,7 @@ class OrchestrationEngine:
                 _task_effect_key,
                 _workload_reservation,
             ) = item
+            outcome = None
             try:
                 outcome = await asyncio.to_thread(
                     activation.runtime.run_packet,
@@ -2015,10 +2170,19 @@ class OrchestrationEngine:
                 return item, outcome, None
             except Exception as exc:
                 return item, None, exc
+            finally:
+                # Review 4112697677: completed, failed, raised or cancelled, the member's reservation settles.
+                settlements.append(self._settle_packet_spend(
+                    record, assignment, _task_effect_key, outcome,
+                    plan_generation=packet_generation))
 
         observed = await asyncio.gather(
             *(dispatch_one(item) for item in dispatchable)
         )
+        current = self.store.get(record.task_id)
+        if (current is None or current.plan is None or current.plan != record.plan
+                or current.plan_generation != packet_generation):
+            return False
         completed_packets: list[
             tuple[Assignment, dict[str, object], object, str]
         ] = []
@@ -2116,6 +2280,10 @@ class OrchestrationEngine:
                         detail=outcome.reason,
                     )
 
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            return False
+        if not all(settlements):
+            return False
         if replay_integrity_failure:
             await self._stop_for_owner(
                 record,
@@ -2138,6 +2306,7 @@ class OrchestrationEngine:
                 ),
             )
             try:
+                self._prepare_packet_consumption(record, task_effect_key)
                 progression = activation.packet_result_consumer.consume(
                     record, assignment, work, outcome
                 )
@@ -2227,6 +2396,7 @@ class OrchestrationEngine:
             ProviderName.GEMINI: ProviderTransport.GEMINI_INTERACTIONS_API,
             ProviderName.GROK: ProviderTransport.XAI_RESPONSES_API,
             ProviderName.PERPLEXITY: ProviderTransport.PERPLEXITY_API,
+            ProviderName.ZAI: ProviderTransport.ZAI_CODING_CLI,
         }.get(provider, ProviderTransport.DIRECTOR_BACKEND)
 
     @classmethod
@@ -2680,6 +2850,10 @@ class OrchestrationEngine:
         if record is None:
             return
         try:
+            if not self._settle_not_created_dispatches(record):
+                return
+            if not self._retry_spend_settlements(record):
+                return
             plan_installed = False
             if record.workload_selection_hold_reasons:
                 # Generic resume/approval cannot clear a plan-local allocation hold.
@@ -3091,6 +3265,10 @@ class OrchestrationEngine:
             record.message = "All assignments passed Director review."
             self.store.save(record)
             await self._status_post(record, f"*{task_id} — DONE*\nAll assignments passed the configured acceptance review. Review branches and pull requests before merging.")
+        except AcknowledgementPersistencePending:
+            # No response persistence means only the durable intent remains.
+            # Reconciliation owns it; never reload it and mark the paid task FAILED.
+            return
         except (PrivacyCleanupPending, StaleTaskWrite):
             # Another process advanced the task (for example, an owner
             # clarification while a provider callback was in flight). The
@@ -3099,6 +3277,8 @@ class OrchestrationEngine:
             return
         except Exception as exc:
             failed = self.store.get(task_id) or record
+            if failed.error and failed.error.startswith("spend_settlement_failed:"):
+                return
             failed.status = TaskStatus.FAILED
             failed.error = f"{type(exc).__name__}: {exc}"
             self.store.save(failed)
@@ -5361,6 +5541,8 @@ class OrchestrationEngine:
         assignment: Assignment,
         *,
         effect_key: str,
+        context: str | None = None,
+        revision_prompt: str | None = None,
     ) -> None:
         """Reserve one supplemental-provider request before paid submission."""
 
@@ -5382,20 +5564,544 @@ class OrchestrationEngine:
             raise ProviderDailyLimitExceeded(
                 f"{assignment.agent.value} requires a durable daily spend ledger"
             )
+        store = getattr(self, "store", None)
+        if not isinstance(store, TaskStore) or store.path != self.provider_spend.path:
+            raise ProviderDailyLimitExceeded("Paid acknowledgement requires a shared SQLite task and spend store")
+        try:
+            bound = assignment_request_cost_bound(
+                self.settings, assignment, context, revision_prompt=revision_prompt,
+            )
+        except (ValueError, PreSubmitProviderError) as exc:
+            raise ProviderDailyLimitExceeded("Provider request cannot be safely priced") from exc
+        floor = self.settings.request_cost_bound_usd(assignment.agent.value) or 0.0
+        estimated = (max(assignment.estimated_cost_usd, floor, bound)
+                     if bound is not None else assignment.estimated_cost_usd)
         self.provider_spend.reserve(
             provider=assignment.agent,
             effect_key=effect_key,
-            estimated_cost_usd=(
-                max(
-                    assignment.estimated_cost_usd,
-                    self.settings.grok_request_cost_floor_usd,
-                )
-                if assignment.agent == ProviderName.GROK
-                else assignment.estimated_cost_usd
-            ),
+            estimated_cost_usd=estimated,
             request_limit=request_limit,
             budget_usd=budget_usd,
+            now=datetime.now(timezone.utc),
+            serialize=bound is None,
         )
+
+    def _spend_assignment_for_intent(
+        self, record: TaskRecord, intent: TaskEffectEvidence | None,
+    ) -> Assignment | None:
+        """Resolve the same authenticated assignment overlay used to claim the effect."""
+        if intent is None or record.plan is None:
+            return None
+        planned = [item for item in record.plan.assignments
+                   if item.sequence == intent.assignment_sequence and item.agent == intent.provider]
+        if len(planned) != 1:
+            return None
+        try:
+            assignment = self._effective_assignment(record, planned[0])
+        except CommunicationEvidenceFailure:
+            return None
+        return assignment if assignment_approval_digest(assignment) == intent.assignment_digest else None
+
+    def apply_dispatch_reconciliation(
+        self, record: TaskRecord, resolution: AmbiguousDispatchResolution,
+    ) -> None:
+        """Persist the owner resolution before settling or closing its effect."""
+        if self.provider_spend is not None:
+            for key, held in self.provider_spend.settlements(record.task_id).items():
+                if (held["pending"] or held["provider"] == ProviderName.CLAUDE.value) and any(
+                    item.kind == "provider_intent" and item.effect_key == key
+                    and item.assignment_sequence == resolution.assignment_sequence
+                    and item.plan_generation == record.plan_generation
+                    for item in record.task_effect_ledger
+                ):
+                    if resolution.resolution != "created" or resolution.run_id != held["run_id"]:
+                        raise StaleApproval("Reconciliation conflicts with the acknowledged provider run")
+                    return
+        acknowledged = [run for run in record.provider_runs
+                        if run.assignment_sequence == resolution.assignment_sequence
+                        and (any(held["pending"] for held in self._spend_settlements(record, run).values())
+                             or any(contact.run_id == run.run_id and contact.error == record.error
+                                    and contact.error.startswith("spend_settlement_failed:")
+                                    for contact in record.provider_contact_attempts))]
+        if acknowledged:
+            if resolution.resolution != "created" or resolution.run_id != acknowledged[-1].run_id:
+                raise StaleApproval("Reconciliation conflicts with the acknowledged provider run")
+            # Keep the authenticated outcome; never replace it with an unverified
+            # identifier-only run. Resume performs the accounting retry.
+            return
+        pending = pending_assignment(record)
+        if (pending is not None and pending.sequence == resolution.assignment_sequence
+                and unresolved_ambiguous_dispatch(record, pending) is None
+                and record.status in {TaskStatus.RUNNING, TaskStatus.OWNER_DECISION_REQUIRED}):
+            try:
+                pending = self._effective_assignment(record, pending)
+            except CommunicationEvidenceFailure as exc:
+                raise StaleApproval("The review handoff cannot be authenticated for reconciliation") from exc
+            intent = orphaned_provider_intent(record, pending)
+            if intent is not None:
+                if (self._task_locks[record.task_id].locked()
+                        or self._effect_owner_is_live(intent.recorded_at)):
+                    raise StaleApproval("The provider intent still has an active writer")
+                # The API's CAS commits this content-free evidence with the owner
+                # resolution. Nothing was persisted while acknowledgement storage
+                # was unavailable, and no lost response content can be recovered here.
+                record_provider_effect_observation(
+                    record, pending, effect_key=intent.effect_key, phase=intent.phase, outcome="ambiguous",
+                    run_id=resolution.run_id if resolution.resolution == "created" else None)
+                record.provider_contact_attempts.append(ProviderContactAttempt(
+                    assignment_sequence=pending.sequence, provider=pending.agent,
+                    ordinal=min(3, intent.attempt), phase=intent.phase, outcome="ambiguous_dispatch",
+                    error="spend_settlement_failed:" + intent.effect_key,
+                ))
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+        apply_ambiguous_dispatch_resolution(record, resolution)
+
+    def _settle_reconciled_spend(self, record: TaskRecord) -> bool:
+        # API and restart recovery share the exact-effect settlement and receipt.
+        return self._settle_not_created_dispatches(record)
+
+    def _settle_not_created_dispatches(self, record: TaskRecord) -> bool:
+        """Consume accepted owner resolutions before any resumed provider work.
+
+        Match the contact to its exact preceding effect, never every reservation
+        for a provider/assignment. The effect observation is the replay receipt.
+        """
+        ambiguous = {}
+        for contact in record.provider_contact_attempts:
+            identity = (contact.provider, contact.assignment_sequence)
+            if contact.outcome == "ambiguous_dispatch":
+                ambiguous[identity] = contact
+                continue
+            attempt = ambiguous.pop(identity, None) if contact.phase == "reconciliation" else None
+            if contact.outcome != "reconciled_not_created" or attempt is None:
+                continue
+            candidates = [item for item in record.task_effect_ledger
+                          if item.kind == "provider_intent" and item.provider == attempt.provider
+                          and item.assignment_sequence == attempt.assignment_sequence
+                          and item.phase == attempt.phase and item.recorded_at <= attempt.recorded_at]
+            intent = max(candidates, key=lambda item: item.recorded_at, default=None)
+            if attempt.error.startswith("spend_settlement_failed:"):
+                key = attempt.error.removeprefix("spend_settlement_failed:")
+                intent = next((item for item in candidates if item.effect_key == key), None)
+            if intent is None:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.error = "not_created_reservation_identity_missing"
+                self.store.save(record)
+                return False
+            observations = [item for item in record.task_effect_ledger
+                            if item.kind == "provider_observation" and item.effect_key == intent.effect_key]
+            already_closed = any(item.outcome == "failed_pre_submit" for item in observations)
+            # A known acknowledgement contradicts not-created. Keep its charge
+            # and evidence; the existing created-run reconciliation path applies.
+            journal = self.provider_spend.settlements(record.task_id) if self.provider_spend is not None else {}
+            if attempt.run_id or any(item.run_id_digest for item in observations) or intent.effect_key in journal:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.error = "not_created_conflicts_with_provider_acknowledgement"
+                self.store.save(record)
+                return False
+            assignment = self._spend_assignment_for_intent(record, intent)
+            if assignment is None:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.error = "not_created_assignment_identity_changed"
+                self.store.save(record)
+                return False
+            try:
+                if not already_closed:
+                    self._charge_spend(intent.provider, intent.effect_key, 0.0)
+                if self.provider_spend is not None and intent.provider in ProviderDailySpendLedger._SUPPORTED:
+                    self.provider_spend.release_not_created(provider=intent.provider, effect_key=intent.effect_key)
+            except Exception:
+                record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                record.error = "spend_settlement_failed:" + intent.effect_key
+                record.message = "Owner not-created resolution retained; spend reconciliation must finish before dispatch."
+                self._save_spend_hold(record)
+                return False
+            if not already_closed:
+                record_provider_effect_observation(record, assignment, effect_key=intent.effect_key,
+                                                   phase=intent.phase, outcome="failed_pre_submit")
+            if record.error == "spend_settlement_failed:" + intent.effect_key:
+                record.error = None
+            try:
+                self.store.save(record)
+            except Exception:
+                # The accepted resolution is already durable. Let the API queue
+                # run(), which retries this exact ledger update and receipt.
+                return False
+        return True
+
+    def _charge_spend(self, provider: ProviderName, effect_key: str, cost: float | None, *,
+                      record: TaskRecord | None = None, assignment: Assignment | None = None,
+                      run: ProviderRun | None = None, result_packet: dict | None = None,
+                      packet_outcome=None, packet_only: bool = False) -> bool:
+        """Initial settlement for ordinary work; resume retries the preserved charge. A cost records
+        the actual charge; None settles the request without one, so it keeps counting at its reservation and
+        check 15 sees it as unreconciled; 0.0 only where the request provably never left (a pre-submit refusal)."""
+
+        if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED:
+            return True
+        content_current = True
+        if record is not None and run is not None:
+            content_current = self._journal_spend_acknowledgement(
+                record, effect_key, run,
+                cost if cost is not None else authoritative_reported_cost(run.provider, run.raw),
+                result_packet=result_packet, packet_only=packet_only)
+        try:
+            self.provider_spend.record_charge(
+                provider=provider, effect_key=effect_key, actual_cost_usd=cost, now=datetime.now(timezone.utc),
+                request_exists=run is not None,
+            )
+            if record is not None and run is not None:
+                held = self.provider_spend.settlements(record.task_id)[effect_key]
+                # Keep a known journal charge pending until terminal settlement or recovery.
+                held["pending"] = held["cost"] != cost
+                self.provider_spend.save_settlement(record.task_id, effect_key, held)
+        except Exception:
+            if record is None or (assignment is None and run is None):
+                raise  # Pre-submit callers have no ambiguous paid effect.
+        else:
+            return content_current
+        # Never include the ledger exception text: it may contain connection details.
+        record.status = TaskStatus.OWNER_DECISION_REQUIRED
+        record.error = "spend_settlement_failed:" + effect_key
+        record.message = (
+            "Spend settlement failed; resume retries accounting for the preserved run. "
+            "An unidentified request still requires owner reconciliation."
+        )
+        if not content_current:
+            return False
+        intent = next((item for item in record.task_effect_ledger
+                       if item.effect_key == effect_key and item.kind == "provider_intent"), None)
+        if intent is None:
+            record.message = (
+                "Spend settlement failed and the matching provider intent is missing; "
+                "owner reconciliation is required."
+            )
+            self._save_spend_hold(record)
+            return False
+        if record.plan is None or intent.plan_generation != record.plan_generation:
+            # A packet readback may have reloaded a task after owner cleanup.
+            # Its charge survives, but its old content must not be saved again.
+            return False
+        if assignment is not None and not any(item.kind == "provider_observation" and item.effect_key == effect_key
+                   for item in record.task_effect_ledger):
+            record_provider_effect_observation(record, assignment, effect_key=effect_key,
+                                               phase=intent.phase, outcome="submitted" if run else "ambiguous",
+                                               run_id=run.run_id if run else None)
+        if run is not None:
+            run = run.model_copy(deep=True)
+            index = next((i for i, item in enumerate(record.provider_runs)
+                          if item.run_id == run.run_id and item.provider == run.provider), None)
+            if index is None:
+                record.provider_runs.append(run)
+            else:
+                record.provider_runs[index] = run
+        # The task record retains the acknowledgement/result, exact reservation,
+        # and reconciliation hold even when the spend ledger cannot be written.
+        if run is None:
+            record.provider_contact_attempts.append(ProviderContactAttempt(
+                assignment_sequence=assignment.sequence, provider=provider,
+                ordinal=min(3, intent.attempt), phase=intent.phase,
+                outcome="ambiguous_dispatch", error=record.error,
+            ))
+        self._save_spend_hold(record)
+        return False
+
+    def _journal_spend_acknowledgement(self, record: TaskRecord, effect_key: str,
+                                       run: ProviderRun, cost: float | None, *,
+                                       result_packet=None, packet_only: bool = False) -> bool:
+        if self.provider_spend is None or run.provider not in ProviderDailySpendLedger._SUPPORTED:
+            return True
+        if (not isinstance(self.store, TaskStore)
+                or self.store.path != self.provider_spend.path):
+            raise AcknowledgementPersistencePending("Atomic acknowledgement requires the same SQLite task store")
+        # Dispatch-stamped runs survive reloads; direct callers still hold the
+        # dispatch snapshot. Intent presence never decides content eligibility.
+        intent = next((item for item in record.task_effect_ledger
+                       if item.kind == "provider_intent" and item.effect_key == effect_key), None)
+        generation = run.plan_generation
+        if generation is None:
+            _, journal = self.store.read_spend_acknowledgement(record.task_id, self.provider_spend)
+            held = journal.get(effect_key, {})
+            if held.get("provider") == run.provider.value and held.get("run_id") == run.run_id:
+                generation = held.get("plan_generation")
+        if generation is None:
+            generation = record.plan_generation
+        run = run.model_copy(update={"plan_generation": generation})
+        evidence = {
+            "provider": run.provider.value, "run_id": run.run_id, "cost": cost, "pending": True,
+            "phase": intent.phase if intent else None,
+            "assignment_sequence": intent.assignment_sequence if intent else None,
+            "assignment_digest": intent.assignment_digest if intent else None,
+            "plan_generation": generation,
+            "result_digest": canonical_opaque_identifier_digest(run.result) if run.result else None,
+            "packet_only": packet_only,
+            "result_packet_digest": document_digest(result_packet) if result_packet is not None else None,
+        }
+        # One primary persistence attempt and one recovery, never provider I/O.
+        # Exhaustion leaves only the durable pre-response intent. Do not
+        # let the outer handler turn that paid request into a FAILED task.
+        assignment = self._spend_assignment_for_intent(record, intent)
+        if assignment is not None and not any(item.kind == "provider_observation" and item.effect_key == effect_key
+                                              for item in record.task_effect_ledger):
+            record_provider_effect_observation(record, assignment, effect_key=effect_key,
+                                               phase=intent.phase, outcome="submitted", run_id=run.run_id)
+        index = next((i for i, item in enumerate(record.provider_runs)
+                      if item.provider == run.provider and item.run_id == run.run_id), None)
+        if index is None:
+            record.provider_runs.append(run.model_copy(deep=True))
+        else:
+            record.provider_runs[index] = run.model_copy(deep=True)
+        return self.store.save_spend_acknowledgement(
+            record, effect_key, run, evidence, self.provider_spend)
+
+    def _save_spend_hold(self, record: TaskRecord) -> bool:
+        """Retry a stale hold write by merging evidence into a freshly read record."""
+        evidence = record.model_copy(deep=True)
+        candidate = record
+        for attempt in range(3):
+            if attempt:
+                try:
+                    candidate = self.store.get(record.task_id)
+                except Exception:
+                    return False
+                if candidate is None:
+                    return False
+                if (candidate.plan_generation != evidence.plan_generation
+                        or candidate.plan != evidence.plan):
+                    # An owner reset ends the old content lifecycle. Accounting
+                    # remains recoverable from the content-free journal.
+                    return False
+                for field in ("task_effect_ledger", "provider_contact_attempts"):
+                    current = getattr(candidate, field)
+                    current.extend(copy.deepcopy(item) for item in getattr(evidence, field) if item not in current)
+                for preserved in evidence.provider_runs:
+                    if not self._spend_settlements(evidence, preserved):
+                        continue
+                    current = next((item for item in candidate.provider_runs
+                                    if item.provider == preserved.provider and item.run_id == preserved.run_id), None)
+                    if current is None:
+                        candidate.provider_runs.append(preserved.model_copy(deep=True))
+                    else:
+                        # Retain newer callback fields, adding the held terminal
+                        # result only when the current record lacks that result.
+                        if preserved.result and not current.result:
+                            current.result, current.status = preserved.result, preserved.status
+                        current.raw = {**preserved.raw, **current.raw}
+                candidate.status = TaskStatus.OWNER_DECISION_REQUIRED
+                candidate.error, candidate.message = evidence.error, evidence.message
+            try:
+                self.store.save(candidate)
+            except StaleTaskWrite:
+                continue
+            except Exception:
+                return False
+            for field in type(record).model_fields:
+                setattr(record, field, copy.deepcopy(getattr(candidate, field)))
+            record._store_version = candidate._store_version
+            return True
+        return False
+
+    def _spend_settlements(self, record: TaskRecord, run: ProviderRun) -> dict:
+        if self.provider_spend is None:
+            return {}
+        return {key: held for key, held in self.provider_spend.settlements(record.task_id).items()
+                if held["provider"] == run.provider.value and held["run_id"] == run.run_id}
+
+    def _retry_spend_settlements(self, record: TaskRecord) -> bool:
+        """Repair durable side records without repeating provider I/O."""
+        # New acknowledgements are atomic: the task owns the complete run.
+        # Only pre-atomic journals need provider-specific legacy recovery.
+        if self.provider_spend is not None:
+            for key, held in self.provider_spend.settlements(record.task_id).items():
+                intent = next((item for item in record.task_effect_ledger
+                               if item.kind == "provider_intent" and item.effect_key == key
+                               and item.provider.value == held["provider"]), None)
+                if intent is None:
+                    if held["pending"]:
+                        return False
+                    continue
+                if any(held.get(name, getattr(intent, name)) != getattr(intent, name)
+                       for name in ("phase", "assignment_sequence", "assignment_digest", "plan_generation")):
+                    return False
+                if intent.provider == ProviderName.CLAUDE and not held["pending"]:
+                    # Claude is accounted by its immutable task reservation. The
+                    # journal proves created identity, never a price or a result.
+                    # Do not route it into supplemental daily-spend reconciliation.
+                    continue
+                assignment = self._spend_assignment_for_intent(record, intent)
+                if assignment is None or intent.plan_generation != record.plan_generation:
+                    # Privacy reset: settle the old charge, never restore its run.
+                    try:
+                        self.provider_spend.record_charge(provider=intent.provider, effect_key=key,
+                                                          actual_cost_usd=held["cost"])
+                        held["pending"] = False
+                        self.provider_spend.save_settlement(record.task_id, key, held)
+                    except Exception:
+                        return False
+                    continue
+                if any(run.provider.value == held["provider"] and run.run_id == held["run_id"]
+                       for run in record.provider_runs):
+                    continue
+                if held.get("packet_only"):
+                    # Packet results come from the authenticated runtime readback,
+                    # never a fabricated ordinary run or a synchronous poll.
+                    try:
+                        if held["pending"]:
+                            self.provider_spend.record_charge(provider=intent.provider, effect_key=key,
+                                                              actual_cost_usd=held["cost"])
+                            held["pending"] = False
+                            self.provider_spend.save_settlement(record.task_id, key, held)
+                    except (sqlite3.Error, OSError):
+                        return False
+                    continue
+                bindings = {event.interaction_id for event in record.provider_interaction_ledger
+                            if event.effect_key == key and event.provider.value == held["provider"]
+                            and event.plan_generation == intent.plan_generation
+                            and event.assignment_sequence == intent.assignment_sequence
+                            and event.phase.value == intent.phase}
+                if intent.provider != ProviderName.GEMINI or len(bindings) != 1:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.error = "legacy_acknowledgement_requires_readback"
+                    record.message = (
+                        "Legacy settlement has no saved provider result. Synchronous providers cannot "
+                        "read it back; Gemini requires a durable interaction binding. Owner reconciliation "
+                        "is required; no provider dispatch or poll was attempted."
+                    )
+                    try:
+                        self.store.save(record)
+                        if held["pending"]:
+                            self.provider_spend.record_charge(provider=intent.provider, effect_key=key,
+                                                              actual_cost_usd=held["cost"])
+                            held["pending"] = False
+                            self.provider_spend.save_settlement(record.task_id, key, held)
+                    except (sqlite3.Error, OSError, StaleTaskWrite):
+                        pass  # Keep the legacy hold; never fall into FAILED.
+                    return False
+                run = ProviderRun(provider=intent.provider, run_id=held["run_id"],
+                                  assignment_sequence=intent.assignment_sequence,
+                                  interaction_id=next(iter(bindings)), evidence_source="provider_authenticated",
+                                  status="RECONCILIATION_REQUIRED")
+                state = project_interaction(record.provider_interaction_ledger, run.interaction_id).state
+                if state == ProviderInteractionState.ATTEMPTED:
+                    self._record_dispatch_acknowledgement(record, run)
+                elif state == ProviderInteractionState.DISPATCHED:
+                    self._advance_provider_interaction(record, run, ProviderInteractionState.ACKNOWLEDGED,
+                                                       source=TransportEvidenceSource.AUTHENTICATED_PROVIDER)
+                elif state != ProviderInteractionState.ACKNOWLEDGED:
+                    record.status = TaskStatus.OWNER_DECISION_REQUIRED
+                    record.message = "Legacy Gemini interaction cannot authorize result readback; owner reconciliation required."
+                    self.store.save(record)
+                    return False
+                record.provider_runs.append(run)
+                if intent.phase == "revision":
+                    record.revision_count = max(record.revision_count, intent.attempt)
+                if not any(item.kind == "provider_observation" and item.effect_key == key
+                           for item in record.task_effect_ledger):
+                    record_provider_effect_observation(record, assignment, effect_key=key,
+                                                       phase=intent.phase, outcome="submitted", run_id=run.run_id)
+                self._journal_spend_acknowledgement(record, key, run, held["cost"])
+        # Legacy dispatch recovery bypasses reservation. Repair its exact existing
+        # workload row even if a previous process stopped before creating a hold.
+        for intent in record.task_effect_ledger:
+            if intent.kind != "provider_intent" or intent.phase not in {"dispatch", "revision"}:
+                continue
+            observations = {item.outcome for item in record.task_effect_ledger
+                            if item.kind == "provider_observation" and item.effect_key == intent.effect_key}
+            if not observations.intersection({"submitted", "completed", "ambiguous", "failed_pre_submit"}):
+                continue
+            reservation = self.store.get_workload_reservation(f"{record.task_id}:{intent.effect_key}")
+            if reservation is not None and reservation.final_outcome is None:
+                try:
+                    self.store.finalize_workload_reservation(
+                        reservation.reservation_key,
+                        WorkloadAttemptOutcome.FAILED_PRE_SUBMIT if "failed_pre_submit" in observations
+                        else WorkloadAttemptOutcome.INVOKED)
+                except Exception:
+                    return False
+        # Old raw settlement maps have no trustworthy provenance. Reconstruct only
+        # the held effect's acknowledgement; packet recovery uses runtime readback.
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            key = record.error.removeprefix("spend_settlement_failed:")
+            if not any(key in self._spend_settlements(record, run) for run in record.provider_runs):
+                intent = next((item for item in record.task_effect_ledger
+                               if item.effect_key == key and item.kind == "provider_intent"), None)
+                digests = {item.run_id_digest for item in record.task_effect_ledger
+                           if item.effect_key == key and item.kind == "provider_observation"
+                           and item.run_id_digest is not None}
+                acknowledged_ids = {contact.run_id for contact in record.provider_contact_attempts
+                                    if contact.error == record.error and contact.run_id}
+                run = next((item for item in reversed(record.provider_runs)
+                            if intent is not None and item.provider == intent.provider
+                            and item.assignment_sequence == intent.assignment_sequence
+                            and (canonical_opaque_identifier_digest(item.run_id) in digests
+                                 or item.run_id in acknowledged_ids)), None)
+                if run is not None and self.provider_spend is not None:
+                    self._journal_spend_acknowledgement(
+                        record, key, run, authoritative_reported_cost(run.provider, run.raw))
+        for run in record.provider_runs:
+            for key, held in self._spend_settlements(record, run).items():
+                if not held["pending"]:
+                    continue
+                if not any(item.kind == "provider_intent" and item.effect_key == key
+                           and item.provider == run.provider and item.assignment_sequence == run.assignment_sequence
+                           for item in record.task_effect_ledger):
+                    return False
+                try:
+                    self.provider_spend.record_charge(provider=run.provider, effect_key=key,
+                                                      actual_cost_usd=held["cost"], now=datetime.now(timezone.utc))
+                    if record.error == "spend_settlement_failed:" + key:
+                        remaining = [effect for effect, hold in self.provider_spend.settlements(record.task_id).items()
+                                     if effect != key and hold["pending"]]
+                        record.error = "spend_settlement_failed:" + remaining[0] if remaining else None
+                        record.message = "Spend settlement recovered; preserved provider outcome is ready."
+                    self.store.save(record)
+                    held["pending"] = False
+                    self.provider_spend.save_settlement(record.task_id, key, held)
+                except Exception:
+                    return False
+        return not (record.error and record.error.startswith("spend_settlement_failed:"))
+
+    def _prepare_packet_consumption(self, record: TaskRecord, effect_key: str) -> None:
+        # A held packet without an adapter-created ProviderRun is evidence, not
+        # a verified interaction. Let the normal consumer build and verify it.
+        record.provider_runs = [run for run in record.provider_runs if not (
+            (held := self._spend_settlements(record, run).get(effect_key))
+            and held.get("packet_only") and not held["pending"]
+        )]
+
+    def _settle_provider_spend(self, record: TaskRecord, run: ProviderRun, provider: ProviderName) -> bool:
+        """A terminal run settles every reservation its own observation names, at its provider-reported cost."""
+
+        run_digest = canonical_opaque_identifier_digest(run.run_id)
+        keys = {
+            item.effect_key
+            for item in record.task_effect_ledger
+            if item.kind == "provider_observation" and item.run_id_digest == run_digest
+        }
+        if not keys:
+            # An owner-reconciled "created" run (approvals.apply_ambiguous_dispatch_resolution) carries no
+            # observation of its own: it is the ambiguous dispatch of this assignment, whose reservation settles.
+            keys = {
+                item.effect_key
+                for item in record.task_effect_ledger
+                if item.kind == "provider_observation" and item.outcome == "ambiguous"
+                and item.provider == run.provider and item.assignment_sequence == run.assignment_sequence
+                and item.run_id_digest is None
+                and not any(observed.effect_key == item.effect_key and observed.outcome == "failed_pre_submit"
+                            for observed in record.task_effect_ledger)
+            }
+        cost = authoritative_reported_cost(provider, run.raw)
+        assignment = next((item for item in record.plan.assignments
+                           if item.sequence == run.assignment_sequence), None) if record.plan else None
+        for key in sorted(keys):
+            settled = self._spend_settlements(record, run).get(key)
+            if (settled and not settled["pending"] and settled["run_id"] == run.run_id
+                    and settled.get("result_digest") == (canonical_opaque_identifier_digest(run.result) if run.result else None)
+                    and settled["cost"] == cost):
+                continue
+            if not self._charge_spend(provider, key, cost, record=record, assignment=assignment, run=run):
+                return False
+        return True
 
     async def _stop_for_perplexity_refinement(
         self,
@@ -5918,6 +6624,10 @@ class OrchestrationEngine:
         return True
 
     async def _execute_assignment(self, record: TaskRecord, assignment: Assignment) -> bool:
+        if not self._settle_not_created_dispatches(record):
+            return False
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            return False
         # This record may have been reloaded after a prior assignment. Rebind the
         # exact current plan before any Slack, provider, or review-side effect.
         if not self._verified_plan_or_stop(record):
@@ -6132,10 +6842,12 @@ class OrchestrationEngine:
                 )
                 if workload_reservation is None:
                     return False
+            handoff_context = self._handoff_context(record, assignment)
             try:
                 self._reserve_provider_daily_spend(
                     assignment,
                     effect_key=effect_key,
+                    context=handoff_context,
                 )
             except ProviderReservationIdentityConflict as exc:
                 # A reservation identity mismatch is evidence of durable
@@ -6219,7 +6931,6 @@ class OrchestrationEngine:
                         effect_key=effect_key,
                     )
                 return False
-            handoff_context = self._handoff_context(record, assignment)
             consumed_artifact_digests = (
                 self._consumed_dependency_artifact_digests(record, assignment)
             )
@@ -6233,12 +6944,14 @@ class OrchestrationEngine:
                 consumed_artifact_digests=consumed_artifact_digests,
             )
             self.store.save(record)
+            dispatch_generation = record.plan_generation
             try:
                 run = await adapter.dispatch(
                     assignment,
                     context=handoff_context,
                 )
             except PreSubmitProviderError as exc:
+                self._charge_spend(assignment.agent, effect_key, 0.0)  # provably never left
                 if workload_reservation is not None:
                     finalized = await self._finalize_workload_dispatch(
                         record,
@@ -6311,15 +7024,16 @@ class OrchestrationEngine:
                     "because a paid run may already exist; owner reconciliation is required."
                 )
                 self.store.save(record)
+                if not self._charge_spend(assignment.agent, effect_key, None,
+                                          record=record, assignment=assignment):
+                    return False
                 await self._status_post(record, record.message)
                 return False
-            if workload_reservation is not None and not await self._finalize_workload_dispatch(
-                record,
-                workload_reservation,
-                WorkloadAttemptOutcome.INVOKED,
-            ):
-                return False
+            # Review 4112697677: from the moment the request exists it is settled without a charge, so every later
+            # exit (unavailable, timeout, cancellation, any exception) leaves it unreconciled, never invisible; the
+            # terminal run below raises it to its reported cost.
             run.assignment_sequence = assignment.sequence
+            run.plan_generation = dispatch_generation
             run.interaction_id = interaction_id
             run.evidence_source = "provider_authenticated"
             self._record_dispatch_acknowledgement(record, run)
@@ -6332,7 +7046,18 @@ class OrchestrationEngine:
                 run_id=run.run_id,
             )
             record.provider_runs.append(run)
-            self.store.save(record)
+            if assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
+                self.store.save(record)
+            settlement_ok = self._charge_spend(assignment.agent, effect_key, None,
+                                                record=record, assignment=assignment, run=run)
+            if workload_reservation is not None and not await self._finalize_workload_dispatch(
+                record,
+                workload_reservation,
+                WorkloadAttemptOutcome.INVOKED,
+            ):
+                return False
+            if not settlement_ok:
+                return False
             if not self._verified_plan_or_stop(record):
                 return False
             await self._status_post(record, f"*{record.task_id} — RUNNING*\nDispatched assignment {assignment.sequence} to `{assignment.agent.value}`." + (f" [Open run]({run.url})" if run.url else ""))
@@ -6357,6 +7082,8 @@ class OrchestrationEngine:
             return False
         run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
         record.provider_runs[run_index] = run
+        if not self._settle_provider_spend(record, run, assignment.agent):
+            return False
         if not run.result:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = f"{assignment.agent.value} requires manual completion verification"
@@ -6563,10 +7290,14 @@ class OrchestrationEngine:
                 if revision_workload_reservation is None:
                     return False
             # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
+            revision_handoff_context = self._handoff_context(record, assignment)
+            revision_prompt = decision.revision_prompt or "Address the failed acceptance checks and report new evidence."
             try:
                 self._reserve_provider_daily_spend(
                     assignment,
                     effect_key=revision_effect_key,
+                    context=revision_handoff_context,
+                    revision_prompt=revision_prompt,
                 )
             except ProviderReservationIdentityConflict as exc:
                 if revision_workload_reservation is not None:
@@ -6610,7 +7341,6 @@ class OrchestrationEngine:
                     record, f"*{record.task_id} — BLOCKED*\n{record.message}"
                 )
                 return False
-            revision_handoff_context = self._handoff_context(record, assignment)
             revision_consumed_artifact_digests = (
                 self._consumed_dependency_artifact_digests(record, assignment)
             )
@@ -6624,14 +7354,16 @@ class OrchestrationEngine:
                 consumed_artifact_digests=revision_consumed_artifact_digests,
             )
             self.store.save(record)
+            revision_generation = record.plan_generation
             try:
                 revised = await adapter.revise(
                     run,
-                    decision.revision_prompt or "Address the failed acceptance checks and report new evidence.",
+                    revision_prompt,
                     assignment=assignment,
                     context=revision_handoff_context,
                 )
             except PreSubmitProviderError as exc:
+                self._charge_spend(assignment.agent, revision_effect_key, 0.0)  # provably never left
                 if revision_workload_reservation is not None:
                     if not await self._finalize_workload_dispatch(
                         record,
@@ -6705,20 +7437,14 @@ class OrchestrationEngine:
                     "retried because a paid run may already exist; owner reconciliation is required."
                 )
                 self.store.save(record)
+                if not self._charge_spend(assignment.agent, revision_effect_key, None,
+                                          record=record, assignment=assignment):
+                    return False
                 await self._status_post(record, record.message)
-                return False
-            if revision_workload_reservation is not None and not (
-                await self._finalize_workload_dispatch(
-                    record,
-                    revision_workload_reservation,
-                    WorkloadAttemptOutcome.INVOKED,
-                )
-            ):
-                return False
-            if not self._verified_plan_or_stop(record):
                 return False
             record.revision_count += 1
             revised.assignment_sequence = assignment.sequence
+            revised.plan_generation = revision_generation
             revised.interaction_id = revision_interaction_id
             revised.evidence_source = "provider_authenticated"
             self._record_dispatch_acknowledgement(record, revised)
@@ -6731,7 +7457,22 @@ class OrchestrationEngine:
                 run_id=revised.run_id,
             )
             record.provider_runs.append(revised)
-            self.store.save(record)
+            if assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
+                self.store.save(record)
+            settlement_ok = self._charge_spend(assignment.agent, revision_effect_key, None,
+                                                record=record, assignment=assignment, run=revised)
+            if revision_workload_reservation is not None and not (
+                await self._finalize_workload_dispatch(
+                    record,
+                    revision_workload_reservation,
+                    WorkloadAttemptOutcome.INVOKED,
+                )
+            ):
+                return False
+            if not settlement_ok:
+                return False
+            if not self._verified_plan_or_stop(record):
+                return False
             try:
                 revised = await self._wait(adapter, revised, record, assignment)
             except ProviderUnavailableError as exc:
@@ -6744,6 +7485,8 @@ class OrchestrationEngine:
             if not self._verified_plan_or_stop(record):
                 return False
             record.provider_runs[-1] = revised
+            if not self._settle_provider_spend(record, revised, assignment.agent):
+                return False
             self.store.save(record)
             if not revised.result:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -6923,6 +7666,7 @@ class OrchestrationEngine:
                         "provider poll changed the dispatched run identity"
                     )
                 observed.interaction_id = current.interaction_id
+                observed.plan_generation = current.plan_generation
                 observed.assignment_sequence = current.assignment_sequence
                 observed.session_id = observed.session_id or current.session_id
                 observed.evidence_source = "provider_authenticated"
@@ -7025,3 +7769,28 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 04:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 12:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]]

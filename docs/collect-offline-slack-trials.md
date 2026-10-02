@@ -1,3 +1,8 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]] -->
@@ -32,8 +37,15 @@ before trial 2. It requires:
   `SIMULATION — NO PROVIDER INTERACTION`, the label in `primary_default.py`.
 - Every outcome has a 64-hex `provider_result_digest`.
 - Terminal text contains that simulation label and `Actual USD cost: not recorded`.
+  A terminal reply Slack reports as edited, or with any subtype, never counts as
+  containing either: Slack keeps its original timestamp but returns the new text.
 
 The collector accepts only this contract; a file cannot weaken its requirements.
+Owner ruling (2026-09-24), option chosen: "Offline = pipeline proof". Check 10 proves the pipeline works end to end offline (delivery, simulation labels, ten consecutive, committed structural rubric); answer correctness is check 20's job (the real paid run). The structural rubric
+therefore proves the offline pipeline, not that any answer is correct; check
+10 does not verify answers and check 20 (the real paid run) does. A receipt
+counts only as a bot reply's leading header, never as text quoted inside a
+provider result.
 Compute its **file-byte SHA256** and include
 `rubric-sha256:<64-lowercase-hex-digest>` in the owner's original trial request.
 The collector matches that source event back to immutable intake text. The
@@ -47,8 +59,10 @@ declared in the source message.
 
 This measures simulated orchestration structure, not real provider answer
 quality. The good-run standard additionally requires authentic owner input,
-bounded work, one task, no ambiguous effects/delivery, wall time below 60 seconds,
-and attributable cost below USD 1. Machine time alone cannot satisfy wall time.
+bounded work, one task, no ambiguous effects/delivery, and complete attributable
+evidence. Wall time, machine time and actual cost are reported metrics; the former
+60-second/USD 1 figures are not acceptance gates. Nonnegative measurements and
+wall = owner pause + machine remain required; separate spending caps still apply.
 
 ## Collect after the owner completes a trial
 
@@ -246,7 +260,7 @@ evaluations are recomputed, and changed rubric hashes or conflicting checks fail
 | Receipt evidence | Run fields |
 | --- | --- |
 | Accepted task or unresolved thread | `run_id` |
-| Matched, gateway-attested owner input | `actual_owner_event` |
+| Matched owner input, gateway-attested by the task's one append-only intake claim (its digests re-derived from the served intake, in a complete readback) | `actual_owner_event` |
 | Recomputed predeclared rubric | `correctness_verified` |
 | Global deduplication authority | `task_count`, otherwise null |
 | Native terminal count and approved-pause arithmetic | `terminal_reply_count`, `wall_seconds`, `owner_pause_seconds`, `machine_seconds` |
@@ -296,8 +310,8 @@ discovers these tests. For #201, run the delivery tests only on the assigned lan
 
 ```powershell
 $env:PYTHONPATH = 'src'
-& C:/Users/edwar/director-orchestrator/.worktrees/langgraph-primary-cutover/.venv/Scripts/python.exe -m unittest tests.test_collect_offline_slack_trials tests.test_record_offline_trial tests.test_completion_scorecard -v
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-postgres-test-lane.ps1 -Action Test -ContainerName director-lane-201 -HostPort 55442 -Python C:/Users/edwar/director-orchestrator/.worktrees/langgraph-primary-cutover/.venv/Scripts/python.exe -TestNames tests.test_primary_slack_delivery
+& <venv-python> -m unittest tests.test_collect_offline_slack_trials tests.test_record_offline_trial tests.test_completion_scorecard -v
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-postgres-test-lane.ps1 -Action Test -ContainerName director-lane-201 -HostPort 55442 -Python <venv-python> -TestNames tests.test_primary_slack_delivery
 ```
 
 Static source checks do not replace executed tests, exact-head review, CI or
@@ -320,3 +334,8 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->

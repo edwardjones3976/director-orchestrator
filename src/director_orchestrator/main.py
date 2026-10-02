@@ -1,3 +1,7 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
@@ -59,7 +63,6 @@ from fastapi.responses import JSONResponse
 from . import __version__
 from .approvals import (
     StaleApproval,
-    apply_ambiguous_dispatch_resolution,
     apply_failed_predispatch_retry,
     apply_oracle_recovery,
     apply_owner_approval,
@@ -124,6 +127,7 @@ from .oracle_merge import (
     OracleMergeService,
     OracleMergeStore,
 )
+from .merge_observer import build_standing_merge_boundary
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 from .runtime_activation import RuntimeActivation
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -246,7 +250,15 @@ oracle_github = (
     else None
 )
 oracle_merge_service = OracleMergeService(
-    oracle_merge_policy, oracle_merge_store, oracle_github
+    oracle_merge_policy, oracle_merge_store, oracle_github,
+    # Issue #306: the boundary is mandatory on every Oracle merge path. An
+    # enabled gate that cannot build it from Settings fails startup with an
+    # explicit error instead of ever constructing a legacy no-boundary merge.
+    standing_merge_boundary=(
+        build_standing_merge_boundary(settings, github=oracle_github)
+        if oracle_github is not None
+        else None
+    ),
 )
 engine = OrchestrationEngine(
     settings,
@@ -544,9 +556,12 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": providers_ready,
+        "provider_prices": settings.provider_price_readiness(),
         # Trial-only contact lane (owner directive #207): individual readiness
         # booleans so an operator can see which gate is closed; never a value.
         "zai_trial": settings.zai_trial_readiness(),
+        # Enrolled production lane (2026-09-27): booleans only, closed by default.
+        "zai_production": settings.zai_production_readiness(),
         "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
@@ -752,6 +767,14 @@ def intake(
                 status_code=503,
                 detail="LangGraph primary intake is unavailable",
             ) from exc
+    if payload.primary_committee_debate is not None:
+        # The legacy engine has no Z.ai seat and cannot run under the primary
+        # fence: an invited debate is refused here, never silently dropped.
+        raise HTTPException(
+            status_code=409,
+            detail="Invited committee debates require the LangGraph primary; "
+            "Z.ai is unavailable under legacy rollback",
+        )
     if settings.langgraph_primary_postgres_dsn:
         postgres_module = importlib.import_module(
             ".langgraph_postgres", package=__package__
@@ -898,7 +921,7 @@ def get_task(
             # the evidence and the projection the task record is derived from,
             # so the record and the evidence describe the same version. Only
             # the writer-generation header below is read outside that snapshot.
-            from .langgraph_postgres import DeadlineExpired
+            from .langgraph_postgres import DeadlineExpired, PostgresControlPlaneError
 
             try:
                 evidence = primary_default_activation.coordinator.read_qualification_evidence(
@@ -908,6 +931,13 @@ def get_task(
                 raise HTTPException(
                     status_code=503,
                     detail="LangGraph primary qualification readback exceeded its deadline",
+                ) from exc
+            except PostgresControlPlaneError as exc:
+                # A projection whose content does not match its stored digest, or metadata over the byte bound:
+                # the readback is refused rather than served.
+                raise HTTPException(
+                    status_code=503,
+                    detail="LangGraph primary qualification readback was refused",
                 ) from exc
             if evidence is None:
                 primary_record = None
@@ -1770,12 +1800,13 @@ def reconcile_dispatch(
         stored = store.mutate_if_version(
             task_id,
             expected_version,
-            lambda record: apply_ambiguous_dispatch_resolution(record, resolution),
+            lambda record: engine.apply_dispatch_reconciliation(record, resolution),
         )
     except StaleApproval as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if stored is None:
         raise HTTPException(status_code=409, detail="Task changed during reconciliation")
+    engine._settle_reconciled_spend(stored)
     background.add_task(engine.run, task_id)
     return stored
 
@@ -1925,3 +1956,7 @@ def complete_run(
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

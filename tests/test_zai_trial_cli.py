@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 23:58 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 """scripts/zai-trial.py: the operator boundary between the deployment .env, the trial ledger and stdout.
@@ -92,8 +93,12 @@ class CliSubprocessTests(unittest.TestCase):
         self.assertTrue(self.ledger_path.exists())
 
     def test_widened_configuration_is_refused_as_json(self):
-        reason = self._refused(*run_cli("status", env_file=self.env_file("ZAI_MODE=production"), env=self.env))
+        reason = self._refused(*run_cli("status", env_file=self.env_file("ZAI_MODE=unrestricted"), env=self.env))
         self.assertIn("ZAI_MODE", reason)
+        # Production mode exists since the enrollment, but never without the
+        # owner's recorded activation evidence.
+        reason = self._refused(*run_cli("status", env_file=self.env_file("ZAI_MODE=production"), env=self.env))
+        self.assertIn("ZAI_PRODUCTION_ACTIVATION", reason)
 
     def test_ledger_path_naming_the_taskstore_is_refused_before_any_write(self):
         reason = self._refused(*run_cli("status", env_file=self.env_file("ZAI_TRIAL_LEDGER_PATH=" + str(self.sqlite)),
@@ -252,3 +257,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 23:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

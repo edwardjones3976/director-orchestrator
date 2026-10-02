@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:50 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | BEGIN]]
@@ -107,11 +108,13 @@ def load_json_dir(directory: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
-def manifest(directory: Path) -> str:
+def manifest(directory: Path, *, exclude_run_record: bool = False) -> str:
     """D-M1-0 digest: SHA-256 over sorted ``<dir_basename>/<file>\\t<file_sha256>\\n`` lines."""
     dir_name = directory.resolve().name
     lines: list[str] = []
     for path in sorted(directory.glob("*.json"), key=lambda p: p.name):
+        if exclude_run_record and path.name == "run.json":
+            continue
         file_digest = hashlib.sha256(path.read_bytes()).hexdigest()
         lines.append(f"{dir_name}/{path.name}\t{file_digest}\n")
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
@@ -490,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
     grades_sha256 = sha256_file_bytes(args.grades) if args.grades is not None else None
     digest_metadata = {
         "reference_manifest": computed_refs_manifest,
-        "candidate_manifest": manifest(args.candidates),
+        "candidate_manifest": manifest(args.candidates, exclude_run_record=True),
         "grades_sha256": grades_sha256,
         "exclude_file_sha256": exclude_file_sha256,
         "n_references": n_references,
@@ -523,3 +526,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:32 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:43 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-27 | 00:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 22:50 UTC | END]]

@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]]
@@ -57,6 +62,82 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WindowsPrimaryActivationToolTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_tls_lane_certificates_lifecycle_and_failure_cleanup(self):
+        script = self.text("windows-postgres-test-lane.ps1")
+        functions = script[script.index("function New-LaneTls"):script.index('if ($Action -eq "Start")')]
+        with tempfile.TemporaryDirectory() as directory:
+            harness = r'''
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$Python = $args[0]
+$repoRoot = $args[1]
+$ContainerName = 'tls-fixture'
+$HostPort = 55433
+$Tls = $true
+$image = 'fixture-image'
+$databaseUser = 'fixture'
+$databaseName = 'fixture'
+$laneLabel = 'fixture-lane'
+$dsnVariable = 'LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN'
+$caVariable = 'LANGGRAPH_RUNTIME_POSTGRES_TEST_CA'
+$containerVariable = 'LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER'
+$dsn = 'unused'
+$script:tlsDirectory = $null
+$script:exists = $false
+$script:failStart = $false
+$script:encoded = ''
+$script:lastDirectory = ''
+function docker {
+    $global:LASTEXITCODE = 0
+    switch ($args[0]) {
+        'ps' { return }
+        'create' {
+            if (-not ($args -contains '--mount') -or -not ($args -contains '--entrypoint')) { throw 'TLS container options missing' }
+            if ($args[-1] -notmatch 'chmod 0600' -or $args[-1] -notmatch 'chown -R postgres:postgres' -or $args[-1] -notmatch 'ssl=on') { throw 'TLS server permissions missing' }
+            $label = @($args | Where-Object { $_ -like 'director-orchestrator.test-lane-tls-directory=*' })[0]
+            $script:encoded = $label.Split('=', 2)[1]
+            $script:lastDirectory = $script:tlsDirectory
+            $script:exists = $true
+            return 'tls-instance'
+        }
+        'start' { if ($script:failStart) { $global:LASTEXITCODE = 1 }; return }
+        'inspect' { return $script:encoded }
+        'rm' { $script:exists = $false; return }
+    }
+    throw 'Unexpected Docker command'
+}
+'''
+            harness += functions + r'''
+function Assert-DockerReachable {}
+function Enter-LaneSlot {}
+function Remove-LaneSlot {}
+function Wait-LaneReady {}
+function Get-LaneContainer { if ($script:exists) { return @{Owned=$true; State='running'; Tls=$true} }; return $null }
+Start-Lane
+if (-not (Test-Path -LiteralPath $env:LANGGRAPH_RUNTIME_POSTGRES_TEST_CA)) { throw 'CA missing' }
+if ($env:LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN -notmatch 'sslmode=verify-full&sslrootcert=') { throw 'Verified TLS not exported' }
+$saved = $script:tlsDirectory
+# A fresh script invocation recovers the original host path from the label.
+$script:tlsDirectory = $null
+Stop-Lane
+if (Test-Path -LiteralPath $saved) { throw 'TLS files survived Stop' }
+if ($env:LANGGRAPH_RUNTIME_POSTGRES_TEST_CA -or $env:LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN) { throw 'Environment survived Stop' }
+$script:failStart = $true
+try { Start-Lane; throw 'Expected start failure' } catch {
+    if ($_.Exception.Message -ne 'The disposable PostgreSQL container could not be started.') { throw }
+}
+if ($script:exists -or (Test-Path -LiteralPath $script:lastDirectory)) { throw 'TLS resources survived startup failure' }
+Write-Output 'tls-lifecycle-passed'
+'''
+            path = Path(directory) / "tls.ps1"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File",
+                str(path), sys.executable, str(ROOT)], capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, timeout=60)
+            self.assertEqual(completed.returncode, 0, "TLS lane harness failed; connection values withheld")
+            self.assertIn("tls-lifecycle-passed", completed.stdout)
+
     def text(self, name: str) -> str:
         # read_text opens in text mode with newline=None, so a CRLF checkout
         # is already folded to LF before any assertion below sees it.
@@ -909,14 +990,15 @@ $image = 'already-present'
 $laneLabel = 'test-label'
 $script:items = @{}
 $script:serial = 0
+$script:laneInstanceId = $null
 $script:listingFails = $false
 $script:removeFails = $false
 $script:createFails = $false
 $env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
 $env:GITHUB_ACTIONS = $null
-function Item($name, $owner = '', $lane = '', $managed = '') {
+function Item($name, $owner = '', $lane = '', $managed = '', $state = 'running', $instance = '') {
     $script:serial++
-    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed"
+    $script:items[$name] = "$($script:serial)|$name|$owner|$lane|$managed|$state|$instance"
 }
 function docker {
     $global:LASTEXITCODE = 0
@@ -925,7 +1007,13 @@ function docker {
             if ($script:listingFails) { $global:LASTEXITCODE = 1; return }
             foreach ($row in $script:items.Values) {
                 $parts = $row -split '\|'
-                "$($parts[0])|$($parts[1])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4])"
+                if ($args -contains '--filter') {
+                    Check ($args -contains '--no-trunc' -and $args -contains '-q') 'Expected full ID query'
+                    $filter = $args[[Array]::IndexOf($args, '--filter') + 1]
+                    if ($filter -ceq "id=$($parts[0])") { $parts[0] }
+                    continue
+                }
+                "$($parts[0])|$($parts[1])|$($parts[5])|director-orchestrator.test-lane-slot=$($parts[2]),director-orchestrator.postgres-test-lane=$($parts[3]),director-orchestrator.test-lane-managed=$($parts[4]),director-orchestrator.test-lane-instance=$($parts[6])"
             }
             return
         }
@@ -933,8 +1021,17 @@ function docker {
             $name = $args[[Array]::IndexOf($args, '--name') + 1]
             if ($script:createFails -or $script:items.ContainsKey($name)) { $global:LASTEXITCODE = 1; return }
             if ($args -notcontains '--pull=never') { throw 'Slot may pull image' }
-            $owner = ($args[[Array]::IndexOf($args, '--label') + 1] -split '=', 2)[1]
-            Item $name $owner
+            $labels = @{}
+            for ($i = 0; $i -lt $args.Count; $i++) {
+                if ($args[$i] -eq '--label' -and ($i + 1) -lt $args.Count) {
+                    $pair = [string]$args[$i + 1] -split '=', 2
+                    if ($pair.Count -eq 2) { $labels[$pair[0]] = $pair[1] }
+                }
+            }
+            $owner = $labels['director-orchestrator.test-lane-slot']
+            $instance = $labels['director-orchestrator.test-lane-instance']
+            if (-not $instance) { throw 'Slot is not bound to a lane instance' }
+            Item $name $owner '' '' 'running' $instance
             return [string]$script:serial
         }
         'rm' {
@@ -959,6 +1056,7 @@ function MustFail($pattern) {
 """
             harness += functions + r"""
 function Clear-LaneEnvironment {}
+function Remove-LaneTls {}
 $base = $args[0]
 $env:LOCALAPPDATA = Join-Path $base 'local'
 $env:XDG_STATE_HOME = Join-Path $base 'xdg'
@@ -975,6 +1073,8 @@ Item 'candidate' '' 'true' 'true'
 Item 'legacy' '' 'true'
 Enter-LaneSlot
 Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Missing reservation'
+$liveId = ($script:items['candidate'] -split '\|')[0]
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[6] -eq $liveId) 'Reservation is not bound to the lane instance'
 Remove-LaneSlot
 Item 'legacy-two' '' 'true'
 MustFail '*cap 2*'
@@ -1011,6 +1111,31 @@ Item 'ci-four' '' 'true' 'true'
 Item 'director-test-lane-slot-3' 'ci-three'
 Item 'director-test-lane-slot-4' 'ci-four'
 MustFail '*cap 2*'
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '2'
+$script:items = @{}
+Item 'candidate' '' 'true' 'true'
+Item 'dead-lane' '' 'true' 'true' 'exited'
+Item 'director-test-lane-slot-1' 'dead-lane'
+Item 'pending-lane' '' 'true' 'true' 'created'
+Item 'director-test-lane-slot-2' 'pending-lane'
+Enter-LaneSlot
+Check (-not $script:items.ContainsKey('dead-lane')) 'Exited managed lane retained'
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[2] -eq 'candidate') 'Dead lane slot not reclaimed'
+Check ($script:items.ContainsKey('pending-lane')) 'Created lane removed'
+Check (($script:items['director-test-lane-slot-2'] -split '\|')[2] -eq 'pending-lane') 'Created lane slot reclaimed'
+Remove-LaneSlot
+$script:items = @{}
+Item 'candidate' '' 'true' 'true'
+Item 'foreign' '' '' '' 'exited'
+Item 'director-test-lane-slot-1' 'foreign'
+Item 'unmanaged-lane' '' 'true' '' 'dead'
+Item 'director-test-lane-slot-2' 'unmanaged-lane'
+MustFail '*cap 2*'
+Check ($script:items.ContainsKey('foreign')) 'Foreign exited container removed'
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Foreign owner slot reclaimed'
+Check ($script:items.ContainsKey('unmanaged-lane')) 'Unmanaged lane removed'
+Check ($script:items.ContainsKey('director-test-lane-slot-2')) 'Unmanaged owner slot reclaimed'
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = $null
 $script:items = @{}
 Item 'candidate' '' 'true' 'true'
 $script:listingFails = $true
@@ -1025,7 +1150,7 @@ try { Stop-Lane; throw 'Expected foreign refusal' } catch {
     if ($_.Exception.Message -notlike '*was not created by this script*') { throw }
 }
 Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Foreign refusal released slot'
-function Get-LaneContainer { return @{ State='running'; Owned=$true } }
+function Get-LaneContainer { return @{ State='running'; Owned=$true; Tls=$false } }
 function Remove-LaneContainer { throw 'Removal failed' }
 try { Stop-Lane; throw 'Expected removal failure' } catch {
     if ($_.Exception.Message -ne 'Removal failed') { throw }
@@ -1034,7 +1159,7 @@ Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed removal r
 function Remove-LaneContainer { $script:items.Remove('candidate') }
 Stop-Lane
 Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Stop retained slot'
-Item 'director-test-lane-slot-1' 'candidate'
+Item 'director-test-lane-slot-1' 'candidate' '' '' 'running' $script:laneInstanceId
 function Get-LaneContainer { return $null }
 $script:removeFails = $true
 try { Stop-Lane; throw 'Expected slot removal failure' } catch {
@@ -1044,6 +1169,47 @@ Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed slot remo
 $script:removeFails = $false
 Stop-Lane
 Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Absent lane retained slot'
+Item 'director-test-lane-slot-1' 'candidate' '' '' 'running' $script:laneInstanceId
+$removedId = [string]$script:serial
+$script:items.Remove('director-test-lane-slot-1')
+Item 'director-test-lane-slot-1' 'replacement'
+Remove-SlotContainer $removedId
+Check ($ErrorActionPreference -eq 'Stop') 'Removal changed error preference'
+Check (($script:items['director-test-lane-slot-1'] -split '\|')[2] -eq 'replacement') 'Removed replacement slot'
+$remainingId = [string]$script:serial
+$script:removeFails = $true
+try { Remove-SlotContainer $remainingId; throw 'Expected existing slot failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($script:items.ContainsKey('director-test-lane-slot-1')) 'Failed removal lost existing slot'
+$script:listingFails = $true
+try { Remove-SlotContainer $removedId; throw 'Expected listing failure' } catch {
+    if ($_.Exception.Message -notlike '*slot could not be removed*') { throw }
+}
+Check ($ErrorActionPreference -eq 'Stop') 'Failed removal changed error preference'
+$script:listingFails = $false
+$script:removeFails = $false
+$owned = [string]$script:laneInstanceId
+$script:items.Remove('candidate')
+Item 'candidate' '' 'true' 'true'
+Item 'director-test-lane-slot-9' 'candidate' '' '' 'running' 'replacement-id'
+$script:laneInstanceId = $owned
+Remove-LaneSlot
+Check ($script:items.ContainsKey('director-test-lane-slot-9')) 'Same-name start deleted the new reservation'
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '1'
+$script:items = @{}
+$script:laneInstanceId = $null
+Item 'candidate' '' 'true' 'true'
+Item 'orphan-owner' '' 'true' 'true' 'running'
+MustFail '*cap 1*'
+Check ($script:items.ContainsKey('orphan-owner')) 'Orphaned managed owner was removed'
+Check (-not $script:items.ContainsKey('director-test-lane-slot-1')) 'Rejected admission kept a reservation'
+$sqliteFile = Join-Path $base 'director-postgres-test-lane-fixture.sqlite3'
+Set-Content -LiteralPath $sqliteFile 'x'
+Set-Content -LiteralPath ($sqliteFile + '-wal') 'x'
+Remove-LaneSqlite $sqliteFile
+Check (-not (Test-Path -LiteralPath $sqliteFile)) 'Per-run SQLite was kept'
+Check (-not (Test-Path -LiteralPath ($sqliteFile + '-wal'))) 'Per-run SQLite wal was kept'
 Write-Output 'slot-checks-passed'
 """
             path = Path(directory) / "slots.ps1"
@@ -1058,6 +1224,11 @@ Write-Output 'slot-checks-passed'
 
     def test_postgres_test_lane_mirrors_ci_and_refuses_foreign_containers(self) -> None:
         text = self.text("windows-postgres-test-lane.ps1")
+        self.assertIn("[ValidateRange(1, 256)][int]$Parallel", text)
+        self.assertIn("$PSBoundParameters.ContainsKey('Parallel')", text)
+        self.assertIn("-Parallel requires -Action Test and full discovery (no -TestNames).", text)
+        self.assertIn("& $pythonPath scripts/run-tests-parallel.py --shards $Parallel", text)
+        self.assertIn("else { & $pythonPath -m unittest discover -s tests -v }", text)
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         for action in ('"Start"', '"Stop"', '"Status"', '"Dsn"', '"Test"'):
@@ -1101,8 +1272,8 @@ Write-Output 'slot-checks-passed'
         self.assertIn('--filter "publish=$HostPort"', text)
         self.assertIn("docker rm --force --volumes", text)
         for forbidden in (
-            "docker compose", "docker inspect", "Threading.Mutex", "langgraph-primary-db",
-            "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "Read-DotEnv", "0.0.0.0", "Remove-Item",
+            "docker compose", "Threading.Mutex", "langgraph-primary-db",
+            "LANGGRAPH_PRIMARY_POSTGRES_PASSWORD", "Read-DotEnv", "0.0.0.0",
             "-AsHashtable", "ToHexString", "$IsWindows", " && ", " || ", " ?? ",
         ):
             self.assertNotIn(forbidden, text)
@@ -1134,6 +1305,9 @@ Write-Output 'slot-checks-passed'
         self.assertIn("try { Stop-Lane; $laneRemoved = $true } catch", test_section)
         self.assertIn("may still be running; rerun -Action Stop", test_section)
         self.assertIn("if (-not $laneRemoved) { throw", test_section)
+        self.assertIn("director-orchestrator.test-lane-instance=", text)
+        self.assertIn("Remove-LaneSqlite", test_section)
+        self.assertIn("$orphanedManaged", text)
 
     def test_stage_a_runbook_lists_every_control_action_and_the_scripted_offline_path(self) -> None:
         script = self.text("windows-langgraph-primary-control.ps1")
@@ -1302,3 +1476,8 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 16:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 23:43 UTC | END]]

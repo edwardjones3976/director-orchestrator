@@ -1,3 +1,4 @@
+# [[Cursor | Auto | 2026-09-30 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
@@ -76,6 +77,47 @@ class BuildInputsTests(unittest.TestCase):
         refs.mkdir(parents=True)
         (refs / "metadata").mkdir()
         return root, refs, out
+
+    def test_explicit_dataset_root_rejects_pr_body_and_path_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dataset"
+            refs = root / "set-b" / "refs"
+            refs.mkdir(parents=True)
+            source = root / "pulls" / "360" / "body.md"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"Completed pull request body.\n")
+            item = {"kind": "assignment_packet", "text": "Completed pull request body.",
+                    "source_ref": "pulls/360/body.md",
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+            errors = build_inputs.validate_context(
+                [item], {}, set(), refs, "p1", {}, source_root=root,
+            )
+            self.assertTrue(any("completed pull request" in error for error in errors))
+            self.assertIsNotNone(build_inputs._forbidden_assignment_source(
+                "alias/body.md", source.resolve(), root.resolve(),
+            ))
+            item["source_ref"] = "assignments/../pulls/360/body.md"
+            errors = build_inputs.validate_context(
+                [item], {}, set(), refs, "p1", {}, source_root=root,
+            )
+            self.assertTrue(any("relative source path" in error for error in errors))
+
+    def test_training_mode_disables_the_frozen_own_source_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, _out = self._layout(Path(tmp))
+            text = "alpha beta gamma delta epsilon zeta eta theta iota"
+            source = root / "assignment.md"
+            source.write_bytes(text.encode("utf-8"))
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            (refs / "metadata" / "p1.meta.json").write_text(json.dumps({
+                "source_file": "assignment.md", "source_sha256": digest}), encoding="utf-8")
+            context = [{"kind": "assignment_packet", "text": text,
+                        "source_ref": "assignment.md", "source_sha256": digest}]
+            args = (context, {"p1": _minimal_ref(constraints=[text])},
+                    {"assignment.md"}, refs, "p1", {digest: {"p1"}})
+            self.assertEqual(build_inputs.validate_context(*args), [])
+            errors = build_inputs.validate_context(*args, allow_held_out_source=False)
+            self.assertTrue(any("held-out" in error for error in errors))
 
     def test_source_file_rejects_absolute_and_parent_escape(self):
         for source_kind in ("absolute_inside", "absolute_outside", "parent_escape"):
@@ -505,9 +547,368 @@ class BuildInputsTests(unittest.TestCase):
             self.assertEqual(run["item_count"], 1)
 
 
+SOURCE_TEXT = "The packet asks for a mirror log check.\n"
+SHA = hashlib.sha256(SOURCE_TEXT.encode("utf-8")).hexdigest()
+
+
+def _context_item(**overrides):
+    item = {"kind": "assignment_packet", "text": "The packet asks for a mirror log check.",
+            "source_ref": "packets/other-source.md", "source_sha256": SHA}
+    item.update(overrides)
+    return item
+
+
+class BuildInputsContextTests(unittest.TestCase):
+    """Packet M2-C1: the D-M2-10 input contract with provenance-bound context."""
+
+    def test_scalar_overlap_requires_a_verified_own_assignment_excerpt(self):
+        objective = "Make receipt costs include every paid route without mixing budget buckets."
+        title = "Preserve costs and stop at the stated budget limit"
+        source_text = f"# {title}\n\n{objective}\nKeep `cost < limit` before dispatch.\n"
+        cases = (
+            "own", "inline_code", "wrong_digest", "wrong_metadata", "foreign",
+            "not_assignment", "outside_excerpt", "injected_objective", "injected_title",
+            "altered_operator", "repository", "legacy",
+        )
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                source = root / "assignment.md"
+                source.write_bytes(source_text.encode("utf-8"))
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                reference = _minimal_ref("p1", objective=objective,
+                    acceptance_checks=[objective, title, "Keep cost < limit before dispatch.",
+                                       "Require separate written authorization for exporting the sealed packet."])
+                meta = {"source_file": "assignment.md", "source_sha256": digest,
+                        "source_title": title}
+                item = _context_item(text=source_text, source_ref="assignment.md", source_sha256=digest)
+                if case == "inline_code":
+                    reference["objective"] = "Keep cost < limit before dispatch."
+                elif case == "wrong_digest":
+                    item["source_sha256"] = "0" * 64
+                elif case == "wrong_metadata":
+                    meta["source_sha256"] = "0" * 64
+                elif case == "foreign":
+                    (root / "foreign.md").write_bytes(source.read_bytes())
+                    item["source_ref"] = "foreign.md"
+                elif case == "not_assignment":
+                    item["kind"] = "project_policy"
+                elif case == "outside_excerpt":
+                    item["text"] = "Keep `cost < limit` before dispatch."
+                elif case == "injected_objective":
+                    reference["objective"] = reference["acceptance_checks"][-1]
+                elif case == "injected_title":
+                    meta["source_title"] = reference["acceptance_checks"][-1]
+                elif case == "altered_operator":
+                    reference["objective"] = "Keep cost > limit before dispatch."
+                elif case == "repository":
+                    reference["repository"] = reference["acceptance_checks"][-1]
+                (refs / "p1.json").write_text(json.dumps(reference), encoding="utf-8")
+                (refs / "metadata" / "p1.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+                (context / "p1.context.json").write_text(json.dumps([item]), encoding="utf-8")
+                argv = ["--set", "b", "--refs", str(refs), "--out", str(out)]
+                if case != "legacy":
+                    argv += ["--context", str(context)]
+                with redirect_stderr(io.StringIO()):
+                    code = build_inputs.build(argv)
+                self.assertEqual(code, 0 if case in {"own", "inline_code"} else 1)
+                if code:
+                    self.assertFalse(out.exists())
+                else:
+                    payload = json.loads((out / "p1.json").read_text(encoding="utf-8"))
+                    self.assertEqual(payload["objective"], reference["objective"])
+                    self.assertEqual(payload["title"], title)
+                    self.assertEqual(payload["context"], [item])
+
+    def _layout(self, tmp: Path) -> tuple[Path, Path, Path, Path]:
+        root = tmp / "dataset"
+        refs, out, context = root / "refs", root / "inputs", root / "context"
+        refs.mkdir(parents=True)
+        (refs / "metadata").mkdir()
+        context.mkdir()
+        return root, refs, out, context
+
+    def _held_out_task(self, root: Path, refs: Path) -> str:
+        """A set A item whose frozen source is a markdown packet beside the refs."""
+        item_id = "ew-one"
+        (refs / f"{item_id}.json").write_text(json.dumps(_minimal_ref(
+            item_id, constraints=["stdlib only", "alpha beta gamma delta epsilon zeta eta theta iota"],
+        )), encoding="utf-8")
+        md_path = root / "packets" / "ew-one.md"
+        md_path.parent.mkdir(exist_ok=True)
+        md_path.write_text(
+            "# Heading From Markdown\n\nBackground: the mirror task runs nightly on the G drive "
+            "and the owner wants the log kept.\n\n## Constraints\n\n- alpha beta gamma delta epsilon "
+            "zeta eta theta iota\n", encoding="utf-8")
+        (root / "packets" / "other-source.md").write_bytes(SOURCE_TEXT.encode("utf-8"))
+        (refs / "metadata" / f"{item_id}.meta.json").write_text(
+            json.dumps({"source_file": "packets/ew-one.md",
+                        "source_sha256": hashlib.sha256(md_path.read_bytes()).hexdigest()}), encoding="utf-8")
+        (refs / "p2.json").write_text(json.dumps(_minimal_ref("p2", non_goals=["never touch the archive drive"])),
+                                      encoding="utf-8")
+        (root / "packets" / "p2.md").write_text("# Second Packet\n", encoding="utf-8")
+        (refs / "metadata" / "p2.meta.json").write_text(
+            json.dumps({"source_file": "packets/p2.md",
+                        "source_sha256": hashlib.sha256((root / "packets" / "p2.md").read_bytes()).hexdigest()}),
+            encoding="utf-8")
+        return item_id
+
+    def _build(self, refs: Path, out: Path, context: Path) -> tuple[int, str]:
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            code = build_inputs.build(["--set", "a", "--refs", str(refs), "--out", str(out),
+                                       "--context", str(context)])
+        return code, errors.getvalue()
+
+    def test_context_cut_from_the_frozen_source_is_written_with_the_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            excerpt = (root / "packets" / "ew-one.md").read_text(encoding="utf-8")
+            (root / "policy.md").write_text("One writer per file.\n", encoding="utf-8")
+            policy = _context_item(kind="project_policy", text="One writer per file.",
+                                   source_ref="policy.md", source_sha256=hashlib.sha256(
+                                       (root / "policy.md").read_bytes()).hexdigest())
+            (context / f"{item_id}.context.json").write_text(json.dumps([
+                _context_item(text=excerpt, source_ref="packets/ew-one.md",
+                              source_sha256=hashlib.sha256((root / "packets" / "ew-one.md").read_bytes()).hexdigest()),
+                policy,
+            ]), encoding="utf-8")
+            (context / "p2.context.json").write_text(json.dumps([
+                _context_item(text="# Second Packet", source_ref="packets/p2.md",
+                              source_sha256=hashlib.sha256((root / "packets" / "p2.md").read_bytes()).hexdigest()),
+                policy,
+            ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 0, stderr)
+            payload = json.loads((out / f"{item_id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(payload), {"id", "objective", "repository", "title", "context"})
+            self.assertEqual(payload["title"], "Heading From Markdown")
+            self.assertEqual(payload["context"][0]["text"], excerpt)
+            self.assertEqual(set(payload["context"][0]), {"kind", "text", "source_ref", "source_sha256"})
+            self.assertEqual(payload["context"][1]["kind"], "project_policy")
+            run = json.loads((out.parent / f"{out.name}.build.json").read_text(encoding="utf-8"))
+            self.assertEqual(run["input_contract"], "D-M2-10")
+            self.assertEqual(run["context_dir"], str(context.resolve()))
+            self.assertEqual(run["context_manifest"], build_inputs.manifest(context))
+            self.assertEqual(run["n_inputs"], 2)
+
+    def test_legacy_build_without_context_records_the_m1_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, _context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            self.assertEqual(build_inputs.build(["--set", "a", "--refs", str(refs), "--out", str(out)]), 0)
+            payload = json.loads((out / f"{item_id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(payload), {"id", "objective", "repository", "title"})
+            run = json.loads((out.parent / f"{out.name}.build.json").read_text(encoding="utf-8"))
+            self.assertEqual(run["input_contract"], "D-M1-1")
+            self.assertIsNone(run["context_dir"])
+            self.assertIsNone(run["context_manifest"])
+
+    def test_verified_own_sources_may_share_policy_text(self):
+        shared = "keepers share one written rule and do not export the sealed packet"
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            for relative in ("packets/ew-one.md", "packets/p2.md"):
+                path = root / relative
+                path.write_text(path.read_text(encoding="utf-8") + shared + "\n", encoding="utf-8")
+            other_only = "violet lanterns mark the other task and never the first"
+            for name, relative, scored in (
+                (item_id, "packets/ew-one.md", [shared, "alpha beta gamma delta epsilon zeta eta theta iota"]),
+                ("p2", "packets/p2.md", [shared, other_only]),
+            ):
+                source = root / relative
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                (refs / "metadata" / f"{name}.meta.json").write_text(json.dumps({
+                    "source_file": relative, "source_sha256": digest,
+                }), encoding="utf-8")
+                (refs / f"{name}.json").write_text(
+                    json.dumps(_minimal_ref(name, constraints=scored)), encoding="utf-8")
+                (context / f"{name}.context.json").write_text(json.dumps([
+                    _context_item(text=shared, source_ref=relative, source_sha256=digest),
+                ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 0, stderr)
+            shutil.rmtree(out)
+            (root / "inputs.build.json").unlink()
+            other = json.loads((context / "p2.context.json").read_text(encoding="utf-8"))[0]
+            (context / f"{item_id}.context.json").write_text(json.dumps([other]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 1)
+            self.assertIn("resolves to a held-out item", stderr)
+            own = root / "packets" / "ew-one.md"
+            own_digest = hashlib.sha256(own.read_bytes()).hexdigest()
+            forged = _context_item(
+                text=other_only,
+                source_ref="packets/ew-one.md", source_sha256=own_digest,
+            )
+            (context / f"{item_id}.context.json").write_text(json.dumps([forged]), encoding="utf-8")
+            (context / "p2.context.json").write_text(json.dumps([
+                _context_item(text="# Second Packet", source_ref="packets/p2.md",
+                              source_sha256=hashlib.sha256((root / "packets" / "p2.md").read_bytes()).hexdigest()),
+            ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 1)
+            self.assertIn("overlaps scored field", stderr)
+            self.assertIn("not an excerpt", stderr)
+            (context / f"{item_id}.context.json").write_text(json.dumps([
+                _context_item(text=shared, source_ref="packets/ew-one.md", source_sha256="0" * 64),
+            ]), encoding="utf-8")
+            code, stderr = self._build(refs, out, context)
+            self.assertEqual(code, 1)
+            self.assertIn("does not match source bytes", stderr)
+
+    def test_context_whose_source_ref_resolves_to_a_held_out_item_is_refused(self):
+        refusals = {
+            "own id": "ew-one",
+            "other reference id": "p2",
+            "other id as path": "C:\\llm\\datasets\\heldout\\set-a\\p2.json",
+            "other source file": "packets/p2.md",
+            "other source file name": "p2.md",
+            "other source file stem": "packets/P2.md",
+            "case and punctuation folded": "EW_ONE",
+        }
+        for name, source_ref in refusals.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                (context / f"{item_id}.context.json").write_text(
+                    json.dumps([_context_item(source_ref=source_ref)]), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(f"context {item_id}: context[0]: source_ref resolves to a held-out item", stderr)
+                self.assertFalse(out.exists())
+                self.assertFalse((root / "inputs.build.json").exists())
+
+    def test_context_text_overlapping_a_scored_field_is_refused(self):
+        leaks = {
+            "own constraint shingle": ("Remember alpha beta gamma delta epsilon zeta eta theta when planning.", "ew-one"),
+            "other item non-goal": ("The owner said: never touch the archive drive.", "p2"),
+        }
+        for name, (text, leaked_from) in leaks.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                (context / f"{item_id}.context.json").write_text(
+                    json.dumps([_context_item(), _context_item(text=text)]), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(f"context {item_id}: context[1]: text overlaps scored field of {leaked_from}:", stderr)
+                self.assertFalse(out.exists())
+
+    def test_context_citation_must_match_real_source_bytes_and_excerpt(self):
+        cases = {
+            "nonexistent path": _context_item(source_ref="packets/missing.md", source_sha256="0" * 64),
+            "parent escape": _context_item(source_ref="../outside.md"),
+            "wrong digest": _context_item(source_sha256="0" * 64),
+            "invented excerpt": _context_item(text="A sentence absent from the source."),
+            "forged held-out alias": _context_item(source_ref="packets/p2.md",
+                                                      source_sha256=hashlib.sha256(b"# Second Packet\n").hexdigest()),
+        }
+        expected = {
+            "nonexistent path": "does not resolve to a source file",
+            "parent escape": "must be a relative source path",
+            "wrong digest": "does not match source bytes",
+            "invented excerpt": "not an excerpt of source_ref",
+            "forged held-out alias": "resolves to a held-out item",
+        }
+        for name, item in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                (context / f"{item_id}.context.json").write_text(json.dumps([item]), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(expected[name], stderr)
+                self.assertFalse(out.exists())
+
+    def test_pr_body_archive_is_not_task_time_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            (refs / "pr-103.json").write_text(json.dumps(_minimal_ref("pr-103")), encoding="utf-8")
+            (refs / "metadata" / "pr-103.meta.json").write_text(
+                json.dumps({"source_pr": 103, "source_title": "Fixture PR"}), encoding="utf-8")
+            raw = root / "raw" / "pr-bodies.jsonl"
+            raw.parent.mkdir()
+            raw.write_bytes(b'{"number":103,"body":"Context from a later PR body."}\n')
+            (context / "pr-103.context.json").write_text(json.dumps([
+                _context_item(text="Context from a later PR body.",
+                              source_ref="raw/pr-bodies.jsonl",
+                              source_sha256=hashlib.sha256(raw.read_bytes()).hexdigest())
+            ]), encoding="utf-8")
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                code = build_inputs.build(["--set", "b", "--refs", str(refs),
+                                           "--out", str(out), "--context", str(context)])
+            self.assertEqual(code, 1)
+            self.assertIn("lacks assignment-time provenance", errors.getvalue())
+            self.assertFalse(out.exists())
+            policy = root / "policy.md"
+            policy.write_bytes(b"A neutral policy excerpt.\n")
+            (context / "pr-103.context.json").write_text(json.dumps([
+                _context_item(kind="project_policy", text="A neutral policy excerpt.",
+                              source_ref="policy.md",
+                              source_sha256=hashlib.sha256(policy.read_bytes()).hexdigest())
+            ]), encoding="utf-8")
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                code = build_inputs.build(["--set", "b", "--refs", str(refs),
+                                           "--out", str(out), "--context", str(context)])
+            self.assertEqual(code, 1)
+            self.assertIn("no verified assignment-time source", errors.getvalue())
+
+    def test_missing_empty_or_malformed_context_is_refused(self):
+        cases = {
+            "missing file": (None, "missing context file"),
+            "empty array": ([], "at least one item"),
+            "not an array": ({"kind": "assignment_packet"}, "must be a list"),
+            "bad kind": ([_context_item(kind="held_out_reference")], "kind must be one of"),
+            "bad hash": ([_context_item(source_sha256="nope")], "64 lowercase hex"),
+            "extra field": ([dict(_context_item(), constraints=["x"])], "exactly kind, text"),
+        }
+        for name, (context_value, fragment) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out, context = self._layout(Path(tmp))
+                item_id = self._held_out_task(root, refs)
+                if context_value is not None:
+                    (context / f"{item_id}.context.json").write_text(json.dumps(context_value), encoding="utf-8")
+                (context / "p2.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+                code, stderr = self._build(refs, out, context)
+                self.assertEqual(code, 1)
+                self.assertIn(f"context {item_id}: ", stderr)
+                self.assertIn(fragment, stderr)
+                self.assertFalse(out.exists())
+
+    def test_excluded_item_needs_no_context_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            item_id = self._held_out_task(root, refs)
+            (context / f"{item_id}.context.json").write_text(json.dumps([_context_item()]), encoding="utf-8")
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                code = build_inputs.build(["--set", "a", "--refs", str(refs), "--out", str(out),
+                                           "--context", str(context), "--exclude", "p2=answer revealed"])
+            self.assertEqual(code, 0, errors.getvalue())
+            self.assertEqual([p.name for p in out.iterdir()], [f"{item_id}.json"])
+
+    def test_context_dir_must_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out, context = self._layout(Path(tmp))
+            self._held_out_task(root, refs)
+            code, stderr = self._build(refs, out, context / "absent")
+            self.assertEqual(code, 1)
+            self.assertIn("context is not a directory", stderr)
+            self.assertFalse(out.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | END]]
+# [[Cursor | Auto | 2026-09-30 | 02:20 UTC | END]]

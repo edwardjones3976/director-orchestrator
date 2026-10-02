@@ -1,3 +1,13 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -113,7 +123,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 
 | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | --- | --- | --- |
-| 5 | 10 | 5 | 5 |
+| 4 | 8 | 4 | 4 |
 
 ## Roles and responsibilities
 
@@ -184,14 +194,17 @@ Strengths:
 
 | Variable | Kind | Settings field | Default | In .env.example | Value recorded |
 | --- | --- | --- | --- | --- | --- |
+| `GEMINI_INPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `gemini_input_usd_per_mtok` | - | yes | no |
+| `GEMINI_OUTPUT_USD_PER_MTOK` | token_price_usd_per_mtok | `gemini_output_usd_per_mtok` | - | yes | no |
 | `GEMINI_DAILY_BUDGET_USD` | daily_budget_usd | `gemini_daily_budget_usd` | `2.0` | yes | no |
 | `GEMINI_DAILY_REQUEST_LIMIT` | daily_request_limit | `gemini_daily_request_limit` | `50` | yes | no |
+| `GEMINI_USAGE_PROBE_COST_CEILING_USD` | per_request_cost_floor_usd | `gemini_usage_probe_cost_ceiling_usd` | - | yes | no |
 | `GEMINI_MAX_TOTAL_TOKENS` | token_ceiling | `gemini_max_total_tokens` | `20000` | yes | no |
 | `GEMINI_USAGE_MAX_ATTEMPTS` | max_attempts | `gemini_usage_max_attempts` | `3` | yes | no |
 | `GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS` | retry_delay_seconds | `gemini_usage_max_retry_delay_seconds` | `8` | yes | no |
 
 - Provider daily spend ledger member: yes
-- Not modeled note: none
+- Not modeled note: Managed Gemini cannot honor a finite per-request monetary ceiling, even with configured token prices or GEMINI_MAX_TOTAL_TOKENS. Work and probes serialize, holding all remaining daily capacity; an unresolved non-legacy request blocks admission across UTC days until authoritative cost settlement or reconciliation. Serialization is not a provider-enforced spend ceiling.
 - Shared limits: `MAX_TASK_BUDGET_USD`, `PROVIDER_TIMEOUT_SECONDS`, `PROVIDER_POLL_SECONDS`
 
 ## Allowlists and gating
@@ -307,7 +320,7 @@ Separation of duties:
 | `result-packet-return` | mediated | provider_to_director | provider_response_to_dispatch | authorized | enabled | none | `src/director_orchestrator/packet_results.py`, `src/director_orchestrator/packet_contracts.py` |
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
 | `dependency-outcome-forwarding` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/antigravity.py` |
-| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes` |
+| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes`, `src/director_orchestrator/primary_committee.py` |
 | `antigravity-invited-debate` | mediated | bidirectional | director_invitation_only | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/antigravity.py:build_debate_request`, `src/director_orchestrator/policy.py` |
 | `antigravity-closed-work-directive` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/antigravity.py`, `src/director_orchestrator/primary_transports.py:antigravity_closed_payload` |
 | `provider-usage-checks` | mediated | director_to_provider | timer_or_owner | authorized | disabled | none | `src/director_orchestrator/usage.py` |
@@ -329,6 +342,7 @@ Separation of duties:
 | `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `provider-usage-checks`, `owner-manual-recovery` |
 | `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 | `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `zai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `advisory-debate`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -368,3 +382,13 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:24 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 18:50 UTC | END]] -->

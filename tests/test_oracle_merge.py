@@ -1,3 +1,5 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]]
@@ -9,6 +11,7 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:55 UTC | BEGIN]]
 from __future__ import annotations
 
+import itertools
 import sqlite3
 import json
 import tempfile
@@ -19,7 +22,24 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
 from director_orchestrator.config import Settings
+from director_orchestrator.hotl_execution import (
+    STANDING_MERGE_AUTHORITY,
+    MergeExecutionBoundary,
+    MergeObservation,
+)
+from director_orchestrator.merge_eligibility import (
+    MergeEligibilityPolicy,
+)
+from tests.test_merge_eligibility import (
+    bundle as eligibility_bundle,
+    check as eligibility_check,
+    digest as eligibility_digest,
+    review as eligibility_review,
+)
 from director_orchestrator.callbacks import apply_manual_run_completion
 from director_orchestrator.interactions import (
     ProviderInteractionPhase,
@@ -112,6 +132,28 @@ class FakeGitHub:
             merged=True, merge_commit_sha="c" * 40, actor="test-merger"
         )
 
+    def merge_as_identity(
+        self,
+        *,
+        repository: str,
+        pull_number: int,
+        expected_head_sha: str,
+        expected_base_sha: str,
+        acting_identity: str,
+        allow_bypass: bool = False,
+    ) -> str:
+        """Identity-bound transport for the standing boundary: same refusal
+        behavior as the legacy merge, plus an explicit bypass guard."""
+
+        if allow_bypass is not False:
+            raise RuntimeError("identity-bound merge refuses protection bypass")
+        result = self.merge(
+            repository, pull_number, expected_head_sha, expected_base_sha
+        )
+        if not result.merged or not result.merge_commit_sha:
+            raise RuntimeError("GitHub refused the exact-SHA identity-bound merge")
+        return str(result.merge_commit_sha)
+
     def mark_ready(
         self, repository: str, pull_number: int, expected_sha: str, expected_base_sha: str
     ) -> bool:
@@ -122,12 +164,54 @@ class FakeGitHub:
         return True
 
 
+class PinnedStandingBoundary(MergeExecutionBoundary):
+    """Test double for the production boundary: the assignment pin follows the
+    artifact under review so one harness serves the suite's many artifacts.
+
+    Production is stricter, not looser: the real construction site pins one
+    assignment per boundary from Settings, and the service still refuses any
+    artifact whose assignment differs from the pin.
+    """
+
+    pinned_artifact: OracleReviewArtifact | None = None
+
+    def pin(self, artifact: OracleReviewArtifact) -> None:
+        self._pinned_assignment = artifact.assignment_id
+        self.pinned_artifact = artifact
+
+    @property
+    def assignment_id(self) -> str:
+        return self._pinned_assignment
+
+    @assignment_id.setter
+    def assignment_id(self, value: str) -> None:
+        self._pinned_assignment = value
+
+
+class BoundaryPinnedService(OracleMergeService):
+    """Pins the boundary to each artifact before evaluation begins."""
+
+    def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
+        pin = getattr(self._standing_merge_boundary, "pin", None)
+        if pin is not None:
+            pin(artifact)
+        return super().process(artifact)
+
+
 class OracleMergeGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.database = str(Path(self.temporary.name) / "oracle.sqlite3")
         self.sleeps: list[float] = []
+        # Throwaway observer keys, generated in memory per test; never files.
+        self.observer_private_key = Ed25519PrivateKey.generate()
+        self.observer_public_key = (
+            self.observer_private_key.public_key().public_bytes(
+                Encoding.Raw, PublicFormat.Raw
+            )
+        )
+        self.standing_boundaries = itertools.count()
         self.settings = Settings(
             sqlite_path=self.database,
             oracle_automerge_enabled=True,
@@ -222,18 +306,133 @@ class OracleMergeGateTests(unittest.TestCase):
         values.update(changes)
         return OraclePullRequestSnapshot.model_validate(values)
 
+    def standing_boundary(self, github: FakeGitHub) -> PinnedStandingBoundary:
+        """A working Ed25519 observer: signs fresh observations for whatever
+        artifact the service pins, merges only through the identity-bound
+        transport, and keeps its durable audit in a per-instance database."""
+
+        audit_path = str(
+            Path(self.temporary.name) / f"standing-{next(self.standing_boundaries)}.sqlite3"
+        )
+        observer_private_key = self.observer_private_key
+
+        def observe(action, pull_number, challenge):
+            artifact = boundary.pinned_artifact
+            reviewer = replace(
+                eligibility_review(
+                    artifact.reviewer_provider, "standing", head=artifact.head_sha
+                ),
+                verdict="ACCEPT",
+            )
+            security = eligibility_review(
+                "security-standing", "security-standing", head=artifact.head_sha
+            )
+            checks = (
+                eligibility_check("ci", head=artifact.head_sha),
+                eligibility_check("security", head=artifact.head_sha),
+            )
+            evidence = eligibility_bundle(
+                repository=artifact.repository,
+                base_ref=artifact.base_ref,
+                head_ref=artifact.head_ref,
+                candidate_head_sha=artifact.head_sha,
+                changed_paths=("oracle/calibration.py",),
+                material_author_principals=frozenset({artifact.implementation_provider}),
+                assignment_status={
+                    "scope": "assignment",
+                    "assignment_id": boundary.assignment_id,
+                    "assignment_acceptance_authorized": True,
+                    "gate_evidence_complete": True,
+                },
+                independent_reviews=(reviewer,),
+                security_reviews=(security,),
+                checks=checks,
+                owner_authorization_digest=eligibility_digest("owner"),
+                authenticated_record_digests=frozenset({
+                    reviewer.authentication_record_digest, reviewer.record_digest,
+                    security.authentication_record_digest, security.record_digest,
+                    *(item.response_digest for item in checks),
+                    eligibility_digest("owner"),
+                }),
+            )
+            observation = MergeObservation(
+                bundle=evidence,
+                pull_number=pull_number,
+                base_sha=artifact.base_sha,
+                environment="test",
+                observed_at=datetime.now(timezone.utc),
+                challenge=challenge,
+                authority_id=STANDING_MERGE_AUTHORITY,
+                authority_status="ACTIVE",
+                operating_state="ATTENDED",
+                producer_principal=artifact.implementation_provider,
+                merging_principal=action.acting_identity,
+                provenance_status="COMPLETE",
+                protection_status="SATISFIED",
+                ruleset_status="SATISFIED",
+                bypass_status="DISABLED",
+                cancellation_status="RUNNING",
+                tier_zero_status="CLEAR",
+                budget_used=0,
+                budget_limit=1,
+                attempts_used=0,
+                attempt_limit=1,
+                hops_used=0,
+                hop_limit=1,
+                base_protected=(
+                    action.action_class == "eligible_merge_protected_branch"
+                ),
+            )
+            signature = observer_private_key.sign(observation.payload()).hex()
+            return observation, signature
+
+        boundary = PinnedStandingBoundary(
+            repository=self.settings.oracle_automerge_repository,
+            environment="test",
+            assignment_id="unpinned-until-the-service-pins-the-artifact",
+            policy=MergeEligibilityPolicy(
+                allowed_base_refs=(self.settings.oracle_automerge_base_ref,),
+                allowed_path_globs=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
+                required_check_names=("ci", "security"),
+                required_branch_prefix="oracle/",
+                require_owner_authorization=True,
+                kill_switch_engaged=False,
+            ),
+            prohibited_paths=(),
+            observer_public_key=self.observer_public_key,
+            observe=observe,
+            merge=github.merge_as_identity,
+            audit_path=audit_path,
+        )
+        return boundary
+
     def service(
         self,
         github: FakeGitHub,
         settings: Settings | None = None,
         store: OracleMergeStore | None = None,
+        *,
+        standing_boundary: PinnedStandingBoundary | None | bool = True,
+        **kwargs,
     ) -> OracleMergeService:
+        # Extra constructor kwargs (state_witness, checks_green_oracle, ...)
+        # forward unchanged, so adjacent wiring suites reuse this harness
+        # without rebuilding the boundary themselves.
         selected = settings or self.settings
-        return OracleMergeService(
+        boundary: PinnedStandingBoundary | None
+        if standing_boundary is True:
+            boundary = self.standing_boundary(github)
+        else:
+            boundary = (
+                standing_boundary if standing_boundary is not None else None
+            )
+        return BoundaryPinnedService(
             OracleMergePolicy(selected),
             store or OracleMergeStore(self.database),
             github,
             sleep=self.sleeps.append,
+            standing_merge_boundary=boundary,
+            **kwargs,
         )
 
     def bind_verified_interaction(
@@ -668,13 +867,13 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_accepted_exact_sha_merges_and_records_append_only_audit(self):
         github = FakeGitHub(self.snapshot())
         store = OracleMergeStore(self.database)
-        result = OracleMergeService(
-            OracleMergePolicy(self.settings), store, github
-        ).process(self.artifact())
+        # Issue #306: the merge goes through the standing boundary; the actor
+        # is the boundary-bound acting identity, not the transport's login.
+        result = self.service(github, store=store).process(self.artifact())
 
         self.assertEqual(result.status, OracleMergeStatus.MERGED)
         self.assertEqual(result.merge_commit_sha, "c" * 40)
-        self.assertEqual(result.actor, "test-merger")
+        self.assertEqual(result.actor, "claude")
         self.assertEqual(result.check_run_ids, [1, 2])
         self.assertEqual(result.changed_paths, ["oracle/calibration.py"])
         self.assertEqual(github.merge_calls, 1)
@@ -1074,8 +1273,11 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_base_advance_during_final_merge_validation_fails_closed(self):
         github = FakeGitHub(self.snapshot(), advance_base_on_merge=True)
         result = self.service(github).process(self.artifact())
-        self.assertEqual(result.status, OracleMergeStatus.ERROR)
+        # The identity-bound transport reports the refused merge as an error,
+        # and the boundary converts it into a held, reserved attempt.
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
         self.assertIsNone(result.merge_commit_sha)
+        self.assertIn("merge boundary refused or result ambiguous", result.reasons[0])
 
     def test_invalid_signature_stops_before_github_or_audit(self):
         github = FakeGitHub(self.snapshot())
@@ -1126,17 +1328,33 @@ class OracleMergeGateTests(unittest.TestCase):
         self.assertEqual(result.reasons, [])
         self.assertEqual(result.serious_safety_reasons, [])
 
-    def test_protected_merge_requires_the_standing_evidence_boundary(self):
-        for protected in (None, True):
+    def test_no_boundary_refuses_every_base_class_without_a_legacy_fallback(self):
+        """Issue #306: with no boundary there is no merge path at all, for a
+        protected base, a non-protected base, or an unverified one."""
+
+        for protected in (None, True, False):
             with self.subTest(protected=protected):
                 github = FakeGitHub(self.snapshot(base_protected=protected))
-                result = self.service(github).process(
-                    self.artifact(artifact_id=f"review-protected-{protected}"))
-                self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+                result = self.service(
+                    github, standing_boundary=None
+                ).process(
+                    self.artifact(artifact_id=f"review-protected-{protected}")
+                )
+                self.assertEqual(result.status, OracleMergeStatus.REJECTED)
                 self.assertEqual(github.merge_calls, 0)
-                reason = ("base branch protection is unverified" if protected is None
-                          else "standing merge evidence boundary is not configured")
-                self.assertIn(reason, result.reasons)
+                self.assertIn(
+                    "standing merge evidence boundary is not configured",
+                    result.reasons,
+                )
+
+    def test_unverified_base_protection_still_fails_closed_with_a_boundary(self):
+        github = FakeGitHub(self.snapshot(base_protected=None))
+        result = self.service(github).process(
+            self.artifact(artifact_id="review-unverified-protection")
+        )
+        self.assertNotEqual(result.status, OracleMergeStatus.MERGED)
+        self.assertEqual(github.merge_calls, 0)
+        self.assertIn("base branch protection is unverified", result.reasons)
 
     def test_protected_project_branch_is_not_a_blanket_policy_prohibition(self):
         result = OracleMergePolicy(self.settings).evaluate(
@@ -1153,16 +1371,15 @@ class OracleMergeGateTests(unittest.TestCase):
         self._assert_project_merge_uses_authenticated_boundary(protected=False, refuse=True)
 
     def _assert_project_merge_uses_authenticated_boundary(self, *, protected, refuse=False):
-        import hashlib
-        import hmac
-        from director_orchestrator.hotl_execution import (
-            MergeExecutionBoundary, MergeObservation, STANDING_MERGE_AUTHORITY,
-        )
         from tests.test_merge_eligibility import bundle, policy, review, check, digest
 
         artifact = self.artifact()
         github = FakeGitHub(self.snapshot(base_protected=protected))
-        key = b"test-only-standing-observer-key!!"
+        # Throwaway Ed25519 keys in memory; the boundary holds the public half.
+        observer_key = Ed25519PrivateKey.generate()
+        observer_public_key = observer_key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        )
         now = datetime.now(timezone.utc)
         reviewer = replace(review("claude", "standing"), verdict="ACCEPT")
         security = review("security", "security-standing")
@@ -1194,7 +1411,7 @@ class OracleMergeGateTests(unittest.TestCase):
                 attempts_used=0, attempt_limit=1, hops_used=0, hop_limit=1,
                 base_protected=protected,
             )
-            return observation, hmac.new(key, observation.payload(), hashlib.sha256).hexdigest()
+            return observation, observer_key.sign(observation.payload()).hex()
 
         calls = []
         def transport(**kwargs):
@@ -1205,7 +1422,8 @@ class OracleMergeGateTests(unittest.TestCase):
             repository=artifact.repository, environment="test", assignment_id=artifact.assignment_id,
             policy=policy(allowed_base_refs=(artifact.base_ref,), allowed_path_globs=("oracle/*",),
                           required_check_names=("ci", "security"), required_branch_prefix="oracle/"),
-            prohibited_paths=(), observer_key=key, observe=observe, merge=transport,
+            prohibited_paths=(), observer_public_key=observer_public_key,
+            observe=observe, merge=transport,
             audit_path=self.database + ".standing", clock=lambda: now,
         )
         service = self.service(github)
@@ -2050,9 +2268,9 @@ class OracleMergeGateTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
+            thread.join(timeout=30)
 
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(outcomes, [None])
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], RuntimeError)
@@ -2186,8 +2404,10 @@ class OracleMergeGateTests(unittest.TestCase):
 
         failed = self.service(github, store=store).process(artifact)
 
-        self.assertEqual(failed.status, OracleMergeStatus.ERROR)
-        self.assertIn("GitHub merge failed closed", failed.reasons[0])
+        # The boundary catches the transport error and holds; the attempt is
+        # reserved and the mutation is never replayed.
+        self.assertEqual(failed.status, OracleMergeStatus.REJECTED)
+        self.assertIn("merge boundary refused or result ambiguous", failed.reasons[0])
         self.assertEqual(github.merge_calls, 1)
 
         duplicate = self.service(github, store=store).process(artifact)
@@ -2213,8 +2433,9 @@ class OracleMergeGateTests(unittest.TestCase):
     def test_branch_protection_or_github_refusal_is_recorded_as_error(self):
         github = FakeGitHub(self.snapshot(), merge_error=True)
         result = self.service(github).process(self.artifact())
-        self.assertEqual(result.status, OracleMergeStatus.ERROR)
-        self.assertIn("failed closed", result.reasons[0])
+        # Through the boundary the refusal is a hold, never a retry.
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertIn("merge boundary refused or result ambiguous", result.reasons[0])
 
     def test_kill_switch_stops_before_any_github_call(self):
         github = FakeGitHub(self.snapshot())
@@ -2241,3 +2462,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:48 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

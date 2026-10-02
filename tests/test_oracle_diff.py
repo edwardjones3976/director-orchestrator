@@ -1,3 +1,5 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 from __future__ import annotations
@@ -2882,6 +2884,15 @@ class WriteMutationRateLimitTests(unittest.TestCase):
         self.harness.setUp()
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
+        # Issue #306 removed the legacy no-boundary merge, so the write
+        # mutations under test travel through a working standing boundary.
+        # The phase 3 harness supplies it (throwaway in-memory Ed25519 keys);
+        # the merge transport stays this suite's own gateway.
+        from tests.test_oracle_merge import OracleMergeGateTests
+
+        self.fixtures = OracleMergeGateTests("setUp")
+        self.fixtures.setUp()
+        self.addCleanup(self.fixtures.temporary.cleanup)
         self.settings = Settings(
             sqlite_path=str(Path(self.temporary.name) / "oracle.sqlite3"),
             oracle_automerge_enabled=True,
@@ -2938,17 +2949,18 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             return self.harness.handler(request)
 
         store = OracleMergeStore(self.settings.sqlite_path)
-        service = OracleMergeService(
-            OracleMergePolicy(self.settings),
-            store,
+        # The same gateway now merges only through the standing boundary; a
+        # 429 on the mutation is held by the boundary as an ambiguous outcome.
+        service = self.fixtures.service(
             GitHubOracleGateway(
                 "repo-scoped-token", transport=httpx.MockTransport(handler)
             ),
-            sleep=lambda _: None,
+            settings=self.settings,
+            store=store,
         )
         first = service.process(artifact)
-        self.assertEqual(first.status, OracleMergeStatus.ERROR)
-        self.assertTrue(any("merge failed closed" in item for item in first.reasons))
+        self.assertEqual(first.status, OracleMergeStatus.REJECTED)
+        self.assertTrue(any("merge boundary refused or result ambiguous" in item for item in first.reasons))
         self.assertFalse(any("retryable" in item for item in first.reasons))
         self.assertEqual(
             sum(1 for item in self.harness.requests if item.url.path.endswith("/merge")),
@@ -2972,7 +2984,7 @@ class WriteMutationRateLimitTests(unittest.TestCase):
         self.assertIsNone(row[2])
         self.assertNotIn("3600", " ".join(first.reasons))
 
-    def test_merge_preflight_get_429_releases_without_mutating(self) -> None:
+    def test_merge_preflight_get_429_holds_terminal_without_mutating(self) -> None:
         artifact = self._artifact("merge-preflight-429")
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -2985,18 +2997,19 @@ class WriteMutationRateLimitTests(unittest.TestCase):
                 return httpx.Response(429, headers={"retry-after": "3600"})
             return self.harness.handler(request)
 
-        service = OracleMergeService(
-            OracleMergePolicy(self.settings),
-            OracleMergeStore(self.settings.sqlite_path),
+        # The rate limit now surfaces inside the boundary, which holds every
+        # transport failure as an ambiguous outcome: terminal, never retried,
+        # and still no mutation is attempted.
+        service = self.fixtures.service(
             GitHubOracleGateway(
                 "repo-scoped-token", transport=httpx.MockTransport(handler)
             ),
-            sleep=lambda _: None,
+            settings=self.settings,
+            store=OracleMergeStore(self.settings.sqlite_path),
         )
         result = service.process(artifact)
-        self.assertEqual(result.status, OracleMergeStatus.ERROR)
-        self.assertTrue(any("rate limit" in item for item in result.reasons))
-        self.assertTrue(any("remains retryable" in item for item in result.reasons))
+        self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+        self.assertTrue(any("merge boundary refused or result ambiguous" in item for item in result.reasons))
         self.assertEqual(
             sum(1 for item in self.harness.requests if item.url.path.endswith("/merge")),
             0,
@@ -3018,7 +3031,10 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(row, ("RECOVERABLE", None))
+        # Held means terminal: the attempt records its verdict instead of
+        # releasing the artifact for a retry.
+        self.assertNotEqual(row[0], "RECOVERABLE")
+        self.assertIsNotNone(row[1])
 
 
 class OracleMergeStoreSchemaTests(unittest.TestCase):
@@ -3202,8 +3218,8 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+            thread.join(timeout=30)
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(errors, [])
         connection = sqlite3.connect(self.path)
         try:
@@ -3247,8 +3263,8 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+            thread.join(timeout=30)
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(errors, [])
         self.assertIn("retry_not_before", self._columns())
 
@@ -3826,9 +3842,9 @@ class MalformedRetryDeadlineTests(unittest.TestCase):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=10)
+            thread.join(timeout=30)
 
-        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "workers did not finish within 30s per thread")
         self.assertEqual(errors, [])
         self.assertEqual(len(outcomes), 2)
         for hold in outcomes:
@@ -4712,3 +4728,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:16 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

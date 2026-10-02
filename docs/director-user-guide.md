@@ -1,3 +1,7 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
@@ -33,7 +37,7 @@ never post them to Slack.
 
 ## Director maintenance routing
 
-Every Director (the ChatGPT/Codex Director, Claude as second in command, and any
+Every Director (the ChatGPT/Codex Director and any explicitly owner-appointed
 project Director) sends maintenance, meaning review-finding fixes, record and
 document inconsistencies, CI fixes, and provider connection or plumbing
 problems, to OpenAI Codex, handed over through the Codex CLI (`codex exec` with a
@@ -60,6 +64,28 @@ depending on whether paid runs are enabled.
 
 Duplicate posts are safe. The event ID is the idempotency key, so re-sending
 does not create a second task.
+
+### Opening a committee debate
+
+```
+DIRECTOR debate
+Question: Should the retry budget move to the gateway?
+Options: gateway | worker
+Invite: zai, claude
+Material risk: no
+```
+
+(`/director debate` with the same lines also works.) The gateway turns only this
+exact form into a signed invitation; any other line, a repeated field, or an
+uninvitable member is refused with the usage text and nothing is forwarded.
+The Director (OpenAI) is always seated for its own independent position and its
+single full-weight vote; `Invite` may name `zai`, `claude`, `cursor` or `grok`
+(Antigravity's debate contract is not carried by primary packets). Each seat is
+an ordinary primary assignment: the plan still needs your approval, every seat's
+lane needs a configured budget and must be ready, and the reviewer synthesizes
+the positions without voting. The tally uses the charter weights over the fixed
+10.0 total, records members you did not invite as not seated, and fails closed if
+the Director's contribution is missing. The legacy engine refuses the command.
 
 ### Approving
 
@@ -127,7 +153,7 @@ requires the head to equal the frozen candidate, every named CI check completed
 successfully with none skipped, pending or failed, and two distinct non-author
 artifacts — security and independent review — each an `APPROVED` review whose
 body is exactly the canonical `director-activation-review/v1` JSON. Comments,
-quoted markers and prose never qualify. This runtime-activation requirement is distinct from ordinary single-reviewer engineering review. Alternative modes apply their own specific evidence rules. See [langgraph-primary-operations.md](langgraph-primary-operations.md) for the `github-v1` path, [provider-acceptance-v2.md](provider-acceptance-v2.md) and [provider-acceptance-v2-runtime.md](provider-acceptance-v2-runtime.md) for v2, and [two-party-activation-v3.md](two-party-activation-v3.md) for v3's explicit signed adoption path. Exact candidate, CI, security, independent identity, owner approvals, and fail-closed requirements remain mandatory where the selected contract imposes them, without imposing v3's signed `owner_adoption` mechanism on all modes.
+quoted markers and prose never qualify. This runtime-activation requirement is distinct from ordinary single-reviewer engineering review. Alternative modes apply their own specific evidence rules. See [langgraph-primary-operations.md](langgraph-primary-operations.md) for the `github-v1` path, [provider-acceptance-v2.md](provider-acceptance-v2.md) and [provider-acceptance-v2-runtime.md](provider-acceptance-v2-runtime.md) for v2, [two-party-activation-v3.md](two-party-activation-v3.md) for v3's explicit signed adoption path, and the `owner-local-evidence-v1` section of [langgraph-primary-operations.md](langgraph-primary-operations.md) for owner adoption of retained local evidence. Exact candidate, CI, security, independent identity, owner approvals, and fail-closed requirements remain mandatory where the selected contract imposes them, without imposing v3's signed `owner_adoption` mechanism on all modes.
 
 ## Backups
 
@@ -228,3 +254,7 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->

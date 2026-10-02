@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -43,6 +45,7 @@ from .host_provider_bridge import (
     BridgeRequest,
     HostProviderBridgeAmbiguous,
     HostProviderBridgeError,
+    HostProviderBridgeRefused,
     PostgresHostWriterFenceVerifier,
     WindowsHostProviderExecutor,
     bridge_response_signature,
@@ -64,6 +67,16 @@ def _required(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} is required")
     return value
+
+
+def executable_digest(command) -> str:
+    """Hash the explicit executable used by the bridge, never a PATH guess."""
+    import hashlib
+    path = Path(command[0])
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise ValueError("native executable must be an explicit regular file")
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _commands() -> dict[str, tuple[str, ...]]:
@@ -396,9 +409,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("X-Director-Response-Proof", proof)
             self.end_headers()
             self.wfile.write(result)
-        except HostProviderBridgeAttestationMismatch:
+        except (HostProviderBridgeAttestationMismatch, HostProviderBridgeRefused) as exc:
             # Nothing ran. Signed, so the Director can trust that it did not.
-            body = json.dumps({"ok": False, "reason": "attestation_mismatch"},
+            reason = ("attestation_mismatch" if isinstance(exc, HostProviderBridgeAttestationMismatch)
+                      else "refused_before_execution")
+            body = json.dumps({"ok": False, "reason": reason},
                               separators=(",", ":")).encode("utf-8")
             response_digest = _digest(body)
             self.send_response(403)
@@ -515,3 +530,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]]

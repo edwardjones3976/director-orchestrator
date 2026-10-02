@@ -253,6 +253,33 @@ def _resume_only_thread(process_id: int) -> None:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
 
 
+def signal_contained_tree(
+    process: subprocess.Popen[bytes],
+    guard: ProcessTreeGuard,
+) -> None:
+    """Signal the owned tree immediately without waiting or closing.
+
+    Overflow readers and other fail-closed paths use this so a blocked
+    ``wait`` cannot sit until the caller's command timeout. Verified reap,
+    guard release, and pipe close remain ``stop_contained_process``.
+    """
+
+    if guard.active:
+        try:
+            guard.terminate()
+        except ProcessContainmentError:
+            pass
+    elif os.name != "nt":
+        try:
+            os.killpg(process.pid, getattr(signal, "SIGKILL", 9))
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        process.kill()
+    except OSError:
+        pass
+
+
 def stop_contained_process(
     process: subprocess.Popen[bytes],
     guard: ProcessTreeGuard,

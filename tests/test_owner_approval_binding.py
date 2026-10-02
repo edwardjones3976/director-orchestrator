@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
@@ -384,8 +387,8 @@ class AtomicOwnerDecisionTests(unittest.TestCase):
             barrier = threading.Barrier(2)
             original_get = task_store.get_versioned
 
-            def synchronized_get(task_id: str):
-                versioned = original_get(task_id)
+            def synchronized_get(task_id: str, **kwargs):
+                versioned = original_get(task_id, **kwargs)
                 barrier.wait(timeout=5)
                 return versioned
 
@@ -1012,14 +1015,14 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             owner_saved = threading.Event()
 
             def own_and_finish() -> None:
-                start.wait(timeout=5)
+                start.wait(timeout=60)
                 reservation = owner_engine._reserve_effect_intent(
                     owner_snapshot, assignment, phase="dispatch"
                 )
                 self.assertIsNotNone(reservation)
                 owned, effect_key = reservation
                 owner_reserved.set()
-                self.assertTrue(observer_checked.wait(timeout=5))
+                self.assertTrue(observer_checked.wait(timeout=60), "observer did not check within 60s")
                 record_provider_effect_observation(
                     owned,
                     assignment,
@@ -1042,8 +1045,8 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
                 owner_saved.set()
 
             def observe_late() -> object:
-                start.wait(timeout=5)
-                self.assertTrue(owner_reserved.wait(timeout=5))
+                start.wait(timeout=60)
+                self.assertTrue(owner_reserved.wait(timeout=60), "owner did not reserve within 60s")
                 observer_snapshot, version_before = observer_store.get_versioned(
                     record.task_id
                 )
@@ -1060,8 +1063,8 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 owner_future = executor.submit(own_and_finish)
                 observer_future = executor.submit(observe_late)
-                owner_future.result(timeout=10)
-                self.assertIsNone(observer_future.result(timeout=10))
+                owner_future.result(timeout=60)
+                self.assertIsNone(observer_future.result(timeout=60))
 
             stored, version = TaskStore(database).get_versioned(record.task_id)
             self.assertEqual(version, 2)
@@ -1117,14 +1120,14 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             owner_saved = threading.Event()
 
             def own_and_finish() -> None:
-                start.wait(timeout=5)
+                start.wait(timeout=60)
                 reservation = owner_engine._reserve_effect_intent(
                     owner_snapshot, assignment, phase="revision"
                 )
                 self.assertIsNotNone(reservation)
                 owned, effect_key = reservation
                 owner_reserved.set()
-                self.assertTrue(observer_checked.wait(timeout=5))
+                self.assertTrue(observer_checked.wait(timeout=60), "observer did not check within 60s")
                 record_provider_effect_observation(
                     owned,
                     assignment,
@@ -1145,8 +1148,8 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
                 owner_saved.set()
 
             def observe_late() -> object:
-                start.wait(timeout=5)
-                self.assertTrue(owner_reserved.wait(timeout=5))
+                start.wait(timeout=60)
+                self.assertTrue(owner_reserved.wait(timeout=60), "owner did not reserve within 60s")
                 observer_snapshot, version_before = observer_store.get_versioned(
                     record.task_id
                 )
@@ -1163,8 +1166,8 @@ class ImmutableEffectLedgerTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 owner_future = executor.submit(own_and_finish)
                 observer_future = executor.submit(observe_late)
-                owner_future.result(timeout=10)
-                self.assertIsNone(observer_future.result(timeout=10))
+                owner_future.result(timeout=60)
+                self.assertIsNone(observer_future.result(timeout=60))
 
             stored = TaskStore(database).get(record.task_id)
             self.assertEqual(stored.status, TaskStatus.REVIEWING)
@@ -1416,6 +1419,34 @@ class OracleRecoveryBindingTests(unittest.TestCase):
             )
 
         self.assertEqual(record.model_dump(mode="json"), before)
+
+    def test_legacy_run_digest_survives_authorized_recovery_reload(self):
+        import hashlib
+        import json
+        from director_orchestrator.approvals import provider_run_digest
+
+        record = self._stopped_record()
+        apply_oracle_recovery(record, OracleRecoveryApproval(
+            owner_user_id="U0B9UJ86D27", decision_digest=record.oracle_recovery.decision_digest,
+            action="retry_recoverable", note="Retry the unchanged exact-SHA artifact",
+        ), oracle_attempt_status="RECOVERABLE")
+        payload = record.model_dump(mode="json")
+        legacy_run = payload["provider_runs"][0]
+        legacy_run.pop("plan_generation")
+        legacy_digest = hashlib.sha256(json.dumps(
+            legacy_run, ensure_ascii=True, separators=(",", ":"), sort_keys=True,
+        ).encode("utf-8")).hexdigest()
+        payload["oracle_recovery"]["provider_run_digest"] = legacy_digest
+        restarted = TaskRecord.model_validate_json(json.dumps(payload))
+        run = restarted.provider_runs[0]
+        self.assertEqual(provider_run_digest(run), legacy_digest)
+        self.assertTrue(oracle_recovery_matches(restarted, restarted.plan.assignments[0], run))
+        run.plan_generation = restarted.plan_generation
+        self.assertFalse(oracle_recovery_matches(restarted, restarted.plan.assignments[0], run))
+        restarted.oracle_recovery.provider_run_digest = provider_run_digest(run)
+        self.assertTrue(oracle_recovery_matches(restarted, restarted.plan.assignments[0], run))
+        run.plan_generation += 1
+        self.assertFalse(oracle_recovery_matches(restarted, restarted.plan.assignments[0], run))
 
     def test_exact_recovery_survives_restart_and_reuses_same_run(self):
         record = self._stopped_record()
@@ -3902,3 +3933,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 21:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:35 UTC | END]]

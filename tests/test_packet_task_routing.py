@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:47 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
@@ -24,6 +29,15 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | BEGIN]]
 from __future__ import annotations
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+import contextlib
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
 
 import copy
 import json
@@ -768,6 +782,62 @@ class RepositoryInventorySnapshots:
         ]
 
 
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | BEGIN]]
+def _remove_snapshot_tree(root: str) -> None:
+    """Remove a snapshot repository the way TemporaryDirectory does.
+
+    Git writes loose objects read-only, and on Windows ``os.unlink`` of a
+    read-only file raises ``PermissionError``, so a plain ``shutil.rmtree``
+    can never delete ``.git/objects`` there. Clear the read-only bit on the
+    path and its parent, then retry that one operation, as
+    ``tempfile.TemporaryDirectory`` does; anything else is re-raised.
+    """
+
+    def handle(function, path, error):
+        if not isinstance(error, PermissionError):
+            raise error
+        for target in (path, os.path.dirname(path)):
+            try:
+                os.chmod(target, stat.S_IRWXU)
+            except OSError:
+                pass
+        function(path)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(root, onexc=handle)
+    else:  # pragma: no cover - older interpreters pass an exc_info triple
+        shutil.rmtree(root, onerror=lambda function, path, info: handle(function, path, info[1]))
+
+
+@contextlib.contextmanager
+def _snapshot_repository():
+    """A temporary snapshot repository whose removal tolerates Windows handle lag.
+
+    A just-terminated git child releases its handles inside ``.git``
+    asynchronously on Windows, so removal can hit ``PermissionError`` for a
+    moment after the test body has passed. Retry the removal for up to about
+    five seconds instead of failing the test; the last error is raised, so a
+    real leak still surfaces.
+    """
+
+    root = tempfile.mkdtemp(prefix="director-blob-test-")
+    try:
+        yield root
+    finally:
+        last_error: PermissionError | None = None
+        for _attempt in range(10):
+            try:
+                _remove_snapshot_tree(root)
+                last_error = None
+                break
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.5)
+        if last_error is not None:
+            raise last_error
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]
+
+
 class CompactProviderViewTests(unittest.TestCase):
     TEXT = "Project: demo\nSummarize README.md for the owner."
 
@@ -878,10 +948,9 @@ class CompactProviderViewTests(unittest.TestCase):
         """A large blob is refused on its size, never read into memory."""
 
         import subprocess as subprocess_module
-        import tempfile as tempfile_module
         from director_orchestrator.packet_routing import git_blob_reader
 
-        with tempfile_module.TemporaryDirectory() as root:
+        with _snapshot_repository() as root:
             def git(*args, data=None):
                 return subprocess_module.run(
                     ("git", "-c", f"safe.directory={root}", *args), cwd=root, check=True,
@@ -905,15 +974,17 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertIsNone(reader(large))
             # A size that lies still cannot fill memory: the stream stops at
             # the cap plus one byte and the blob is refused.
-            reads = []
+            reads, processes = [], []
 
             class Recording:
                 def __init__(self, *args, **kwargs):
                     self._process = real_popen(*args, **kwargs)
+                    processes.append(self)
                     original = self._process.stdout.read
                     self._process.stdout.read = lambda size=-1: (
                         reads.append(size) or original(size))
                     self.stdout = self._process.stdout
+                    self.stderr = self._process.stderr
 
                 def poll(self):
                     return self._process.poll()
@@ -934,6 +1005,18 @@ class CompactProviderViewTests(unittest.TestCase):
                     patch("director_orchestrator.packet_routing.subprocess.Popen", Recording):
                 self.assertIsNone(reader(large))
             self.assertEqual([4097], reads)
+            self.assertEqual(1, len(processes))
+            self.assertIsNotNone(processes[0].returncode)
+            self.assertTrue(processes[0].stdout.closed)
+            # Reap the recorded child synchronously and close its pipes before
+            # the snapshot repository is removed: on Windows a terminated
+            # process releases its handles asynchronously, and rmtree on a
+            # still-open .git object raises PermissionError.
+            for recorded in processes:
+                recorded._process.wait(timeout=5.0)
+                for pipe in (recorded._process.stdout, recorded._process.stderr):
+                    if pipe is not None and not pipe.closed:
+                        pipe.close()
 
     def test_screens_ignore_case_where_the_format_does(self) -> None:
         """Lower, upper and mixed case of the same identifier or credential."""
@@ -1333,6 +1416,7 @@ class CompactProviderViewTests(unittest.TestCase):
         class Slow:
             def __init__(self, *args, **kwargs):
                 self.returncode = None
+                self.stderr = None
                 self.stdout = SimpleNamespace(
                     read=lambda size=-1: time_module.sleep(3) or b"late", close=lambda: None)
 
@@ -1355,34 +1439,38 @@ class CompactProviderViewTests(unittest.TestCase):
         self.assertLess(time_module.monotonic() - started, 2.5)
         self.assertEqual([True], killed)
 
-    def test_a_blob_read_spends_the_shared_deadline_and_opens_no_cleanup_window(self) -> None:
-        """Every wait, the reap included, is clamped to what is left of the
-        caller's deadline; a process not yet exited is reaped by a daemon."""
+    def test_a_blob_read_spends_the_shared_deadline_and_reaps_before_returning(self) -> None:
+        """Read work shares the deadline; cleanup gets a bounded synchronous wait."""
 
         import subprocess as subprocess_module
+        import threading as threading_module
         import time as time_module
         from director_orchestrator.packet_routing import blob_read_deadline, git_blob_reader
 
-        waits, reaped = [], []
+        waits, processes, closed = [], [], []
+        ended = threading_module.Event()
 
         class Stuck:
             def __init__(self, *args, **kwargs):
                 self.returncode = None
                 self.stdout = SimpleNamespace(
-                    read=lambda size=-1: time_module.sleep(3) or b"late", close=lambda: None)
+                    read=lambda size=-1: ended.wait(3) and b"late",
+                    close=lambda: closed.append("stdout"))
+                self.stderr = SimpleNamespace(close=lambda: closed.append("stderr"))
+                processes.append(self)
 
             def poll(self):
-                return None
+                return self.returncode
 
             def kill(self):
-                pass
+                ended.set()
 
             def wait(self, timeout=None):
-                if timeout is None:
-                    reaped.append(True)
-                    return -9
                 waits.append(timeout)
-                raise subprocess_module.TimeoutExpired("git", timeout)
+                if not ended.is_set():
+                    raise AssertionError("child was not killed before wait")
+                self.returncode = -9
+                return self.returncode
 
         sized = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
         runs = []
@@ -1394,21 +1482,59 @@ class CompactProviderViewTests(unittest.TestCase):
         # A 10 s reader inside a 0.3 s caller deadline.
         reader = git_blob_reader(".", timeout_seconds=10)
         started = time_module.monotonic()
+        deadline = started + 0.3
+        initial_allowance = deadline - started
         with patch("director_orchestrator.packet_routing.subprocess.run", side_effect=run), \
                 patch("director_orchestrator.packet_routing.subprocess.Popen", Stuck), \
-                blob_read_deadline(time_module.monotonic() + 0.3):
+                blob_read_deadline(deadline):
             self.assertIsNone(reader("a" * 40))
         self.assertLess(time_module.monotonic() - started, 1.5)
-        self.assertLessEqual(runs[0], 0.3)
-        self.assertEqual(1, len(waits))
-        self.assertLessEqual(waits[0], 0.3)
-        time_module.sleep(0.05)
-        self.assertEqual([True], reaped)
+        self.assertLessEqual(runs[0], initial_allowance)
+        self.assertEqual([1.0], waits)
+        self.assertIsNotNone(processes[0].returncode)
+        self.assertEqual(["stdout", "stderr"], closed)
         # A deadline already spent reads nothing at all.
         with patch("director_orchestrator.packet_routing.subprocess.run",
                    side_effect=AssertionError("spawned")), \
                 blob_read_deadline(time_module.monotonic() - 1):
             self.assertIsNone(reader("a" * 40))
+
+    def test_blob_cleanup_retries_a_timed_out_wait(self) -> None:
+        self._check_blob_cleanup_wait_timeout(always_timeout=False)
+
+    def test_blob_cleanup_refuses_when_both_waits_time_out(self) -> None:
+        self._check_blob_cleanup_wait_timeout(always_timeout=True)
+
+    def _check_blob_cleanup_wait_timeout(self, *, always_timeout: bool) -> None:
+        import io
+        import subprocess as subprocess_module
+        from unittest.mock import Mock, call
+        from director_orchestrator.packet_routing import git_blob_reader
+
+        process = Mock(stdout=io.BytesIO(b"blob"), stderr=io.BytesIO(), returncode=None)
+        process.poll.return_value = None
+
+        def wait(*, timeout):
+            if always_timeout or process.wait.call_count == 1:
+                raise subprocess_module.TimeoutExpired("git", timeout)
+            process.returncode = -9
+            return process.returncode
+
+        process.wait.side_effect = wait
+        sized = subprocess_module.CompletedProcess((), 0, stdout=b"4\n", stderr=b"")
+        with patch("director_orchestrator.packet_routing.subprocess.run", return_value=sized), \
+                patch("director_orchestrator.packet_routing.subprocess.Popen", return_value=process), \
+                patch("director_orchestrator.packet_routing.logging.getLogger") as logger:
+            self.assertIsNone(git_blob_reader(".")("a" * 40))
+        self.assertEqual(2, process.kill.call_count)
+        self.assertEqual([call(timeout=1.0), call(timeout=1.0)], process.wait.call_args_list)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+        self.assertEqual(None if always_timeout else -9, process.returncode)
+        if always_timeout:
+            logger.return_value.warning.assert_called_once_with("Git blob child cleanup failed")
+        else:
+            logger.return_value.warning.assert_not_called()
 
     def test_a_small_task_view_is_prepared_once_and_sent_as_prepared(self) -> None:
         """The transport sends the prepared bytes; without them it rebuilds with
@@ -1690,3 +1816,8 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 06:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:14 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:47 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-28 | 08:00 UTC | END]]

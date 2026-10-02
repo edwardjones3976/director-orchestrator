@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
@@ -39,6 +42,9 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:24 UTC | BEGIN]]
 from __future__ import annotations
 
+import copy
+import errno
+import time
 import hmac
 import math
 import json
@@ -46,7 +52,7 @@ import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass, replace
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -118,6 +124,10 @@ _INTENT_KINDS = frozenset(
 )
 _MAX_TASK_EFFECTS = 200
 _MAX_PROVIDER_INTERACTION_EVENTS = 500
+
+
+class AcknowledgementPersistencePending(RuntimeError):
+    """Paid response could not be committed; durable intent remains AMBIGUOUS."""
 
 
 class StaleTaskWrite(RuntimeError):
@@ -291,19 +301,16 @@ class TaskStore:
         self._initialize()
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        # Legacy task JSON may contain provider prose that migration replaces
-        # with opaque digests. SQLite's default leaves deleted cell content in
-        # free pages, so every writer enables physical page scrubbing before
-        # any migration or update.
-        connection.execute("PRAGMA secure_delete = ON")
-        try:
+    def _connect(self, *, timeout: float = 30) -> Iterator[sqlite3.Connection]:
+        with closing(sqlite3.connect(self.path, timeout=timeout)) as connection:
+            connection.row_factory = sqlite3.Row
+            # Legacy task JSON may contain provider prose that migration replaces
+            # with opaque digests. SQLite's default leaves deleted cell content in
+            # free pages, so every writer enables physical page scrubbing before
+            # any migration or update.
+            connection.execute("PRAGMA secure_delete = ON")
             with connection:
                 yield connection
-        finally:
-            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -857,6 +864,7 @@ class TaskStore:
                 """
             )
             self._migrate_effect_ledgers(connection)
+            self._compact_spend_settlements(connection)
             if self._journal_mode(connection) == "wal":
                 # A pre-upgrade WAL may still contain raw task JSON even when
                 # every logical row already uses the compact schema.
@@ -1238,11 +1246,19 @@ class TaskStore:
         else:
             changed_private_projection = previous_projection != replacement_projection
         had_private_projection = previous_projection is None or bool(previous_projection)
+        if changed_private_projection:
+            self._compact_spend_settlements(connection, json.loads(replacement_json)["task_id"])
         if (
             changed_private_projection
             and had_private_projection
             and self._journal_mode(connection) == "wal"
         ):
+            self._mark_privacy_cleanup_pending(connection)
+
+    def _compact_spend_settlements(self, connection: sqlite3.Connection, task_id: str | None = None) -> None:
+        from .providers import ProviderDailySpendLedger
+
+        if ProviderDailySpendLedger.compact_settlements(connection, task_id):
             self._mark_privacy_cleanup_pending(connection)
 
     def create(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
@@ -1421,13 +1437,13 @@ class TaskStore:
         self._attempt_privacy_cleanup()
         return record, True
 
-    def get(self, task_id: str) -> TaskRecord | None:
-        versioned = self.get_versioned(task_id)
+    def get(self, task_id: str, *, timeout: float = 30) -> TaskRecord | None:
+        versioned = self.get_versioned(task_id, timeout=timeout)
         return versioned[0] if versioned is not None else None
 
-    def get_versioned(self, task_id: str) -> tuple[TaskRecord, int] | None:
+    def get_versioned(self, task_id: str, *, timeout: float = 30) -> tuple[TaskRecord, int] | None:
         self._attempt_privacy_cleanup()
-        with self._lock, self._connect() as connection:
+        with self._task_lock(timeout), self._connect(timeout=timeout) as connection:
             row = connection.execute(
                 "SELECT * FROM tasks WHERE task_id = ?",
                 (task_id,),
@@ -2471,9 +2487,126 @@ class TaskStore:
                     ),
                 )
 
-    def save(self, record: TaskRecord) -> TaskRecord:
+    @contextmanager
+    def _task_lock(self, timeout: float) -> Iterator[None]:
+        if not self._lock.acquire(timeout=timeout):
+            raise sqlite3.OperationalError("Task store is busy")
+        try:
+            yield
+        finally:
+            self._lock.release()
+
+    @staticmethod
+    def _temporary_acknowledgement_failure(exc) -> bool:
+        code = getattr(exc, "sqlite_errorcode", 0) & 0xff
+        return (code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR}
+                or getattr(exc, "errno", None) in {errno.EIO, errno.EAGAIN, errno.EBUSY, errno.EINTR}
+                or getattr(exc, "winerror", None) in {32, 33}
+                or str(exc) in {"database is locked", "database table is locked", "Task store is busy"})
+
+    def read_spend_acknowledgement(self, task_id, ledger):
+        """Bound post-dispatch reads just like acknowledgement writes."""
+        deadline = time.monotonic() + 2.0
+        for attempt in range(2):
+            if time.monotonic() >= deadline:
+                break
+            try:
+                latest = self.get(task_id, timeout=0.25)
+                held = ledger.settlements(task_id, timeout=0.25) if ledger is not None else {}
+                return latest, held
+            except (sqlite3.OperationalError, OSError) as exc:
+                if not self._temporary_acknowledgement_failure(exc):
+                    break
+                if attempt == 0 and time.monotonic() + 0.1 < deadline:
+                    time.sleep(0.1)
+            except Exception:
+                break
+        raise AcknowledgementPersistencePending("Acknowledgement read exhausted; reconcile the durable intent")
+
+    def save_spend_acknowledgement(self, record, effect_key, run, evidence, ledger) -> bool:
+        """Commit task content and accounting together, or only accounting after reset.
+
+        Both packet and ordinary adapters use the same bounded persistence path.
+        No provider I/O or content restoration is permitted during recovery.
+        """
+        if self.path != ledger.path:
+            raise AcknowledgementPersistencePending("Atomic acknowledgement requires the same SQLite task store")
+        generation = evidence["plan_generation"]
+        preserved = record.model_copy(deep=True)
+        candidate = record
+        deadline = time.monotonic() + 2.0
+        for attempt in range(2):
+            if time.monotonic() >= deadline:
+                break
+            try:
+                latest = self.get(record.task_id, timeout=0.25)
+                if latest is None or latest.plan is None or generation != latest.plan_generation:
+                    # Missing intent is not a reset. A captured generation mismatch
+                    # permits only content-free accounting, including on CAS retry.
+                    if effect_key is not None:
+                        ledger.save_settlement(record.task_id, effect_key, evidence, timeout=0.25)
+                    if latest is not None:
+                        for field in type(record).model_fields:
+                            setattr(record, field, copy.deepcopy(getattr(latest, field)))
+                        record._store_version = latest._store_version
+                    return False
+                if attempt:
+                    candidate = latest
+                    for field in ("task_effect_ledger", "provider_interaction_ledger", "provider_contact_attempts"):
+                        current = getattr(candidate, field)
+                        current.extend(copy.deepcopy(item) for item in getattr(preserved, field) if item not in current)
+                    current = next((item for item in candidate.provider_runs
+                                    if item.provider == run.provider and item.run_id == run.run_id), None)
+                    if current is None:
+                        candidate.provider_runs.append(run.model_copy(deep=True))
+                    else:
+                        if current.interaction_id not in (None, run.interaction_id):
+                            break  # Conflicting authenticated bindings need reconciliation.
+                        if not current.interaction_id:
+                            current.interaction_id = run.interaction_id
+                        if not current.result and run.result:
+                            current.result, current.status = run.result, run.status
+                        current.raw = {**run.raw, **current.raw}
+                    candidate.revision_count = max(candidate.revision_count, preserved.revision_count)
+                if time.monotonic() >= deadline:
+                    break
+                self.save(candidate, spend_settlement=(effect_key, evidence) if effect_key is not None else None,
+                          timeout=0.25)
+            except StaleTaskWrite:
+                pass  # Reload and merge the current record on the recovery attempt.
+            except (sqlite3.OperationalError, OSError) as exc:
+                if not self._temporary_acknowledgement_failure(exc):
+                    break
+                if attempt == 0 and time.monotonic() + 0.1 < deadline:
+                    time.sleep(0.1)
+            except Exception:
+                # A non-transient persistence refusal must also retain the intent.
+                break
+            else:
+                for field in type(record).model_fields:
+                    setattr(record, field, copy.deepcopy(getattr(candidate, field)))
+                record._store_version = candidate._store_version
+                return True
+        raise AcknowledgementPersistencePending("Acknowledgement persistence exhausted; reconcile the durable intent")
+
+    def save(self, record: TaskRecord, *, spend_settlement: tuple[str, dict] | None = None,
+             timeout: float = 30) -> TaskRecord:
+        """CAS the task and, when supplied, its content-free acknowledgement atomically.
+
+        The settlement table must already exist in this SQLite database. This
+        does not provide a transaction across a Postgres runtime and SQLite.
+        """
+        if spend_settlement is not None:
+            from .providers import ProviderDailySpendLedger
+
+            effect_key, evidence = spend_settlement
+            evidence = ProviderDailySpendLedger.compact_settlement(evidence)
+            if not any(run.provider.value == evidence.get("provider") and run.run_id == evidence.get("run_id")
+                       for run in record.provider_runs):
+                raise ValueError("Acknowledgement requires its matching task run")
         self._attempt_privacy_cleanup()
-        with self._lock, self._connect() as connection:
+        timeout = min(timeout, 0.25) if spend_settlement else timeout
+        with self._task_lock(timeout), self._connect(timeout=timeout) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """SELECT effect_migration_status, record_version, record_json
@@ -2521,7 +2654,14 @@ class TaskStore:
                 raise StaleTaskWrite(
                     "Task changed while the write was being committed"
                 )
-            record._store_version = current_version + 1
+            if spend_settlement is not None:
+                connection.execute(
+                    """INSERT INTO engine_spend_settlements VALUES (?, ?, ?)
+                    ON CONFLICT(task_id, effect_key) DO UPDATE SET evidence = excluded.evidence""",
+                    (record.task_id, effect_key, json.dumps(evidence, allow_nan=False)),
+                )
+        # Never advance the caller's CAS version until COMMIT has succeeded.
+        record._store_version = current_version + 1
         self._attempt_privacy_cleanup()
         return record
 
@@ -4346,3 +4486,6 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:41 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | END]]

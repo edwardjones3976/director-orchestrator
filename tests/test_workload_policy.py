@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
@@ -160,13 +161,14 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                Provider.CLAUDE: 25,
-                Provider.CURSOR: 15,
-                Provider.GROK: 10,
-                Provider.OPENAI: 40,
-                Provider.GEMINI: 10,
+                Provider.CLAUDE: 21,
+                Provider.CURSOR: 12,
+                Provider.GROK: 8,
+                Provider.OPENAI: 33,
+                Provider.GEMINI: 8,
                 Provider.PERPLEXITY: 0,
                 Provider.FIRECRAWL: 0, Provider.GITHUB_COPILOT: 0,
+                Provider.ZAI: 18,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
@@ -179,36 +181,38 @@ class WorkloadTargetTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                DirectProductionProvider.CLAUDE: 25,
-                DirectProductionProvider.CURSOR: 15,
-                DirectProductionProvider.GROK: 10,
-                DirectProductionProvider.GEMINI: 10,
+                DirectProductionProvider.CLAUDE: 21,
+                DirectProductionProvider.CURSOR: 12,
+                DirectProductionProvider.GROK: 8,
+                DirectProductionProvider.GEMINI: 8,
                 DirectProductionProvider.PERPLEXITY: 0,
                 DirectProductionProvider.FIRECRAWL: 0, DirectProductionProvider.GITHUB_COPILOT: 0,
-                DirectProductionProvider.EXTERNAL_OPENAI: 40,
+                DirectProductionProvider.EXTERNAL_OPENAI: 33,
+                DirectProductionProvider.ZAI: 18,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
         self.assertNotIn(DirectProductionProvider.EXTERNAL_OPENAI, Provider)
 
     def test_default_policy_exposes_machine_readable_targets(self):
-        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 25)
-        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.OPENAI), 40)
-        self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.OPENAI), (37, 43))
+        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.CLAUDE), 21)
+        self.assertEqual(DEFAULT_POLICY.overall_target(Provider.OPENAI), 33)
+        self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.OPENAI), (30, 36))
         self.assertEqual(DEFAULT_POLICY.direct_production_soft_band(
-            DirectProductionProvider.EXTERNAL_OPENAI), (37, 43))
+            DirectProductionProvider.EXTERNAL_OPENAI), (30, 36))
         self.assertEqual(
             DEFAULT_POLICY.direct_production_target(
                 DirectProductionProvider.CLAUDE
             ),
-            25,
+            21,
         )
         self.assertEqual(
             DEFAULT_POLICY.direct_production_soft_band(
                 DirectProductionProvider.CLAUDE
             ),
-            (22, 28),
+            (18, 24),
         )
+        self.assertEqual(DEFAULT_POLICY.direct_production_soft_band(DirectProductionProvider.ZAI), (15, 21))
         self.assertEqual(DEFAULT_POLICY.overall_normal_band(Provider.PERPLEXITY), (0, 3))
         self.assertEqual(COPILOT_LITE_NORMAL_BAND, (0, 4))
         self.assertTrue(evaluate_copilot_lite_effort(current_units=0, total_units=99))
@@ -297,7 +301,8 @@ class AssignmentRoutingTests(unittest.TestCase):
 
         self.assertTrue(result.allowed)
         self.assertIn("prospective_rolling_share:claude:9/20", result.advisories)
-        self.assertIn("total_effort_provider_above_normal_band:claude:28", result.advisories)
+        ceiling = DEFAULT_POLICY.overall_normal_band(Provider.CLAUDE)[1]
+        self.assertIn(f"total_effort_provider_above_normal_band:claude:{ceiling}", result.advisories)
 
     def test_skewed_total_effort_history_blocks_new_overage(self):
         history = records(
@@ -358,7 +363,8 @@ class AssignmentRoutingTests(unittest.TestCase):
                 )
                 if provider is Provider.GROK:
                     self.assertIn(
-                        "total_effort_provider_above_normal_band:grok:13",
+                        "total_effort_provider_above_normal_band:grok:"
+                        f"{DEFAULT_POLICY.overall_normal_band(Provider.GROK)[1]}",
                         reported.advisories,
                     )
 
@@ -602,8 +608,9 @@ class DirectProductionRoutingTests(unittest.TestCase):
             "direct_production_hard_cap_exceeded:cursor:20",
             result.violations,
         )
+        cursor_ceiling = DEFAULT_POLICY.direct_production_soft_band(DirectProductionProvider.CURSOR)[1]
         self.assertIn(
-            "direct_production_above_soft_band:cursor:18",
+            f"direct_production_above_soft_band:cursor:{cursor_ceiling}",
             result.advisories,
         )
 
@@ -637,8 +644,9 @@ class DirectProductionRoutingTests(unittest.TestCase):
         )
 
         self.assertTrue(result.allowed)
+        claude_ceiling = DEFAULT_POLICY.direct_production_soft_band(DirectProductionProvider.CLAUDE)[1]
         self.assertIn(
-            "direct_production_above_soft_band:claude:28",
+            f"direct_production_above_soft_band:claude:{claude_ceiling}",
             result.advisories,
         )
         self.assertNotIn(
@@ -670,8 +678,9 @@ class DirectProductionRoutingTests(unittest.TestCase):
 
         self.assertTrue(result.allowed)
         self.assertIn("total_effort_prospective_usage_guard", result.advisories)
+        cursor_ceiling = DEFAULT_POLICY.direct_production_soft_band(DirectProductionProvider.CURSOR)[1]
         self.assertIn(
-            "direct_production_above_soft_band:cursor:18",
+            f"direct_production_above_soft_band:cursor:{cursor_ceiling}",
             result.advisories,
         )
         self.assertNotIn("direct_production_hard_cap_exceeded:cursor:20", result.violations)
@@ -790,9 +799,11 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             direct_production_history=tuple(
                 DirectProductionRecord(f"fixture-{i}", provider)
                 for i, provider in enumerate(
-                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    # Claude 4/20 sits inside its 18-24% band after the Z.ai
+                    # enrollment; cursor and grok are above theirs.
+                    [DirectProductionProvider.CLAUDE]*3 + [DirectProductionProvider.CURSOR]*3
                     + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
-                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*9
                 )
             ),
             assignment_id="SELECT-IMPLEMENTATION-1",
@@ -824,9 +835,11 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             direct_production_history=tuple(
                 DirectProductionRecord(f"fixture-{i}", provider)
                 for i, provider in enumerate(
-                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    # Claude 4/20 sits inside its 18-24% band after the Z.ai
+                    # enrollment; cursor and grok are above theirs.
+                    [DirectProductionProvider.CLAUDE]*3 + [DirectProductionProvider.CURSOR]*3
                     + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
-                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*9
                 )
             ),
             assignment_id="SELECT-SUBORDINATE-GEMINI",
@@ -870,9 +883,11 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             direct_production_history=tuple(
                 DirectProductionRecord(f"fixture-{i}", provider)
                 for i, provider in enumerate(
-                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    # Claude 4/20 sits inside its 18-24% band after the Z.ai
+                    # enrollment; cursor and grok are above theirs.
+                    [DirectProductionProvider.CLAUDE]*3 + [DirectProductionProvider.CURSOR]*3
                     + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
-                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*9
                 )
             ),
             assignment_id="SELECT-UNDER-TARGET-ANTIGRAVITY",
@@ -892,9 +907,11 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             direct_production_history=tuple(
                 DirectProductionRecord(f"fixture-{i}", provider)
                 for i, provider in enumerate(
-                    [DirectProductionProvider.CLAUDE]*4 + [DirectProductionProvider.CURSOR]*3
+                    # Claude 4/20 sits inside its 18-24% band after the Z.ai
+                    # enrollment; cursor and grok are above theirs.
+                    [DirectProductionProvider.CLAUDE]*3 + [DirectProductionProvider.CURSOR]*3
                     + [DirectProductionProvider.GEMINI] + [DirectProductionProvider.GROK]*2
-                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*8
+                    + [DirectProductionProvider.PERPLEXITY] + [DirectProductionProvider.EXTERNAL_OPENAI]*9
                 )
             ),
             assignment_id="SELECT-IMPLEMENTATION-2",
@@ -943,8 +960,9 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             DirectProductionRecord(f"CURSOR-{index}", DirectProductionProvider.CURSOR)
             for index in range(5)
         ) + tuple(
+            # 3 + the candidate = 20%, inside Claude's post-enrollment 18-24% band.
             DirectProductionRecord(f"CLAUDE-{index}", DirectProductionProvider.CLAUDE)
-            for index in range(4)
+            for index in range(3)
         ) + tuple(
             DirectProductionRecord(f"GROK-{index}", DirectProductionProvider.GROK)
             for index in range(3)
@@ -955,6 +973,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             DirectProductionRecord("PERPLEXITY-0", DirectProductionProvider.PERPLEXITY),
             DirectProductionRecord("EXTERNAL-0", DirectProductionProvider.EXTERNAL_OPENAI),
             DirectProductionRecord("EXTERNAL-1", DirectProductionProvider.EXTERNAL_OPENAI),
+            DirectProductionRecord("EXTERNAL-2", DirectProductionProvider.EXTERNAL_OPENAI),
         )
 
         selected = select_cheapest_capable_provider(
@@ -1361,3 +1380,4 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

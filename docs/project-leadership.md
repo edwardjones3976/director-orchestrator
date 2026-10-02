@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
@@ -16,8 +17,9 @@
 
 The project uses capability-based routing with assignment-scoped authority.
 ChatGPT/Codex keeps the explicit Director lane description; Perplexity and
-Firecrawl keep explicit public-research lane descriptions. Other lanes do not
-carry standing job assignments. This decision applies to new project
+Firecrawl keep explicit public-research lane descriptions. Outside the deputy
+appointments below, other lanes do not carry standing implementation
+assignments. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.
 
@@ -26,6 +28,30 @@ owner objective is immediate ChatGPT/Codex Director authority for priorities,
 decomposition, routing, review orchestration, completion reporting, and owner
 escalation. This policy update does not claim that a deployed runtime provider
 changed in production.
+
+## Owner-appointed succession and daily briefing
+
+Owner direction, 2026-09-30: **Codex is #1, Claude is #2, and Cursor is the
+official #3.** Claude carries the Director's duties while Codex is unavailable;
+Cursor carries **all Director duties when both Codex and Claude are unavailable**.
+This includes Consultant, Investigator, Foreman and Quality Lead responsibilities,
+and the Director's authorized debate functions. The active provider keeps its
+own identity and advisory vote. These scoped appointments supersede general
+no-standing-assignment wording for leadership only and remain effective until
+the owner changes them. Explicit project-specific appointments remain intact.
+
+Keep exactly one acting lead. Record a takeover and known availability evidence
+in the existing coordination record before directing shared work; reconcile
+active sessions and uncertain effects instead of replaying them. Returning
+leaders read the handoff and agree the transfer before resuming. An old quota
+report or a quiet session alone is not proof of unavailability.
+
+The three leaders use one [staff register and briefing procedure](team-staff-and-briefings.md).
+Each night at **23:00 America/Los_Angeles**, the active lead reports completed
+work, ongoing work and unresolved issues, and exactly seven next actions with
+owners and deadlines or dependency checkpoints. The foreman's input checkpoint
+is 22:45. Succession grants no extra credentials or budget and changes no review
+independence, policy gate, or deployed provider selector.
 
 The owner-visible handoff is recorded in Codex task
 `01a077dc-2e5c-7652-9ae7-1e5aa0e692e5`, evidence set
@@ -53,7 +79,8 @@ never post them to Slack.
 
 ## Director maintenance routing
 
-Every Director (the ChatGPT/Codex Director, Claude as second in command, and any
+Every Director (the ChatGPT/Codex Director, Claude as second in command, Cursor
+as third in command when both are unavailable, and any
 project Director) sends maintenance, meaning review-finding fixes, record and
 document inconsistencies, CI fixes, and provider connection or plumbing
 problems, to OpenAI Codex, handed over through the Codex CLI (`codex exec` with a
@@ -82,8 +109,9 @@ The Director delegates substantial implementation work and routes maintenance
 to OpenAI Codex as described above. OpenAI/Codex may also
 act within a separately assigned engineering scope, but coordination duties do
 not imply material authorship or independent acceptance authority.
-Other providers keep their identities and verified capabilities. Non-exempt
-providers do not carry standing jobs; assignments are capability- and
+Other providers keep their identities and verified capabilities. Outside the
+scoped leadership succession, specialists do not carry standing implementation
+jobs; assignments are capability- and
 authority-scoped for each candidate. Codex
 Security remains the named security product and gate.
 
@@ -97,6 +125,9 @@ Historical approvals never transfer to a new candidate or a different author.
 The prospective OpenAI and Claude duty allocations exchange places in the
 non-engineering profiles. The owner's subsequent explicit engineering decision
 sets OpenAI to 40% and Claude to 25%; the other lanes keep their existing targets.
+On 2026-09-27 the owner enrolled Z.ai (GLM) at 18% in every profile and the other
+nonzero lanes were reduced proportionally (engineering: OpenAI 33%, Claude 21%);
+see `docs/provider-allocation-profiles.md`. Enrollment grants Z.ai no standing role.
 Claude's advisory vote is 2.0 and OpenAI's is 2.5, with total
 committee weight unchanged. The canonical numbers are in
 `src/director_orchestrator/allocation_profiles.py` and `team_charter.py`.
@@ -157,3 +188,4 @@ That status is observational only and does not create standing role authority.
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->

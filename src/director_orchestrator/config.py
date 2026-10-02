@@ -1,3 +1,7 @@
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
@@ -122,6 +126,20 @@ def _float(name: str, default: float) -> float:
 
 def _positive_float(name: str, default: float) -> float:
     value = _float(name, default)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be finite and greater than zero")
+    return value
+
+
+def _optional_positive_float(name: str) -> float | None:
+    """A finite positive amount, or None when the variable is unset (a caller then refuses fail-closed)."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except (ValueError, OverflowError):
+        raise ValueError(f"{name} must be finite and greater than zero") from None
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be finite and greater than zero")
     return value
@@ -358,7 +376,7 @@ class Settings:
     langgraph_primary_required_providers: tuple[str, ...] = field(
         default_factory=lambda: _csv(
             "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
-            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,zai",
         )
     )
     langgraph_primary_provider_activation_bindings_json: str = field(
@@ -721,6 +739,40 @@ class Settings:
     oracle_automerge_antigravity_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_ANTIGRAVITY_ACTORS", ""
     )
+    # Standing merge boundary (merge-law phase 3). The observer is a separate
+    # local process; only it ever loads the Ed25519 private key. This process
+    # needs just the public half, the loopback observer endpoint, a durable
+    # audit path and the assignment/environment scope. Any value missing here
+    # makes both production construction sites fail closed: no merge, and an
+    # explicit error instead of a legacy fallback.
+    oracle_observer_endpoint: str = os.getenv("ORACLE_OBSERVER_ENDPOINT", "").strip()
+    oracle_observer_public_key_path: str = os.getenv(
+        "ORACLE_OBSERVER_PUBLIC_KEY_PATH", ""
+    ).strip()
+    oracle_standing_merge_audit_path: str = os.getenv(
+        "ORACLE_STANDING_MERGE_AUDIT_PATH", ""
+    ).strip()
+    oracle_standing_merge_environment: str = os.getenv(
+        "ORACLE_STANDING_MERGE_ENVIRONMENT", ""
+    ).strip()
+    oracle_standing_merge_assignment_id: str = os.getenv(
+        "ORACLE_STANDING_MERGE_ASSIGNMENT_ID", ""
+    ).strip()
+    oracle_standing_merge_prohibited_paths: tuple[str, ...] = _csv(
+        "ORACLE_STANDING_MERGE_PROHIBITED_PATHS", ""
+    )
+    # Observer-only arming values. The private key path is read by no code in
+    # the merging process: scripts/merge_observer.py is its only consumer, and
+    # the boundary builder deliberately never looks at this field.
+    oracle_observer_private_key_path: str = os.getenv(
+        "ORACLE_OBSERVER_PRIVATE_KEY_PATH", ""
+    ).strip()
+    oracle_standing_merge_producer_principal: str = os.getenv(
+        "ORACLE_STANDING_MERGE_PRODUCER_PRINCIPAL", ""
+    ).strip()
+    oracle_standing_merge_security_actors: tuple[str, ...] = _csv(
+        "ORACLE_STANDING_MERGE_SECURITY_ACTORS", ""
+    )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
     usage_check_interval_minutes: int = _int("USAGE_CHECK_INTERVAL_MINUTES", 360)
@@ -859,6 +911,9 @@ class Settings:
     gemini_max_total_tokens: int = _int("GEMINI_MAX_TOTAL_TOKENS", 20_000)
     gemini_daily_budget_usd: float = _float("GEMINI_DAILY_BUDGET_USD", 2.0)
     gemini_daily_request_limit: int = _int("GEMINI_DAILY_REQUEST_LIMIT", 50)
+    # The most one usage-check probe request may cost: every probe attempt reserves it before it is sent. Unset,
+    # the monitor refuses gemini probes rather than reserve nothing.
+    gemini_usage_probe_cost_ceiling_usd: float | None = _optional_positive_float("GEMINI_USAGE_PROBE_COST_CEILING_USD")
     gemini_mode: str = os.getenv(
         "GEMINI_MODE", "antigravity_subordinate"
     ).strip().lower()
@@ -874,6 +929,12 @@ class Settings:
     grok_mode: str = os.getenv("GROK_MODE", "cursor_family_primary").strip().lower()
     grok_timeout_seconds: int = _int("GROK_TIMEOUT_SECONDS", 180)
     grok_max_output_tokens: int = _int("GROK_MAX_OUTPUT_TOKENS", 4_096)
+    gemini_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GEMINI_INPUT_USD_PER_MTOK"))
+    gemini_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GEMINI_OUTPUT_USD_PER_MTOK"))
+    grok_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GROK_INPUT_USD_PER_MTOK"))
+    grok_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("GROK_OUTPUT_USD_PER_MTOK"))
+    perplexity_input_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("PERPLEXITY_INPUT_USD_PER_MTOK"))
+    perplexity_output_usd_per_mtok: float | None = field(default_factory=lambda: _optional_positive_float("PERPLEXITY_OUTPUT_USD_PER_MTOK"))
     grok_max_context_chars: int = _int("GROK_MAX_CONTEXT_CHARS", 262_144)
     grok_daily_budget_usd: float = _float("GROK_DAILY_BUDGET_USD", 2.0)
     grok_daily_request_limit: int = _int("GROK_DAILY_REQUEST_LIMIT", 50)
@@ -908,10 +969,23 @@ class Settings:
     perplexity_daily_request_limit: int = _int(
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
     )
+    # As gemini_usage_probe_cost_ceiling_usd, for perplexity usage-check probes.
+    perplexity_usage_probe_cost_ceiling_usd: float | None = _optional_positive_float(
+        "PERPLEXITY_USAGE_PROBE_COST_CEILING_USD"
+    )
 
-    # Z.ai GLM Coding Plan: a trial-only, fail-closed contact lane (owner
-    # directive #207). `zai` is deliberately absent from every production enum;
-    # these settings only gate the bounded Lite trial route in `zai_lane`.
+    # Z.ai GLM Coding Plan. The owner enrolled `zai` as a production lane
+    # (2026-09-27); ZAI_MODE=production plus ZAI_ENABLED and recorded activation
+    # evidence open it, and every default keeps it closed. ZAI_MODE=trial_only
+    # keeps the earlier bounded Lite trial route in `zai_lane` and its separate,
+    # no-credit ledger unchanged.
+    zai_enabled: bool = _bool("ZAI_ENABLED", False)
+    # host_bridge: the Docker Director reaches the Windows Claude Code CLI over
+    # the authenticated host bridge, which holds the key and executable.
+    # native: this process runs the CLI itself (a host deployment).
+    zai_transport: str = os.getenv("ZAI_TRANSPORT", "host_bridge").strip().lower()
+    zai_max_turns: int = _int("ZAI_MAX_TURNS", 30)
+    zai_production_timeout_seconds: int = _int("ZAI_PRODUCTION_TIMEOUT_SECONDS", 900)
     zai_trial_enabled: bool = _bool("ZAI_TRIAL_ENABLED", False)
     zai_api_key: str = os.getenv("ZAI_API_KEY", "")
     zai_api_base: str = os.getenv("ZAI_API_BASE", "https://api.z.ai/api/anthropic")
@@ -1054,6 +1128,75 @@ class Settings:
             "production_activation_absent": not self.zai_production_activation,
         }
 
+    def zai_production_readiness(self) -> dict[str, bool]:
+        """Booleans only for the enrolled Z.ai production lane; never a value.
+
+        Every check defaults to closed. Recorded activation evidence is the
+        digest of the owner's activation record, set by the deployment; it is
+        configuration, never proof that a live round trip has happened.
+        """
+        from .zai_native import GLM_MODEL, MAX_TIMEOUT_SECONDS, MAX_TURNS_LIMIT
+        from .zai_trial import ENDPOINT
+
+        readiness = {
+            "enabled": self.zai_enabled,
+            "production_mode": self.zai_mode == "production",
+            "activation_evidence_recorded": bool(
+                re.fullmatch(r"sha256:[0-9a-f]{64}", self.zai_production_activation)
+            ),
+            "transport_valid": self.zai_transport in {"host_bridge", "native"},
+            "official_endpoint": self.zai_api_base == ENDPOINT,
+            "glm_model_configured": bool(GLM_MODEL.fullmatch(self.zai_model)),
+            "trial_ledger_isolated": self.zai_ledger_isolated(),
+        }
+        if self.zai_transport == "native":
+            # This process runs the CLI, so it needs the key and executable.
+            executable = (
+                Path(self.zai_cli_executable).expanduser() if self.zai_cli_executable else None
+            )
+            readiness.update({
+                "credential_configured": bool(self.zai_api_key)
+                and not any(character.isspace() for character in self.zai_api_key),
+                "cli_configured": executable is not None
+                and executable.is_absolute()
+                and executable.is_file(),
+                "max_turns_valid": 1 <= self.zai_max_turns <= MAX_TURNS_LIMIT,
+                "timeout_valid": 30 <= self.zai_production_timeout_seconds <= MAX_TIMEOUT_SECONDS,
+            })
+        else:
+            # The Windows bridge holds the key, CLI and bounds; this container
+            # needs only the authenticated bridge binding.
+            readiness["host_bridge_configured"] = bool(
+                self.langgraph_primary_host_bridge_endpoint
+                and self.langgraph_primary_host_bridge_secret
+            )
+        return readiness
+
+    def zai_bridge_expectation(self):
+        """What this Director requires of the bridged lane, or None while it is closed."""
+        if self.zai_transport != "host_bridge" or not all(self.zai_production_readiness().values()):
+            return None
+        from .zai_native import ZaiBridgeExpectation
+
+        return ZaiBridgeExpectation(
+            model=self.zai_model, allow_repository_write=self.zai_allow_repository_write)
+
+    def zai_native_config(self):
+        """The lane's trusted transport configuration, or None while it is closed."""
+        if self.zai_transport != "native" or not all(self.zai_production_readiness().values()):
+            return None
+        from .zai_native import ZaiNativeConfig
+
+        return ZaiNativeConfig(
+            executable=Path(self.zai_cli_executable).expanduser(),
+            api_key=self.zai_api_key,
+            model=self.zai_model,
+            max_turns=self.zai_max_turns,
+            timeout_seconds=self.zai_production_timeout_seconds,
+            allow_repository_write=self.zai_allow_repository_write,
+            endpoint=self.zai_api_base,
+        )
+
     def zai_ledger_isolated(self) -> bool:
         """True when the trial ledger names no other durable store (or is unset).
 
@@ -1122,6 +1265,51 @@ class Settings:
     def grok_cli_repository_map(self) -> dict[str, str]:
         return dict(self.grok_cli_repository_roots)
 
+    def __post_init__(self) -> None:
+        for provider in ("gemini", "grok", "perplexity"):
+            self.provider_token_prices(provider)
+
+    def provider_token_prices(self, provider: str) -> tuple[float, float] | None:
+        prices = tuple(getattr(self, f"{provider}_{kind}_usd_per_mtok") for kind in ("input", "output"))
+        for price in prices:
+            if price is not None and (isinstance(price, bool) or not isinstance(price, (int, float))
+                                      or not math.isfinite(price) or price <= 0):
+                raise ValueError("Provider token prices must be finite and positive")
+        return None if None in prices else prices
+
+    def provider_price_readiness(self) -> dict[str, bool]:
+        return {provider: self.provider_token_prices(provider) is not None
+                for provider in ("gemini", "grok", "perplexity")}
+
+    def token_request_cost_bound_usd(
+        self, provider: str, payload: dict, max_output_tokens: int,
+    ) -> float | None:
+        prices = self.provider_token_prices(provider)
+        if prices is None:
+            return None
+        if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or max_output_tokens <= 0:
+            raise ValueError("A positive enforced output token limit is required")
+        # One token per encoded byte overestimates text tokenization; the complete
+        # JSON envelope also covers framing. Do not apply to tools/hidden inputs.
+        input_bound = len(json.dumps(payload, ensure_ascii=True).encode("utf-8"))
+        bound = (input_bound * prices[0] + max_output_tokens * prices[1]) / 1_000_000
+        if not math.isfinite(bound) or bound <= 0:
+            raise ValueError("Provider request cost bound must be finite and positive")
+        return math.nextafter(bound, math.inf)
+
+    def request_cost_bound_usd(self, provider: str) -> float | None:
+        """Legacy minimum used alongside a proven request maximum, never as that maximum.
+
+        Grok supplies a floor; the other settings describe probe ceilings, not
+        arbitrary assignments. Unbounded requests instead serialize and hold
+        remaining daily capacity.
+        """
+        bound = {"gemini": self.gemini_usage_probe_cost_ceiling_usd, "grok": self.grok_request_cost_floor_usd,
+                 "perplexity": self.perplexity_usage_probe_cost_ceiling_usd}.get(provider)
+        if not isinstance(bound, (int, float)) or isinstance(bound, bool) or not math.isfinite(bound) or bound <= 0:
+            return None
+        return float(bound)
+
     def readiness(self) -> dict[str, bool]:
         slack_gateway_ready = bool(
             len(self.slack_gateway_secret) >= 32
@@ -1144,7 +1332,10 @@ class Settings:
             "gemini": all(self.gemini_supplemental_readiness().values()),
             "grok": all(self.grok_primary_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
-            "zai": all(self.zai_trial_readiness().values()),
+            "zai": all(
+                (self.zai_production_readiness() if self.zai_mode == "production"
+                 else self.zai_trial_readiness()).values()
+            ),
         }
 
     def usage_check_readiness(self) -> dict[str, bool]:
@@ -1237,7 +1428,7 @@ class Settings:
         # exempt. Fail loudly at startup instead.
         ready_specialists = {
             provider
-            for provider in ("claude", "cursor", "gemini", "grok", "perplexity")
+            for provider in ("claude", "cursor", "gemini", "grok", "perplexity", "zai")
             if provider_readiness[provider]
         }
         return {
@@ -1278,7 +1469,7 @@ class Settings:
         if not isinstance(payload, dict):
             raise ValueError("primary provider budgets must be a JSON object")
         allowed = {"openai", "claude", "cursor", "grok", "antigravity",
-                   "perplexity", "firecrawl", "github-copilot"}
+                   "perplexity", "firecrawl", "github-copilot", "zai"}
         for provider, amount in payload.items():
             if provider not in allowed:
                 raise ValueError("primary provider budget names must be canonical lanes")
@@ -1323,7 +1514,7 @@ class Settings:
             raise ValueError(
                 "TRUSTED_PROVIDER_COST_RANKS must be a non-empty JSON object"
             )
-        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot"}
+        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot", "zai"}
         parsed: dict[str, int] = {}
         for raw_provider, raw_rank in payload.items():
             if not isinstance(raw_provider, str):
@@ -1357,22 +1548,49 @@ class Settings:
         return dict(sorted(parsed.items()))
 
     def validate_zai_trial_configuration(self) -> None:
-        """Refuse any Z.ai setting that would widen the Lite trial before startup.
+        """Refuse any inconsistent Z.ai setting before startup.
 
-        Z.ai is a trial-only contact lane (owner directive #207): no production
-        credit, no review or merge authority, and no activation before the
-        owner's decision on or after 2026-09-29. These are environment values,
-        so model output cannot change them; an operator who sets one gets a
-        startup failure rather than a wider lane. This adds a gate; the
-        transport's own per-call refusals in `zai_trial` are unchanged.
+        ZAI_MODE=trial_only keeps the Lite trial lane (owner directive #207)
+        exactly as it was: no production credit, no review or merge authority
+        and no activation setting. ZAI_MODE=production is the owner's
+        2026-09-27 enrollment; it needs ZAI_PRODUCTION_ACTIVATION to name the
+        owner's activation record by digest, and it may not run the trial lane
+        at the same time. These are environment values, so model output cannot
+        change them; an operator who sets an inconsistent one gets a startup
+        failure rather than a wider lane. The transports' own per-call refusals
+        are unchanged.
         """
 
         from .zai_trial import ENDPOINT
 
-        if self.zai_mode != "trial_only":
+        if self.zai_mode not in {"trial_only", "production"}:
+            raise ValueError("ZAI_MODE must be trial_only or production")
+        if self.zai_api_base != ENDPOINT:
             raise ValueError(
-                "ZAI_MODE must be trial_only until the owner's activation decision"
+                "ZAI_API_BASE must be the official Z.ai Anthropic-compatible endpoint"
             )
+        if self.zai_transport not in {"host_bridge", "native"}:
+            raise ValueError("ZAI_TRANSPORT must be host_bridge or native")
+        if self.zai_mode == "production":
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.zai_production_activation):
+                raise ValueError(
+                    "ZAI_PRODUCTION_ACTIVATION must be the sha256: digest of the "
+                    "owner's activation record in production mode"
+                )
+            if self.zai_trial_enabled:
+                raise ValueError(
+                    "ZAI_TRIAL_ENABLED must be false in production mode: the trial "
+                    "ledger stays a closed historical record"
+                )
+            if not self.zai_ledger_isolated():
+                raise ValueError(
+                    "ZAI_TRIAL_LEDGER_PATH must be its own file: it names the TaskStore, a "
+                    "LangGraph checkpoint, resume-claim, acceptance, runtime-ledger or "
+                    "completion-gate store"
+                )
+            return
+        if self.zai_enabled:
+            raise ValueError("ZAI_ENABLED requires ZAI_MODE=production")
         if self.zai_allow_repository_write or self.zai_allow_review_verdict:
             raise ValueError(
                 "ZAI_ALLOW_REPOSITORY_WRITE and ZAI_ALLOW_REVIEW_VERDICT must stay "
@@ -1380,12 +1598,8 @@ class Settings:
             )
         if self.zai_production_activation:
             raise ValueError(
-                "ZAI_PRODUCTION_ACTIVATION is not honoured: production activation "
-                "is an owner decision on or after 2026-09-29 and needs its own change"
-            )
-        if self.zai_api_base != ENDPOINT:
-            raise ValueError(
-                "ZAI_API_BASE must be the official Z.ai Anthropic-compatible endpoint"
+                "ZAI_PRODUCTION_ACTIVATION is honoured only with ZAI_MODE=production; "
+                "the trial lane never carries production activation"
             )
         if self.zai_trial_enabled and not self.zai_lite_entitlement_verified:
             raise ValueError(
@@ -2383,6 +2597,28 @@ class Settings:
     def oracle_github_credential_configured(self) -> bool:
         return self.oracle_merge_readiness()["github_credential_configured"]
 
+    def standing_merge_boundary_readiness(self) -> dict[str, bool]:
+        """Every input the merge boundary needs before it may be built.
+
+        Missing any one of these must leave the service unable to merge, never
+        able to merge without the boundary.
+        """
+
+        return {
+            "observer_endpoint_configured": bool(self.oracle_observer_endpoint),
+            "observer_public_key_configured": bool(
+                self.oracle_observer_public_key_path
+            ),
+            "audit_path_configured": bool(self.oracle_standing_merge_audit_path),
+            "environment_configured": bool(self.oracle_standing_merge_environment),
+            "assignment_id_configured": bool(
+                self.oracle_standing_merge_assignment_id
+            ),
+        }
+
+    def standing_merge_boundary_configured(self) -> bool:
+        return all(self.standing_merge_boundary_readiness().values())
+
     def provider_strategy(self) -> dict[str, dict[str, object]]:
         return {
             "claude": {
@@ -2581,3 +2817,7 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]]
+# [[Z.ai | GLM-5.3 | 2026-09-27 | 06:39 UTC | END]]

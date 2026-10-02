@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
@@ -60,7 +62,9 @@ def previous_engineering_digest():
     """Reconstruct the original historical hard-tolerance identity for the
     pre-role-swap targets, never the current prospective identity."""
     from director_orchestrator.allocation_profiles import historical_allocation_profile_digest
-    with patch("director_orchestrator.allocation_profiles.ALLOCATION_PROFILES",
+    # Since the Z.ai enrollment the historical identity reads the pinned
+    # pre-enrollment table, so the pre-role-swap targets are patched there.
+    with patch("director_orchestrator.allocation_profiles.PRE_ZAI_ALLOCATION_PROFILES",
                {"engineering": PREVIOUS_ENGINEERING_TARGETS}):
         return historical_allocation_profile_digest("engineering")
 
@@ -511,6 +515,28 @@ class PostgresAdmissionTests(unittest.TestCase):
         self.assertEqual(self.count("director_primary_provider_attempt"), 2)
         self.assertEqual(self.count("director_primary_workload_assignment"), 21)
 
+    def test_zai_over_target_is_admitted_while_real_holds_remain(self):
+        # Owner 2026-09-27: targets and the normal band are routing guidance, not
+        # a dispatch block. Nineteen Z.ai admissions (95% against an 18% target)
+        # do not refuse the next one; an unauthenticated history still does.
+        with self.handle.claim_store._pool.connection() as connection:
+            with connection.transaction():
+                for index in range(19):
+                    connection.execute(f"""INSERT INTO {self.schema}.director_primary_workload_assignment
+                        (task_id, assignment_id, provider_lane, reservation_digest,
+                         fencing_generation, policy_version, policy_digest) VALUES (%s,%s,'zai',%s,1,%s,%s)""",
+                        ("zai-fixture", str(index), DIGEST, POLICY_VERSION, POLICY_DIGEST))
+        task = self.task("zai")
+        self.attempt(self.ready(task), task[1])
+        self.assertEqual(self.count("director_primary_provider_attempt"), 1)
+        self.assertEqual(self.count("director_primary_workload_assignment"), 20)
+        self.seed_unknown_history_digest()
+        held = self.task("zai")
+        with self.assertRaises(WorkloadAdmissionHold) as hold:
+            self.attempt(self.ready(held), held[1])
+        self.assertEqual(hold.exception.reason_code, "workload_history_invalid")
+        self.assertEqual(self.count("director_primary_provider_attempt"), 1)
+
     def test_reverse_sequence_hold_propagates_to_real_graph(self):
         from tests.test_primary_default import DefaultPrimaryApplicationIntegrationTests
         from director_orchestrator.primary_default import IntakeAuthentication
@@ -626,3 +652,5 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]]

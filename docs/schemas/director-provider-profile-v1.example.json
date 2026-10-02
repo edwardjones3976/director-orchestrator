@@ -41,6 +41,22 @@
     "spend_ledger_member": true,
     "variables": [
       {
+        "default": null,
+        "documented_in_env_example": true,
+        "kind": "token_price_usd_per_mtok",
+        "settings_field": "grok_input_usd_per_mtok",
+        "values_recorded": false,
+        "variable": "GROK_INPUT_USD_PER_MTOK"
+      },
+      {
+        "default": null,
+        "documented_in_env_example": true,
+        "kind": "token_price_usd_per_mtok",
+        "settings_field": "grok_output_usd_per_mtok",
+        "values_recorded": false,
+        "variable": "GROK_OUTPUT_USD_PER_MTOK"
+      },
+      {
         "default": 2.0,
         "documented_in_env_example": true,
         "kind": "daily_budget_usd",
@@ -404,10 +420,10 @@
       "default_profile": "engineering",
       "overall_effort_policy": "telemetry_only_no_separate_allocation",
       "profiles": {
-        "engineering": 10,
-        "enterprise": 5,
-        "mixed": 10,
-        "public_research": 5
+        "engineering": 8,
+        "enterprise": 4,
+        "mixed": 8,
+        "public_research": 4
       },
       "zero_target_rule": "ineligible"
     },

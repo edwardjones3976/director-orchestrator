@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -123,6 +126,13 @@ class ValidationCapture:
         value = asdict(self)
         value.pop("signature")
         return value
+
+
+@dataclass(frozen=True)
+class ValidationCaptureV2(ValidationCapture):
+    """V1 bytes remain unchanged; V2 signs the bridge's executable digest."""
+    version: str
+    executable_sha256: str
 
 
 class PostgresValidationStore:
@@ -498,11 +508,31 @@ class CaptureVerifier:
         self.openai_responses_route=openai_responses_route
 
     def verify(self, binding: ProviderActivationBinding, evidence_digest: str, *, expires_at=None) -> bool:
+        return self.verified_output(binding, evidence_digest, expires_at=expires_at) is not None
+
+    def verified_output(self, binding: ProviderActivationBinding, evidence_digest: str, *,
+                        expires_at=None) -> bytes | None:
+        verified = self.verified_capture(binding, evidence_digest, expires_at=expires_at)
+        return verified[0] if verified is not None else None
+
+    def verified_capture(self, binding: ProviderActivationBinding, evidence_digest: str, *,
+                         expires_at=None) -> tuple[bytes, ValidationCapture] | None:
+        """Return output and signed metadata from one verified read, or None.
+
+        Product classification must use these bytes and this capture together,
+        never metadata from a second read of a mutable store.
+        """
         try:
             row = self.store.load_capture(evidence_digest)
             if row is None or row[3] or row[4] <= int(time.time()) or row[5] != "succeeded":
-                return False
-            capture = ValidationCapture(**row[0])
+                return None
+            if "version" in row[0]:
+                capture = ValidationCaptureV2(**row[0])
+                if (capture.version != "director-validation-capture/v2"
+                        or not re.fullmatch(r"[0-9a-f]{64}", capture.executable_sha256)):
+                    return None
+            else:
+                capture = ValidationCapture(**row[0])
             # The expected tree is compared, not just carried: a valid signed
             # capture minted for another runtime tree under the same candidate
             # and generation must never qualify this one.
@@ -514,9 +544,9 @@ class CaptureVerifier:
                     or digest(bytes(row[1])) != capture.input_digest or digest(bytes(row[2])) != capture.output_digest
                     or digest(canonical_json_bytes(asdict(capture))) != evidence_digest
                     or (expires_at is not None and expires_at.timestamp() > capture.expires_at)):
-                return False
+                return None
             if capture.provider == "antigravity" and json.loads(bytes(row[2])).get("attempt_digest") != "sha256:"+capture.reservation:
-                return False
+                return None
             # A signed capture pins the lane configuration it was minted under.
             # Re-normalising the response cannot detect a rotated credential,
             # endpoint, meter enrollment, timeout ceiling or worker fingerprint,
@@ -531,18 +561,18 @@ class CaptureVerifier:
             # only through re-execution, never through this read path.
             if capture.provider == "openai" and self.openai_responses_route is not None:
                 if capture.configuration_digest != self.openai_responses_route.configuration_digest:
-                    return False
+                    return None
             if capture.provider == "antigravity" and self.team_route is not None:
                 if capture.configuration_digest != self.team_route.configuration_digest():
-                    return False
+                    return None
             result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),
                                        team_route=self.team_route, openai_responses_route=self.openai_responses_route)
             if digest(canonical_json_bytes(result)) != capture.result_digest or result["run_reference"] != capture.native_session:
-                return False
+                return None
             expected = hmac.new(self.key.encode(),canonical_json_bytes(capture.payload()),hashlib.sha256).hexdigest()
-            return hmac.compare_digest(expected,capture.signature)
+            return (bytes(row[2]), capture) if hmac.compare_digest(expected,capture.signature) else None
         except (ValueError,TypeError,KeyError,ValidationError):
-            return False
+            return None
 
 
 _GENERATION_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -593,7 +623,8 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", re
         openai_responses_route=responses_route_from_environment())
 
 
-def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None, openai_responses_route=None) -> ValidationCapture:
+def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None,
+                 openai_responses_route=None, executable_sha256=None) -> ValidationCapture:
     """Only the bridge calls this after configured native execution returns."""
     if len(capture_key) < 32 or not output or len(output) > MAX_CAPTURE_BYTES:
         raise ValidationError("missing bounded execution capture")
@@ -613,8 +644,14 @@ def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route
                   input_digest=digest(admission["packet"]),output_digest=digest(output),
                   result_digest=digest(canonical_json_bytes(result)),
                   native_session=result["run_reference"],expires_at=admission["expires_at"])
+    capture_type = ValidationCapture
+    if executable_sha256 is not None:
+        if not isinstance(executable_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", executable_sha256):
+            raise ValidationError("invalid executable digest")
+        fields.update(version="director-validation-capture/v2", executable_sha256=executable_sha256)
+        capture_type = ValidationCaptureV2
     signature=hmac.new(capture_key.encode(),canonical_json_bytes(fields),hashlib.sha256).hexdigest()
-    return ValidationCapture(**fields,signature=signature)
+    return capture_type(**fields,signature=signature)
 
 
 def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None, openai_responses_route=None) -> dict:
@@ -810,11 +847,15 @@ class ValidationBridgeService:
         self.openai_responses_route=openai_responses_route
 
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
+        request_scope = {"digest": None}
+        if request.provider == "openai" and self.openai_responses_route is not None:
+            request_scope["started"] = time.monotonic()
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
         # One request scope: runtime bytes are hashed here, before admission,
-        # and rehashed at each post-execution check.
-        scope = _RUNTIME_SCOPE.set({"digest": None})
+        # and rehashed at each post-execution check. Responses also carries
+        # its original pre-hash start; the other lanes keep their own clocks.
+        scope = _RUNTIME_SCOPE.set(request_scope)
         try:
             rehash_runtime_scope()
             return self._run_lane(request, owner_token)
@@ -830,6 +871,8 @@ class ValidationBridgeService:
             return self._run_openai_responses(request, owner_token)
         pin=production_configuration_digest(self.production,request.provider,
                                            account_files=self.account_files.get(request.provider,()))
+        from .host_provider_bridge_server import executable_digest
+        executable_sha256 = executable_digest(self.production.commands[request.provider])
         self.refuse_configuration_drift(request,pin,"production executable/account/workspace/adapter binding drift")
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
@@ -859,7 +902,10 @@ class ValidationBridgeService:
             if pin!=production_configuration_digest(self.production,request.provider,
                     account_files=self.account_files.get(request.provider,())):
                 raise ValidationError("native configuration changed during execution")
-            capture=make_capture(admission,raw_captures[0],capture_key=self.capture_key)
+            if executable_digest(executor.commands[request.provider]) != executable_sha256:
+                raise ValidationError("native executable changed during execution")
+            capture=make_capture(admission,raw_captures[0],capture_key=self.capture_key,
+                                 executable_sha256=executable_sha256)
             evidence=self.store.settle(admission,raw_captures[0],capture)
             return {"evidence_digest":evidence,"evidence_id":admission["reservation"],
                     "expires_at":capture.expires_at,"surfaces":["app","runtime_adapter"]}
@@ -892,8 +938,9 @@ class ValidationBridgeService:
         """Explicit Responses API validation; never falls back to native Codex.
 
         One whole-operation deadline, measured from a single start reading taken
-        before admission, governs connection acquisition, admission, monetary
-        reservation, claim, fence, network, capture, settlement and COMMIT alike.
+        before the request's mandatory integrity hash, governs connection
+        acquisition, admission, monetary reservation, claim, fence, network,
+        capture, settlement and COMMIT alike.
         The canary packet's own ceiling tightens that same deadline from the shared
         start; a post-admission reading may never extend it.  Store calls receive
         the shared deadline so connection waits and transaction-local statement
@@ -915,7 +962,10 @@ class ValidationBridgeService:
         transport_ceiling = int(getattr(route.transport, "maximum_timeout_seconds", 180))
         if transport_ceiling < 1:
             raise ValidationError("Responses validation timeout is exhausted")
-        started = time.monotonic()
+        scope = _RUNTIME_SCOPE.get()
+        started = scope.get("started") if scope is not None else None
+        if started is None:  # Direct lane calls and legacy digest-only scopes retain their own start.
+            started = time.monotonic()
         deadline = started + transport_ceiling
 
         def remaining_seconds() -> float:
@@ -1034,8 +1084,8 @@ class ValidationBridgeService:
 # Read-only all-lane qualification preflight
 # ---------------------------------------------------------------------------
 #
-# The static lane inventory (eight canonical lanes plus three separately
-# qualified contacts). Lane classes are descriptive only; every allocation
+# The static lane inventory (nine canonical lanes, Z.ai enrolled by the owner
+# on 2026-09-27, plus two separately qualified contacts). Lane classes are descriptive only; every allocation
 # weight is read from the owner-approved allocation_profiles authority rather
 # than duplicated here. The inventory grants nothing: enrollment, live
 # eligibility and paid readiness stay UNKNOWN because no authenticated
@@ -1049,6 +1099,7 @@ _LANE_CLASSES = {
     "perplexity": "evidence_only_research",
     "firecrawl": "public_search_transport",
     "github-copilot": "capability_routed_lane",
+    "zai": "capability_routed_lane",
 }
 
 
@@ -1064,7 +1115,6 @@ def _canonical_lanes():
 CANONICAL_LANES = _canonical_lanes()
 ADDITIONAL_CONTACTS = (
     ("grok-bot", "Grok Bot", "Unverified as an enrolled transport; direct Grok evidence cannot qualify this contact."),
-    ("z-ai", "Z.ai", "Separate tools-off Lite trial contract; not a canonical production lane."),
     ("vscode-coding-bot", "VS Code Coding Bot", "Editor host; the actual underlying provider/model identity must be preserved."),
 )
 RESEARCH_ONLY_LANES = frozenset({"perplexity", "firecrawl"})
@@ -1152,3 +1202,6 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]
