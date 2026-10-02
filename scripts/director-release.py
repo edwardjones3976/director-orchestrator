@@ -1,8 +1,8 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:34 UTC | BEGIN]]
-"""Pinned R1 preparation and free doctor; live release remains blocked by named dependencies.
+"""Pinned R1 preparation, read-only doctor and sibling rehearsal command plan.
 
 No command here reserves a generation, dispatches a provider, starts a service,
-or manufactures acceptance. See docs/director-release.md for the remaining R1 work.
+or manufactures acceptance. The existing control script owns execution and gates.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -31,7 +32,7 @@ MAX_BYTES = 4 * 1024 * 1024
 DEPENDENCIES = {
     "fresh_generation_authority": "primary_generation.require_generation has no read-only fresh-manifest verification path",
     "paid_admission": "the validation CLI has no per-lane campaign/daily-dollar reservation and settlement contract",
-    "disposable_rehearsal": "no disposable-project acceptance and database-identity setup is wired into this runner",
+    "trusted_descriptor": "W2 must publish the HOME-independent owner descriptor consumer before preparation can be trusted",
 }
 
 
@@ -68,11 +69,26 @@ def document(raw):
 
 def bounded_read(path):
     path = Path(path)
-    require(path.is_absolute() and not path.is_symlink() and path.is_file(), "input_path_invalid")
+    unlinked(path)
+    require(path.is_file(), "input_path_invalid")
     with path.open("rb") as stream:
         raw = stream.read(MAX_BYTES + 1)
     require(len(raw) <= MAX_BYTES, "input_too_large")
     return raw
+
+
+def unlinked(path):
+    """Reject symlinks and Windows junctions anywhere in an input/output path."""
+    path = Path(path)
+    require(path.is_absolute(), "input_path_invalid")
+    for part in (path, *path.parents):
+        try:
+            metadata = part.lstat()
+        except FileNotFoundError:
+            continue
+        require(not stat.S_ISLNK(metadata.st_mode) and not (
+            getattr(metadata, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)),
+            "linked_path_refused")
 
 
 def pinned_file(pin):
@@ -98,10 +114,12 @@ def child_environment():
     # Never let an inherited COMPOSE_FILE, DOCKER_HOST, PYTHONPATH, provider key,
     # or Git override silently redirect a release check.
     keep = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP",
-            "TMPDIR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA"}
+            "TMPDIR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA",
+            "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432"}
     env = {key: value for key, value in os.environ.items() if key.upper() in keep}
     env.update(PYTHONPATH=str(ROOT / "src"), PYTHONDONTWRITEBYTECODE="1",
-               GIT_NO_REPLACE_OBJECTS="1", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+               GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
     return env
 
 
@@ -175,7 +193,8 @@ print(json.dumps({'database_identity':binding[0],'database_instance_id':binding[
 
 class Release:
     def __init__(self, path):
-        self.raw = bounded_read(path)
+        self.path = Path(path)
+        self.raw = bounded_read(self.path)
         self.spec = document(self.raw)
         validator = Draft202012Validator(document(SCHEMA.read_bytes()))
         require(not list(validator.iter_errors(self.spec)), "invalid_release_descriptor")
@@ -183,10 +202,14 @@ class Release:
         self.source = Path(self.spec["source"])
         require(self.source.is_absolute() and self.source.resolve() == ROOT.resolve(), "wrong_runner_checkout")
         self.output = Path(self.spec["output_directory"])
+        unlinked(self.source)
+        unlinked(self.output)
         require(self.output.is_absolute() and self.output.is_dir() and not self.output.is_symlink(), "output_directory_unavailable")
         require(not self.output.resolve().is_relative_to(self.source.resolve()), "output_must_be_outside_checkout")
         require(Path(self.spec["snapshot"]["path"]).is_absolute(), "snapshot_path_invalid")
+        unlinked(Path(self.spec["snapshot"]["path"]))
         for name in ("python", "powershell"):
+            unlinked(Path(self.spec["executables"][name]))
             require(Path(self.spec["executables"][name]).is_absolute() and
                     Path(self.spec["executables"][name]).is_file(), "executable_unavailable")
         self.deadline = time.monotonic() + self.spec["timeout_seconds"]
@@ -330,62 +353,179 @@ class Release:
         self.run([self.spec["executables"]["python"], "-B", str(self.source / "scripts/live-dispatch-preflight.py")], env=env)
 
     def verify_inputs(self):
+        self.owner_check()
+        require(bounded_read(self.path) == self.raw, "descriptor_changed")
+        unlinked(self.output)
         for name in ("runtime_env", "bridge_env", "generation_manifest", "validation_manifest", "bridge_ca"):
             pinned_file(self.spec[name])
         for pin in self.spec["compose_files"]:
             pinned_file(pin)
+        if "rehearsal" in self.spec:
+            for key in ("descriptor", "acceptance_artifact"):
+                pinned_file(self.spec["rehearsal"][key])
+
+    def owner_check(self):
+        # W2 owns this authority boundary. Fail before probes/writes until its
+        # published OS-anchored, whole-descriptor consumer can be reused here.
+        raise ReleaseError("trusted_descriptor_consumer_unavailable")
 
     def doctor(self):
         checks = []
-        for name in ("source", "image", "selectors", "compose", "snapshot", "reviewers", "bridge", "database", "live_config"):
+        for name in ("owner", "source", "image", "selectors", "compose", "snapshot", "reviewers", "bridge", "database", "live_config"):
             try:
                 getattr(self, name + "_check")()
                 checks.append({"check": name, "status": "PASS"})
             except Exception as error:
                 checks.append({"check": name, "status": "FAIL", "reason": str(error) if isinstance(error, ReleaseError) else type(error).__name__})
-        try:
-            self.verify_inputs()
-        except Exception:
-            checks.append({"check": "input_readback", "status": "FAIL", "reason": "input_changed_during_doctor"})
+                if name == "owner":
+                    break
+        if checks[0]["status"] == "PASS":
+            try:
+                self.verify_inputs()
+            except Exception:
+                checks.append({"check": "input_readback", "status": "FAIL", "reason": "input_changed_during_doctor"})
         return {"schema_version": "director-release-doctor/v1", "descriptor_sha256": self.descriptor_digest,
                 "checks": checks, "preparation_ready": all(item["status"] == "PASS" for item in checks),
                 "release_ready": False, "provider_calls": 0, "dependencies": DEPENDENCIES}
 
     def prepare(self, *, resume=False):
+        self.owner_check()  # Refuse before even creating the local lock file.
         journal = self.output / (self.spec["release_id"] + ".jsonl")
         target = self.output / (self.spec["release_id"] + ".activation.compose.json")
         with locked(journal.with_suffix(".lock")):
             records = read_journal(journal, self.descriptor_digest)
             if records:
                 require(resume, "use_resume_for_existing_journal")
-                require(len(records) == 2 and records[-1]["event"] == "receipt" and records[-1]["status"] == "COMPLETE",
-                        "reconciliation_required_no_replay")
                 self.verify_inputs()
-                require(sha(bounded_read(target)) == records[-1]["output_sha256"], "completed_output_changed")
-                return {"status": "PREPARED", "resumed": True, "release_ready": False, "provider_calls": 0}
+                # Only a proven complete local write can be recovered. A missing,
+                # partial or different artifact stays held; no effect is replayed.
+                reason = "completed_output_changed" if len(records) == 2 else "reconciliation_required_no_replay"
+                require(target.is_file() and sha(bounded_read(target)) == records[0]["output_sha256"], reason)
+                if len(records) == 1:
+                    self.complete_render(journal, records[0]["output_sha256"])
+                return {"status": "PREPARED", "resumed": True, "recovered_receipt": len(records) == 1,
+                        "release_ready": False, "provider_calls": 0}
             require(not target.exists(), "unrecorded_output_requires_reconciliation")
             report = self.doctor()
             require(report["preparation_ready"] and self.rendered is not None, "doctor_refused_preparation")
             self.verify_inputs()
             append_record(journal, {"event": "intent", "descriptor_sha256": self.descriptor_digest,
-                                   "step": "render_compose", "sequence": 1})
+                                   "step": "render_compose", "sequence": 1, "output_sha256": sha(self.rendered)})
             try:
                 with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
                     stream.write(self.rendered)
                     stream.flush()
                     os.fsync(stream.fileno())
                 require(bounded_read(target) == self.rendered, "compose_output_readback_failed")
-                append_record(journal, {"event": "receipt", "descriptor_sha256": self.descriptor_digest,
-                                       "step": "render_compose", "sequence": 2, "status": "COMPLETE", "output_sha256": sha(self.rendered)})
+                self.verify_inputs()
+                self.complete_render(journal, sha(self.rendered))
             except BaseException:
                 # A pending intent is sufficient to refuse replay even if this append fails.
                 raise ReleaseError("reconciliation_required_no_replay") from None
             return {"status": "PREPARED", "resumed": False, "release_ready": False, "provider_calls": 0}
 
+    def complete_render(self, journal, digest):
+        append_record(journal, {"event": "receipt", "descriptor_sha256": self.descriptor_digest,
+                               "step": "render_compose", "sequence": 2, "status": "COMPLETE", "output_sha256": digest})
+
+    def rehearsal(self):
+        """Return an unexecuted plan; existing control actions retain every gate."""
+        require("rehearsal" in self.spec, "sibling_descriptor_required")
+        self.verify_inputs()
+        plan = self.spec["rehearsal"]
+        sibling = Release(plan["descriptor"]["path"])
+        require("rehearsal" not in sibling.spec, "recursive_rehearsal_refused")
+        require(sibling.spec["candidate"] == self.spec["candidate"] and
+                sibling.spec["image_id"] == self.spec["image_id"], "sibling_candidate_mismatch")
+        require(sibling.spec["compose_project"] != self.spec["compose_project"] and
+                sibling.spec["release_id"] != self.spec["release_id"] and
+                not paths_overlap(sibling.output, self.output), "sibling_project_not_isolated")
+        for key in ("runtime_env", "bridge_env", "generation_manifest", "validation_manifest"):
+            require(Path(sibling.spec[key]["path"]).resolve() != Path(self.spec[key]["path"]).resolve(),
+                    "sibling_profile_not_isolated")
+        for key in ("database_identity", "database_instance_id"):
+            require(sibling.manifest["activation"][key] != self.manifest["activation"][key],
+                    "sibling_database_not_isolated")
+        for key in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"):
+            require(sibling.runtime.get(key) == "false", "sibling_must_be_unpaid")
+        require(sibling.runtime.get("LANGGRAPH_PARALLEL_KILL_SWITCH") == "true", "sibling_must_be_unpaid")
+        for key in ("SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID"):
+            require(not sibling.runtime.get(key) or sibling.runtime[key] != self.runtime.get(key),
+                    "sibling_slack_identity_not_isolated")
+        require(sibling.runtime.get("DIRECTOR_HOST_PORT") == str(plan["host_port"]), "sibling_host_port_mismatch")
+        backup = Path(plan["backup_path"])
+        unlinked(backup)
+        require(backup.parent.resolve() == sibling.output.resolve() and not backup.exists(), "sibling_backup_path_invalid")
+        self.source_check()
+        self.selectors_check()
+        self.compose_check()
+        report = sibling.doctor()
+        require(report["preparation_ready"], "sibling_doctor_refused")
+        final_graph, sibling_graph = document(self.rendered), document(sibling.rendered)
+        isolated_sibling(final_graph, sibling_graph, plan["host_port"])
+        base = [sibling.spec["executables"]["powershell"], "-NoProfile", "-NonInteractive", "-File",
+                str(sibling.source / "scripts/windows-langgraph-primary-control.ps1")]
+        common = ["-EnvironmentFile", sibling.spec["runtime_env"]["path"], "-ComposeProject",
+                  sibling.spec["compose_project"], "-HostPort", str(plan["host_port"]), "-TimeoutSeconds", "120"]
+        steps = []
+        for action in ("Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
+                       "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"):
+            arguments = [*base, "-Action", action, *common]
+            if action == "Accept":
+                arguments += ["-AcceptanceArtifactPath", plan["acceptance_artifact"]["path"]]
+            elif action in ("Backup", "RestoreDrill"):
+                arguments += ["-BackupPath", str(backup)]
+            steps.append({"action": action, "argv": arguments})
+        self.verify_inputs()
+        sibling.verify_inputs()
+        return {"schema_version": "director-release-rehearsal-plan/v1", "status": "PLANNED", "executed": False,
+                "descriptor_sha256": self.descriptor_digest, "sibling_descriptor_sha256": sibling.descriptor_digest,
+                "compose_project": sibling.spec["compose_project"], "candidate": self.spec["candidate"],
+                "image_id": self.spec["image_id"], "cwd": str(sibling.source), "timeout_seconds": 1499,
+                "environment": {"COMPOSE_FILE": os.pathsep.join(pin["path"] for pin in sibling.spec["compose_files"]),
+                                "COMPOSE_PATH_SEPARATOR": os.pathsep},
+                "steps": steps, "release_ready": False, "provider_calls": 0,
+                "dependencies": DEPENDENCIES, "on_uncertain_effect": "STOP_RECONCILE_WITHOUT_REPLAY"}
+
+
+def paths_overlap(left, right):
+    left, right = Path(left).resolve(), Path(right).resolve()
+    return left.is_relative_to(right) or right.is_relative_to(left)
+
+
+def isolated_sibling(final, sibling, host_port):
+    """Check resolved Compose resources, not just a different project name."""
+    project = sibling["name"]
+    for kind in ("networks", "volumes"):
+        final_names = {item.get("name") for item in final.get(kind, {}).values()}
+        for item in sibling.get(kind, {}).values():
+            require(not item.get("external") and not item.get("driver_opts") and not item.get("driver") and
+                    isinstance(item.get("name"), str) and
+                    item["name"].startswith(project + "_") and item["name"] not in final_names,
+                    "sibling_shared_" + kind)
+    require(bool(sibling.get("networks")), "sibling_network_missing")
+    final_ports = {str(port.get("published")) for service in final["services"].values() for port in service.get("ports", [])}
+    final_binds = [mount["source"] for service in final["services"].values()
+                   for mount in service.get("volumes", []) if mount.get("type") == "bind"]
+    for service in sibling["services"].values():
+        require(not any(service.get(key) for key in ("network_mode", "pid", "ipc", "privileged", "devices",
+                                                    "volumes_from", "container_name")), "sibling_host_resource_refused")
+        for port in service.get("ports", []):
+            published = str(port.get("published", ""))
+            require(port.get("host_ip") == "127.0.0.1" and published.isdigit() and
+                    1024 <= int(published) <= 65535 and published not in final_ports, "sibling_port_not_isolated")
+        for mount in service.get("volumes", []):
+            if mount.get("type") == "bind" and not mount.get("read_only"):
+                unlinked(Path(mount["source"]))
+                require(all(not paths_overlap(mount["source"], source) for source in final_binds),
+                        "sibling_shared_write_mount")
+    require(any(str(port.get("published")) == str(host_port) and port.get("target") == 8080
+                for port in sibling["services"]["orchestrator"].get("ports", [])), "sibling_host_port_mismatch")
+
 
 @contextmanager
 def locked(path):
-    require(not path.is_symlink(), "journal_lock_invalid")
+    unlinked(path)
     with path.open("a+b") as stream:
         stream.seek(0, os.SEEK_END)
         if not stream.tell():
@@ -413,7 +553,7 @@ def locked(path):
 
 def append_record(path, value):
     value = dict(value, record_sha256=sha(encoded(value)))
-    require(not path.is_symlink(), "journal_path_invalid")
+    unlinked(path)
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as stream:
         stream.write(encoded(value) + b"\n")
         stream.flush()
@@ -428,21 +568,26 @@ def read_journal(path, descriptor_digest):
     result = [document(line) for line in raw.splitlines()]
     require(len(result) <= 2, "unexpected_journal_sequence")
     for number, entry in enumerate(result, 1):
-        fields = {"event", "descriptor_sha256", "step", "sequence", "record_sha256"}
+        fields = {"event", "descriptor_sha256", "step", "sequence", "record_sha256", "output_sha256"}
         if number == 2:
-            fields |= {"status", "output_sha256"}
+            fields |= {"status"}
         require(isinstance(entry, dict) and set(entry) == fields, "invalid_journal_record")
         require(entry["sequence"] == number and entry["descriptor_sha256"] == descriptor_digest and
                 entry["step"] == "render_compose" and entry["event"] == ("intent" if number == 1 else "receipt"),
                 "journal_binding_mismatch")
         require(sha(encoded({k: v for k, v in entry.items() if k != "record_sha256"})) == entry["record_sha256"],
                 "journal_digest_mismatch")
+        require(isinstance(entry["output_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", entry["output_sha256"]),
+                "journal_output_digest_invalid")
+        if number == 2:
+            require(entry["status"] == "COMPLETE" and entry["output_sha256"] == result[0]["output_sha256"],
+                    "journal_receipt_mismatch")
     return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("doctor", "prepare", "resume"))
+    parser.add_argument("action", choices=("doctor", "prepare", "resume", "rehearsal"))
     parser.add_argument("--descriptor", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -451,6 +596,9 @@ def main(argv=None):
             report = release.doctor()
             print(json.dumps(report, sort_keys=True))
             return 2  # Missing authority is never a PASS, even with every diagnostic green.
+        if args.action == "rehearsal":
+            print(json.dumps(release.rehearsal(), sort_keys=True))
+            return 0
         print(json.dumps(release.prepare(resume=args.action == "resume"), sort_keys=True))
         return 0
     except Exception as error:

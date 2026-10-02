@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://director.local/schemas/director-release-descriptor-v1.schema.json",
-  "title": "Director R1 preparation descriptor",
+  "title": "Director R1 preparation and sibling rehearsal descriptor",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "release_id", "source", "candidate", "compose_project", "image_id", "runtime_env", "bridge_env", "compose_files", "generation_manifest", "validation_manifest", "bridge_url", "bridge_ca", "snapshot", "reviewers", "executables", "output_directory", "timeout_seconds"],
@@ -42,6 +42,16 @@
       "properties": {"python": {"$ref": "#/$defs/path"}, "powershell": {"$ref": "#/$defs/path"}}
     },
     "output_directory": {"$ref": "#/$defs/path"},
+    "rehearsal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["descriptor", "acceptance_artifact", "backup_path", "host_port"],
+      "properties": {
+        "descriptor": {"$ref": "#/$defs/pin"},
+        "acceptance_artifact": {"$ref": "#/$defs/pin"},
+        "backup_path": {"$ref": "#/$defs/path"},
+        "host_port": {"type": "integer", "minimum": 1024, "maximum": 65535}
+      }
+    },
     "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 900}
   },
   "$defs": {

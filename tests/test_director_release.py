@@ -1,5 +1,6 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:35 UTC | BEGIN]]
-"""Offline preparation contracts; all Docker, bridge and database I/O is mocked."""
+"""Preparation/rehearsal contracts; authority and live I/O remain explicitly mocked."""
+import copy
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
 import importlib.util
@@ -7,6 +8,8 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -99,6 +102,11 @@ class ReleasePreparationTests(unittest.TestCase):
         self.save()
         self.calls = []
         self.reply_changes = {}
+        # W2's unpublished authority consumer is an explicit integration blocker.
+        # This stand-in permits exercising the independent W5 logic only.
+        self.owner_patch = patch.object(release.Release, "owner_check", return_value=None)
+        self.owner_patch.start()
+        self.addCleanup(self.owner_patch.stop)
         command_patch = patch.object(release, "command", side_effect=self.platform)
         command_patch.start()
         self.addCleanup(command_patch.stop)
@@ -127,7 +135,8 @@ class ReleasePreparationTests(unittest.TestCase):
         if argv[:2] == ["docker", "compose"]:
             self.assertEqual(argv[-3:], ["config", "--format", "json"])
             self.assertIn(str(self.root / "compose.yml"), argv)
-            return release.encoded(self.compose)
+            graph = self.sibling_compose if argv[3] == "fixture-sibling" else self.compose
+            return release.encoded(graph)
         if "-File" in argv:
             self.assertIn(argv[argv.index("-Action") + 1], ("Verify", "Preflight"))
             return b"read-only fixture proof"
@@ -135,8 +144,10 @@ class ReleasePreparationTests(unittest.TestCase):
             return release.encoded({"ok": True, "pinned_environment": True,
                 "configuration_digests": self.reply_changes.get("bridge", {"grok": "e" * 64})})
         if argv[-1] == release.DATABASE_PROBE:
-            return release.encoded({"database_identity": self.activation["database_identity"],
-                "database_instance_id": self.activation["database_instance_id"],
+            request = json.loads(kwargs["input_bytes"])
+            activation = self.sibling_activation if request["generation"] != self.generation else self.activation
+            return release.encoded({"database_identity": activation["database_identity"],
+                "database_instance_id": activation["database_instance_id"],
                 "occupied_slots": self.reply_changes.get("slots", [])})
         if Path(argv[-1]).name == "live-dispatch-preflight.py":
             return b"configuration-only checks"
@@ -184,7 +195,7 @@ class ReleasePreparationTests(unittest.TestCase):
             release.Release(self.descriptor).prepare(resume=True)
         self.assertEqual(len(self.calls), calls)
 
-    def test_interrupted_receipt_is_ambiguous_and_cannot_replay(self):
+    def test_interrupted_receipt_recovers_proven_local_write_without_replay(self):
         append = release.append_record
         def fail_receipt(path, value):
             if value["event"] == "receipt":
@@ -195,10 +206,21 @@ class ReleasePreparationTests(unittest.TestCase):
             release.Release(self.descriptor).prepare()
         calls = len(self.calls)
         original = (self.output / "fixture-r1.activation.compose.json").read_bytes()
-        with self.assertRaisesRegex(release.ReleaseError, "reconciliation_required_no_replay"):
-            release.Release(self.descriptor).prepare(resume=True)
+        result = release.Release(self.descriptor).prepare(resume=True)
+        self.assertTrue(result["recovered_receipt"])
         self.assertEqual(len(self.calls), calls)
         self.assertEqual((self.output / "fixture-r1.activation.compose.json").read_bytes(), original)
+
+    def test_missing_or_partial_output_after_intent_is_never_replayed(self):
+        journal = self.output / "fixture-r1.jsonl"
+        release.append_record(journal, {"event": "intent", "descriptor_sha256": release.sha(self.descriptor.read_bytes()),
+            "step": "render_compose", "sequence": 1, "output_sha256": "a" * 64})
+        for raw in (None, b"partial"):
+            if raw is not None:
+                (self.output / "fixture-r1.activation.compose.json").write_bytes(raw)
+            with self.assertRaisesRegex(release.ReleaseError, "reconciliation_required_no_replay"):
+                release.Release(self.descriptor).prepare(resume=True)
+        self.assertEqual(self.calls, [])
 
     def test_truncated_tampered_and_other_descriptor_journals_fail_closed(self):
         tool = release.Release(self.descriptor)
@@ -208,7 +230,7 @@ class ReleasePreparationTests(unittest.TestCase):
             tool.prepare(resume=True)
         journal.write_bytes(b"")
         release.append_record(journal, {"event": "intent", "descriptor_sha256": "0" * 64,
-            "step": "render_compose", "sequence": 1})
+            "step": "render_compose", "sequence": 1, "output_sha256": "a" * 64})
         with self.assertRaisesRegex(release.ReleaseError, "journal_binding_mismatch"):
             tool.prepare(resume=True)
         entry = json.loads(journal.read_bytes())
@@ -250,6 +272,163 @@ class ReleasePreparationTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "doctor_refused_preparation"):
                 tool.prepare()
         self.assertFalse((self.output / "fixture-r1.jsonl").exists())
+
+    def test_descriptor_mutation_is_refused_before_write_or_resume_receipt(self):
+        tool = release.Release(self.descriptor)
+        self.descriptor.write_bytes(self.descriptor.read_bytes() + b" ")
+        with self.assertRaisesRegex(release.ReleaseError, "descriptor_changed"):
+            tool.verify_inputs()
+        self.assertFalse((self.output / "fixture-r1.jsonl").exists())
+        self.save()
+        tool.prepare()
+        self.spec["timeout_seconds"] += 1
+        self.save()
+        with self.assertRaisesRegex(release.ReleaseError, "journal_binding_mismatch"):
+            release.Release(self.descriptor).prepare(resume=True)
+
+    def test_unpublished_owner_consumer_fails_before_any_probe_or_write_even_with_fake_home(self):
+        self.owner_patch.stop()
+        with patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root)}):
+            tool = release.Release(self.descriptor)
+            report = tool.doctor()
+            self.assertFalse(report["preparation_ready"])
+            self.assertEqual(report["checks"][0]["reason"], "trusted_descriptor_consumer_unavailable")
+            with self.assertRaisesRegex(release.ReleaseError, "trusted_descriptor_consumer_unavailable"):
+                tool.prepare()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def sibling(self):
+        spec = copy.deepcopy(self.spec)
+        spec.update(release_id="fixture-sibling", compose_project="fixture-sibling",
+                    output_directory=str(self.root / "sibling-output"))
+        Path(spec["output_directory"]).mkdir()
+        self.sibling_compose = copy.deepcopy(self.compose)
+        self.compose["networks"] = {"default": {"name": "fixture-director_default"}}
+        self.compose["services"]["orchestrator"]["ports"] = [{"host_ip": "127.0.0.1", "published": "8080", "target": 8080}]
+        self.sibling_compose.update(name="fixture-sibling", networks={"default": {"name": "fixture-sibling_default"}})
+        self.sibling_compose["services"]["orchestrator"]["ports"] = [{"host_ip": "127.0.0.1", "published": "18080", "target": 8080}]
+        self.sibling_compose["volumes"] = {"data": {"name": "fixture-sibling_data"}}
+        manifest = copy.deepcopy(self.manifest)
+        manifest["activation"].update(compose_project="fixture-sibling", database_identity="postgres:sha256:" + "d" * 64,
+                                       database_instance_id="22222222-2222-4222-8222-222222222222")
+        self.sibling_activation = manifest["activation"]
+        for graph, item in ((self.compose, self.manifest), (self.sibling_compose, manifest)):
+            item["resolved_compose_sha256"] = release.resolved_deployment_digest(graph, self.image)
+        # Re-pin the parent after adding actual resolved topology to its fixture.
+        self.spec["generation_manifest"] = self.pin("generation.json", release.encoded(self.manifest))
+        self.generation = self.spec["generation_manifest"]["sha256"]
+        self.runtime.update(LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=self.generation,
+                            DIRECTOR_PROVIDER_VALIDATION_GENERATION=self.generation)
+        self.bridge["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"] = self.generation
+        self.validation["generation"] = self.generation
+        self.compose["services"]["orchestrator"]["environment"]["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"] = self.generation
+        self.spec["runtime_env"] = self.pin_env("runtime.env", self.runtime)
+        self.spec["bridge_env"] = self.pin_env("bridge.env", self.bridge)
+        self.spec["validation_manifest"] = self.pin("validation.json", release.encoded(self.validation))
+        spec["generation_manifest"] = self.pin("sibling-generation.json", release.encoded(manifest))
+        generation = spec["generation_manifest"]["sha256"]
+        runtime = dict(self.runtime, LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=generation,
+                       DIRECTOR_PROVIDER_VALIDATION_GENERATION=generation, ALLOW_PAID_RUNS="false",
+                       LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false", LANGGRAPH_PARALLEL_KILL_SWITCH="true",
+                       DIRECTOR_HOST_PORT="18080")
+        spec["runtime_env"] = self.pin_env("sibling-runtime.env", runtime)
+        spec["bridge_env"] = self.pin_env("sibling-bridge.env", dict(self.bridge, LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=generation))
+        spec["validation_manifest"] = self.pin("sibling-validation.json", release.encoded(dict(self.validation, generation=generation)))
+        self.sibling_compose["services"]["orchestrator"]["environment"]["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"] = generation
+        self.spec["rehearsal"] = {"descriptor": self.pin("sibling.json", release.encoded(spec)),
+            "acceptance_artifact": self.pin("sibling-acceptance.json", b'{"fixture":"never accepted by runner"}'),
+            "backup_path": str(Path(spec["output_directory"]) / "rehearsal.dump"), "host_port": 18080}
+        self.save()
+        return spec
+
+    def test_rehearsal_emits_existing_control_contract_only_for_sibling_without_execution(self):
+        sibling = self.sibling()
+        report = release.Release(self.descriptor).rehearsal()
+        self.assertEqual(report["status"], "PLANNED")
+        self.assertFalse(report["executed"])
+        self.assertLess(report["timeout_seconds"], 1500)
+        actions = [row["action"] for row in report["steps"]]
+        self.assertEqual(actions, ["Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
+                                   "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"])
+        for step in report["steps"]:
+            argv = step["argv"]
+            self.assertEqual(argv[argv.index("-ComposeProject") + 1], "fixture-sibling")
+            self.assertEqual(argv[argv.index("-EnvironmentFile") + 1], sibling["runtime_env"]["path"])
+        self.assertEqual(report["environment"]["COMPOSE_FILE"], self.spec["compose_files"][0]["path"])
+        self.assertFalse(any("windows-langgraph-primary-control.ps1" in str(arg) for call, _ in self.calls for arg in call))
+        self.assertEqual(list(Path(sibling["output_directory"]).iterdir()), [])
+
+    def test_rehearsal_refuses_reusing_final_identity_or_paths(self):
+        sibling = self.sibling()
+        for field, value in (("compose_project", self.spec["compose_project"]),
+                             ("output_directory", self.spec["output_directory"]),
+                             ("runtime_env", self.spec["runtime_env"]),
+                             ("generation_manifest", self.spec["generation_manifest"])):
+            with self.subTest(field=field):
+                altered = dict(sibling, **{field: value})
+                self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(altered))
+                self.save()
+                with self.assertRaises(release.ReleaseError):
+                    release.Release(self.descriptor).rehearsal()
+        self.assertEqual(self.calls, [])
+
+    def test_sibling_topology_rejects_shared_volume_network_port_or_writable_bind(self):
+        self.sibling()
+        for field in ("port", "network", "volume", "bind", "host"):
+            with self.subTest(field=field):
+                graph = copy.deepcopy(self.sibling_compose)
+                service = graph["services"]["orchestrator"]
+                if field == "port":
+                    service["ports"][0]["published"] = "8080"
+                elif field == "network":
+                    graph["networks"]["default"]["name"] = "fixture-director_default"
+                elif field == "volume":
+                    graph["volumes"]["data"]["driver_opts"] = {"device": "/production"}
+                elif field == "bind":
+                    service["volumes"][0]["read_only"] = False
+                else:
+                    service["network_mode"] = "host"
+                with self.assertRaises(release.ReleaseError):
+                    release.isolated_sibling(self.compose, graph, 18080)
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose CLI required; configuration-only, no daemon operation")
+    def test_sibling_guard_consumes_actual_compose_rendering(self):
+        self.sibling()
+        graphs = []
+        for value in (self.compose, self.sibling_compose):
+            path = self.root / (value["name"] + ".json")
+            path.write_bytes(release.encoded(value))
+            result = subprocess.run(["docker", "compose", "--project-name", value["name"], "--env-file",
+                self.spec["runtime_env"]["path"], "-f", str(path), "config", "--format", "json"],
+                cwd=self.root, env=release.child_environment(), capture_output=True, timeout=180)
+            self.assertEqual(result.returncode, 0, "configuration-only Compose producer failed")
+            graphs.append(json.loads(result.stdout))
+            self.assertRegex(release.resolved_deployment_digest(graphs[-1], self.image), r"^[0-9a-f]{64}$")
+        release.isolated_sibling(*graphs, 18080)
+        graphs[1]["services"]["orchestrator"]["ports"][0]["published"] = "8080"
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_isolated"):
+            release.isolated_sibling(*graphs, 18080)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required for actual control parameter binding")
+    def test_rehearsal_argv_binds_to_real_control_parameters_without_running_its_body(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        source = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text(encoding="utf-8-sig")
+        # Reuse the real consumer's parameter block and PowerShell binder. Its
+        # runtime body is intentionally absent: no Docker, profile write or gate runs.
+        parameters = source[source.index("[CmdletBinding()]"):source.index('$ErrorActionPreference = "Stop"')]
+        harness = self.root / "control-parameters-only.ps1"
+        harness.write_text(parameters + '\n$PSBoundParameters | ConvertTo-Json -Compress\n', encoding="utf-8")
+        for step in plan["steps"]:
+            arguments = step["argv"][step["argv"].index("-File") + 2:]
+            result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness), *arguments],
+                                    cwd=self.root, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, "generated arguments rejected by actual control parameter contract")
+            observed = json.loads(result.stdout)
+            self.assertEqual(observed["Action"], step["action"])
+            self.assertEqual(observed["ComposeProject"], "fixture-sibling")
+            self.assertEqual(observed["HostPort"], 18080)
 
     def test_descriptor_rejects_bypass_fields_and_output_inside_checkout(self):
         self.spec["allow_unverified_release"] = True
