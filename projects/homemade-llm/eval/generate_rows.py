@@ -862,8 +862,8 @@ NATIVE_PROTOCOL = "lms-native-prediction-v1"
 # launch composition, outside these fully hashed candidate bytes. No CLI, scenario
 # or runtime data can supply it. A self-written record/Python call is not authority;
 # no live operator launch/release exists. The default below remains closed.
-NATIVE_GPU_MARKER = Path("C:/llm/runs/m2/native-generation.owner.json")
-NATIVE_GPU_LOCK = Path("C:/llm/runs/m2/local-inference.gpu.lock")
+NATIVE_GPU_MUTEX = "Global\\homemade-llm-gpu"
+_NATIVE_GPU_RETAINED: list[tuple[Any, Any]] = []
 NATIVE_ATTEMPT_ROOT = Path("C:/llm/runs/m2/native-attempt-reservations")
 NATIVE_MAX_BYTES = 1024 * 1024
 
@@ -1049,37 +1049,107 @@ def _native_resource_checks() -> dict[str, Any]:
     return {"free_floor_bytes": 150 * 1024**3, "hot_bytes": total, "competing_producers": 0}
 
 
+def _native_gpu_marker() -> Path:
+    """The same system CommonApplicationData path as invoke-bounded.ps1."""
+    if os.name != "nt":
+        raise ValueError("native GPU marker requires Windows")
+    import ctypes
+    from ctypes import wintypes
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.SHGetFolderPathW.argtypes = (wintypes.HWND, ctypes.c_int, wintypes.HANDLE,
+                                      wintypes.DWORD, wintypes.LPWSTR)
+    shell.SHGetFolderPathW.restype = ctypes.c_long
+    folder = ctypes.create_unicode_buffer(260)
+    if shell.SHGetFolderPathW(None, 0x23, None, 0, folder) != 0 or not folder.value:
+        raise ValueError("native CommonApplicationData unavailable")
+    return Path(folder.value) / "homemade-llm" / "gpu-poisoned.txt"
+
+
 @contextmanager
 def _native_resources(owner: dict[str, Any]):
-    # FileShare.None interoperates with existing PowerShell GPU runners.
-    if os.name == "nt":
-        import ctypes
-        import msvcrt
-        from ctypes import wintypes
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                                      ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
-        kernel.CreateFileW.restype = wintypes.HANDLE
-        handle = kernel.CreateFileW(str(NATIVE_GPU_LOCK), 0xC0000000, 0, None, 4, 0x80, None)
-        if handle == ctypes.c_void_p(-1).value:
-            raise ValueError("native GPU lock occupied")
-        gpu = os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDWR), "r+b")
-    else:
-        # Used only by harmless offline fixtures; production resource checks refuse POSIX.
-        gpu = NATIVE_GPU_LOCK.open("xb")
+    """Participate in the PS mutex/poison protocol; this is not backend-stop proof."""
+    if _NATIVE_GPU_RETAINED:
+        raise ValueError("native GPU cleanup requires operator verification")
+    kernel = handle = None
+    held = abandoned = published = entered = False
+    retain = False
+    thread = threading.get_native_id()
     marker = None
+    marker_bytes = (json.dumps(owner, sort_keys=True) + "\n").encode("utf-8")
     try:
-        marker = NATIVE_GPU_MARKER.open("x", encoding="utf-8", newline="\n")
-        json.dump(owner, marker, sort_keys=True); marker.write("\n"); marker.flush(); os.fsync(marker.fileno())
-        marker.close()
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+            kernel.CreateMutexW.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+            kernel.ReleaseMutex.restype = wintypes.BOOL
+            kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel.CloseHandle.restype = wintypes.BOOL
+            handle = kernel.CreateMutexW(None, False, NATIVE_GPU_MUTEX)
+            if not handle:
+                raise ValueError("native GPU mutex unavailable")
+            wait = kernel.WaitForSingleObject(handle, 0)
+            held = wait in (0, 0x80)
+            abandoned = wait == 0x80
+            if not held:
+                raise ValueError("native GPU mutex occupied or wait failed")
+        # POSIX is only an isolated offline fixture seam; real resource checks refuse it.
+        marker = _native_gpu_marker()
+        try:
+            marker.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError("native GPU poisoned; operator verification required")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        with marker.open("xb") as stream:
+            stream.write(marker_bytes); stream.flush(); os.fsync(stream.fileno())
+        published = True
+        if abandoned:
+            # Ownership is granted, but persistent/backend consistency is UNKNOWN.
+            raise ValueError("native GPU mutex abandoned; poison retained")
+        entered = True
         yield
     finally:
-        gpu.close()
-        if owner.get("cleanup_confirmed"):
-            existing = local_transport.strict_json(NATIVE_GPU_MARKER.read_bytes())
-            if existing.get("owner_token") != owner["owner_token"]:
-                raise ValueError("native marker ownership changed")
-            NATIVE_GPU_MARKER.unlink()  # Only our exact ephemeral owner marker.
+        if held and threading.get_native_id() != thread:
+            retain = True
+        else:
+            try:
+                # Absence/client/child observations do not prove backend/resource stop.
+                # The current SDK reports UNKNOWN, so real completions retain poison.
+                if entered and owner.get("cleanup_confirmed") and owner.get("backend_stopped") is True:
+                    if marker.read_bytes() != marker_bytes:
+                        raise ValueError("native GPU marker ownership changed")
+                    marker.unlink()  # Only this exact owner record, under the shared mutex.
+                elif published or abandoned:
+                    if marker is None:
+                        raise ValueError("native GPU poison location UNKNOWN")
+                    # Retain existing poison, including foreign bytes; never overwrite it.
+                    try:
+                        marker.lstat()
+                    except FileNotFoundError:
+                        with marker.open("xb") as stream:
+                            stream.write(marker_bytes); stream.flush(); os.fsync(stream.fileno())
+            except (OSError, ValueError):
+                # If poison cannot be confirmed persistent, do not release locally.
+                retain = held
+                raise
+            finally:
+                if held and retain:
+                    _NATIVE_GPU_RETAINED.append((kernel, handle))
+                elif handle:
+                    if held and not kernel.ReleaseMutex(handle):
+                        _NATIVE_GPU_RETAINED.append((kernel, handle))
+                        raise ValueError("native GPU mutex release UNKNOWN")
+                    if not kernel.CloseHandle(handle):
+                        raise ValueError("native GPU mutex close UNKNOWN")
+        if retain and held and threading.get_native_id() != thread:
+            _NATIVE_GPU_RETAINED.append((kernel, handle))
+            raise ValueError("native GPU ownership thread changed; poison retained")
 
 
 def _native_answer(response: Any, request: dict[str, Any]) -> dict[str, Any]:
@@ -1184,14 +1254,13 @@ def native_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, 
         if _source_utc(scenario["source_provenance"]["admitted_at"], "licensed source") >= _source_utc(record["start_utc"], "native inference"):
             fail("licensed source admission must precede native inference; no request sent")
     owner = {"owner_token": secrets.token_hex(16), "source_group": scenario["source_group"],
-             "model": prepared["model"], "attempt_ordinal": release["attempt_ordinal"]}
+             "model": prepared["model"], "attempt_ordinal": release["attempt_ordinal"],
+             "backend_stopped": "UNKNOWN"}
     pair = _canonical_hash([scenario["source_group"], prepared["model"]])
     NATIVE_ATTEMPT_ROOT.mkdir(parents=True, exist_ok=True)
     receipts_dir.mkdir(parents=True, exist_ok=True)
     reservation = NATIVE_ATTEMPT_ROOT / f"{pair}-{release['attempt_ordinal']}.json"
     path = receipts_dir / f"native-{pair}-{release['attempt_ordinal']}.json"
-    resource = _native_resource_checks()
-    record["resource_checks"] = resource
     with reservation.open("x", encoding="utf-8", newline="\n") as attempt:
         json.dump({**owner, "release_sha256": release["release_sha256"], "start_utc": record["start_utc"]}, attempt, sort_keys=True)
         attempt.write("\n"); attempt.flush(); os.fsync(attempt.fileno())
@@ -1199,6 +1268,7 @@ def native_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, 
         json.dump(record, handle, sort_keys=True); handle.write("\n"); handle.flush(); os.fsync(handle.fileno())
         try:
             with _native_resources(owner):
+                record["resource_checks"] = _native_resource_checks()
                 start = time.monotonic()  # Absolute budget starts before any owned SDK load.
                 request["generationDeadlineUnixMs"] = int(time.time() * 1000) + timeout * 1000
                 payload = _sdk_json(request)
@@ -1212,6 +1282,7 @@ def native_dispatch(scenario: dict[str, Any], purpose: str, prepared: dict[str, 
                 refuse_secrets(response, "native response and raw metadata")
                 record.update(response=response, response_sha256=_canonical_hash(response), sdk_response_utf8=raw.decode("utf-8"))
                 life = response.get("lifecycle", {})
+                owner["backend_stopped"] = life.get("backendStopped", "UNKNOWN")
                 owner["cleanup_confirmed"] = (child["child_tree_closed"] and life.get("clientDisposal") == "CONNECTIONS_CLOSED"
                     and life.get("ownedAliasUnloaded") in {"ABSENCE_OBSERVED", "NO_LOAD_ATTEMPTED"})
                 record["cleanup"] = "OWNED_ABSENCE_AND_CHILD_DEATH_OBSERVED" if owner["cleanup_confirmed"] else "UNKNOWN"

@@ -2229,14 +2229,19 @@ class NativeSdkTransportTests(unittest.TestCase):
         self.operator_pin = (self.root / "OFFLINE-MOCK-not-a-live-release", "f" * 64)
         release = {"attempt_ordinal": 3, "release_sha256": "f" * 64,
                    "runtime_sha256": hashlib.sha256(runtime_path.read_bytes()).hexdigest()}
-        for name, value in (("NATIVE_GPU_MARKER", self.root / "owned-marker.json"),
-                            ("NATIVE_GPU_LOCK", self.root / "gpu.lock"),
+        for name, value in (("NATIVE_GPU_MUTEX", "Global\\homemade-llm-gpu.TEST-" + self.root.name),
                             ("NATIVE_ATTEMPT_ROOT", self.root / "attempts")):
             patched = patch.object(generate_rows, name, value); patched.start(); self.addCleanup(patched.stop)
+        marker = patch.object(generate_rows, "_native_gpu_marker", return_value=self.root / "owned-marker.json")
+        marker.start(); self.addCleanup(marker.stop)
         for name, value in (("native_execution_release", release), ("_native_runtime", runtime),
                             ("_native_resource_checks", {"offline_mock": True})):
             patched = patch.object(generate_rows, name, return_value=value)
             patched.start(); self.addCleanup(patched.stop)
+        def checked_resources():
+            self.assertTrue((self.root / "owned-marker.json").exists())
+            return {"offline_mock": True}
+        generate_rows._native_resource_checks.side_effect = checked_resources
         original = generate_rows.native_execution_release
         def checked_release(*args, operator_pin=None):
             self.assertIs(operator_pin, self.operator_pin)
@@ -2281,7 +2286,7 @@ class NativeSdkTransportTests(unittest.TestCase):
                     "backendStopped": "UNKNOWN"}}
 
     def child_response(self, argv, payload, deadline):
-        self.assertTrue(generate_rows.NATIVE_GPU_MARKER.exists())
+        self.assertTrue((self.root / "owned-marker.json").exists())
         attempts = list(generate_rows.NATIVE_ATTEMPT_ROOT.glob("*.json"))
         self.assertEqual(len(attempts), 1)
         request = generate_rows.local_transport.strict_json(payload)
@@ -2323,10 +2328,11 @@ class NativeSdkTransportTests(unittest.TestCase):
 
     def test_native_dry_run_has_zero_effects_and_preserves_refs(self):
         before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for root in (self.set_a, self.set_b) for p in root.glob("*.json")}
-        with patch.object(generate_rows, "prepare_local_model") as prepare, patch.object(generate_rows, "_native_process") as child, patch.object(generate_rows, "native_execution_release") as release:
+        with patch.object(generate_rows, "prepare_local_model") as prepare, patch.object(generate_rows, "_native_process") as child, patch.object(generate_rows, "native_execution_release") as release, patch.object(generate_rows, "_native_resources") as resources, patch.object(generate_rows, "_native_gpu_marker") as marker:
             report = self.generate_local({}, native_sdk=True, dry_run=True)
             self.assertEqual(report, {"dry_run": True, "rows": 0, "receipts": 0})
             prepare.assert_not_called(); child.assert_not_called(); release.assert_not_called()
+            resources.assert_not_called(); marker.assert_not_called()
         self.assertFalse(self.out.exists())
         self.assertFalse((self.root / "receipts").exists())
         after = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for root in (self.set_a, self.set_b) for p in root.glob("*.json")}
@@ -2354,7 +2360,9 @@ class NativeSdkTransportTests(unittest.TestCase):
         self.assertEqual(receipt["request"]["schema"], generate_rows._schema_validator().schema["properties"]["target"])
         self.assertNotEqual(receipt["request_sha256"], receipt["sdk_request_utf8_sha256"])
         self.assertEqual(receipt["response"]["lifecycle"]["backendStopped"], "UNKNOWN")
-        self.assertFalse(generate_rows.NATIVE_GPU_MARKER.exists())
+        self.assertEqual(receipt["cleanup"], "OWNED_ABSENCE_AND_CHILD_DEATH_OBSERVED")
+        # Mechanical completion does not release a GPU whose backend stop is UNKNOWN.
+        self.assertTrue((self.root / "owned-marker.json").exists())
         self.assertEqual(len(list(generate_rows.NATIVE_ATTEMPT_ROOT.glob("*.json"))), 1)
         self.out = self.root / "second.jsonl"
         with self.assertRaises(FileExistsError):
@@ -2370,7 +2378,25 @@ class NativeSdkTransportTests(unittest.TestCase):
         receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(receipt["response"]["predictionConfig"]["value"]["fields"][-2]["value"], {"checked": False, "value": 42})
-        self.assertFalse(generate_rows.NATIVE_GPU_MARKER.exists())
+        self.assertTrue((self.root / "owned-marker.json").exists())
+
+    def test_native_resource_refusal_has_durable_poison_and_zero_model_calls(self):
+        options = self.native_fixture()
+        def refuse_resources():
+            self.assertTrue((self.root / "owned-marker.json").exists())
+            raise ValueError("offline resource refusal")
+        generate_rows._native_resource_checks.side_effect = refuse_resources
+        with self.assertRaises(SystemExit):
+            self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path},
+                                native_release_pin=self.operator_pin)
+        self.native_child.assert_not_called(); self.local_probe.assert_not_called(); self.local_http.assert_not_called()
+        self.assertFalse(self.out.exists())
+        self.assertTrue((self.root / "owned-marker.json").exists())
+        self.assertEqual(len(list(generate_rows.NATIVE_ATTEMPT_ROOT.glob("*.json"))), 1)
+        receipt = json.loads(next(options["receipts_dir"].glob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["cleanup"], "UNKNOWN")
+        self.assertNotIn("response", receipt)
 
     def test_native_independent_result_refusals(self):
         options = self.native_fixture()
@@ -2395,7 +2421,7 @@ class NativeSdkTransportTests(unittest.TestCase):
         self.mutation = lambda r: r["lifecycle"].update(ownedAliasUnloaded="UNKNOWN")
         with self.assertRaises(SystemExit):
             self.generate_local(options, native_sdk=True, native_options={"runtime_manifest": self.runtime_path}, native_release_pin=self.operator_pin)
-        self.assertTrue(generate_rows.NATIVE_GPU_MARKER.exists())
+        self.assertTrue((self.root / "owned-marker.json").exists())
         self.assertFalse(self.out.exists()); self.native_child.assert_called_once()
 
     def test_actual_contained_child_success_timeout_overflow_and_no_threads(self):
@@ -2436,6 +2462,210 @@ class NativeSdkTransportTests(unittest.TestCase):
             # POSIX killed child may remain a zombie until its OS parent reaps it.
             proc = Path(f"/proc/{pid}/stat")
             self.assertTrue(not proc.exists() or proc.read_text().split()[2] == "Z")
+
+
+@unittest.skipUnless(generate_rows.os.name == "nt", "actual harmless Windows GPU guard interoperation")
+class NativeSharedGpuGuardTests(unittest.TestCase):
+    """Unique TEST mutex/temp poison only; no production lock, SDK or GPU work."""
+    def setUp(self):
+        import uuid
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.marker = self.root / "test-owned-poison.json"
+        self.name = "Global\\homemade-llm-gpu.TEST-" + uuid.uuid4().hex
+        self.owner = {"owner_token": uuid.uuid4().hex, "fixture": "OFFLINE_GUARD_ONLY"}
+        self.retained = []
+        self.children = []
+        self.patches = [patch.object(generate_rows, "NATIVE_GPU_MUTEX", self.name),
+                        patch.object(generate_rows, "_native_gpu_marker", return_value=self.marker),
+                        patch.object(generate_rows, "_NATIVE_GPU_RETAINED", self.retained)]
+        for item in self.patches:
+            item.start()
+
+    def tearDown(self):
+        # Only this test's children/handles/temp directory; production state is untouched.
+        for child, stop in self.children:
+            stop.touch()
+            try:
+                child.communicate(timeout=10)
+            except generate_rows.subprocess.TimeoutExpired:
+                child.kill(); child.communicate(timeout=5)
+        for kernel, handle in self.retained:
+            self.assertTrue(kernel.ReleaseMutex(handle))  # Same test-owning thread.
+            self.assertTrue(kernel.CloseHandle(handle))
+        for item in reversed(self.patches):
+            item.stop()
+        self.temp.cleanup()
+
+    def ps(self, body):
+        import subprocess
+        return subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", body],
+                              cwd=self.root, capture_output=True, text=True, timeout=10,
+                              creationflags=subprocess.CREATE_NO_WINDOW)
+
+    def hold_in_ps(self, *, abandoned=False):
+        import subprocess
+        import time
+        ready = self.root / "ready"
+        stop = self.root / "stop"
+        release = "" if abandoned else "$m.ReleaseMutex();"
+        script = ("$ErrorActionPreference='Stop'; $m=[Threading.Mutex]::new($false,'" + self.name + "'); "
+                  "if(-not $m.WaitOne(0)){exit 2}; [IO.File]::WriteAllText('" + str(ready) + "','ready'); "
+                  "$end=[DateTime]::UtcNow.AddSeconds(8); "
+                  "while(-not (Test-Path -LiteralPath '" + str(stop) + "') -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 10}; "
+                  + release + "$m.Dispose();")
+        child = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                 cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+        self.children.append((child, stop))
+        end = time.monotonic() + 5
+        while not ready.exists() and child.poll() is None and time.monotonic() < end:
+            time.sleep(.01)
+        self.assertTrue(ready.exists(), "test PS mutex holder did not become ready")
+        return child, stop
+
+    def probe_in_ps(self):
+        result = self.ps("$ErrorActionPreference='Stop'; $m=[Threading.Mutex]::new($false,'" + self.name + "'); "
+                         "$held=$false; try { $held=$m.WaitOne(0); if(-not $held){'BUSY'} "
+                         "elseif(Test-Path -LiteralPath '" + str(self.marker) + "'){'POISON'} else {'FREE'} } "
+                         "finally {if($held){$m.ReleaseMutex()};$m.Dispose()}")
+        self.assertEqual(result.returncode, 0, "harmless PS probe failed")
+        return result.stdout.strip()
+
+    def test_python_and_powershell_exclude_each_other(self):
+        child, stop = self.hold_in_ps()
+        with self.assertRaisesRegex(ValueError, "mutex occupied"):
+            with generate_rows._native_resources(self.owner):
+                self.fail("busy shared mutex allowed entry")
+        self.assertFalse(self.marker.exists())
+        stop.touch(); child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 0)
+        with generate_rows._native_resources(self.owner):
+            self.assertEqual(json.loads(self.marker.read_bytes())["owner_token"], self.owner["owner_token"])
+            self.assertEqual(self.probe_in_ps(), "BUSY")
+            self.owner["cleanup_confirmed"] = True
+            self.owner["backend_stopped"] = True  # Test-only declared termination, not SDK proof.
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.probe_in_ps(), "FREE")
+
+    def test_poison_refuses_and_foreign_bytes_remain(self):
+        foreign = b"foreign test-owned poison\n"
+        self.marker.write_bytes(foreign)
+        with self.assertRaisesRegex(ValueError, "GPU poisoned"):
+            with generate_rows._native_resources(self.owner):
+                self.fail("foreign poison allowed entry")
+        self.assertEqual(self.marker.read_bytes(), foreign)
+        self.assertEqual(self.probe_in_ps(), "POISON")
+
+    def test_unknown_cleanup_retains_poison_for_powershell(self):
+        with generate_rows._native_resources(self.owner):
+            pass  # No successful cleanup declaration; no model is called.
+        before = self.marker.read_bytes()
+        self.assertEqual(self.probe_in_ps(), "POISON")
+        with self.assertRaisesRegex(ValueError, "GPU poisoned"):
+            with generate_rows._native_resources(self.owner):
+                self.fail("unknown cleanup allowed replay")
+        self.assertEqual(self.marker.read_bytes(), before)
+
+    def test_backend_unknown_retains_poison_despite_other_cleanup_observations(self):
+        self.owner["backend_stopped"] = "UNKNOWN"
+        with generate_rows._native_resources(self.owner):
+            self.owner["cleanup_confirmed"] = True
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(self.probe_in_ps(), "POISON")
+
+    def test_abandoned_mutex_refuses_and_publishes_poison(self):
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel.CreateMutexW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle.restype = wintypes.BOOL
+        # Keep a reference alive, otherwise last-handle close destroys the test object.
+        reference = kernel.CreateMutexW(None, False, self.name)
+        self.assertTrue(reference)
+        try:
+            child, stop = self.hold_in_ps(abandoned=True)
+            stop.touch(); child.communicate(timeout=10)
+            self.assertEqual(child.returncode, 0)
+            with self.assertRaisesRegex(ValueError, "mutex abandoned"):
+                with generate_rows._native_resources(self.owner):
+                    self.fail("abandonment allowed entry")
+            self.assertTrue(self.marker.exists())
+            self.assertEqual(self.probe_in_ps(), "POISON")
+        finally:
+            self.assertTrue(kernel.CloseHandle(reference))
+
+    def test_marker_write_failure_prevents_entry(self):
+        with patch.object(Path, "open", side_effect=OSError("test marker write refusal")):
+            with self.assertRaises(OSError):
+                with generate_rows._native_resources(self.owner):
+                    self.fail("write failure allowed entry")
+        self.assertEqual(self.probe_in_ps(), "FREE")  # No operation was started.
+
+    def test_foreign_replacement_is_never_removed(self):
+        foreign = b"replacement owned by another test actor\n"
+        with self.assertRaisesRegex(ValueError, "marker ownership changed"):
+            with generate_rows._native_resources(self.owner):
+                self.marker.write_bytes(foreign)
+                self.owner["cleanup_confirmed"] = True
+                self.owner["backend_stopped"] = True  # Test-only known-stop branch.
+        self.assertEqual(self.marker.read_bytes(), foreign)
+        self.assertEqual(self.probe_in_ps(), "BUSY")
+        self.assertEqual(len(self.retained), 1)
+
+    def test_missing_uncertain_marker_is_repaired_or_mutex_retained(self):
+        with generate_rows._native_resources(self.owner):
+            self.marker.unlink()  # Test-owned temporary marker, never production.
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(self.probe_in_ps(), "POISON")
+        self.marker.unlink()
+        failure = patch.object(Path, "open", side_effect=OSError("test repair refusal"))
+        try:
+            with self.assertRaises(OSError):
+                with generate_rows._native_resources(self.owner):
+                    self.marker.unlink()
+                    failure.start()  # Remains installed through the guard's finalization.
+        finally:
+            failure.stop()
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(len(self.retained), 1)
+        self.assertEqual(self.probe_in_ps(), "BUSY")
+        # Handle retention is local only; it cannot guarantee safety after process exit.
+
+    def test_cross_thread_exit_cannot_clear_poison_or_release_mutex(self):
+        import threading
+        context = generate_rows._native_resources(self.owner)
+        context.__enter__()
+        self.owner["cleanup_confirmed"] = True
+        before = self.marker.read_bytes()
+        failures = []
+        def exit_elsewhere():
+            try:
+                context.__exit__(None, None, None)
+            except ValueError as exc:
+                failures.append(str(exc))
+        worker = threading.Thread(target=exit_elsewhere)
+        worker.start(); worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(failures), 1)
+        self.assertIn("ownership thread changed", failures[0])
+        self.assertEqual(self.marker.read_bytes(), before)
+        self.assertEqual(len(self.retained), 1)
+        self.assertEqual(self.probe_in_ps(), "BUSY")
+
+    def test_system_marker_resolution_matches_existing_powershell_protocol(self):
+        # Read-only location comparison; no production marker/mutex is touched.
+        original = self.patches[1]
+        original.stop()
+        try:
+            actual = generate_rows._native_gpu_marker()
+        finally:
+            original.start()
+        expected = self.ps("Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'homemade-llm\\gpu-poisoned.txt'")
+        self.assertEqual(expected.returncode, 0)
+        self.assertEqual(actual, Path(expected.stdout.strip()))
 
 
 if __name__ == "__main__":
