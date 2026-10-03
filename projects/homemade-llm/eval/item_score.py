@@ -77,6 +77,24 @@ def _empty_field_counts():
     }
 
 
+def _reject_dup_keys(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError("duplicate property")
+        out[k] = v
+    return out
+
+
+def _load_json_data(path):
+    try:
+        return json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_dup_keys
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+
 def _parse_fields(obj):
     if not isinstance(obj, dict):
         return None
@@ -92,15 +110,11 @@ def _parse_fields(obj):
     return parsed
 
 
-def _load_json(path):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
-        return None
-
-
 def _load_excluded(path):
-    data = _load_json(path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        raise UsageError from None
     if data is None:
         raise UsageError
     rows = data
@@ -118,7 +132,7 @@ def _load_excluded(path):
 
 
 def _context_norm(path):
-    data = _load_json(path)
+    data = _load_json_data(path)
     if not isinstance(data, dict):
         return ""
     blocks = data.get("context") or []
@@ -437,7 +451,7 @@ def run(argv):
     totals["packets_roster"] = len(ids)
 
     for item_id in ids:
-        ref_obj = _load_json(refs_dir / f"{item_id}.json")
+        ref_obj = _load_json_data(refs_dir / f"{item_id}.json")
         ref_fields = _parse_fields(ref_obj) if ref_obj is not None else None
         if ref_fields is None:
             totals["packets_unreadable_reference"] += 1
@@ -457,7 +471,7 @@ def run(argv):
             if result["reference_items"]:
                 packet_recalls.append(0.0)
             continue
-        cand_obj = _load_json(cand_path)
+        cand_obj = _load_json_data(cand_path)
         cand_fields = _parse_fields(cand_obj) if cand_obj is not None else None
         if cand_fields is None:
             totals["packets_malformed_candidate"] += 1

@@ -653,6 +653,116 @@ class ItemScoreTests(unittest.TestCase):
         self.assertEqual(data["reference_items"], 8)
         self.assertEqual(data["reference_items_scored"], 4)
 
+    def _write_dup_constraints_candidate(self, path, first_val, second_val):
+        parts = []
+        for field in FIELDS:
+            if field != "constraints":
+                parts.append(f'"{field}": []')
+        parts.append(f'"constraints": {json.dumps([first_val])}')
+        parts.append(f'"constraints": {json.dumps([second_val])}')
+        path.write_text("{" + ", ".join(parts) + "}", encoding="utf-8")
+
+    def test_duplicate_json_member_candidate_refused(self):
+        marker = self._mark("SECRETMARKER-dupjson")
+        item_id = "hid-dupjson-c1"
+        ok_id = "hid-dupjson-ok"
+        ref_val = f"expected constraint {marker}"
+        bad_val = f"unsupported constraint {marker}"
+        ref = empty_packet(
+            non_goals=[f"n {marker}"],
+            constraints=[ref_val],
+            acceptance_checks=[f"a {marker}"],
+            evidence_requirements=[f"e {marker}"],
+        )
+        self._write(self.refs, item_id, ref)
+        self._write(self.refs, ok_id, empty_packet(non_goals=[f"ok {marker}"]))
+        self._write(self.cands, ok_id, empty_packet(non_goals=[f"ok {marker}"]))
+        for first, second in ((bad_val, ref_val), (ref_val, bad_val)):
+            with self.subTest(order=(first, second)):
+                cand_path = self.cands / f"{item_id}.json"
+                self._write_dup_constraints_candidate(cand_path, first, second)
+                out = self._out_path(f"dup_{hash(first)}.json")
+                proc, text = self._run(out)
+                self.assertEqual(proc.returncode, 0)
+                data = self._load(proc, text)
+                self.assertEqual(data["packets_malformed_candidate"], 1)
+                self.assertEqual(data["status"], "incomplete")
+                self.assertEqual(data["zero_error_packets"], 1)
+                self.assertEqual(data["packets_scored"], 1)
+                self.assertEqual(data["packet_recall"]["min"], 0.0)
+                self.assertLess(data["overall_recall"], 1.0)
+                self.assertEqual(data["packets_roster"], 2)
+
+    def test_duplicate_json_member_nested_candidate_refused(self):
+        marker = self._mark("SECRETMARKER-dupnest")
+        item_id = "hid-dupjson-n1"
+        ok_id = "hid-dupjson-nok"
+        ref = empty_packet(non_goals=[f"ok {marker}"])
+        self._write(self.refs, item_id, ref)
+        self._write(self.refs, ok_id, empty_packet(non_goals=[f"fine {marker}"]))
+        self._write(self.cands, ok_id, empty_packet(non_goals=[f"fine {marker}"]))
+        nested = (
+            '{"non_goals": ["'
+            + f"ok {marker}"
+            + '"], "meta": {"x": 1, "x": 2}, '
+            + '"constraints": [], "acceptance_checks": [], "evidence_requirements": []}'
+        )
+        (self.cands / f"{item_id}.json").write_text(nested, encoding="utf-8")
+        out = self._out_path("dup_nested.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["packets_malformed_candidate"], 1)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["zero_error_packets"], 1)
+        self.assertEqual(data["packets_scored"], 1)
+
+    def test_duplicate_json_member_reference_unreadable(self):
+        marker = self._mark("SECRETMARKER-dupref")
+        good_id = "hid-dupref-good"
+        self._write(self.refs, good_id, empty_packet(non_goals=[f"good {marker}"]))
+        self._write(self.cands, good_id, empty_packet(non_goals=[f"good {marker}"]))
+        dup_ref = (
+            '{"non_goals": ["'
+            + f"a {marker}"
+            + '"], "non_goals": ["'
+            + f"b {marker}"
+            + '"], "constraints": [], "acceptance_checks": [], "evidence_requirements": []}'
+        )
+        (self.refs / "hid-dupref-bad.json").write_text(dup_ref, encoding="utf-8")
+        out = self._out_path("dup_ref.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["packets_unreadable_reference"], 1)
+        self.assertIsNone(data["overall_recall"])
+        for field in FIELDS:
+            self.assertIsNone(data["per_field"][field]["recall"])
+        self.assertEqual(data["status"], "incomplete")
+
+    def test_valid_candidate_control_after_dup_json_guard(self):
+        marker = self._mark("SECRETMARKER-validctl")
+        item_id = "hid-validctl"
+        ref = empty_packet(
+            non_goals=[f"Keep it simple {marker}"],
+            constraints=[f"Must use Python {marker}"],
+        )
+        cand = empty_packet(
+            non_goals=[f"Keep it simple {marker}"],
+            constraints=[f"Must use Python {marker}"],
+        )
+        self._write(self.refs, item_id, ref)
+        self._write(self.cands, item_id, cand)
+        out = self._out_path("valid_ctl.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["packets_malformed_candidate"], 0)
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["zero_error_packets"], 1)
+        self.assertEqual(data["overall_recall"], 1.0)
+        self.assertEqual(data["overall_precision"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,10 +90,14 @@ def set_ok(name: str) -> bool:
     return not any(b in low for b in BANNED_SUBSTR)
 
 
+def _parse_json_data(text: str) -> object:
+    return json.loads(text, object_pairs_hook=_reject_dup_keys)
+
+
 def _load_refs(refs_dir: Path) -> dict[str, object]:
     refs: dict[str, object] = {}
     for p in sorted(refs_dir.glob("*.json")):
-        refs[p.stem] = json.loads(p.read_text(encoding="utf-8"))
+        refs[p.stem] = _parse_json_data(p.read_text(encoding="utf-8"))
     return refs
 
 
@@ -108,8 +112,8 @@ def _read_candidate(cand_dir: Path, item_id: str) -> object | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        return _parse_json_data(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
         return None
 
 

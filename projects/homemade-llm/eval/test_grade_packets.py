@@ -1034,6 +1034,88 @@ class TestGradePackets(unittest.TestCase):
             self.assertEqual(p.returncode, 0)
             self.assertTrue(out_ok.is_dir())
 
+    def _write_dup_constraints_candidate(self, cands: Path, iid: str, first: str, second: str) -> None:
+        parts = [f'"{f}": []' for f in FIELDS if f != "constraints"]
+        parts.append(f'"constraints": {json.dumps([first])}')
+        parts.append(f'"constraints": {json.dumps([second])}')
+        (cands / f"{iid}.json").write_text("{" + ", ".join(parts) + "}", encoding="utf-8")
+
+    def test_14_duplicate_json_candidate_invalid_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            refs.mkdir()
+            cands.mkdir()
+            ref = {f: f"{MARKER}-ref-{f}" for f in FIELDS}
+            (refs / "i1.json").write_text(json.dumps(ref), encoding="utf-8")
+            bad = f"{MARKER}-bad-c"
+            good = f"{MARKER}-good-c"
+            for first, second in ((bad, good), (good, bad)):
+                with self.subTest(order=(first, second)):
+                    out = root / f"out_{hash(first)}"
+                    self._write_dup_constraints_candidate(cands, "i1", first, second)
+                    p = self.run_tool(
+                        [
+                            "build",
+                            "--refs",
+                            str(refs),
+                            "--candidates",
+                            str(cands),
+                            "--label",
+                            "run1",
+                            "--set",
+                            "ab",
+                            "--out",
+                            str(out),
+                        ]
+                    )
+                    self.assertEqual(p.returncode, 0)
+                    packet = (out / "packet-run1-set-ab-b01.md").read_text(encoding="utf-8")
+                    self.assertIn("<missing or invalid candidate>", packet)
+                    self.assertNotIn(bad, packet)
+                    self.assertNotIn(good, packet)
+
+    def test_15_duplicate_json_reference_refuses_build(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            out = root / "odir"
+            refs.mkdir()
+            cands.mkdir()
+            write_item(refs, cands, "i1")
+            dup_ref = (
+                '{"non_goals": ["'
+                + f"{MARKER}-a"
+                + '"], "non_goals": ["'
+                + f"{MARKER}-b"
+                + '"], "constraints": [], "acceptance_checks": [], "evidence_requirements": []}'
+            )
+            (refs / "i2.json").write_text(dup_ref, encoding="utf-8")
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "ab",
+                    "--out",
+                    str(out),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+            self.assertFalse(out.exists())
+            self.assert_no_tmps(root)
+
+    def test_16_valid_control_packet_unchanged(self) -> None:
+        self.test_01_packet_format_byte_exact()
+
 
 if __name__ == "__main__":
     unittest.main()
