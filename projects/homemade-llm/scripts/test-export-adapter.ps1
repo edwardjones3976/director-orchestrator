@@ -317,12 +317,14 @@ try {
             [switch]$Execute,
             [string]$Name = 'tstexp',
             [string]$StagingRoot = '',
+            [string]$CHotRootArg = '',
             [string]$RunId = '',
             [long]$ProbeCFreeBytes = -1,
             [long]$ProbeEFreeBytes = -1,
             [long]$ProbeLlmBytes = -1
         )
         if ($StagingRoot -eq '') { $StagingRoot = $eRoot }
+        if ($CHotRootArg -eq '') { $CHotRootArg = $cRoot }
         if ($ProbeCFreeBytes -lt 0) { $ProbeCFreeBytes = $cFreeOk }
         if ($ProbeEFreeBytes -lt 0) { $ProbeEFreeBytes = $eFreeOk }
         if ($ProbeLlmBytes -lt 0) { $ProbeLlmBytes = $llmOk }
@@ -333,7 +335,7 @@ try {
         [void]$a.Add('-Name'); [void]$a.Add($Name)
         if ($RunId) { [void]$a.Add('-RunId'); [void]$a.Add($RunId) }
         [void]$a.Add('-BaseRevision'); [void]$a.Add($rev)
-        [void]$a.Add('-CHotRoot'); [void]$a.Add($cRoot)
+        [void]$a.Add('-CHotRoot'); [void]$a.Add($CHotRootArg)
         [void]$a.Add('-StagingRoot'); [void]$a.Add($StagingRoot)
         [void]$a.Add('-ExpectedShardsJson'); [void]$a.Add($expectedPath)
         [void]$a.Add('-BaseTemplateSha256'); [void]$a.Add($templateSha)
@@ -1011,6 +1013,46 @@ try {
     $stagingKids = @()
     if (Test-Path -LiteralPath $eRoot) { $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force) }
     Assert ($stagingKids.Count -eq 0) 't-c: owned staging folder removed after success'
+
+    # --- T-H Hot-root alias regression ---
+    Clear-Artifacts
+    $physicalHot = Join-Path $root 'physical-hot'
+    $hotAlias = Join-Path $root 'hot-alias'
+    if (Test-Path -LiteralPath $hotAlias) { Remove-TreeSafe $hotAlias }
+    if (Test-Path -LiteralPath $physicalHot) { Remove-TreeSafe $physicalHot }
+    New-Item -ItemType Directory -Path $physicalHot -Force | Out-Null
+    Get-ChildItem -LiteralPath $cRoot -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $physicalHot -Recurse -Force
+    }
+    $hotSentinel = Join-Path $physicalHot 'hot-root-sentinel.bin'
+    [IO.File]::WriteAllBytes($hotSentinel, [Text.Encoding]::UTF8.GetBytes('HOT-ROOT-SENTINEL'))
+    $hotSentSha = Get-Sha256File $hotSentinel
+    New-Item -ItemType Junction -Path $hotAlias -Target $physicalHot | Out-Null
+    $hotStaging = Join-Path $physicalHot 'staging'
+    $hotOutCkpt1 = Join-Path $physicalHot 'models\m2\tstexp-ckpt1-Q4_K_M.gguf'
+    $hotReportsDir = Join-Path $physicalHot 'reports'
+    try {
+        $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -CHotRootArg $hotAlias -StagingRoot $hotStaging)
+        $text = Out-Text $r.Lines
+        Assert ($r.Code -ne 0 -and $text -match 'reparse point') 't-h: hot-root alias export refused'
+        Assert ((Get-ShimLogLines).Count -eq 0) 't-h: hot-root alias no docker'
+        Assert (-not (Test-Path -LiteralPath $hotStaging)) 't-h: no staging directory under physical-hot'
+        Assert (-not (Test-Path -LiteralPath $hotOutCkpt1)) 't-h: no output file'
+        $hotReports = @()
+        if (Test-Path -LiteralPath $hotReportsDir) {
+            $hotReports = @(Get-ChildItem -LiteralPath $hotReportsDir -Filter 'm2-export-tstexp-*.json' -File -ErrorAction SilentlyContinue)
+        }
+        Assert ($hotReports.Count -eq 0) 't-h: no report'
+        Assert ((Get-Sha256File $hotSentinel) -eq $hotSentSha) 't-h: physical-hot sentinel unchanged'
+    } finally {
+        if (Test-Path -LiteralPath $hotAlias) {
+            $hotItem = Get-Item -LiteralPath $hotAlias -Force
+            if ($hotItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                [System.IO.Directory]::Delete($hotAlias, $false)
+            }
+        }
+        if (Test-Path -LiteralPath $physicalHot) { Remove-TreeSafe $physicalHot }
+    }
 
     # --- 13. Delete guard ---
     Clear-Artifacts

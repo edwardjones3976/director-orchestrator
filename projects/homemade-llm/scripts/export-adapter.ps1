@@ -258,6 +258,7 @@ function Assert-NoReparseOnPath([string]$Root, [string]$Target, [string]$Context
 }
 
 function Assert-PhysicalStagingContainment([string]$RunPath, [string]$Context) {
+    Assert-NoReparseExistingAncestors (Get-NormalPath $CHotRoot) $Context
     $staging = Get-NormalPath $StagingRoot
     $stagingResolved = $staging
     if (Test-Path -LiteralPath $staging -PathType Container) {
@@ -864,6 +865,7 @@ foreach ($plan in $plans) {
         End-Step $steps 'base_shards'
 
         Start-Step $steps 'staging'
+        Assert-NoReparseExistingAncestors (Get-NormalPath $CHotRoot) 'export staging'
         Assert-NoReparseExistingAncestors $runStaging 'export staging'
         Assert-NoReparseExistingAncestors (Get-NormalPath $StagingRoot) 'export staging'
         Assert-PhysicalStagingContainment '' 'export staging'
