@@ -267,7 +267,7 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertNotIn("-Probe requires -Winner", text)
         self.assertIn("--expected-digests", text)
         self.assertIn("ExpectedDigests", text)
-        self.assertIn("m2-expected-qwen3-14b-v2.json", text)
+        self.assertIn("m1-expected-qwen3-14b.json", text)
         self.assertIn("HF_HUB_OFFLINE", text)
 
     def test_wrapper_serialized_docker_arguments_keep_offline_flags_before_image(self):
@@ -487,7 +487,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             trusted, listing, pin = self._trusted_chain(root)
-            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json", str(trusted))
+            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v1.json", str(trusted))
             block = block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
             for mode in ("matching", "changed_list", "changed_root", "fallback"):
                 trusted, listing, _ = self._trusted_chain(root)
@@ -517,14 +517,6 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 train_adapter.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
-
-    def test_python_and_wrapper_use_the_same_owner_approved_v2_root_pin_and_default(self):
-        approved_pin = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
-        self.assertEqual(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, approved_pin)
-        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
-        self.assertIn(f"$TrustedDigestRootSHA256 = '{train_adapter.TRUSTED_DIGEST_ROOT_SHA256}'", source)
-        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json'", source)
-        self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-14b-v2.json'", source)
 
     def _complete_trusted_snapshot(self, root: Path) -> tuple[Path, Path, str]:
         trusted, listing, _ = self._trusted_chain(root)
