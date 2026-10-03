@@ -158,5 +158,84 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
             record.consumed_packet_results['correlation'] = 'b'*64
             self.assertTrue(engine._packet_result_consumed(record, run))
             from director_orchestrator.approvals import reset_for_owner_clarification
+            record.revision_authority_by_effect = {str(i): ('a'*64, 'b'*64) for i in range(20)}
             reset_for_owner_clarification(record)
+            self.assertEqual(record.revision_authority_by_effect, {})
+            store.save(record)
+            self.assertEqual(store.get(record.task_id).revision_authority_by_effect, {})
             self.assertFalse(engine._packet_result_consumed(record, run))
+
+
+    async def test_zero_charge_storage_failure_is_retried_without_a_provider_run(self):
+        import sqlite3
+        from unittest.mock import patch
+        from director_orchestrator.models import TaskStatus
+        with tempfile.TemporaryDirectory() as root:
+            settings, store, record, assignment = fixtures.ProviderSpendSettlementTests()._world(root)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase='dispatch', max_task_budget_usd=10)
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            record_provider_effect_observation(record, assignment, effect_key=key,
+                                               phase='dispatch', outcome='failed_pre_submit')
+            store.save(record)
+            with patch.object(engine.provider_spend, 'record_charge', side_effect=sqlite3.OperationalError('locked')):
+                self.assertFalse(engine._settle_unsubmitted_spend(record, assignment, key))
+            saved = store.get(record.task_id)
+            self.assertEqual(saved.status, TaskStatus.OWNER_DECISION_REQUIRED)
+            self.assertEqual(saved.error, 'spend_settlement_failed:' + key)
+            restarted = OrchestrationEngine(settings, store)
+            self.assertTrue(restarted._retry_spend_settlements(saved))
+            self.assertIsNone(store.get(record.task_id).error)
+            self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, 0))
+            self.assertEqual(saved.provider_runs, [])
+            self.assertEqual(saved.provider_contact_attempts, [])
+
+    async def test_packet_pre_submit_exits_and_missing_replay_evidence(self):
+        from unittest.mock import AsyncMock, patch
+        from tests import test_engine_packet_runtime_routing as routing
+        from director_orchestrator.models import TaskStatus
+        for parallel in (False, True):
+            for scenario in ('publication', 'revalidation', 'missing_packet'):
+                with self.subTest(parallel=parallel, scenario=scenario):
+                    f = routing.PacketRuntimeRoutingTests()
+                    f.setUp()
+                    try:
+                        settings = f._settings(langgraph_runtime_enabled=True,
+                            langgraph_runtime_live_dispatch_enabled=True,
+                            langgraph_runtime_task_writer_enabled=True,
+                            langgraph_parallel_external_dispatch_enabled=parallel,
+                            langgraph_parallel_kill_switch=False)
+                        transport = routing.RecordingTransport(f.result)
+                        router = routing.StubPacketTaskRouter(f.work, routing.PacketBoundaryAdapter('gemini', transport))
+                        activation = routing.RuntimeActivation(settings, packet_task_router=router,
+                            packet_result_consumer=routing.RecordingResultConsumer())
+                        f.addCleanup(activation.close)
+                        engine, store = f._engine(settings, activation)
+                        record, assignment = f._record(agent=ProviderName.GEMINI)
+                        if scenario == 'missing_packet':
+                            record.provider_runs.append(ProviderRun(provider=assignment.agent,
+                                assignment_sequence=1, run_id='existing', status='completed'))
+                            engine._spend_settlements = lambda *args: {'held': {'result_packet_digest': 'a'*64}}
+                        store.create(record)
+                        engine._publish_delegation = AsyncMock(return_value=scenario != 'publication')
+                        if scenario == 'revalidation':
+                            engine._revalidated_plan_after_publication = lambda *args: None
+                        with patch('director_orchestrator.engine.assignment_request_cost_bound', return_value=0.1):
+                            if parallel:
+                                await engine._dispatch_parallel_packet_batch(record)
+                            else:
+                                await engine._route_live_dispatch(record, assignment)
+                        self.assertEqual(transport.sends, 0)
+                        saved = store.get(record.task_id)
+                        if scenario == 'missing_packet':
+                            self.assertEqual(saved.status, TaskStatus.OWNER_DECISION_REQUIRED)
+                            self.assertIn('runtime packet', saved.message + (saved.error or ''))
+                        elif parallel and scenario == 'revalidation':
+                            # The claimed parallel member cannot prove pre-submit closure.
+                            self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0.1))
+                        else:
+                            self.assertTrue(any(e.outcome == 'failed_pre_submit' for e in saved.task_effect_ledger))
+                            self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0))
+                    finally:
+                        activation.close()
+                        f.directory.cleanup()

@@ -1438,6 +1438,7 @@ def reset_for_owner_clarification(record: TaskRecord) -> None:
     record.assignment_outcomes = []
     record.review_handoff_digests = {}
     record.consumed_packet_results = {}
+    record.revision_authority_by_effect = {}
     record.provider_contact_attempts = []
     record.unavailable_providers = []
     record.deferred_assignments = []

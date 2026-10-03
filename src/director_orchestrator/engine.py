@@ -1264,6 +1264,10 @@ class OrchestrationEngine:
         try:
             idempotency_key = router.idempotency_key(record, assignment)
             bound_packet = runtime.bound_work_packet(idempotency_key)
+            if bound_packet is None and any(
+                run.assignment_sequence == assignment.sequence for run in record.provider_runs
+            ):
+                raise CommunicationEvidenceFailure("Existing provider run has no bound runtime packet")
             work_packet = (
                 router.validate_bound_packet(record, assignment, bound_packet)
                 if bound_packet is not None
@@ -1380,6 +1384,7 @@ class OrchestrationEngine:
                     effect_key=task_effect_key,
                     outcome="failed_pre_submit",
                 )
+                self.store.save(record)
             self._settle_unsubmitted_spend(record, assignment, task_effect_key)
             return False
         published_record = record
@@ -1690,6 +1695,11 @@ class OrchestrationEngine:
                     record, assignment
                 )
                 bound_packet = activation.runtime.bound_work_packet(idempotency_key)
+                if bound_packet is None and any(
+                    run.assignment_sequence == assignment.sequence for run in record.provider_runs
+                ):
+                    await self._stop_for_owner(record, "Existing provider run has no bound runtime packet; reconcile before replay.")
+                    return False
                 work = dict(
                     activation.packet_task_router.validate_bound_packet(
                         record, assignment, bound_packet
@@ -2063,6 +2073,9 @@ class OrchestrationEngine:
                             effect_key=task_effect_key,
                             outcome="failed_pre_submit",
                         )
+                        self.store.save(record)
+                    if closed_pre_submit:
+                        self._settle_unsubmitted_spend(record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -2113,6 +2126,8 @@ class OrchestrationEngine:
                                 parallel_member_effect_key=member.effect_key,
                             )
                         )
+                    if closed_pre_submit:
+                        self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -5775,7 +5790,19 @@ class OrchestrationEngine:
                     if item.kind == "provider_observation" and item.effect_key == key}
         if len(intents) != 1 or outcomes != {"failed_pre_submit"}:
             return False
-        return self._charge_spend(assignment.agent, key, 0.0, record=current)
+        try:
+            self._charge_spend(assignment.agent, key, 0.0)
+        except (sqlite3.Error, OSError):
+            current.status = TaskStatus.OWNER_DECISION_REQUIRED
+            current.error = "spend_settlement_failed:" + key
+            current.message = "Pre-submit accounting is pending; resume retries the exact zero charge without provider I/O."
+            self._save_spend_hold(current)
+            return False
+        if current.error == "spend_settlement_failed:" + key:
+            current.error = None
+            current.message = "Pre-submit accounting recovered; no provider request was sent."
+            self.store.save(current)
+        return True
 
     def _charge_spend(self, provider: ProviderName, effect_key: str, cost: float | None, *,
                       record: TaskRecord | None = None, assignment: Assignment | None = None,
@@ -5957,6 +5984,19 @@ class OrchestrationEngine:
 
     def _retry_spend_settlements(self, record: TaskRecord) -> bool:
         """Repair durable side records without repeating provider I/O."""
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            key = record.error.split(":", 1)[1]
+            outcomes = {item.outcome for item in record.task_effect_ledger
+                        if item.kind == "provider_observation" and item.effect_key == key}
+            if outcomes == {"failed_pre_submit"}:
+                intent = next((item for item in record.task_effect_ledger
+                               if item.kind == "provider_intent" and item.effect_key == key), None)
+                assignment = self._spend_assignment_for_intent(record, intent) if intent else None
+                if assignment is None or not self._settle_unsubmitted_spend(record, assignment, key):
+                    return False
+                refreshed = self.store.get(record.task_id)
+                record.error, record.message = refreshed.error, refreshed.message
+                record._store_version = refreshed._store_version
         # New acknowledgements are atomic: the task owns the complete run.
         # Only pre-atomic journals need provider-specific legacy recovery.
         if self.provider_spend is not None:
