@@ -150,18 +150,14 @@ class TrainAdapterTests(unittest.TestCase):
             for rel in (
                 "eval/build_inputs.py",
                 "eval/test_build_inputs.py",
+                "eval/validate_rows.py",
+                "eval/test_validate_rows.py",
                 "train/prompt_template.py",
                 "schemas/director-data-v1-row.schema.json",
             ):
                 dest = hl / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(repo / "projects" / "homemade-llm" / rel, dest)
-            for name in ("validate_rows.py", "test_validate_rows.py"):
-                blob = subprocess.check_output(
-                    ["git", "show", f"origin/pr-349:projects/homemade-llm/eval/{name}"],
-                    cwd=repo,
-                )
-                (hl / "eval" / name).write_bytes(blob)
             out = root / "validated"
             script = root / "run_validator.py"
             script.write_text(
@@ -176,17 +172,26 @@ class TrainAdapterTests(unittest.TestCase):
                 "dev = fixture.make_row(set_a, set_b, source_group='seed-002', split='dev',\n"
                 "    input={'objective': 'Add a retry budget to the n8n intake webhook.'},\n"
                 "    target={'non_goals': ['no change to the Slack copy']})\n"
-                "(root / 'rows.jsonl').write_text(''.join(json.dumps(item) + '\\n' for item in (train, dev)), encoding='utf-8')\n"
+                "(root / 'rows.jsonl').write_bytes(''.join(json.dumps(item) + '\\n' for item in (train, dev)).encode('utf-8'))\n"
                 "code = validate_rows.validate(['--rows', str(root / 'rows.jsonl'), '--set-a', str(set_a),\n"
                 "    '--set-b', str(set_b), '--out', str(root / 'validated')])\n"
                 "raise SystemExit(code)\n",
                 encoding="utf-8",
+                newline="\n",
             )
             completed = subprocess.run([sys.executable, str(script), str(root)], cwd=repo, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
+            accepted = [json.loads(line) for line in (out / "accepted.jsonl").read_text(encoding="utf-8").splitlines()]
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["n_accepted"], 2)
+            self.assertEqual(report["n_rejected"], 0)
+            self.assertEqual(report["n_quarantined"], 0)
+            self.assertEqual(report["rows_per_split"], {"train": 1, "dev": 1})
+            self.assertEqual({item["source_group"] for item in accepted}, {"seed-001", "seed-002"})
             loaded = train_adapter.load_training_rows(out / "accepted.jsonl")
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["split"], "train")
+            self.assertEqual(loaded[0]["row_id"], next(item["row_id"] for item in accepted if item["split"] == "train"))
             self.assertNotIn("id", loaded[0]["input"])
             messages = train_adapter.messages_for(loaded[0])
             self.assertIn("Webhook secret rotation", messages[1]["content"])
@@ -262,7 +267,7 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertNotIn("-Probe requires -Winner", text)
         self.assertIn("--expected-digests", text)
         self.assertIn("ExpectedDigests", text)
-        self.assertIn("m1-expected-qwen3-14b.json", text)
+        self.assertIn("m2-expected-qwen3-14b-v2.json", text)
         self.assertIn("HF_HUB_OFFLINE", text)
 
     def test_wrapper_serialized_docker_arguments_keep_offline_flags_before_image(self):
@@ -482,7 +487,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             trusted, listing, pin = self._trusted_chain(root)
-            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v1.json", str(trusted))
+            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json", str(trusted))
             block = block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
             for mode in ("matching", "changed_list", "changed_root", "fallback"):
                 trusted, listing, _ = self._trusted_chain(root)
@@ -512,6 +517,14 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 train_adapter.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
+
+    def test_python_and_wrapper_use_the_same_owner_approved_v2_root_pin_and_default(self):
+        approved_pin = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+        self.assertEqual(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, approved_pin)
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn(f"$TrustedDigestRootSHA256 = '{train_adapter.TRUSTED_DIGEST_ROOT_SHA256}'", source)
+        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json'", source)
+        self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-14b-v2.json'", source)
 
     def _complete_trusted_snapshot(self, root: Path) -> tuple[Path, Path, str]:
         trusted, listing, _ = self._trusted_chain(root)
