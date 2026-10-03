@@ -195,7 +195,7 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
         from tests import test_engine_packet_runtime_routing as routing
         from director_orchestrator.models import TaskStatus
         for parallel in (False, True):
-            for scenario in ('publication', 'revalidation', 'missing_packet'):
+            for scenario in ('publication', 'revalidation', 'missing_packet', 'workload_failure'):
                 with self.subTest(parallel=parallel, scenario=scenario):
                     f = routing.PacketRuntimeRoutingTests()
                     f.setUp()
@@ -217,7 +217,15 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
                                 assignment_sequence=1, run_id='existing', status='completed'))
                             engine._spend_settlements = lambda *args: {'held': {'result_packet_digest': 'a'*64}}
                         store.create(record)
-                        engine._publish_delegation = AsyncMock(return_value=scenario != 'publication')
+                        engine._publish_delegation = AsyncMock(return_value=scenario not in ('publication', 'workload_failure'))
+                        if scenario == 'workload_failure':
+                            engine._reserve_workload_dispatch = AsyncMock(return_value=SimpleNamespace())
+                            async def closed_but_unfinalized(current, assigned, reservation, **kwargs):
+                                record_provider_effect_observation(current, assigned,
+                                    effect_key=kwargs['effect_key'], phase='dispatch', outcome='failed_pre_submit')
+                                store.save(current)
+                                return False
+                            engine._finalize_workload_pre_submit_stop = closed_but_unfinalized
                         if scenario == 'revalidation':
                             engine._revalidated_plan_after_publication = lambda *args: None
                         with patch('director_orchestrator.engine.assignment_request_cost_bound', return_value=0.1):

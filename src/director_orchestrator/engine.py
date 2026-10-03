@@ -2074,8 +2074,7 @@ class OrchestrationEngine:
                             outcome="failed_pre_submit",
                         )
                         self.store.save(record)
-                    if closed_pre_submit:
-                        self._settle_unsubmitted_spend(record, assignment, task_effect_key)
+                    self._settle_unsubmitted_spend(record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -2126,8 +2125,7 @@ class OrchestrationEngine:
                                 parallel_member_effect_key=member.effect_key,
                             )
                         )
-                    if closed_pre_submit:
-                        self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
+                    self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
