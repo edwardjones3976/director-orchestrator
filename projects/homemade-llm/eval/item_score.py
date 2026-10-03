@@ -95,7 +95,25 @@ def _load_json_data(path):
         return None
 
 
-def _parse_fields(obj):
+def _collapse_ws(text):
+    return " ".join(text.split())
+
+
+def _parse_reference_fields(obj):
+    if not isinstance(obj, dict):
+        return None
+    parsed = {}
+    for field in FIELDS:
+        if field not in obj:
+            return None
+        value = obj[field]
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            return None
+        parsed[field] = value
+    return parsed
+
+
+def _parse_candidate_fields(obj):
     if not isinstance(obj, dict):
         return None
     parsed = {}
@@ -152,10 +170,10 @@ def _context_for_scoring(path):
         if not isinstance(text, str):
             return False, ""
         parts.append(text)
-    return True, norm(" ".join(parts))
+    return True, [_collapse_ws(t) for t in parts]
 
 
-def score_packet(ref_fields, cand_fields, context_norm, context_available=True):
+def score_packet(ref_fields, cand_fields, context_blocks, context_available=True):
     ref_n = {f: [norm(x) for x in ref_fields[f]] for f in FIELDS}
     cand_n = {f: [norm(x) for x in cand_fields[f]] for f in FIELDS}
     ref_status = {f: [None] * len(ref_n[f]) for f in FIELDS}
@@ -241,16 +259,27 @@ def score_packet(ref_fields, cand_fields, context_norm, context_available=True):
             if not ref_item:
                 continue
             if any(
-                difflib.SequenceMatcher(None, ref_item, extra).ratio() >= 0.90
+                difflib.SequenceMatcher(None, ref_item, extra, autojunk=False).ratio()
+                >= 0.90
                 for extra in nonempty_spurious
             ):
                 near += 1
         counts["near_right_field"] = near
         per_field[field] = counts
-        if context_norm is not None:
+        if context_blocks is not None:
             if context_available:
-                for extra in spurious_items:
-                    if extra and extra in context_norm:
+                for i, status in enumerate(cand_status[field]):
+                    if status != "spurious":
+                        continue
+                    collapsed = _collapse_ws(cand_fields[field][i])
+                    if not collapsed:
+                        spurious_not_in_context += 1
+                        continue
+                    if any(
+                        collapsed in block
+                        for block in context_blocks
+                        if block
+                    ):
                         spurious_in_context += 1
                     else:
                         spurious_not_in_context += 1
@@ -476,7 +505,9 @@ def run(argv):
 
     for item_id in ids:
         ref_obj = _load_json_data(refs_dir / f"{item_id}.json")
-        ref_fields = _parse_fields(ref_obj) if ref_obj is not None else None
+        ref_fields = (
+            _parse_reference_fields(ref_obj) if ref_obj is not None else None
+        )
         if ref_fields is None:
             totals["packets_unreadable_reference"] += 1
             continue
@@ -496,7 +527,9 @@ def run(argv):
                 packet_recalls.append(0.0)
             continue
         cand_obj = _load_json_data(cand_path)
-        cand_fields = _parse_fields(cand_obj) if cand_obj is not None else None
+        cand_fields = (
+            _parse_candidate_fields(cand_obj) if cand_obj is not None else None
+        )
         if cand_fields is None:
             totals["packets_malformed_candidate"] += 1
             result = score_packet(ref_fields, {f: [] for f in FIELDS}, None)
@@ -515,8 +548,8 @@ def run(argv):
         ctx_available = True
         if use_inputs:
             ctx_path = inputs_dir / f"{item_id}.json"
-            ctx_available, ctx_norm = _context_for_scoring(ctx_path)
-            ctx = ctx_norm
+            ctx_available, ctx_blocks = _context_for_scoring(ctx_path)
+            ctx = ctx_blocks
             if not ctx_available:
                 totals["packets_context_unavailable"] += 1
         result = score_packet(

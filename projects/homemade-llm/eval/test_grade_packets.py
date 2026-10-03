@@ -80,7 +80,10 @@ def write_manifest(path: Path, packets: list[tuple[str, list[str]]], label: str 
         "fields": list(FIELDS),
         "n_items": len(items),
         "excluded": [],
-        "packets": [{"packet": name, "items": ids, "sha256": "00"} for name, ids in packets],
+        "packets": [
+            {"packet": name, "items": ids, "sha256": "0" * 64}
+            for name, ids in packets
+        ],
     }
     path.write_text(json.dumps(man, indent=1), encoding="utf-8")
 
@@ -1115,6 +1118,255 @@ class TestGradePackets(unittest.TestCase):
 
     def test_16_valid_control_packet_unchanged(self) -> None:
         self.test_01_packet_format_byte_exact()
+
+    def _build_with_exclude(self, root: Path, exclude_text: str) -> subprocess.CompletedProcess:
+        refs = root / "rdir"
+        cands = root / "cdir"
+        refs.mkdir(exist_ok=True)
+        cands.mkdir(exist_ok=True)
+        write_item(refs, cands, "i1")
+        write_item(refs, cands, "i2")
+        excl = root / "ex.json"
+        excl.write_text(exclude_text, encoding="utf-8")
+        out = root / "odir"
+        return self.run_tool(
+            [
+                "build",
+                "--refs",
+                str(refs),
+                "--candidates",
+                str(cands),
+                "--exclude",
+                str(excl),
+                "--label",
+                "run1",
+                "--set",
+                "ab",
+                "--out",
+                str(out),
+            ]
+        )
+
+    def test_17_exclude_strict_refusals(self) -> None:
+        bad_cases = [
+            ('{"excluded": "not-a-list"}', "non_list_excluded"),
+            ('{"exclude": [{"id": "i1"}]}', "misspelled_key"),
+            (
+                '{"excluded": [{"id": "i1"}], "extra": 1}',
+                "extra_top_level",
+            ),
+            ('["not-a-row"]', "row_string"),
+            ('[{"reason": "x"}]', "row_lacks_id"),
+            ('{"id": "i1", "id": "i2"}', "duplicate_members"),
+            ("{not json", "invalid_json"),
+            ('[{"id": "i1"}, {"id": "i1"}]', "duplicate_id"),
+        ]
+        for body, _name in bad_cases:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                p = self._build_with_exclude(root, body)
+                self.assertEqual(p.returncode, 1, msg=body)
+                self.assertEqual((p.stderr or "").strip(), "usage error")
+                self.assertFalse((root / "odir").exists())
+                self.assert_no_tmps(root)
+
+    def test_18_exclude_valid_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            refs.mkdir()
+            cands.mkdir()
+            for iid in ("keep", "drop"):
+                write_item(refs, cands, iid)
+            for idx, body in enumerate(
+                (
+                    json.dumps([{"id": "drop"}]),
+                    json.dumps({"excluded": [{"id": "drop"}]}),
+                )
+            ):
+                with self.subTest(body=body):
+                    excl = root / f"ex{idx}.json"
+                    excl.write_text(body, encoding="utf-8")
+                    out = root / f"odir{idx}"
+                    p = self.run_tool(
+                        [
+                            "build",
+                            "--refs",
+                            str(refs),
+                            "--candidates",
+                            str(cands),
+                            "--exclude",
+                            str(excl),
+                            "--label",
+                            "run1",
+                            "--set",
+                            "ab",
+                            "--out",
+                            str(out),
+                        ]
+                    )
+                    self.assertEqual(p.returncode, 0)
+                    man = json.loads(
+                        (out / "manifest-run1-set-ab.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(man["excluded"], ["drop"])
+                    all_items: list[str] = []
+                    for pkt in man["packets"]:
+                        all_items.extend(pkt["items"])
+                    self.assertEqual(all_items, ["keep"])
+                    self.assertNotIn("drop", all_items)
+
+    def _merge_bad_manifest(self, man_obj: dict) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            man_path = root / "man.json"
+            man_path.write_text(json.dumps(man_obj, indent=1), encoding="utf-8")
+            replies = root / "replies"
+            replies.mkdir()
+            pkt = man_obj["packets"][0]["packet"]
+            stem = Path(pkt).stem + ".txt"
+            (replies / stem).write_text(reply_body(["t1"]), encoding="utf-8", newline="\n")
+            outp = root / "grades.jsonl"
+            p = self.run_tool(
+                [
+                    "merge",
+                    "--manifest",
+                    str(man_path),
+                    "--replies",
+                    str(replies),
+                    "--grader",
+                    "gleft",
+                    "--out",
+                    str(outp),
+                ]
+            )
+            self.assertFalse(outp.exists())
+            self.assert_no_tmps(root)
+            return p
+
+    def test_19_merge_manifest_validation(self) -> None:
+        base_packets = [("packet-run1-set-ab-b01.md", ["t1"])]
+        base = {
+            "label": "run1",
+            "set": "ab",
+            "rubric_sha256": RUBRIC_SHA_LIT,
+            "fields": list(FIELDS),
+            "n_items": 1,
+            "excluded": [],
+            "packets": [
+                {
+                    "packet": "packet-run1-set-ab-b01.md",
+                    "items": ["t1"],
+                    "sha256": "0" * 64,
+                }
+            ],
+        }
+        bad = dict(base)
+        bad["rubric_sha256"] = "f" * 64
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual((p.stderr or "").strip(), "usage error")
+
+        bad = dict(base)
+        bad["fields"] = list(reversed(FIELDS))
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+
+        bad = dict(base)
+        bad["n_items"] = 99
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+
+        bad = dict(base)
+        bad["packets"] = [
+            {
+                "packet": "packet-run1-set-ab-b01.md",
+                "items": ["t1"],
+                "sha256": "0" * 64,
+            },
+            {
+                "packet": "packet-run1-set-ab-b02.md",
+                "items": ["t1"],
+                "sha256": "0" * 64,
+            },
+        ]
+        bad["n_items"] = 2
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+
+        dup_member = (
+            '{"label": "run1", "set": "ab", "rubric_sha256": "'
+            + RUBRIC_SHA_LIT
+            + '", "fields": '
+            + json.dumps(list(FIELDS))
+            + ', "n_items": 1, "packets": [{"packet": "packet-run1-set-ab-b01.md", '
+            + '"items": ["t1"], "sha256": "'
+            + "0" * 64
+            + '", "sha256": "'
+            + "1" * 64
+            + '"}]}'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            man_path = root / "man.json"
+            man_path.write_text(dup_member, encoding="utf-8")
+            replies = root / "replies"
+            replies.mkdir()
+            (replies / "packet-run1-set-ab-b01.txt").write_text(
+                reply_body(["t1"]), encoding="utf-8", newline="\n"
+            )
+            outp = root / "grades.jsonl"
+            p = self.run_tool(
+                [
+                    "merge",
+                    "--manifest",
+                    str(man_path),
+                    "--replies",
+                    str(replies),
+                    "--grader",
+                    "gleft",
+                    "--out",
+                    str(outp),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertFalse(outp.exists())
+
+        bad = dict(base)
+        bad["packets"] = [
+            {"packet": "packet-run1-set-ab-b01.md", "items": ["t1"]},
+        ]
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            built = self._build_tiny(root, ["t1", "t2"])
+            man_path = built / "manifest-run1-set-ab.json"
+            replies = root / "replies"
+            replies.mkdir()
+            man = json.loads(man_path.read_text(encoding="utf-8"))
+            for pkt in man["packets"]:
+                (replies / (Path(pkt["packet"]).stem + ".txt")).write_text(
+                    reply_body(pkt["items"]), encoding="utf-8", newline="\n"
+                )
+            outp = root / "grades.jsonl"
+            p = self.run_tool(
+                [
+                    "merge",
+                    "--manifest",
+                    str(man_path),
+                    "--replies",
+                    str(replies),
+                    "--grader",
+                    "gleft",
+                    "--out",
+                    str(outp),
+                ]
+            )
+            self.assertEqual(p.returncode, 0)
+            self.assertTrue(outp.is_file())
 
 
 if __name__ == "__main__":

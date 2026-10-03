@@ -58,14 +58,27 @@ class _Parser(argparse.ArgumentParser):
 def load_excluded(path: Path | None) -> set[str]:
     if not path:
         return set()
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    rows = raw if isinstance(raw, list) else raw.get("excluded", [])
-    out: set[str] = set()
+    raw = _parse_json_data(path.read_text(encoding="utf-8"))
+    if isinstance(raw, list):
+        rows = raw
+    elif isinstance(raw, dict):
+        if set(raw.keys()) != {"excluded"}:
+            raise ValueError("invalid exclude file")
+        rows = raw["excluded"]
+    else:
+        raise ValueError("invalid exclude file")
     if not isinstance(rows, list):
-        return out
+        raise ValueError("invalid exclude file")
+    out: set[str] = set()
     for r in rows:
-        if isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"]:
-            out.add(r["id"])
+        if not isinstance(r, dict):
+            raise ValueError("invalid exclude file")
+        iid = r.get("id")
+        if not isinstance(iid, str) or not iid:
+            raise ValueError("invalid exclude file")
+        if iid in out:
+            raise ValueError("invalid exclude file")
+        out.add(iid)
     return out
 
 
@@ -295,6 +308,59 @@ def _publish_no_clobber(tmp_name: str, dest: str) -> None:
     os.link(tmp_name, dest)
 
 
+_HEX64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+def _manifest_expected_pairs(manifest: dict) -> list[tuple[str, set[str]]] | None:
+    label = manifest.get("label")
+    set_name = manifest.get("set")
+    if not label_ok(label) or not set_ok(set_name):
+        return None
+    if manifest.get("rubric_sha256") != RUBRIC_SHA:
+        return None
+    fields = manifest.get("fields")
+    if fields != list(FIELDS):
+        return None
+    packets = manifest.get("packets")
+    if not isinstance(packets, list) or not packets:
+        return None
+    n_items = manifest.get("n_items")
+    if not isinstance(n_items, int):
+        return None
+    all_ids: set[str] = set()
+    packet_names: set[str] = set()
+    expected_pairs: list[tuple[str, set[str]]] = []
+    total_items = 0
+    for pkt in packets:
+        if not isinstance(pkt, dict):
+            return None
+        name = pkt.get("packet")
+        items_raw = pkt.get("items")
+        digest = pkt.get("sha256")
+        if not isinstance(name, str) or not name:
+            return None
+        if name in packet_names:
+            return None
+        packet_names.add(name)
+        if not isinstance(digest, str) or not _HEX64_RE.fullmatch(digest):
+            return None
+        if not isinstance(items_raw, list) or not items_raw:
+            return None
+        items: list[str] = []
+        for i in items_raw:
+            if not isinstance(i, str) or not i:
+                return None
+            if i in all_ids:
+                return None
+            all_ids.add(i)
+            items.append(i)
+        total_items += len(items)
+        expected_pairs.append((name, set(items)))
+    if n_items != total_items:
+        return None
+    return expected_pairs
+
+
 # Grader identity is the caller-asserted --grader argument; independence must come from the route and receipt, not from row labels.
 def cmd_merge(a: argparse.Namespace) -> int:
     out = Path(a.out)
@@ -314,27 +380,20 @@ def cmd_merge(a: argparse.Namespace) -> int:
     allow.add("__GRADER__")
     allow.add(grader)
     try:
-        manifest = json.loads(man_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        manifest = _parse_json_data(man_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
         print("usage error", file=sys.stderr)
         return 1
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("packets"), list):
+    if not isinstance(manifest, dict):
         print("usage error", file=sys.stderr)
         return 1
-    packets = manifest["packets"]
+    expected_pairs = _manifest_expected_pairs(manifest)
+    if expected_pairs is None:
+        print("usage error", file=sys.stderr)
+        return 1
     all_ids: set[str] = set()
-    roster: dict[str, str] = {}
-    expected_pairs: list[tuple[str, set[str]]] = []
-    for pkt in packets:
-        if not isinstance(pkt, dict) or not isinstance(pkt.get("packet"), str) or not isinstance(pkt.get("items"), list):
-            print("usage error", file=sys.stderr)
-            return 1
-        items = [i for i in pkt["items"] if isinstance(i, str) and i]
-        name = pkt["packet"]
-        for i in items:
-            all_ids.add(i)
-            roster[i] = name
-        expected_pairs.append((name, set(items)))
+    for _, packet_ids in expected_pairs:
+        all_ids.update(packet_ids)
     summary = _empty_summary()
     summary["expected_keys"] = sum(len(items) * len(FIELDS) for _, items in expected_pairs)
     distinct: set[tuple[str, str]] = set()

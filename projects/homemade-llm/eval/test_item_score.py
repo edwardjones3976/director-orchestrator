@@ -550,9 +550,116 @@ class ItemScoreTests(unittest.TestCase):
         proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
         self.assertEqual(proc.returncode, 0)
         data = self._load(proc, text)
-        self.assertEqual(data["spurious_in_context"], 0)
-        self.assertEqual(data["spurious_not_in_context"], 1)
+        self.assertEqual(data["spurious_in_context"], 1)
+        self.assertEqual(data["spurious_not_in_context"], 0)
         self.assertEqual(data["per_field"]["non_goals"]["near_right_field"], 0)
+
+    def test_verbatim_per_block_spurious_context(self):
+        marker = self._mark("SECRETMARKER-vctx")
+        item_id = "hid-vctx-1"
+        extra = f"alpha beta {marker}"
+        ref = empty_packet(non_goals=[f"ref only {marker}"])
+        cand = empty_packet(non_goals=[f"ref only {marker}", extra])
+        self._write(self.refs, item_id, ref)
+        self._write(self.cands, item_id, cand)
+
+        self._write(
+            self.inputs,
+            item_id,
+            {"context": [{"text": "alpha"}, {"text": "beta"}]},
+        )
+        out = self._out_path("vctx_split.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        data = self._load(proc, text)
+        self.assertEqual(data["spurious_not_in_context"], 1)
+        self.assertEqual(data["spurious_in_context"], 0)
+
+        self._write(
+            self.inputs,
+            item_id,
+            {"context": [{"text": f"prefix {extra} suffix"}]},
+        )
+        out = self._out_path("vctx_one_block.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        data = self._load(proc, text)
+        self.assertEqual(data["spurious_in_context"], 1)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+
+        phrase = f"ExactPhrase {marker}"
+        self._write(
+            self.inputs,
+            item_id,
+            {"context": [{"text": phrase}]},
+        )
+        cand2 = empty_packet(
+            non_goals=[f"ref only {marker}", phrase.upper()],
+        )
+        self._write(self.cands, item_id, cand2)
+        out = self._out_path("vctx_case.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        data = self._load(proc, text)
+        self.assertEqual(data["spurious_not_in_context"], 1)
+
+        padded = f"  {extra}  "
+        cand3 = empty_packet(non_goals=[f"ref only {marker}", padded])
+        self._write(self.cands, item_id, cand3)
+        self._write(
+            self.inputs,
+            item_id,
+            {"context": [{"text": extra}]},
+        )
+        out = self._out_path("vctx_ws.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        data = self._load(proc, text)
+        self.assertEqual(data["spurious_in_context"], 1)
+
+    def test_strict_reference_fields(self):
+        marker = self._mark("SECRETMARKER-sref")
+        empty_ref_id = "hid-empty-ref"
+        self._write(self.refs, empty_ref_id, {})
+        self._write(self.cands, empty_ref_id, {})
+        missing_field_id = "hid-miss-field"
+        self._write(
+            self.refs,
+            missing_field_id,
+            {"non_goals": [f"only ng {marker}"]},
+        )
+        self._write(self.cands, missing_field_id, empty_packet())
+        cand_miss_id = "hid-cand-miss"
+        self._write(
+            self.refs,
+            cand_miss_id,
+            empty_packet(non_goals=[f"ng {marker}"]),
+        )
+        self._write(self.cands, cand_miss_id, {"non_goals": [f"ng {marker}"]})
+        out = self._out_path("strict_ref.json")
+        proc, text = self._run(out)
+        data = self._load(proc, text)
+        self.assertEqual(data["packets_unreadable_reference"], 2)
+        self.assertEqual(data["packets_scored"], 1)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["zero_error_packets"], 1)
+        ng = data["per_field"]["non_goals"]
+        self.assertEqual(ng["reference_items"], 1)
+        self.assertEqual(ng["candidate_items"], 1)
+        self.assertEqual(ng["correct"], 1)
+
+    def test_long_repeated_near_right_field(self):
+        unit = "x" * 10
+        repeated = unit * 30
+        ref_text = repeated
+        cand_text = "y" + repeated[1:]
+        item_id = "hid-long-near"
+        ref = empty_packet(non_goals=[ref_text])
+        cand = empty_packet(non_goals=[cand_text])
+        self._write(self.refs, item_id, ref)
+        self._write(self.cands, item_id, cand)
+        out = self._out_path("long_near.json")
+        proc, text = self._run(out)
+        data = self._load(proc, text)
+        ng = data["per_field"]["non_goals"]
+        self.assertGreaterEqual(len(ref_text), 300)
+        self.assertEqual(ng["near_right_field"], 1)
 
     def test_link_no_clobber(self):
         marker = self._mark("SECRETMARKER-link")
