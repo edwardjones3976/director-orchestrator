@@ -4,6 +4,46 @@ Owner direction: 2026-09-30. This is the team's daily coordination procedure.
 The objective remains a correct, evidenced result at reasonable, non-wasteful
 cost. A status update is not a reason to launch another model or repeat QA.
 
+## Provider roster
+
+Shared reference for owners and all collaborating providers, updated 2026-10-02.
+The roster has **11 provider/contact entries across nine grouped providers or
+services**. Routes listed here are documented contact options, not a live
+availability check or proof of runtime admission.
+
+| # | Provider or contact | Documented contact options | Profile or guidance |
+| --- | --- | --- | --- |
+| 1 | OpenAI — ChatGPT / Codex | ChatGPT sessions, local Codex CLI, Codex Cloud and OpenAI API | [OpenAI profile](provider-profiles/openai.profile.md) |
+| 2 | Anthropic — Claude | Existing Claude session and first-party Claude Code CLI | [Claude profile](provider-profiles/claude.profile.md) |
+| 3 | Cursor | Local Cursor Agent CLI and separate Cloud Agents | [Cursor profile](provider-profiles/cursor.profile.md) |
+| 4 | Google Gemini / Antigravity | Antigravity application and `agy` CLI | [Antigravity profile](provider-profiles/antigravity.profile.md) |
+| 5 | xAI — Direct Grok | Responses API/MCP and Grok Build CLI | [Grok profile](provider-profiles/grok.profile.md) |
+| 6 | Grok Bot | Separate owner-authorized GUI contact | [Contact procedures](#staff-sheet-and-contact-directory) |
+| 7 | Perplexity | Public research through MCP/API search and ask | [Perplexity profile](provider-profiles/perplexity.profile.md) |
+| 8 | Firecrawl | Public web research/retrieval through CLI or connector | [Firecrawl profile](provider-profiles/firecrawl.profile.md) |
+| 9 | GitHub Copilot | PowerShell `copilot`, `copilot --resume` and headless CLI | [Copilot profile](provider-profiles/github-copilot.profile.md) |
+| 10 | VS Code Coding Bot | Installed editor's Copilot Chat GUI contact | [VS Code contact methods](providers/vscode-contact-methods.md) |
+| 11 | Z.ai — GLM | Provider-dispatch and isolated CLI transport | [Z.ai profile](provider-profiles/zai.profile.md) |
+
+Grok Bot is a separate Grok contact route. VS Code Coding Bot is a Copilot
+contact, not proof of a separately enrolled provider. Firecrawl provides
+retrieval tooling rather than a standalone reasoning model. A route or product
+name does not establish the actual served model or backend provider family.
+
+Internal OpenAI teammates include the linked Director and Astra Light sessions,
+the cloud ChatGPT teammate (owner-selected Astra High), and the separately
+registered Codex Cloud Worker. Codex Security is an OpenAI tool specialization.
+These are not additional provider families. Director is a role, not another
+provider or bot; removed Director-branded bots are not roster members.
+
+To use the roster, choose the relevant profile and existing contact, confirm
+current availability and assignment authority, then follow the contact
+procedures below. Preserve the owner preference for external-provider work,
+with internal chats providing useful support. Use the
+[runtime profiles and route catalog](provider-profiles/README.md) for runtime
+contracts; this contact list does not change allocation, budget, access or
+review eligibility. Keep secrets and private contact details out of this guide.
+
 ## Leadership and succession
 
 **Administrators: ChatGPT/Codex (#1), Claude (#2), Cursor (#3).** The owner

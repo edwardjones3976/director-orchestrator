@@ -60,8 +60,8 @@ source baseline above is not Long Table canary authority or a deployment receipt
 
 Archived pre-primary sources (historical, non-authoritative):
 
-- [langgraph-transition-plan-pre-primary.md](archive/langgraph-transition-plan-pre-primary.md)
-- [langgraph-shadow-operations-pre-primary.md](archive/langgraph-shadow-operations-pre-primary.md)
+- [langgraph-transition-plan-pre-primary.md](archive/langgraph-pre-primary/langgraph-transition-plan-pre-primary.md)
+- [langgraph-shadow-operations-pre-primary.md](archive/langgraph-pre-primary/langgraph-shadow-operations-pre-primary.md)
 
 ## Current truth
 
@@ -74,8 +74,10 @@ those observations explicitly in the acceptance package.
 Exactly one engine owns each task's mutations and external effects. Ownership
 transfer requires the cutover gates below; rollback must preserve the ledger and
 reconcile external effects rather than blindly replay them. Gate 0 accepted a
-prerequisite, not a deployment. Packet schemas and the
-[interoperability contract](model-interoperability-contract.md) remain binding.
+prerequisite, not a deployment. Packet schemas, the
+[interoperability contract](model-interoperability-contract.md), and the
+[completion gates](director-completion-gates.md) remain binding as subordinate
+current contracts under this operations authority.
 
 ## Target topology
 
