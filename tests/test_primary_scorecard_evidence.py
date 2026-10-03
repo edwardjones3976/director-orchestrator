@@ -511,6 +511,19 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             environment={"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN,
                          "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "c" * 64})
 
+    def test_intake_authority_compares_the_real_lease_token(self):
+        # Review 4168299443: the evaluator's own constant-time compare against the stored row decides
+        # owner_token_matches; a wrong expected token must yield False through the real query path.
+        self.intake()
+        authority = self.report()["intake_authority"]
+        self.assertIs(authority["owner_token_matches"], True)
+        self.assertNotIn("owner_token", authority)
+        self.assertNotIn(TEST_OWNER_TOKEN, json.dumps(authority, default=str))
+        for wrong in ("x" * 40, TEST_OWNER_TOKEN[:-1] + "!", "short", None):
+            with self.subTest(wrong=wrong):
+                self.settings.langgraph_primary_owner_token = wrong
+                self.assertIs(self.report()["intake_authority"]["owner_token_matches"], False)
+
     def test_explicit_connection_checks_instance_and_stays_open(self):
         import psycopg
         from psycopg.rows import dict_row
@@ -554,7 +567,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_parallel_batch"
                 "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
-                " VALUES (%s, %s, 'default-director-owner', 1, 1)", (task_id, "sha256:" + "1" * 64))
+                " VALUES (%s, %s, %s, 1, 1)", (task_id, "sha256:" + "1" * 64, TEST_OWNER_TOKEN))
             self.assertEqual(self.report()["counts"]["batches_pending_projection_binding"], 1)
             connection.execute(
                 f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
@@ -571,7 +584,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_parallel_batch"
                 "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
-                " VALUES (%s, %s, 'default-director-owner', 1, 4)", (task_id, digest))
+                " VALUES (%s, %s, %s, 1, 4)", (task_id, digest, TEST_OWNER_TOKEN))
             for sequence, (assignment_id, status, dependencies) in enumerate(assignments, 1):
                 connection.execute(
                     f"INSERT INTO {self.schema}.director_primary_parallel_assignment(task_id, assignment_id, sequence,"
@@ -620,7 +633,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_parallel_batch"
                 "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
-                " VALUES (%s, %s, 'default-director-owner', 1, 1)", (task_id, "sha256:" + "3" * 64))
+                " VALUES (%s, %s, %s, 1, 1)", (task_id, "sha256:" + "3" * 64, TEST_OWNER_TOKEN))
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_parallel_assignment(task_id, assignment_id, sequence,"
                 " provider_id, deployment_id, dependencies, write_surfaces, retry_limit, status)"
@@ -729,7 +742,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         with self.handle.pool.connection() as connection:
             connection.execute(
                 f"INSERT INTO {s}.director_primary_parallel_batch(task_id, plan_digest, owner_token, fencing_generation,"
-                " max_concurrency) VALUES (%s, %s, 'default-director-owner', 1, 1)", (other, "sha256:" + "5" * 64))
+                " max_concurrency) VALUES (%s, %s, %s, 1, 1)", (other, "sha256:" + "5" * 64, TEST_OWNER_TOKEN))
             self.classify(connection, other, "RECONCILIATION_REQUIRED")
             # The projection guard forbids this state; lift it in the disposable schema to prove the count sees it.
             connection.execute(f"ALTER TABLE {s}.director_primary_task_projection DISABLE TRIGGER USER")
@@ -929,7 +942,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_parallel_batch"
                 "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
-                " VALUES (%s, %s, 'default-director-owner', 1, 2)", (task_id, "sha256:" + "4" * 64))
+                " VALUES (%s, %s, %s, 1, 2)", (task_id, "sha256:" + "4" * 64, TEST_OWNER_TOKEN))
             for sequence, assignment in enumerate(("A1", "A2"), 1):
                 connection.execute(
                     f"INSERT INTO {self.schema}.director_primary_parallel_assignment(task_id, assignment_id, sequence,"

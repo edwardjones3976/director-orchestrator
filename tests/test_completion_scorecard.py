@@ -94,6 +94,7 @@
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 import dataclasses
+import io
 import json
 import hashlib
 import importlib.util
@@ -105,7 +106,7 @@ import re
 import tempfile
 import time
 import unittest
-from contextlib import ExitStack, closing, nullcontext
+from contextlib import ExitStack, closing, nullcontext, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1292,6 +1293,69 @@ class ScorecardGitTrustTests(unittest.TestCase):
             self.assertIsNone(cli.launch_refusal(cli.ROOT, self.descriptor))
             self.assertEqual(sc._run_bytes(["git", "-C", str(self.repo), "show",
                                            f"{self.pin}:scripts/director-scorecard.py"]), self.script.read_bytes())
+
+    def test_home_environment_cannot_relocate_the_owner_root_287_34(self):
+        real = self.launcher.account_home()
+        with patch.dict(os.environ, {"HOME": str(self.home), "USERPROFILE": str(self.home),
+                                     "HOMEDRIVE": "Z:", "HOMEPATH": "\\attacker"}):
+            self.assertEqual(self.launcher.account_home(), real)
+            self.assertNotEqual(self.launcher.owner_root(), self.home / ".director-scorecard")
+        # A copied launcher, fake descriptor and attestation dir under an attacker HOME is not the installed launcher.
+        copied = subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo)],
+                                env={**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home)},
+                                cwd=self.outside, capture_output=True, text=True, timeout=60)
+        self.assertEqual(copied.returncode, 2, copied.stderr)
+        self.assertIn("use the owner-installed launcher", copied.stderr)
+        self.assertNotIn("clean evaluator reached", copied.stdout)
+
+    def test_any_descriptor_change_during_a_launch_voids_the_report_287_33(self):
+        run = subprocess.run
+        document = json.loads(self.descriptor.read_text())
+
+        def launch(arguments, **options):
+            if arguments[0] == "git":
+                return run(arguments, **options)
+            env = options["env"]
+            self.assertEqual(env[self.launcher.DESCRIPTOR_ENV], digest)
+            self.assertEqual(env[self.launcher.OWNER_HOME_ENV], str(self.home))
+            receipt = json.loads(self.launcher._receipt_path(env[self.launcher.NONCE_ENV]).read_bytes())
+            Path(env["DIRECTOR_SCORECARD_RESULT"]).write_text(json.dumps(
+                {"attested": True, "attestation": receipt["attestation"]}))
+            # Same evaluator pin; only another owner field changes mid-run.
+            self.descriptor.write_text(json.dumps({**document, "security_base_sha": "c" * 40}))
+            return subprocess.CompletedProcess(arguments, 0)
+
+        digest = self.descriptor_digest()
+        with patch.object(self.launcher.subprocess, "run", side_effect=launch), \
+                patch.object(self.launcher.Path, "cwd", return_value=self.outside), \
+                patch.object(self.launcher, "account_home", return_value=self.home), \
+                patch.object(self.launcher, "__file__", str(self.installed)), \
+                redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(self.launcher.launch(self.repo, [], self.descriptor), 2)
+        self.assertIn(self.launcher.UNATTESTED, stderr.getvalue())
+
+    def test_evaluator_reads_owner_files_only_as_the_launcher_pinned_them_287_33(self):
+        from director_orchestrator import primary_scorecard_evidence as evidence
+        cli = self.modules["director-scorecard"]
+        digest = self.descriptor_digest()
+        handed = {evidence.OWNER_HOME_ENV: str(self.home), evidence.DESCRIPTOR_ENV: digest}
+        with self.owner_home(), patch.object(cli, "account_home", return_value=self.home), \
+                patch.dict(os.environ, handed):
+            self.assertEqual(evidence.cli_release_descriptor()["evaluator_sha"], self.pin)
+            self.assertEqual(cli.pinned_evaluator(), self.pin)
+        for broken in ({evidence.DESCRIPTOR_ENV: "0" * 64}, {evidence.OWNER_HOME_ENV: "relative/home"}):
+            with self.subTest(broken=broken), patch.dict(os.environ, {**handed, **broken}):
+                self.assertIsNone(evidence.cli_release_descriptor())
+        with patch.dict(os.environ, {**handed, evidence.DESCRIPTOR_ENV: "0" * 64}):
+            self.assertIsNone(cli.pinned_evaluator())
+        # Without the launcher's hand-over, no owner file is read at all.
+        clean = {key: value for key, value in os.environ.items()
+                 if key not in (evidence.OWNER_HOME_ENV, evidence.DESCRIPTOR_ENV)}
+        with patch.dict(os.environ, clean, clear=True):
+            self.assertIsNone(evidence.owner_home())
+            self.assertIsNone(evidence.cli_release_descriptor())
+            self.assertIsNone(cli.pinned_evaluator())
+            self.assertIsNone(sc._ci_replica_key())
 
     def test_metadata_probe_errors_fail_closed(self):
         for name, module in self.modules.items():
@@ -3282,9 +3346,26 @@ class ScorecardCollectorTests(unittest.TestCase):
         # A lease that is live at observation time but expires before the collection finalizes cannot
         # remain a PASS: the existing FRESH_FOR/valid_until finalization path revalidates it to UNKNOWN.
         expiring = self.world(evaluate_rules=True)
-        expiring.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(minutes=10)).isoformat()
+        expiring.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(minutes=5)).isoformat()
         expiring.until = WORLD_NOW + timedelta(minutes=6)
         self.assertEqual(expiring.state("05"), "UNKNOWN")
+        # The production lease (PrimaryTaskCoordinator DEFAULT_LEASE_SECONDS = 60) still live at the final cutoff
+        # is a PASS in the direct-rule fixture: no five-minute remaining lifetime is demanded (review 4168742770).
+        renewed = self.world(evaluate_rules=True)
+        renewed.consistency["intake_authority"]["lease_expires_at"] = (WORLD_NOW + timedelta(seconds=60)).isoformat()
+        renewed.until = WORLD_NOW + timedelta(seconds=30)
+        self.assertEqual(renewed.state("05"), "PASS")
+        # The scored evidence never outlives the lease, even inside the usual freshness window (review 4169019848).
+        evidence = row(renewed.report(), "05")["evidence"][0]
+        self.assertEqual(sc._when(evidence["expires_at"]), WORLD_NOW + timedelta(seconds=60))
+
+    def test_runtime_discovery_failure_reports_each_check_once(self):
+        # Review 4169163932: 05 is contained, so the containment list already reports it; no duplicate entry.
+        with patch.object(sc, "_runtime", side_effect=ValueError("no single running Director")):
+            observations = sc.collect(SHA, now=NOW, deployment=DEPLOYMENT)
+        ids = [item.check_id for item in observations]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertIsNone(next(item for item in observations if item.check_id == "05").passed)
 
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world(evaluate_rules=True).state("19"), "PASS")
