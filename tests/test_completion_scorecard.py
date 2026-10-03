@@ -102,6 +102,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import types
 import re
 import tempfile
 import time
@@ -1165,6 +1166,44 @@ def installed_launcher_command(installed, home, *arguments, isolated=True):
     )
     return [sys.executable, *(["-I"] if isolated else []), "-c", bootstrap, str(installed), str(home),
             *[str(argument) for argument in arguments]]
+
+
+class PosixAccountLookupTests(unittest.TestCase):
+    """Copilot review of #420: a POSIX effective UID with no passwd entry (or an unusable home) must fail closed as
+    OSError, which every caller already refuses on, never as a KeyError traceback."""
+
+    def modules(self):
+        import importlib.util
+        root = Path(__file__).resolve().parents[1]
+        from director_orchestrator import primary_scorecard_evidence as evidence
+        found = {"evidence": evidence.account_home}
+        for name, script in (("launcher", "scorecard-launcher.py"), ("evaluator", "director-scorecard.py")):
+            spec = importlib.util.spec_from_file_location("posix_lookup_" + name, root / "scripts" / script)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            found[name] = module.account_home
+        return found
+
+    def lookup(self, function, entry):
+        fake = types.SimpleNamespace(getpwuid=entry)
+        with patch.object(os, "name", "posix"), patch.object(os, "geteuid", create=True, return_value=4242),                 patch.dict(sys.modules, {"pwd": fake}):
+            return function()
+
+    def test_missing_passwd_entry_and_unusable_home_are_oserror(self):
+        def missing(uid):
+            raise KeyError(uid)
+        for name, function in self.modules().items():
+            for label, entry in (("missing", missing),
+                                 ("empty", lambda uid: types.SimpleNamespace(pw_dir="")),
+                                 ("relative", lambda uid: types.SimpleNamespace(pw_dir="home/owner"))):
+                with self.subTest(module=name, case=label), self.assertRaises(OSError):
+                    self.lookup(function, entry)
+
+    def test_a_valid_passwd_entry_is_the_account_home(self):
+        for name, function in self.modules().items():
+            with self.subTest(module=name):
+                home = self.lookup(function, lambda uid: types.SimpleNamespace(pw_dir=os.path.abspath(os.sep + "home")))
+                self.assertEqual(os.path.abspath(os.sep + "home"), str(home))
 
 
 class ScorecardGitTrustTests(unittest.TestCase):

@@ -58,7 +58,13 @@ def account_home() -> Path:
         finally:
             ctypes.windll.ole32.CoTaskMemFree(path)
     import pwd
-    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:  # an effective UID with no passwd/NSS entry (arbitrary-UID containers)
+        raise OSError("the account has no passwd entry") from error
+    if not home or not os.path.isabs(home):
+        raise OSError("the account home is not an absolute path")
+    return Path(home)
 
 
 def release_descriptor() -> Path | None:
