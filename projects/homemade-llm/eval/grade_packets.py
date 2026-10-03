@@ -116,7 +116,9 @@ def _load_refs(refs_dir: Path) -> dict[str, object]:
 
 def _candidate_field(cand: object, field: str) -> str:
     if isinstance(cand, dict):
-        return json.dumps(cand.get(field), ensure_ascii=False)
+        value = cand.get(field)
+        if isinstance(value, list) and all(isinstance(x, str) for x in value):
+            return json.dumps(value, ensure_ascii=False)
     return "<missing or invalid candidate>"
 
 
@@ -188,6 +190,9 @@ def cmd_build(a: argparse.Namespace) -> int:
     ids = [i for i in sorted(refs) if i not in excluded]
     if only is not None:
         ids = [i for i in ids if i in only]
+    if not ids:
+        print("usage error", file=sys.stderr)
+        return 1
     parent = out.parent if str(out.parent) else Path(".")
     try:
         parent.mkdir(parents=True, exist_ok=True)
@@ -309,6 +314,12 @@ def _publish_no_clobber(tmp_name: str, dest: str) -> None:
 
 
 _HEX64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+# Safe ASCII basename only: no path separators, drive letters or traversal syntax.
+_PACKET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\.md$")
+
+
+def _safe_packet_name(name: object) -> bool:
+    return isinstance(name, str) and bool(_PACKET_NAME_RE.fullmatch(name))
 
 
 def _manifest_expected_pairs(manifest: dict) -> list[tuple[str, set[str]]] | None:
@@ -325,10 +336,23 @@ def _manifest_expected_pairs(manifest: dict) -> list[tuple[str, set[str]]] | Non
     if not isinstance(packets, list) or not packets:
         return None
     n_items = manifest.get("n_items")
-    if not isinstance(n_items, int):
+    if type(n_items) is not int:
         return None
+    if "excluded" not in manifest:
+        return None
+    excluded_raw = manifest["excluded"]
+    if not isinstance(excluded_raw, list):
+        return None
+    excluded_ids: set[str] = set()
+    for eid in excluded_raw:
+        if not isinstance(eid, str) or not eid:
+            return None
+        if eid in excluded_ids:
+            return None
+        excluded_ids.add(eid)
     all_ids: set[str] = set()
     packet_names: set[str] = set()
+    reply_stems: set[str] = set()
     expected_pairs: list[tuple[str, set[str]]] = []
     total_items = 0
     for pkt in packets:
@@ -337,11 +361,15 @@ def _manifest_expected_pairs(manifest: dict) -> list[tuple[str, set[str]]] | Non
         name = pkt.get("packet")
         items_raw = pkt.get("items")
         digest = pkt.get("sha256")
-        if not isinstance(name, str) or not name:
+        if not _safe_packet_name(name):
             return None
         if name in packet_names:
             return None
         packet_names.add(name)
+        stem_key = Path(name).stem.casefold()
+        if stem_key in reply_stems:
+            return None
+        reply_stems.add(stem_key)
         if not isinstance(digest, str) or not _HEX64_RE.fullmatch(digest):
             return None
         if not isinstance(items_raw, list) or not items_raw:
@@ -357,6 +385,8 @@ def _manifest_expected_pairs(manifest: dict) -> list[tuple[str, set[str]]] | Non
         total_items += len(items)
         expected_pairs.append((name, set(items)))
     if n_items != total_items:
+        return None
+    if excluded_ids & all_ids:
         return None
     return expected_pairs
 

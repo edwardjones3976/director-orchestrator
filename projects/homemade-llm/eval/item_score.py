@@ -130,22 +130,31 @@ def _parse_candidate_fields(obj):
 
 def _load_excluded(path):
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_dup_keys
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
         raise UsageError from None
-    if data is None:
-        raise UsageError
-    rows = data
-    if isinstance(data, dict) and "excluded" in data:
+    if isinstance(data, list):
+        rows = data
+    elif isinstance(data, dict):
+        if set(data.keys()) != {"excluded"}:
+            raise UsageError
         rows = data["excluded"]
+    else:
+        raise UsageError
     if not isinstance(rows, list):
         raise UsageError
     excluded = set()
     for row in rows:
-        if isinstance(row, dict) and "id" in row:
-            excluded.add(str(row["id"]))
-        else:
+        if not isinstance(row, dict):
             raise UsageError
+        iid = row.get("id")
+        if not isinstance(iid, str) or not iid:
+            raise UsageError
+        if iid in excluded:
+            raise UsageError
+        excluded.add(iid)
     return excluded
 
 
@@ -511,6 +520,16 @@ def run(argv):
         if ref_fields is None:
             totals["packets_unreadable_reference"] += 1
             continue
+        # Context coverage is counted for every readable-reference item, even
+        # when the candidate is later found missing or malformed.
+        ctx = None
+        ctx_available = True
+        if use_inputs:
+            ctx_path = inputs_dir / f"{item_id}.json"
+            ctx_available, ctx_blocks = _context_for_scoring(ctx_path)
+            ctx = ctx_blocks
+            if not ctx_available:
+                totals["packets_context_unavailable"] += 1
         cand_path = cands_dir / f"{item_id}.json"
         if not cand_path.is_file():
             totals["packets_missing_candidate"] += 1
@@ -544,14 +563,6 @@ def run(argv):
             if result["reference_items"]:
                 packet_recalls.append(0.0)
             continue
-        ctx = None
-        ctx_available = True
-        if use_inputs:
-            ctx_path = inputs_dir / f"{item_id}.json"
-            ctx_available, ctx_blocks = _context_for_scoring(ctx_path)
-            ctx = ctx_blocks
-            if not ctx_available:
-                totals["packets_context_unavailable"] += 1
         result = score_packet(
             ref_fields,
             cand_fields,

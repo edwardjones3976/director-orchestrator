@@ -392,6 +392,76 @@ class ItemScoreTests(unittest.TestCase):
         self.assertEqual(data["packets_missing_candidate"], 1)
         self.assertEqual(data["packets_malformed_candidate"], 1)
 
+    def test_exclude_strict_refusals_no_publish(self):
+        marker = self._mark("SECRETMARKER-exstrict")
+        item_id = "hid-exstrict-1"
+        other_id = "hid-exstrict-2"
+        self._write(self.refs, item_id, empty_packet(non_goals=[f"n {marker}"]))
+        self._write(self.cands, item_id, empty_packet(non_goals=[f"n {marker}"]))
+        self._write(self.refs, other_id, empty_packet(non_goals=[f"n2 {marker}"]))
+        self._write(self.cands, other_id, empty_packet(non_goals=[f"n2 {marker}"]))
+        bad_cases = [
+            '{"id": "' + item_id + '", "id": "' + other_id + '"}',
+            '[{"id": "' + item_id + '", "id": "' + other_id + '"}]',
+            json.dumps([{"id": None}]),
+            json.dumps([{"id": 1}]),
+            json.dumps([{"reason": "no id field"}]),
+            json.dumps([{"id": ""}]),
+            json.dumps([{"id": item_id}, {"id": item_id}]),
+            json.dumps([{"id": item_id}, {"reason": "second row missing id"}]),
+            "not json at all",
+            json.dumps("just-a-string"),
+            json.dumps({"excluded": "not-a-list"}),
+            json.dumps({"excluded": [{"id": item_id}], "extra": 1}),
+            json.dumps({"exclude": [{"id": item_id}]}),
+            json.dumps(["not-a-row"]),
+        ]
+        for idx, body in enumerate(bad_cases):
+            with self.subTest(body=body):
+                exclude_path = self.root / f"ex_bad_{idx}.json"
+                exclude_path.write_text(body, encoding="utf-8")
+                out = self._out_path(f"ex_bad_{idx}.json")
+                proc, _text = self._run(out, extra=["--exclude", str(exclude_path)], expect_out=False)
+                self.assertEqual(proc.returncode, 1, msg=body)
+                self.assertEqual((proc.stderr or "").strip(), "usage error")
+                self.assertFalse(out.exists())
+
+    def test_context_coverage_counted_for_missing_and_malformed_candidates(self):
+        marker = self._mark("SECRETMARKER-ctxcov")
+        missing_id = "hid-ctxcov-miss"
+        bad_id = "hid-ctxcov-bad"
+        unavail_id = "hid-ctxcov-unavail"
+        unreadable_id = "hid-ctxcov-unreadable"
+
+        # Readable reference, candidate missing, context available.
+        self._write(self.refs, missing_id, empty_packet(non_goals=[f"n {marker}"]))
+        self._write(self.inputs, missing_id, {"context": [{"text": f"ctx {marker}"}]})
+
+        # Readable reference, malformed candidate JSON, context available.
+        self._write(self.refs, bad_id, empty_packet(non_goals=[f"n2 {marker}"]))
+        (self.cands / f"{bad_id}.json").write_text("{not valid json", encoding="utf-8")
+        self._write(self.inputs, bad_id, {"context": [{"text": f"ctx2 {marker}"}]})
+
+        # Readable reference, candidate missing, context unavailable (no inputs file).
+        self._write(self.refs, unavail_id, empty_packet(non_goals=[f"n3 {marker}"]))
+
+        # Unreadable reference: must not be counted for context coverage.
+        (self.refs / f"{unreadable_id}.json").write_text("{not valid json", encoding="utf-8")
+        self._write(self.inputs, unreadable_id, {"context": [{"text": f"ctx4 {marker}"}]})
+
+        out = self._out_path("ctxcov.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 2)
+        data = self._load(proc, text)
+        self.assertEqual(data["packets_missing_candidate"], 2)
+        self.assertEqual(data["packets_malformed_candidate"], 1)
+        self.assertEqual(data["packets_unreadable_reference"], 1)
+        # Only unavail_id has no inputs file -> unavailable; missing_id and
+        # bad_id both have a context file -> available (not counted).
+        # unreadable_id is skipped entirely before context lookup.
+        self.assertEqual(data["packets_context_unavailable"], 1)
+        self.assertEqual(data["spurious_context_unknown"], 0)
+
     def test_atomic_output_existing_refused(self):
         marker = self._mark("SECRETMARKER-at8")
         item_id = "hid-atom-h8"
@@ -557,7 +627,11 @@ class ItemScoreTests(unittest.TestCase):
     def test_verbatim_per_block_spurious_context(self):
         marker = self._mark("SECRETMARKER-vctx")
         item_id = "hid-vctx-1"
-        extra = f"alpha beta {marker}"
+        # The complete phrase must be absent from each individual block but
+        # present if blocks were (incorrectly) joined, so this genuinely
+        # distinguishes per-block matching from joined-block matching. The
+        # output-leak sentinel lives only in the separate reference text below.
+        extra = "alpha beta"
         ref = empty_packet(non_goals=[f"ref only {marker}"])
         cand = empty_packet(non_goals=[f"ref only {marker}", extra])
         self._write(self.refs, item_id, ref)

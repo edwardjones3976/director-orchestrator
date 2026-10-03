@@ -128,10 +128,10 @@ class TestGradePackets(unittest.TestCase):
                 "evidence_requirements": f"{MARKER}-ev",
             }
             cand = {
-                "non_goals": f"{MARKER}-ng-c",
-                "constraints": f"{MARKER}-co-c",
-                "acceptance_checks": f"{MARKER}-ac-c",
-                "evidence_requirements": f"{MARKER}-ev-c",
+                "non_goals": [f"{MARKER}-ng-c"],
+                "constraints": [f"{MARKER}-co-c"],
+                "acceptance_checks": [f"{MARKER}-ac-c"],
+                "evidence_requirements": [f"{MARKER}-ev-c"],
             }
             (refs / "i1.json").write_text(json.dumps(ref), encoding="utf-8")
             (cands / "i1.json").write_text(json.dumps(cand), encoding="utf-8")
@@ -164,16 +164,16 @@ class TestGradePackets(unittest.TestCase):
                 "=== ITEM i1 ===\n"
                 "--- field non_goals\n"
                 f'REFERENCE: "{MARKER}-ng"\n'
-                f'CANDIDATE: "{MARKER}-ng-c"\n'
+                f'CANDIDATE: ["{MARKER}-ng-c"]\n'
                 "--- field constraints\n"
                 f'REFERENCE: "{MARKER}-co"\n'
-                f'CANDIDATE: "{MARKER}-co-c"\n'
+                f'CANDIDATE: ["{MARKER}-co-c"]\n'
                 "--- field acceptance_checks\n"
                 f'REFERENCE: "{MARKER}-ac"\n'
-                f'CANDIDATE: "{MARKER}-ac-c"\n'
+                f'CANDIDATE: ["{MARKER}-ac-c"]\n'
                 "--- field evidence_requirements\n"
                 f'REFERENCE: "{MARKER}-ev"\n'
-                f'CANDIDATE: "{MARKER}-ev-c"\n'
+                f'CANDIDATE: ["{MARKER}-ev-c"]\n'
             ).encode("utf-8")
             self.assertEqual(packet, expected)
             man = json.loads((out / "manifest-run1-set-ab.json").read_text(encoding="utf-8"))
@@ -1119,6 +1119,178 @@ class TestGradePackets(unittest.TestCase):
     def test_16_valid_control_packet_unchanged(self) -> None:
         self.test_01_packet_format_byte_exact()
 
+    def test_candidate_field_rendering_unit(self) -> None:
+        valid = {"non_goals": [f"{MARKER}-a", f"{MARKER}-b"]}
+        self.assertEqual(
+            grade_packets._candidate_field(valid, "non_goals"),
+            json.dumps([f"{MARKER}-a", f"{MARKER}-b"], ensure_ascii=False),
+        )
+        empty = {"non_goals": []}
+        self.assertEqual(grade_packets._candidate_field(empty, "non_goals"), "[]")
+        bad_cases = {
+            "scalar_string": {"non_goals": f"{MARKER}-scalar"},
+            "null": {"non_goals": None},
+            "object": {"non_goals": {"x": f"{MARKER}-obj"}},
+            "nested_list": {"non_goals": [[f"{MARKER}-nested"]]},
+            "mixed_list": {"non_goals": [f"{MARKER}-ok", 1]},
+            "missing_field": {},
+            "non_dict_candidate": None,
+        }
+        for name, cand in bad_cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    grade_packets._candidate_field(cand, "non_goals"),
+                    "<missing or invalid candidate>",
+                )
+
+    def test_candidate_field_rendering_packet_integration(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            out = root / "odir"
+            refs.mkdir()
+            cands.mkdir()
+            ref = {f: [f"{MARKER}-{f}"] for f in FIELDS}
+            (refs / "i1.json").write_text(json.dumps(ref), encoding="utf-8")
+            scalar_invalid = f"{MARKER}-scalar-invalid"
+            cand = {
+                "non_goals": [f"{MARKER}-ng-c1", f"{MARKER}-ng-c2"],
+                "constraints": [],
+                "acceptance_checks": scalar_invalid,
+                # evidence_requirements intentionally omitted: missing field.
+            }
+            (cands / "i1.json").write_text(json.dumps(cand), encoding="utf-8")
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "ab",
+                    "--out",
+                    str(out),
+                ]
+            )
+            self.assertEqual(p.returncode, 0)
+            packet = (out / "packet-run1-set-ab-b01.md").read_text(encoding="utf-8")
+            self.assertIn(
+                "CANDIDATE: "
+                + json.dumps([f"{MARKER}-ng-c1", f"{MARKER}-ng-c2"], ensure_ascii=False)
+                + "\n",
+                packet,
+            )
+            self.assertIn("CANDIDATE: []\n", packet)
+            self.assertIn("CANDIDATE: <missing or invalid candidate>\n", packet)
+            self.assertNotIn(scalar_invalid, packet)
+
+    def test_build_empty_roster_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            refs.mkdir()
+            cands.mkdir()
+            out = root / "odir"
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "ab",
+                    "--out",
+                    str(out),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+            self.assertFalse(out.exists())
+
+            write_item(refs, cands, "i1")
+            write_item(refs, cands, "i2")
+            only = root / "only.txt"
+            only.write_text("nope-not-an-id\n", encoding="utf-8")
+            out2 = root / "odir2"
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--only",
+                    str(only),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "ab",
+                    "--out",
+                    str(out2),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+            self.assertFalse(out2.exists())
+
+            excl = root / "ex.json"
+            excl.write_text(
+                json.dumps([{"id": "i1"}, {"id": "i2"}]), encoding="utf-8"
+            )
+            out3 = root / "odir3"
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--exclude",
+                    str(excl),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "ab",
+                    "--out",
+                    str(out3),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+            self.assertFalse(out3.exists())
+
+            out3.mkdir()
+            before = {p.name for p in out3.iterdir()}
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--exclude",
+                    str(excl),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "ab",
+                    "--out",
+                    str(out3),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+            self.assertTrue(out3.is_dir())
+            self.assertEqual({p.name for p in out3.iterdir()}, before)
+
     def _build_with_exclude(self, root: Path, exclude_text: str) -> subprocess.CompletedProcess:
         refs = root / "rdir"
         cands = root / "cdir"
@@ -1367,6 +1539,98 @@ class TestGradePackets(unittest.TestCase):
             )
             self.assertEqual(p.returncode, 0)
             self.assertTrue(outp.is_file())
+
+
+    def test_20_manifest_excluded_and_name_safety(self) -> None:
+        base = {
+            "label": "run1",
+            "set": "ab",
+            "rubric_sha256": RUBRIC_SHA_LIT,
+            "fields": list(FIELDS),
+            "n_items": 1,
+            "excluded": [],
+            "packets": [
+                {
+                    "packet": "packet-run1-set-ab-b01.md",
+                    "items": ["t1"],
+                    "sha256": "0" * 64,
+                }
+            ],
+        }
+
+        bad = dict(base)
+        del bad["excluded"]
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual((p.stderr or "").strip(), "usage error")
+
+        for bad_excluded in ("not-a-list", ["t1", "t1"], [""], [1], [None], [True]):
+            bad = dict(base)
+            bad["excluded"] = bad_excluded
+            p = self._merge_bad_manifest(bad)
+            self.assertEqual(p.returncode, 1, msg=repr(bad_excluded))
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+
+        bad = dict(base)
+        bad["n_items"] = True
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual((p.stderr or "").strip(), "usage error")
+
+        for bad_name in (
+            "../outside.md",
+            "a/foo.md",
+            "/etc/passwd.md",
+            "C:\\foo.md",
+            "..\\foo.md",
+            "foo.MD".lower() + "/../x.md",
+        ):
+            bad = dict(base)
+            bad["packets"] = [
+                {"packet": bad_name, "items": ["t1"], "sha256": "0" * 64},
+            ]
+            p = self._merge_bad_manifest(bad)
+            self.assertEqual(p.returncode, 1, msg=bad_name)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            man_path = root / "man.json"
+            collide = dict(base)
+            collide["n_items"] = 2
+            collide["packets"] = [
+                {"packet": "Packet-X.md", "items": ["t1"], "sha256": "0" * 64},
+                {"packet": "packet-x.md", "items": ["t2"], "sha256": "1" * 64},
+            ]
+            man_path.write_text(json.dumps(collide, indent=1), encoding="utf-8")
+            replies = root / "replies"
+            replies.mkdir()
+            (replies / "Packet-X.txt").write_text(
+                reply_body(["t1"]), encoding="utf-8", newline="\n"
+            )
+            outp = root / "grades.jsonl"
+            p = self.run_tool(
+                [
+                    "merge",
+                    "--manifest",
+                    str(man_path),
+                    "--replies",
+                    str(replies),
+                    "--grader",
+                    "gleft",
+                    "--out",
+                    str(outp),
+                ]
+            )
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual((p.stderr or "").strip(), "usage error")
+            self.assertFalse(outp.exists())
+
+        bad = dict(base)
+        bad["excluded"] = ["t1"]
+        p = self._merge_bad_manifest(bad)
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual((p.stderr or "").strip(), "usage error")
 
 
 if __name__ == "__main__":
