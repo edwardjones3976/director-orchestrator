@@ -54,6 +54,7 @@ $savedShimFail = $env:HL_SHIM_FAIL
 $savedFakeTemplate = $env:HL_FAKE_TEMPLATE_SHA
 $savedJunction = $env:HL_SHIM_JUNCTION
 $savedJunctionTarget = $env:HL_SHIM_JUNCTION_TARGET
+$savedCreateDest = $env:HL_SHIM_CREATE_DEST
 
 try {
     $uniq = [guid]::NewGuid().ToString('n')
@@ -96,16 +97,34 @@ try {
     [IO.File]::WriteAllBytes($shard2Path, $shard2Bytes)
     $shard1Sha = Get-Sha256File $shard1Path
     $shard2Sha = Get-Sha256File $shard2Path
+    $indexPath = Join-Path $snapDir 'model.safetensors.index.json'
 
     $expectedPath = Join-Path $cRoot 'reports\m1-expected-qwen3-14b.json'
-    $expectedDoc = [ordered]@{}
-    $expectedDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{
-        files = @(
-            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
-            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
-        )
+
+    function Write-FixtureExpected {
+        $expectedDoc = [ordered]@{}
+        $expectedDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{
+            files = @(
+                [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+                [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
+            )
+        }
+        [IO.File]::WriteAllText($expectedPath, ($expectedDoc | ConvertTo-Json -Depth 8))
     }
-    [IO.File]::WriteAllText($expectedPath, ($expectedDoc | ConvertTo-Json -Depth 8))
+
+    function Write-FixtureIndex {
+        $indexDoc = [ordered]@{
+            weight_map = [ordered]@{
+                'model.embed_tokens.weight' = 'model-00001-of-00002.safetensors'
+                'model.layers.0.weight'     = 'model-00001-of-00002.safetensors'
+                'lm_head.weight'            = 'model-00002-of-00002.safetensors'
+            }
+        }
+        [IO.File]::WriteAllText($indexPath, ($indexDoc | ConvertTo-Json -Depth 8))
+    }
+
+    Write-FixtureExpected
+    Write-FixtureIndex
 
     $sentinelPath = Join-Path $cRoot 'models\m1\qwen3-14b\sentinel.gguf'
     [IO.File]::WriteAllBytes($sentinelPath, [Text.Encoding]::UTF8.GetBytes('sentinel-gguf'))
@@ -117,7 +136,6 @@ try {
         $mod = Join-Path $Dir 'adapter_model.safetensors'
         [IO.File]::WriteAllText($cfg, $ConfigText)
         [IO.File]::WriteAllText($mod, $ModelText)
-        [IO.File]::WriteAllText((Join-Path $Dir 'notes.txt'), 'unlisted notes')
         $h1 = Get-Sha256File $cfg
         $h2 = Get-Sha256File $mod
         $doc = @{ files = [ordered]@{ 'adapter_config.json' = $h1; 'adapter_model.safetensors' = $h2 } }
@@ -133,11 +151,9 @@ try {
         $shard2Path,
         (Join-Path $adapter1 'adapter_config.json'),
         (Join-Path $adapter1 'adapter_model.safetensors'),
-        (Join-Path $adapter1 'notes.txt'),
         (Join-Path $adapter1 'adapter-hashes.json'),
         (Join-Path $adapter2 'adapter_config.json'),
         (Join-Path $adapter2 'adapter_model.safetensors'),
-        (Join-Path $adapter2 'notes.txt'),
         (Join-Path $adapter2 'adapter-hashes.json')
     )
 
@@ -171,7 +187,7 @@ for ($i = 0; $i -lt $DockerArgs.Count; $i++) {
 }
 $lc = $null
 for ($j = 0; $j -lt $DockerArgs.Count; $j++) {
-    if ([string]$DockerArgs[$j] -eq '-lc' -and ($j + 1) -lt $DockerArgs.Count) {
+    if ([string]$DockerArgs[$j] -eq '-lc' and ($j + 1) -lt $DockerArgs.Count) {
         $lc = [string]$DockerArgs[$j + 1]
         break
     }
@@ -228,11 +244,20 @@ if ($step -eq 'quantise') {
     exit 0
 }
 if ($step -eq 'template') {
+    if ($env:HL_SHIM_CREATE_DEST) {
+        $destCreate = [string]$env:HL_SHIM_CREATE_DEST
+        $destCreateDir = Split-Path -Parent $destCreate
+        if ($destCreateDir -and -not (Test-Path -LiteralPath $destCreateDir)) {
+            New-Item -ItemType Directory -Path $destCreateDir -Force | Out-Null
+        }
+        [IO.File]::WriteAllBytes($destCreate, [Text.Encoding]::UTF8.GetBytes('CONCURRENT-SENTINEL'))
+    }
     Write-Output ([string]$env:HL_FAKE_TEMPLATE_SHA)
     exit 0
 }
 throw "unknown docker step"
 '@
+    $shim = $shim.Replace("if ([string]`$DockerArgs[`$j] -eq '-lc' and (`$j + 1) -lt `$DockerArgs.Count) {", "if ([string]`$DockerArgs[`$j] -eq '-lc' -and (`$j + 1) -lt `$DockerArgs.Count) {")
     Set-Content -LiteralPath $shimPath -Value $shim -Encoding utf8NoBOM
 
     $env:HL_SHIM_LOG = $shimLogPath
@@ -276,39 +301,87 @@ throw "unknown docker step"
         return @((Get-Content -LiteralPath $shimLogPath -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }))
     }
 
-    function Clear-StagingJunctions {
-        if (-not $eRoot -or -not (Test-Path -LiteralPath $eRoot)) { return }
-        Get-ChildItem -LiteralPath $eRoot -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            $merged = Join-Path $_.FullName 'merged'
-            if (Test-Path -LiteralPath $merged) {
-                $it = Get-Item -LiteralPath $merged -Force
-                if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                    cmd.exe /c "rmdir `"$merged`"" | Out-Null
+    function Remove-JunctionsUnder([string]$Root) {
+        if (-not $Root -or -not (Test-Path -LiteralPath $Root)) { return }
+        $stack = [System.Collections.Generic.Stack[string]]::new()
+        $stack.Push($Root)
+        $reparse = [System.Collections.Generic.List[string]]::new()
+        while ($stack.Count -gt 0) {
+            $dir = $stack.Pop()
+            if (-not (Test-Path -LiteralPath $dir)) { continue }
+            $dirItem = Get-Item -LiteralPath $dir -Force
+            if ($dirItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                [void]$reparse.Add($dir)
+                continue
+            }
+            foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+                if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                    [void]$reparse.Add($child.FullName)
+                } elseif ($child.PSIsContainer) {
+                    $stack.Push($child.FullName)
+                }
+            }
+        }
+        foreach ($p in $reparse) {
+            if (-not (Test-Path -LiteralPath $p)) { continue }
+            $it = Get-Item -LiteralPath $p -Force
+            if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                if ($it.PSIsContainer) {
+                    [System.IO.Directory]::Delete($p, $false)
+                } else {
+                    [System.IO.File]::Delete($p)
                 }
             }
         }
     }
 
+    function Remove-TreeSafe([string]$Path) {
+        if ([string]::IsNullOrWhiteSpace($Path)) { return }
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        Remove-JunctionsUnder $Path
+        if (Test-Path -LiteralPath $Path) {
+            $it = Get-Item -LiteralPath $Path -Force
+            if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                if ($it.PSIsContainer) {
+                    [System.IO.Directory]::Delete($Path, $false)
+                } else {
+                    [System.IO.File]::Delete($Path)
+                }
+            } else {
+                Remove-Item -LiteralPath $Path -Recurse -Force
+            }
+        }
+    }
+
+    function Clear-StagingJunctions {
+        if (-not $eRoot -or -not (Test-Path -LiteralPath $eRoot)) { return }
+        Remove-TreeSafe $eRoot
+    }
+
     function Clear-Artifacts {
         Clear-StagingJunctions
+        if ($eRoot -and -not (Test-Path -LiteralPath $eRoot)) {
+            New-Item -ItemType Directory -Path $eRoot -Force | Out-Null
+        }
         $m2 = Join-Path $cRoot 'models\m2'
         if (Test-Path -LiteralPath $m2) {
-            Remove-Item -LiteralPath $m2 -Recurse -Force
+            Remove-TreeSafe $m2
         }
         $rep = Join-Path $cRoot 'reports'
         if (Test-Path -LiteralPath $rep) {
             Get-ChildItem -LiteralPath $rep -File -Force -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -like 'm2-export-*' } |
-                Remove-Item -Force
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
         }
         if (Test-Path -LiteralPath $eRoot) {
             Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue | ForEach-Object {
-                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-TreeSafe $_.FullName
             }
         }
         if (Test-Path -LiteralPath $shimLogPath) { Remove-Item -LiteralPath $shimLogPath -Force }
         $env:HL_SHIM_FAIL = ''
         $env:HL_SHIM_JUNCTION = ''
+        $env:HL_SHIM_CREATE_DEST = ''
         $env:HL_FAKE_TEMPLATE_SHA = $templateSha
     }
 
@@ -387,6 +460,22 @@ throw "unknown docker step"
         $reportOk = ($j.name -eq 'tstexp') -and ($j.base_revision -eq $rev) -and $hasAh -and $shardDigests -and ($j.chat_template_sha256 -eq $templateSha) -and ($null -ne $j.output.size) -and ($j.output.sha256_read1 -eq $quantSha) -and ($j.output.sha256_read2 -eq $quantSha) -and $hasFree
     }
     Assert $reportOk 'happy: report fields (name, base revision, adapter hashes, shard read digests, chat-template digest, output size/digests, free-space)'
+    $stepNames = @('pre-check', 'adapter_hash', 'base_shards', 'staging', 'merge', 'convert', 'delete_merged', 'quantise', 'chat_template', 'publish')
+    $timingOk = $false
+    if ($null -ne $j -and $null -ne $j.steps) {
+        $timingOk = $true
+        foreach ($sn in $stepNames) {
+            $st = $j.steps.$sn
+            if ($null -eq $st) { $timingOk = $false; break }
+            $ds = $st.durationSeconds
+            $hasDur = ($null -ne $ds) -and ([double]$ds -ge 0)
+            if ([string]::IsNullOrWhiteSpace([string]$st.start) -or [string]::IsNullOrWhiteSpace([string]$st.end) -or -not $hasDur) {
+                $timingOk = $false
+                break
+            }
+        }
+    }
+    Assert $timingOk 'happy: step timings start, end, durationSeconds'
     $stagingKids = @()
     if (Test-Path -LiteralPath $eRoot) { $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force) }
     Assert ($stagingKids.Count -eq 0) 'happy: run staging folder is gone'
@@ -405,7 +494,6 @@ throw "unknown docker step"
     $qline = @($log | Where-Object { $_ -match 'step=quantise' })
     Assert ($qline.Count -eq 1 -and $qline[0] -match 'merged_exists=False') 'happy: quantise records merged already absent'
     Assert ((Get-GuardFingerprint) -eq $fpBeforeHappy) 'happy: sentinel, adapter files, and base shards unchanged'
-    Assert ($text.Contains('unlisted adapter file ignored: notes.txt')) 'happy: notes.txt mentioned and run still succeeded'
 
     # --- 4. Two checkpoints ---
     Clear-Artifacts
@@ -465,6 +553,130 @@ throw "unknown docker step"
     $text = Out-Text $r.Lines
     Assert ($r.Code -ne 0 -and $text -match 'actual=missing' -and (Get-ShimLogLines).Count -eq 0) 'manifest: listed file missing refused, no docker'
 
+    # --- T2 adapter-manifest regressions ---
+    Clear-Artifacts
+    $outsidePath = Join-Path $root 'outside.bin'
+    $outsideBytes = [Text.Encoding]::UTF8.GetBytes('OUTSIDE-BYTES')
+    [IO.File]::WriteAllBytes($outsidePath, $outsideBytes)
+    $outsideSha = Get-Sha256File $outsidePath
+    $escapeDir = Join-Path $root 'adapter-escape'
+    if (Test-Path -LiteralPath $escapeDir) { Remove-TreeSafe $escapeDir }
+    Copy-Item -LiteralPath $adapter1 -Destination $escapeDir -Recurse
+    $h1e = Get-Sha256File (Join-Path $escapeDir 'adapter_config.json')
+    $h2e = Get-Sha256File (Join-Path $escapeDir 'adapter_model.safetensors')
+    $outH = Get-Sha256File $outsidePath
+    $escJson = '{"files":{"adapter_config.json":"' + $h1e + '","adapter_model.safetensors":"' + $h2e + '","../outside.bin":"' + $outH + '"}}'
+    [IO.File]::WriteAllText((Join-Path $escapeDir 'adapter-hashes.json'), $escJson)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($escapeDir) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'invalid relative path' -and (Get-ShimLogLines).Count -eq 0) 't2a: ../outside.bin refused, no docker'
+    Assert ((Get-Sha256File $outsidePath) -eq $outsideSha) 't2a: outside.bin unchanged'
+
+    Clear-Artifacts
+    $unlistedTop = Join-Path $root 'adapter-unlisted-top'
+    if (Test-Path -LiteralPath $unlistedTop) { Remove-TreeSafe $unlistedTop }
+    Copy-Item -LiteralPath $adapter1 -Destination $unlistedTop -Recurse
+    [IO.File]::WriteAllText((Join-Path $unlistedTop 'extra.txt'), 'unlisted-top')
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($unlistedTop) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'unlisted file' -and (Get-ShimLogLines).Count -eq 0) 't2b: top-level unlisted file refused, no docker'
+
+    Clear-Artifacts
+    $unlistedSub = Join-Path $root 'adapter-unlisted-sub'
+    if (Test-Path -LiteralPath $unlistedSub) { Remove-TreeSafe $unlistedSub }
+    Copy-Item -LiteralPath $adapter1 -Destination $unlistedSub -Recurse
+    $subDir = Join-Path $unlistedSub 'nested'
+    New-Item -ItemType Directory -Path $subDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $subDir 'extra.bin'), 'unlisted-nested')
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($unlistedSub) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'unlisted file' -and (Get-ShimLogLines).Count -eq 0) 't2b: nested unlisted file refused, no docker'
+
+    Clear-Artifacts
+    $driveDir = Join-Path $root 'adapter-drive-key'
+    if (Test-Path -LiteralPath $driveDir) { Remove-TreeSafe $driveDir }
+    Copy-Item -LiteralPath $adapter1 -Destination $driveDir -Recurse
+    $h1d = Get-Sha256File (Join-Path $driveDir 'adapter_config.json')
+    $h2d = Get-Sha256File (Join-Path $driveDir 'adapter_model.safetensors')
+    $driveJson = '{"files":{"adapter_config.json":"' + $h1d + '","adapter_model.safetensors":"' + $h2d + '","C:/adapter_config.json":"' + $h1d + '"}}'
+    [IO.File]::WriteAllText((Join-Path $driveDir 'adapter-hashes.json'), $driveJson)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($driveDir) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'invalid relative path' -and (Get-ShimLogLines).Count -eq 0) 't2c: drive-qualified key refused, no docker'
+
+    Clear-Artifacts
+    $rootedDir = Join-Path $root 'adapter-rooted-key'
+    if (Test-Path -LiteralPath $rootedDir) { Remove-TreeSafe $rootedDir }
+    Copy-Item -LiteralPath $adapter1 -Destination $rootedDir -Recurse
+    $h1r = Get-Sha256File (Join-Path $rootedDir 'adapter_config.json')
+    $h2r = Get-Sha256File (Join-Path $rootedDir 'adapter_model.safetensors')
+    $rootedJson = '{"files":{"adapter_config.json":"' + $h1r + '","adapter_model.safetensors":"' + $h2r + '","/adapter_config.json":"' + $h1r + '"}}'
+    [IO.File]::WriteAllText((Join-Path $rootedDir 'adapter-hashes.json'), $rootedJson)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($rootedDir) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'invalid relative path' -and (Get-ShimLogLines).Count -eq 0) 't2c: rooted key refused, no docker'
+
+    Clear-Artifacts
+    $slashDir = Join-Path $root 'adapter-backslash-key'
+    if (Test-Path -LiteralPath $slashDir) { Remove-TreeSafe $slashDir }
+    Copy-Item -LiteralPath $adapter1 -Destination $slashDir -Recurse
+    $h1s = Get-Sha256File (Join-Path $slashDir 'adapter_config.json')
+    $h2s = Get-Sha256File (Join-Path $slashDir 'adapter_model.safetensors')
+    $slashJson = '{"files":{"adapter_config.json":"' + $h1s + '","adapter_model.safetensors":"' + $h2s + '","sub\\adapter_config.json":"' + $h1s + '"}}'
+    [IO.File]::WriteAllText((Join-Path $slashDir 'adapter-hashes.json'), $slashJson)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($slashDir) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'invalid relative path' -and (Get-ShimLogLines).Count -eq 0) 't2c: backslash key refused, no docker'
+
+    Clear-Artifacts
+    $juncAdapter = Join-Path $root 'adapter-junc'
+    if (Test-Path -LiteralPath $juncAdapter) { Remove-TreeSafe $juncAdapter }
+    Copy-Item -LiteralPath $adapter1 -Destination $juncAdapter -Recurse
+    $via = Join-Path $juncAdapter 'via'
+    try {
+        New-Item -ItemType Junction -Path $via -Target $jTarget | Out-Null
+        $h1j = Get-Sha256File (Join-Path $juncAdapter 'adapter_config.json')
+        $h2j = Get-Sha256File (Join-Path $juncAdapter 'adapter_model.safetensors')
+        $juncJson = '{"files":{"adapter_config.json":"' + $h1j + '","adapter_model.safetensors":"' + $h2j + '","via/junction-sentinel.bin":"' + $jSentinelSha + '"}}'
+        [IO.File]::WriteAllText((Join-Path $juncAdapter 'adapter-hashes.json'), $juncJson)
+        $r = Invoke-Export (New-ExportArgs -Checkpoint @($juncAdapter) -Execute)
+        $text = Out-Text $r.Lines
+        Assert ($r.Code -ne 0 -and $text -match 'reparse point' -and (Get-ShimLogLines).Count -eq 0) 't2d: junction path refused, no docker'
+        Assert ((Test-Path -LiteralPath $jSentinel -PathType Leaf) -and (Get-Sha256File $jSentinel) -eq $jSentinelSha) 't2d: junction target sentinel unchanged'
+    } finally {
+        if (Test-Path -LiteralPath $via) {
+            $itVia = Get-Item -LiteralPath $via -Force
+            if ($itVia.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                [System.IO.Directory]::Delete($via, $false)
+            }
+        }
+    }
+
+    Clear-Artifacts
+    $caseDir = Join-Path $root 'adapter-case-dup'
+    if (Test-Path -LiteralPath $caseDir) { Remove-TreeSafe $caseDir }
+    Copy-Item -LiteralPath $adapter1 -Destination $caseDir -Recurse
+    $h1c = Get-Sha256File (Join-Path $caseDir 'adapter_config.json')
+    $h2c = Get-Sha256File (Join-Path $caseDir 'adapter_model.safetensors')
+    $caseJson = '{"files":{"adapter_config.json":"' + $h1c + '","Adapter_config.json":"' + $h1c + '","adapter_model.safetensors":"' + $h2c + '"}}'
+    [IO.File]::WriteAllText((Join-Path $caseDir 'adapter-hashes.json'), $caseJson)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($caseDir) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'duplicate|different casing' -and (Get-ShimLogLines).Count -eq 0) 't2e: case-duplicate keys refused, no docker'
+
+    Clear-Artifacts
+    $badValDir = Join-Path $root 'adapter-bad-hash-value'
+    if (Test-Path -LiteralPath $badValDir) { Remove-TreeSafe $badValDir }
+    Copy-Item -LiteralPath $adapter1 -Destination $badValDir -Recurse
+    $h1b = Get-Sha256File (Join-Path $badValDir 'adapter_config.json')
+    $h2b = Get-Sha256File (Join-Path $badValDir 'adapter_model.safetensors')
+    $badValJson = '{"files":{"adapter_config.json":"not-a-hash","adapter_model.safetensors":"' + $h2b + '"}}'
+    [IO.File]::WriteAllText((Join-Path $badValDir 'adapter-hashes.json'), $badValJson)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($badValDir) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'invalid hash value' -and (Get-ShimLogLines).Count -eq 0) 't2f: bad hash value refused, no docker'
+    $null = $h1b
+
     # --- 7. Base shard mismatch ---
     Clear-Artifacts
     Invoke-FlipFirstByte $shard1Path
@@ -479,6 +691,85 @@ throw "unknown docker step"
     Assert ($stagingKids.Count -eq 0) 'base-shard: no staging folder'
     [IO.File]::WriteAllBytes($shard1Path, $shard1Bytes)
     Assert ((Get-Sha256File $shard1Path) -eq $shard1Sha) 'base-shard: fixture restored'
+
+    # --- T3 base-shard regressions ---
+    Clear-Artifacts
+    $idxExtra = [ordered]@{
+        weight_map = [ordered]@{
+            'model.embed_tokens.weight' = 'model-00001-of-00002.safetensors'
+            'lm_head.weight'            = 'model-00002-of-00002.safetensors'
+            'extra.weight'              = 'model-00003-of-00003.safetensors'
+        }
+    }
+    [IO.File]::WriteAllText($indexPath, ($idxExtra | ConvertTo-Json -Depth 8))
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3a: extra indexed shard refused, no docker, no staging'
+    Write-FixtureIndex
+
+    Clear-Artifacts
+    $expMissing = [ordered]@{}
+    $expMissing["Qwen/Qwen3-14B@$rev"] = [ordered]@{
+        files = @(
+            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
+            [ordered]@{ path = 'model-00003-of-00003.safetensors'; sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; size = 1 }
+        )
+    }
+    [IO.File]::WriteAllText($expectedPath, ($expMissing | ConvertTo-Json -Depth 8))
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3b: expected shard absent refused, no docker, no staging'
+    Write-FixtureExpected
+
+    Clear-Artifacts
+    $extraShard = Join-Path $snapDir 'extra.safetensors'
+    [IO.File]::WriteAllBytes($extraShard, [Text.Encoding]::UTF8.GetBytes('EXTRA-SHARD'))
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3c: unexpected present shard refused, no docker, no staging'
+    if (Test-Path -LiteralPath $extraShard) { Remove-Item -LiteralPath $extraShard -Force }
+
+    Clear-Artifacts
+    Remove-Item -LiteralPath $indexPath -Force
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match 'model\.safetensors\.index\.json' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3d: missing index refused, no docker, no staging'
+    Write-FixtureIndex
+
+    Clear-Artifacts
+    $expDots = [ordered]@{}
+    $expDots["Qwen/Qwen3-14B@$rev"] = [ordered]@{
+        files = @(
+            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
+            [ordered]@{ path = '../model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+        )
+    }
+    [IO.File]::WriteAllText($expectedPath, ($expDots | ConvertTo-Json -Depth 8))
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match '\.\.' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3e: expected path with .. refused, no docker, no staging'
+    Write-FixtureExpected
+
+    Clear-Artifacts
+    $expDup = [ordered]@{}
+    $expDup["Qwen/Qwen3-14B@$rev"] = [ordered]@{
+        files = @(
+            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+            [ordered]@{ path = 'Model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
+        )
+    }
+    [IO.File]::WriteAllText($expectedPath, ($expDup | ConvertTo-Json -Depth 8))
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match 'duplicate' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3f: duplicate expected path refused, no docker, no staging'
+    Write-FixtureExpected
 
     # --- 8. Staging under the C root ---
     Clear-Artifacts
@@ -509,6 +800,44 @@ throw "unknown docker step"
     $text = Out-Text $r.Lines
     Assert ($r.Code -ne 0 -and $text -match 'output already exists') 'output-exists: refused'
     Assert ((Get-Sha256File $outCkpt1) -eq $existSha) 'output-exists: existing file bytes unchanged'
+
+    # --- T4(b) pre-existing .part sentinel ---
+    Clear-Artifacts
+    $m2dir = Join-Path $cRoot 'models\m2'
+    New-Item -ItemType Directory -Path $m2dir -Force | Out-Null
+    $partPath = $outCkpt1 + '.part'
+    $partBytes = [Text.Encoding]::UTF8.GetBytes('PART-SENTINEL')
+    [IO.File]::WriteAllBytes($partPath, $partBytes)
+    $partSha = Get-Sha256File $partPath
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    Assert ($r.Code -eq 0) 'part-sentinel happy: exit 0'
+    Assert ((Get-Sha256File $partPath) -eq $partSha) 'part-sentinel happy: .part unchanged'
+    Assert (Test-Path -LiteralPath $outCkpt1 -PathType Leaf) 'part-sentinel happy: dest written'
+
+    Clear-Artifacts
+    $m2dir = Join-Path $cRoot 'models\m2'
+    New-Item -ItemType Directory -Path $m2dir -Force | Out-Null
+    [IO.File]::WriteAllBytes($partPath, $partBytes)
+    $partSha = Get-Sha256File $partPath
+    $env:HL_SHIM_FAIL = 'merge'
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    Assert ($r.Code -ne 0) 'part-sentinel fail: run fails'
+    Assert ((Get-Sha256File $partPath) -eq $partSha) 'part-sentinel fail: .part unchanged'
+    $env:HL_SHIM_FAIL = ''
+
+    # --- T4(c) concurrent dest creation ---
+    Clear-Artifacts
+    $concurrentBytes = [Text.Encoding]::UTF8.GetBytes('CONCURRENT-SENTINEL')
+    $env:HL_SHIM_CREATE_DEST = $outCkpt1
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $kept = Get-KeptStaging $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'output already exists') 'concurrent: refused already exists'
+    Assert ((Test-Path -LiteralPath $outCkpt1 -PathType Leaf) -and (Get-Sha256File $outCkpt1) -eq (Get-Sha256Bytes $concurrentBytes)) 'concurrent: sentinel bytes unchanged'
+    Assert (-not (Test-Path -LiteralPath ($outCkpt1 + '.part'))) 'concurrent: no .part'
+    Assert ($null -ne $kept -and (Test-Path -LiteralPath (Join-Path $kept '.hl-export-staging') -PathType Leaf)) 'concurrent: staging kept with marker'
+    Assert ((Get-ExportReports).Count -eq 0) 'concurrent: no report file'
+    $env:HL_SHIM_CREATE_DEST = ''
 
     # --- 11. Chat-template mismatch ---
     Clear-Artifacts
@@ -557,6 +886,9 @@ throw "unknown docker step"
     Assert ((Test-Path -LiteralPath $jSentinel -PathType Leaf) -and (Get-Sha256File $jSentinel) -eq $jSentinelSha) 'delete-guard: sentinel behind junction still exists'
     $env:HL_SHIM_JUNCTION = ''
     Clear-StagingJunctions
+    if ($eRoot -and -not (Test-Path -LiteralPath $eRoot)) {
+        New-Item -ItemType Directory -Path $eRoot -Force | Out-Null
+    }
 
     # --- 14. Static checks ---
     $st = Get-Content -LiteralPath $script -Raw -Encoding utf8
@@ -573,31 +905,43 @@ throw "unknown docker step"
     Assert $allHaveNet 'static: every docker run argument list includes --network followed by none'
 
     Assert ((Get-Sha256File $sentinelPath) -eq $sentinelSha) 'guard: C sentinel unchanged at end'
+    Assert ((Test-Path -LiteralPath $jSentinel -PathType Leaf) -and (Get-Sha256File $jSentinel) -eq $jSentinelSha) 'guard: junction target sentinel unchanged at end'
 } finally {
-    if ($eRoot) {
-        if (Test-Path -LiteralPath $eRoot) {
-            Get-ChildItem -LiteralPath $eRoot -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
-                $merged = Join-Path $_.FullName 'merged'
-                if (Test-Path -LiteralPath $merged) {
-                    $it = Get-Item -LiteralPath $merged -Force -ErrorAction SilentlyContinue
-                    if ($it -and ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                        cmd.exe /c "rmdir `"$merged`"" | Out-Null
-                    }
-                }
-            }
+    function Assert-DeletableScratch([string]$Path) {
+        $full = [IO.Path]::GetFullPath($Path)
+        $temp = [IO.Path]::GetFullPath($env:TEMP)
+        $sep = [IO.Path]::DirectorySeparatorChar
+        $prefix = $temp.TrimEnd($sep) + $sep
+        if (-not $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "cleanup refused: $full is not strictly inside $temp"
+        }
+        $leaf = [IO.Path]::GetFileName($full.TrimEnd($sep))
+        if (-not ($leaf.StartsWith('hl-test-export-adapter-') -or $leaf.StartsWith('hl-test-export-jtarget-'))) {
+            throw "cleanup refused: $full leaf not a test scratch name"
         }
     }
+    if ($root) { Assert-DeletableScratch $root }
+    if ($jTarget) { Assert-DeletableScratch $jTarget }
     if ($root -and (Test-Path -LiteralPath $root)) {
-        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-TreeSafe $root
+    }
+    if ($jSentinel -and $jSentinelSha) {
+        if (-not (Test-Path -LiteralPath $jSentinel -PathType Leaf)) {
+            throw 'junction sentinel missing after scratch cleanup'
+        }
+        if ((Get-Sha256File $jSentinel) -ne $jSentinelSha) {
+            throw 'junction sentinel hash changed after scratch cleanup'
+        }
     }
     if ($jTarget -and (Test-Path -LiteralPath $jTarget)) {
-        Remove-Item -LiteralPath $jTarget -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-TreeSafe $jTarget
     }
     if ($null -eq $savedShimLog) { Remove-Item Env:HL_SHIM_LOG -ErrorAction SilentlyContinue } else { $env:HL_SHIM_LOG = $savedShimLog }
     if ($null -eq $savedShimFail) { Remove-Item Env:HL_SHIM_FAIL -ErrorAction SilentlyContinue } else { $env:HL_SHIM_FAIL = $savedShimFail }
     if ($null -eq $savedFakeTemplate) { Remove-Item Env:HL_FAKE_TEMPLATE_SHA -ErrorAction SilentlyContinue } else { $env:HL_FAKE_TEMPLATE_SHA = $savedFakeTemplate }
     if ($null -eq $savedJunction) { Remove-Item Env:HL_SHIM_JUNCTION -ErrorAction SilentlyContinue } else { $env:HL_SHIM_JUNCTION = $savedJunction }
     if ($null -eq $savedJunctionTarget) { Remove-Item Env:HL_SHIM_JUNCTION_TARGET -ErrorAction SilentlyContinue } else { $env:HL_SHIM_JUNCTION_TARGET = $savedJunctionTarget }
+    if ($null -eq $savedCreateDest) { Remove-Item Env:HL_SHIM_CREATE_DEST -ErrorAction SilentlyContinue } else { $env:HL_SHIM_CREATE_DEST = $savedCreateDest }
 }
 
 if ($fail.Count -gt 0) {
