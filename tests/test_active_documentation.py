@@ -99,32 +99,36 @@ class ActiveDocumentationTests(unittest.TestCase):
             tuple(yaml.safe_load(profile)["team"]["director"][key] for key in ("provider", "appointment")),
         )
 
-    def test_codex_director_fallback_requires_explicit_owner_appointment(self):
+    def test_codex_prompt_routes_completion_to_appointed_lead_and_scopes_fallback(self):
         text = " ".join((ROOT / "prompts/codex-engineering.md").read_text(
             encoding="utf-8"
         ).split())
         for clause in (
+            "owner's 2026-10-02 appointment makes Claude the completion lead through 20/20 plus issue #81, including while Codex is available",
+            "Return Director-Orchestrator completion scope and sequencing decisions to Claude",
+            "This appointment excludes Homemade LLM and other projects",
+            "Outside that scoped completion appointment, retain explicit project appointments",
+            "Where no project appointment applies, the general deputy arrangement operates",
             "only under the owner's explicit appointment of Claude as second in command",
             "owner directive, 2026-09-22",
             "only while the ChatGPT/Codex Director is unavailable",
-            "This appointment is current and scoped",
-            "in effect until the owner revokes or replaces it",
-            "This later owner appointment takes precedence, for that scope only, over the general no-standing-assignment statement in docs/project-leadership.md",
-            "never removes deterministic gates or permits self-approval or self-merge",
+            "it does not limit Claude's separate current Director-Orchestrator completion appointment",
+            "Cursor covers all Director duties when both Codex and Claude are unavailable and retains administrator status while either is present",
+            "never remove deterministic gates or permit self-approval or self-merge",
             "Every lane routing still passes capability, authority, availability, budget, repository, and independence checks",
-            "Without that appointment, decisions wait for the ChatGPT/Codex Director or the owner",
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, text)
 
         self.assertIn(
-            "Return scope and sequencing decisions to the acting Director: the "
-            "ChatGPT/Codex Director, or, only while the owner's current scoped appointment "
-            "of Claude as second in command is in effect and the ChatGPT/Codex Director "
-            "is unavailable, Claude; when both are unavailable, the owner's appointed "
-            "third in command, Cursor; otherwise the owner.",
+            "Return completion decisions to Claude under the current appointment, "
+            "even when Codex is available. For other work, follow its owner-appointed "
+            "project Director; where none is appointed, follow Codex, then Claude "
+            "during Codex's absence, then Cursor when both are unavailable.",
             text,
         )
+        self.assertNotIn("The ChatGPT/Codex Director holds project coordination", text)
+        self.assertNotIn("Return scope and sequencing decisions to the acting Director: the ChatGPT/Codex Director", text)
 
     def test_provider_fit_menu_covers_canonical_providers(self):
         contract = yaml.safe_load((ROOT / "docs/templates/project-bootstrap/provider-roles-contract.yaml").read_text(
