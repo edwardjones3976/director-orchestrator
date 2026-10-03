@@ -137,13 +137,21 @@ def _context_for_scoring(path):
     data = _load_json_data(path)
     if not isinstance(data, dict):
         return False, ""
-    blocks = data.get("context") or []
+    if "context" not in data:
+        return False, ""
+    blocks = data["context"]
     if not isinstance(blocks, list):
         return False, ""
     parts = []
     for block in blocks:
-        if isinstance(block, dict) and isinstance(block.get("text"), str):
-            parts.append(block["text"])
+        if not isinstance(block, dict):
+            return False, ""
+        if "text" not in block:
+            return False, ""
+        text = block["text"]
+        if not isinstance(text, str):
+            return False, ""
+        parts.append(text)
     return True, norm(" ".join(parts))
 
 

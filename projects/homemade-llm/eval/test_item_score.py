@@ -859,6 +859,139 @@ class ItemScoreTests(unittest.TestCase):
         self.assertNotIn("spurious_context_unknown", data)
         self.assertEqual(set(data.keys()), TOP_KEYS)
 
+    def _clear_score_packet_dirs(self):
+        for folder in (self.refs, self.cands, self.inputs):
+            for path in folder.glob("*.json"):
+                path.unlink()
+
+    def _write_spurious_local_packet(self, marker, item_id):
+        real = f"real reference item {marker}"
+        extra = "Keep requests local"
+        ref = empty_packet(non_goals=[real])
+        cand = empty_packet(non_goals=[real, extra])
+        self._write(self.refs, item_id, ref)
+        self._write(self.cands, item_id, cand)
+        return extra
+
+    def _run_inputs_context_case(self, item_id, context_payload, out_name):
+        self._write(self.inputs, item_id, context_payload)
+        out = self._out_path(out_name)
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        return self._load(proc, text)
+
+    def _assert_context_unavailable_report(self, data):
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_context_unavailable"], 1)
+        self.assertEqual(data["spurious_context_unknown"], 1)
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+
+    def test_context_presence_type_and_block_validation(self):
+        marker = self._mark("SECRETMARKER-ctxval")
+        extra = "Keep requests local"
+        unavailable_payloads = [
+            ("no_member", {}),
+            ("null", {"context": None}),
+            ("false", {"context": False}),
+            ("empty_str", {"context": ""}),
+            ("object", {"context": {}}),
+            ("string_ctx", {"context": extra}),
+            ("number", {"context": 7}),
+            ("block_string", {"context": [extra]}),
+            ("block_no_text", {"context": [{"provenance": "x"}]}),
+            ("text_number", {"context": [{"text": 1}]}),
+            ("text_null", {"context": [{"text": None}]}),
+            (
+                "mixed_valid_malformed",
+                {
+                    "context": [
+                        {"text": f"prefix {extra} suffix"},
+                        {"text": 1},
+                    ]
+                },
+            ),
+        ]
+        for suffix, payload in unavailable_payloads:
+            with self.subTest(case=suffix):
+                self._clear_score_packet_dirs()
+                item_id = f"hid-ctx-bad-{suffix}"
+                self._write_spurious_local_packet(marker, item_id)
+                data = self._run_inputs_context_case(
+                    item_id, payload, f"ctx_bad_{suffix}.json"
+                )
+                self._assert_context_unavailable_report(data)
+
+        self._clear_score_packet_dirs()
+        item_id = "hid-ctx-ok-in"
+        self._write_spurious_local_packet(marker, item_id)
+        data = self._run_inputs_context_case(
+            item_id,
+            {"context": [{"text": f"prefix {extra} suffix"}]},
+            "ctx_ok_in.json",
+        )
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["spurious_in_context"], 1)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+        self.assertEqual(data["packets_context_unavailable"], 0)
+        self.assertEqual(data["spurious_context_unknown"], 0)
+
+        self._clear_score_packet_dirs()
+        item_id = "hid-ctx-ok-empty"
+        self._write_spurious_local_packet(marker, item_id)
+        data = self._run_inputs_context_case(
+            item_id, {"context": []}, "ctx_ok_empty.json"
+        )
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 1)
+        self.assertEqual(data["packets_context_unavailable"], 0)
+        self.assertEqual(data["spurious_context_unknown"], 0)
+
+        self._clear_score_packet_dirs()
+        item_id = "hid-ctx-ok-prov"
+        self._write_spurious_local_packet(marker, item_id)
+        data = self._run_inputs_context_case(
+            item_id,
+            {
+                "context": [
+                    {
+                        "text": f"noise {marker}",
+                        "source_id": "prov-1",
+                        "offset": 0,
+                    }
+                ]
+            },
+            "ctx_ok_prov.json",
+        )
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["spurious_not_in_context"], 1)
+        self.assertEqual(data["packets_context_unavailable"], 0)
+
+        self._clear_score_packet_dirs()
+        item_id = "hid-ctx-ok-punct"
+        self._write_spurious_local_packet(marker, item_id)
+        data = self._run_inputs_context_case(
+            item_id,
+            {"context": [{"text": "!!!"}]},
+            "ctx_ok_punct.json",
+        )
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["spurious_not_in_context"], 1)
+        self.assertEqual(data["packets_context_unavailable"], 0)
+
+        self._clear_score_packet_dirs()
+        item_id = "hid-ctx-no-inp"
+        self._write_spurious_local_packet(marker, item_id)
+        self._write(self.inputs, item_id, {"context": [{"text": "unused"}]})
+        out = self._out_path("ctx_no_inp_keys.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertNotIn("spurious_in_context", data)
+        self.assertNotIn("packets_context_unavailable", data)
+        self.assertEqual(set(data.keys()), TOP_KEYS)
+
 
 if __name__ == "__main__":
     unittest.main()
