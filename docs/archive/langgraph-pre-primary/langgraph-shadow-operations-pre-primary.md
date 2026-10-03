@@ -10,8 +10,8 @@ steps describe historical capability evidence and operator procedure at that tim
 not current operating instructions.
 
 For intended operations authority after merge and activation, see
-[langgraph-primary-operations.md](../langgraph-primary-operations.md). The tombstone
-at [langgraph-shadow-operations.md](../langgraph-shadow-operations.md) links here.
+[langgraph-primary-operations.md](../../langgraph-primary-operations.md). The tombstone
+at [langgraph-shadow-operations.md](../../langgraph-shadow-operations.md) links here.
 
 ---
 
