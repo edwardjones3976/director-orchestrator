@@ -1,0 +1,56 @@
+{
+  "schema_version": "director-release-descriptor/v1",
+  "release_id": "example-r1",
+  "source": "C:/Director/source",
+  "candidate": {
+    "commit": "0000000000000000000000000000000000000000",
+    "tree": "0000000000000000000000000000000000000000"
+  },
+  "compose_project": "director-example",
+  "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "runtime_env": {
+    "path": "C:/Director/R1/runtime.env",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "bridge_env": {
+    "path": "C:/Director/R1/bridge.env",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "compose_files": [
+    {
+      "path": "C:/Director/R1/compose.yml",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "generation_manifest": {
+    "path": "C:/Director/R1/generation.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "validation_manifest": {
+    "path": "C:/Director/R1/validation.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "bridge_url": "https://127.0.0.1:18767/v1/provider/configuration-digest",
+  "bridge_ca": {
+    "path": "C:/Director/R1/bridge-ca.pem",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "snapshot": {
+    "path": "C:/Director/snapshot",
+    "repository": "example/director",
+    "starting_ref": "main",
+    "remote": "github",
+    "commit": "0000000000000000000000000000000000000000",
+    "tree": "0000000000000000000000000000000000000000"
+  },
+  "reviewers": {
+    "independent": "example-reviewer",
+    "security": "example-security"
+  },
+  "executables": {
+    "python": "C:/Tools/Python/python.exe",
+    "powershell": "C:/Tools/PowerShell/pwsh.exe"
+  },
+  "output_directory": "C:/Director/protected-output",
+  "timeout_seconds": 30
+}

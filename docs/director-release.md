@@ -19,6 +19,9 @@ probes or preparation writes. The tests perform no real owner installation.
 
 The closed schema is
 [`schemas/director-release-descriptor-v1.schema.json`](schemas/director-release-descriptor-v1.schema.json).
+The accompanying [example](schemas/director-release-descriptor-v1.example.json)
+uses illustrative paths and zero hashes; it grants no authority and cannot prepare
+a release until replaced with verified inputs and an owner's exact-byte pin.
 Unknown fields, duplicate JSON keys, and non-finite numbers are rejected. Supply
 a protected descriptor with these inputs; no secrets belong in the descriptor:
 

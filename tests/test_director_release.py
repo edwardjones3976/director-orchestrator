@@ -96,7 +96,10 @@ class ReleasePreparationTests(unittest.TestCase):
             "snapshot": {"path": str(self.snapshot), "repository": "fixture/project", "starting_ref": "main",
                          "remote": "origin", "commit": self.candidate, "tree": self.tree},
             "reviewers": {"independent": "fixture-reviewer", "security": "fixture-security"},
-            "executables": {"python": sys.executable, "powershell": sys.executable},
+            # Linux venv launchers are commonly symlinks; pin the real executable.
+            # The production consumer must still refuse unresolved linked paths.
+            "executables": {"python": str(Path(sys.executable).resolve()),
+                            "powershell": str(Path(sys.executable).resolve())},
             "output_directory": str(self.output), "timeout_seconds": 30}
         self.descriptor = self.root / "descriptor.json"
         self.owner_root = self.root / "owner" / ".director-scorecard"
