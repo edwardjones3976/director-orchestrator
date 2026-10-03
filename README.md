@@ -99,6 +99,22 @@ and that includes me: I may write a change or I may accept one, never both.
 and [Claude's project instructions](CLAUDE.md). The leadership handoff does not
 attest that a deployed service has switched its executing provider.
 
+## Administrators and chain of command
+
+**Owner -> #1 ChatGPT/Codex -> #2 Claude -> #3 Cursor -> assigned providers.**
+Codex, Claude and Cursor are the three provider administrators. Codex may
+overrule and delegate to both; Claude may overrule and delegate to Cursor.
+Cursor is an administrator even while another administrator is directing work.
+Claude covers Codex's absence; Cursor carries all Director duties when both
+are unavailable. The owner approves macro plans; administrators handle individual
+assignments and subordinate plans within existing delegation and runtime gates.
+
+**Current completion lead: Claude, for Director-Orchestrator through 20/20 plus
+issue #81.** Codex remains overall Director and supports Claude's completion
+plan. That assignment excludes Homemade LLM and other projects. See
+[administrator responsibilities and the scoped appointment](docs/project-leadership.md#administrators-and-chain-of-command)
+and [staff/briefing responsibilities](docs/team-staff-and-briefings.md).
+
 ## INVESTIGATOR responsibility
 
 OpenAI/Director members also act as **INVESTIGATOR** under the
