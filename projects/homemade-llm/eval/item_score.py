@@ -4,9 +4,9 @@ import argparse
 import difflib
 import json
 import os
-import re
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 FIELDS = ("non_goals", "constraints", "acceptance_checks", "evidence_requirements")
@@ -31,7 +31,18 @@ class UsageError(Exception):
 
 
 def norm(s):
-    return re.sub(r"[^0-9a-z]+", " ", s.casefold()).strip()
+    s = unicodedata.normalize("NFKC", s).casefold()
+    out = []
+    prev_sep = False
+    for ch in s:
+        if ch.isalnum():
+            out.append(ch)
+            prev_sep = False
+        else:
+            if out and not prev_sep:
+                out.append(" ")
+                prev_sep = True
+    return "".join(out).strip()
 
 
 def _ratio(n, d):
@@ -125,11 +136,18 @@ def score_packet(ref_fields, cand_fields, context_norm):
     cand_n = {f: [norm(x) for x in cand_fields[f]] for f in FIELDS}
     ref_status = {f: [None] * len(ref_n[f]) for f in FIELDS}
     cand_status = {f: [None] * len(cand_n[f]) for f in FIELDS}
+    has_empty = any(not x for f in FIELDS for x in ref_n[f]) or any(
+        not x for f in FIELDS for x in cand_n[f]
+    )
 
     for field in FIELDS:
         claimed = [False] * len(ref_n[field])
         for i, item in enumerate(cand_n[field]):
+            if not item:
+                continue
             for j, ref_item in enumerate(ref_n[field]):
+                if not ref_item:
+                    continue
                 if not claimed[j] and item == ref_item:
                     claimed[j] = True
                     cand_status[field][i] = "correct"
@@ -140,6 +158,8 @@ def score_packet(ref_fields, cand_fields, context_norm):
         for i, item in enumerate(cand_n[field]):
             if cand_status[field][i] is not None:
                 continue
+            if not item:
+                continue
             if any(cand_n[field][k] == item for k in range(i)):
                 cand_status[field][i] = "duplicate"
 
@@ -147,11 +167,15 @@ def score_packet(ref_fields, cand_fields, context_norm):
         for i, item in enumerate(cand_n[field]):
             if cand_status[field][i] is not None:
                 continue
+            if not item:
+                continue
             taken = False
             for other in FIELDS:
                 if other == field:
                     continue
                 for j, ref_item in enumerate(ref_n[other]):
+                    if not ref_item:
+                        continue
                     if ref_status[other][j] is None and ref_item == item:
                         ref_status[other][j] = "misrouted"
                         cand_status[field][i] = "wrong_field"
@@ -184,20 +208,23 @@ def score_packet(ref_fields, cand_fields, context_norm):
             for i, status in enumerate(cand_status[field])
             if status == "spurious"
         ]
+        nonempty_spurious = [extra for extra in spurious_items if extra]
         near = 0
         for j, ref_item in enumerate(ref_n[field]):
             if ref_status[field][j] != "omitted":
                 continue
+            if not ref_item:
+                continue
             if any(
                 difflib.SequenceMatcher(None, ref_item, extra).ratio() >= 0.90
-                for extra in spurious_items
+                for extra in nonempty_spurious
             ):
                 near += 1
         counts["near_right_field"] = near
         per_field[field] = counts
         if context_norm is not None:
             for extra in spurious_items:
-                if extra in context_norm:
+                if extra and extra in context_norm:
                     spurious_in_context += 1
                 else:
                     spurious_not_in_context += 1
@@ -237,8 +264,9 @@ def score_packet(ref_fields, cand_fields, context_norm):
         and misrouted == 0
         and wrong_field == 0
         and duplicate == 0
-        and spurious == 0,
-        "zero_omission": omitted == 0 and misrouted == 0,
+        and spurious == 0
+        and not has_empty,
+        "zero_omission": omitted == 0 and misrouted == 0 and not has_empty,
         "packet_recall": _ratio(matched, ref_items) if ref_items else None,
     }
 
@@ -257,7 +285,8 @@ def _atomic_write(path, text):
                 os.fsync(handle.fileno())
             except OSError:
                 pass
-        os.replace(tmp_name, str(path))
+        os.link(tmp_name, str(path))
+        os.unlink(tmp_name)
         tmp_name = None
     finally:
         if fd >= 0:
@@ -291,11 +320,15 @@ def _parse_args(argv):
 
 
 def build_report(totals, field_totals, packet_recalls, use_inputs):
+    unreadable = totals["packets_unreadable_reference"] > 0
     per_field = {}
     for field in FIELDS:
         counts = field_totals[field]
         counts["precision"] = _ratio(counts["correct"], counts["candidate_items"])
-        counts["recall"] = _ratio(counts["matched"], counts["reference_items"])
+        if unreadable:
+            counts["recall"] = None
+        else:
+            counts["recall"] = _ratio(counts["matched"], counts["reference_items"])
         per_field[field] = {key: counts[key] for key in PER_FIELD_KEYS}
     if packet_recalls:
         packet_recall = {
@@ -305,19 +338,37 @@ def build_report(totals, field_totals, packet_recalls, use_inputs):
         }
     else:
         packet_recall = None
+    if (
+        totals["packets_missing_candidate"] == 0
+        and totals["packets_malformed_candidate"] == 0
+        and totals["packets_unreadable_reference"] == 0
+    ):
+        status = "complete"
+    else:
+        status = "incomplete"
+    if unreadable:
+        overall_recall = None
+    else:
+        overall_recall = _ratio(totals["matched"], totals["reference_items"])
     report = {
         "packets_scored": totals["packets_scored"],
         "packets_missing_candidate": totals["packets_missing_candidate"],
         "packets_malformed_candidate": totals["packets_malformed_candidate"],
         "packets_unreadable_reference": totals["packets_unreadable_reference"],
+        "status": status,
+        "packets_roster": totals["packets_roster"],
         "reference_items": totals["reference_items"],
+        "reference_items_scored": totals["reference_items_scored"],
         "candidate_items": totals["candidate_items"],
         "per_field": per_field,
         "repeated_across_fields": totals["repeated_across_fields"],
         "zero_error_packets": totals["zero_error_packets"],
         "zero_omission_packets": totals["zero_omission_packets"],
         "packet_recall": packet_recall,
-        "overall_recall": _ratio(totals["matched"], totals["reference_items"]),
+        "overall_recall": overall_recall,
+        "overall_recall_valid_candidates_only": _ratio(
+            totals["matched"], totals["reference_items_scored"]
+        ),
         "overall_precision": _ratio(totals["correct"], totals["candidate_items"]),
     }
     if use_inputs:
@@ -367,7 +418,9 @@ def run(argv):
         "packets_missing_candidate": 0,
         "packets_malformed_candidate": 0,
         "packets_unreadable_reference": 0,
+        "packets_roster": 0,
         "reference_items": 0,
+        "reference_items_scored": 0,
         "candidate_items": 0,
         "matched": 0,
         "correct": 0,
@@ -381,6 +434,7 @@ def run(argv):
     packet_recalls = []
     use_inputs = args.inputs is not None
     inputs_dir = Path(args.inputs) if use_inputs else None
+    totals["packets_roster"] = len(ids)
 
     for item_id in ids:
         ref_obj = _load_json(refs_dir / f"{item_id}.json")
@@ -391,11 +445,33 @@ def run(argv):
         cand_path = cands_dir / f"{item_id}.json"
         if not cand_path.is_file():
             totals["packets_missing_candidate"] += 1
+            result = score_packet(ref_fields, {f: [] for f in FIELDS}, None)
+            totals["reference_items"] += result["reference_items"]
+            for field in FIELDS:
+                dest = field_totals[field]
+                src = result["per_field"][field]
+                dest["reference_items"] += src["reference_items"]
+                dest["omitted"] += src["omitted"]
+                dest["misrouted"] += src["misrouted"]
+                dest["matched"] += src["matched"]
+            if result["reference_items"]:
+                packet_recalls.append(0.0)
             continue
         cand_obj = _load_json(cand_path)
         cand_fields = _parse_fields(cand_obj) if cand_obj is not None else None
         if cand_fields is None:
             totals["packets_malformed_candidate"] += 1
+            result = score_packet(ref_fields, {f: [] for f in FIELDS}, None)
+            totals["reference_items"] += result["reference_items"]
+            for field in FIELDS:
+                dest = field_totals[field]
+                src = result["per_field"][field]
+                dest["reference_items"] += src["reference_items"]
+                dest["omitted"] += src["omitted"]
+                dest["misrouted"] += src["misrouted"]
+                dest["matched"] += src["matched"]
+            if result["reference_items"]:
+                packet_recalls.append(0.0)
             continue
         ctx = None
         if use_inputs:
@@ -403,6 +479,7 @@ def run(argv):
         result = score_packet(ref_fields, cand_fields, ctx)
         totals["packets_scored"] += 1
         totals["reference_items"] += result["reference_items"]
+        totals["reference_items_scored"] += result["reference_items"]
         totals["candidate_items"] += result["candidate_items"]
         totals["matched"] += result["matched"]
         totals["correct"] += result["correct"]

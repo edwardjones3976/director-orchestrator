@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import grade_packets
@@ -54,7 +57,7 @@ def row(iid: str, field: str, accepted: object, grader: object | None = "__GRADE
     return json.dumps(obj, ensure_ascii=False)
 
 
-def reply_body(items: list[str], *, accepted: bool = True, grader: str | None = "__GRADER__", extra: bool = True) -> str:
+def reply_body(items: list[str], *, accepted: bool = True, grader: str | None = "__GRADER__", extra: bool = False) -> str:
     parts: list[str] = []
     if extra:
         parts.append(f"prose around rows {MARKER}")
@@ -436,11 +439,10 @@ class TestGradePackets(unittest.TestCase):
             replies.mkdir()
             for pkt in man["packets"]:
                 items = list(pkt["items"])
-                parts = [f"intro {MARKER}"]
+                parts = []
                 for iid in reversed(items):
                     for field in reversed(FIELDS):
                         parts.append(row(iid, field, True, grader="__GRADER__"))
-                parts.append(f"outro {MARKER}")
                 (replies / (Path(pkt["packet"]).stem + ".txt")).write_text(
                     "\n".join(parts) + "\n", encoding="utf-8", newline="\n"
                 )
@@ -621,10 +623,11 @@ class TestGradePackets(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
+            body = "\n".join(row("t1", f, True, grader="eve") for f in FIELDS) + "\n"
             p = self._merge_case(
                 root,
                 [(pkt, items)],
-                {stem: full(grader="eve")},
+                {stem: body},
                 extra_args=["--allow-label", "eve"],
                 out_name="ok.jsonl",
             )
@@ -721,6 +724,315 @@ class TestGradePackets(unittest.TestCase):
                 self.assertEqual(set(summary2), SUMMARY_KEYS)
                 for v in summary2.values():
                     self.assertIsInstance(v, int)
+
+    def test_11_reply_grammar(self) -> None:
+        pkt = "packet-run1-set-ab-b01.md"
+        stem = Path(pkt).stem + ".txt"
+        items = ["t1"]
+        accs = {
+            "non_goals": True,
+            "constraints": False,
+            "acceptance_checks": True,
+            "evidence_requirements": False,
+        }
+
+        def valid_rows() -> str:
+            return "\n".join(row("t1", f, accs[f]) for f in FIELDS) + "\n"
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            body = valid_rows() + '{"id": "t1", "field": "non_goals", "accepted": true\n'
+            p = self._merge_case(root, [(pkt, items)], {stem: body})
+            self.assertEqual(p.returncode, 2)
+            s = json.loads((p.stdout or "").strip())
+            self.assertGreaterEqual(s["malformed"], 1)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parts = []
+            for field in FIELDS:
+                inner = {"id": "t1", "field": field, "accepted": True, "grader": "__GRADER__"}
+                parts.append(json.dumps({"data": inner}))
+            p = self._merge_case(root, [(pkt, items)], {stem: "\n".join(parts) + "\n"})
+            self.assertEqual(p.returncode, 2)
+            s = json.loads((p.stdout or "").strip())
+            self.assertGreaterEqual(s["malformed"], 1)
+
+        rest = "\n".join(row("t1", f, True) for f in FIELDS if f != "non_goals")
+        for blob in (
+            '{"id": "t1", "field": "non_goals", "accepted": false, "accepted": true}',
+            '{"id": "t1", "field": "non_goals", "accepted": true, "accepted": false}',
+        ):
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                p = self._merge_case(root, [(pkt, items)], {stem: blob + "\n" + rest + "\n"})
+                self.assertEqual(p.returncode, 2)
+                s = json.loads((p.stdout or "").strip())
+                self.assertGreaterEqual(s["malformed"], 1)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = self._merge_case(root, [(pkt, items)], {stem: f"please grade {MARKER}\n" + valid_rows()})
+            self.assertEqual(p.returncode, 2)
+            s = json.loads((p.stdout or "").strip())
+            self.assertGreaterEqual(s["malformed"], 1)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = self._merge_case(root, [(pkt, items)], {stem: valid_rows() + f"thanks {MARKER}\n"})
+            self.assertEqual(p.returncode, 2)
+            s = json.loads((p.stdout or "").strip())
+            self.assertGreaterEqual(s["malformed"], 1)
+
+        fence = "`" * 3
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = self._merge_case(root, [(pkt, items)], {stem: fence + "json\n" + valid_rows()})
+            self.assertEqual(p.returncode, 2)
+            s = json.loads((p.stdout or "").strip())
+            self.assertGreaterEqual(s["malformed"], 1)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            listed = '{"id": "t1", "field": "non_goals", "accepted": [true, false]}'
+            p = self._merge_case(root, [(pkt, items)], {stem: listed + "\n" + rest + "\n"})
+            self.assertEqual(p.returncode, 2)
+            s = json.loads((p.stdout or "").strip())
+            self.assertGreaterEqual(s["malformed"], 1)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = self._merge_case(
+                root,
+                [(pkt, items)],
+                {stem: valid_rows()},
+                out_name="mixed.jsonl",
+            )
+            self.assertEqual(p.returncode, 0)
+            outp = root / "mixed.jsonl"
+            got = [json.loads(ln) for ln in outp.read_text(encoding="utf-8").splitlines() if ln]
+            expected = [
+                {"id": "t1", "field": field, "grader": "gleft", "accepted": accs[field]}
+                for field in sorted(FIELDS)
+            ]
+            self.assertEqual(got, expected)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            body = "\n".join(["", fence + "json", "", *valid_rows().splitlines(), "", fence, ""]) + "\n"
+            p = self._merge_case(
+                root,
+                [(pkt, items)],
+                {stem: body},
+                out_name="fenced.jsonl",
+            )
+            self.assertEqual(p.returncode, 0)
+            outp = root / "fenced.jsonl"
+            got = [json.loads(ln) for ln in outp.read_text(encoding="utf-8").splitlines() if ln]
+            expected = [
+                {"id": "t1", "field": field, "grader": "gleft", "accepted": accs[field]}
+                for field in sorted(FIELDS)
+            ]
+            self.assertEqual(got, expected)
+
+    def test_12_no_clobber_publish(self) -> None:
+        pkt = "packet-run1-set-ab-b01.md"
+        stem = Path(pkt).stem + ".txt"
+        real_link = os.link
+        real_rename = os.rename
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            man_path = root / "man.json"
+            write_manifest(man_path, [(pkt, ["t1"])])
+            replies = root / "replies"
+            replies.mkdir()
+            (replies / stem).write_text(reply_body(["t1"]), encoding="utf-8", newline="\n")
+            outp = root / "grades.jsonl"
+            sentinel = b"OTHER_WRITER_SENTINEL"
+
+            def wrap_create(src, dst, *args, **kwargs):
+                Path(dst).write_bytes(sentinel)
+                return real_link(src, dst, *args, **kwargs)
+
+            buf_out = io.StringIO()
+            buf_err = io.StringIO()
+            args = [
+                "merge",
+                "--manifest",
+                str(man_path),
+                "--replies",
+                str(replies),
+                "--grader",
+                "gleft",
+                "--out",
+                str(outp),
+            ]
+            with unittest.mock.patch.object(grade_packets.os, "link", wrap_create):
+                with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                    rc = grade_packets.main(args)
+            self.assertNotIn(MARKER, buf_out.getvalue())
+            self.assertNotIn(MARKER, buf_err.getvalue())
+            self.assertEqual(rc, 1)
+            self.assertEqual(outp.read_bytes(), sentinel)
+            self.assert_no_tmps(root)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            man_path = root / "man.json"
+            write_manifest(man_path, [(pkt, ["t1"])])
+            replies = root / "replies"
+            replies.mkdir()
+            (replies / stem).write_text(reply_body(["t1"]), encoding="utf-8", newline="\n")
+            outp = root / "grades.jsonl"
+
+            def boom(src, dst, *args, **kwargs):
+                raise OSError("boom")
+
+            buf_out = io.StringIO()
+            buf_err = io.StringIO()
+            args = [
+                "merge",
+                "--manifest",
+                str(man_path),
+                "--replies",
+                str(replies),
+                "--grader",
+                "gleft",
+                "--out",
+                str(outp),
+            ]
+            with unittest.mock.patch.object(grade_packets.os, "link", boom):
+                with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                    rc = grade_packets.main(args)
+            self.assertNotIn(MARKER, buf_out.getvalue())
+            self.assertNotIn(MARKER, buf_err.getvalue())
+            self.assertEqual(rc, 1)
+            self.assertFalse(outp.exists())
+            self.assert_no_tmps(root)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            refs.mkdir()
+            cands.mkdir()
+            write_item(refs, cands, "i1")
+            out = root / "odir"
+
+            def wrap_rename(src, dst, *args, **kwargs):
+                dest = Path(dst)
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "sentinel.txt").write_text("OTHER_WRITER_SENTINEL", encoding="utf-8")
+                return real_rename(src, dst, *args, **kwargs)
+
+            buf_out = io.StringIO()
+            buf_err = io.StringIO()
+            args = [
+                "build",
+                "--refs",
+                str(refs),
+                "--candidates",
+                str(cands),
+                "--label",
+                "run1",
+                "--set",
+                "ab",
+                "--out",
+                str(out),
+            ]
+            with unittest.mock.patch.object(grade_packets.os, "rename", wrap_rename):
+                with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                    rc = grade_packets.main(args)
+            self.assertNotIn(MARKER, buf_out.getvalue())
+            self.assertNotIn(MARKER, buf_err.getvalue())
+            self.assertEqual(rc, 1)
+            self.assertEqual((out / "sentinel.txt").read_text(encoding="utf-8"), "OTHER_WRITER_SENTINEL")
+            self.assert_no_tmps(root)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            refs.mkdir()
+            cands.mkdir()
+            write_item(refs, cands, "i1")
+            out = root / "odir"
+
+            def boom_rename(src, dst, *args, **kwargs):
+                raise OSError("boom")
+
+            buf_out = io.StringIO()
+            buf_err = io.StringIO()
+            args = [
+                "build",
+                "--refs",
+                str(refs),
+                "--candidates",
+                str(cands),
+                "--label",
+                "run1",
+                "--set",
+                "ab",
+                "--out",
+                str(out),
+            ]
+            with unittest.mock.patch.object(grade_packets.os, "rename", boom_rename):
+                with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                    rc = grade_packets.main(args)
+            self.assertNotIn(MARKER, buf_out.getvalue())
+            self.assertNotIn(MARKER, buf_err.getvalue())
+            self.assertEqual(rc, 1)
+            self.assertFalse(out.exists())
+            self.assert_no_tmps(root)
+
+    def test_13_set_neutrality(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            refs = root / "rdir"
+            cands = root / "cdir"
+            refs.mkdir()
+            cands.mkdir()
+            write_item(refs, cands, "i1")
+            for name in BANNED:
+                out = root / f"out_{name}"
+                with self.subTest(name=name):
+                    p = self.run_tool(
+                        [
+                            "build",
+                            "--refs",
+                            str(refs),
+                            "--candidates",
+                            str(cands),
+                            "--label",
+                            "run1",
+                            "--set",
+                            name,
+                            "--out",
+                            str(out),
+                        ]
+                    )
+                    self.assertEqual(p.returncode, 1)
+                    self.assertIn("invalid set", p.stderr or "")
+                    self.assertFalse(out.exists())
+            out_ok = root / "out_s1"
+            p = self.run_tool(
+                [
+                    "build",
+                    "--refs",
+                    str(refs),
+                    "--candidates",
+                    str(cands),
+                    "--label",
+                    "run1",
+                    "--set",
+                    "s1",
+                    "--out",
+                    str(out_ok),
+                ]
+            )
+            self.assertEqual(p.returncode, 0)
+            self.assertTrue(out_ok.is_dir())
 
 
 if __name__ == "__main__":

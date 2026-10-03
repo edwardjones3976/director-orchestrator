@@ -31,7 +31,7 @@ BANNED_SUBSTR = (
     "control",
     "arm",
 )
-OBJ_RE = re.compile(r"\{[^{}]*\}")
+_FENCE = "`" * 3
 ROW_KEY_SETS = (frozenset({"id", "field", "accepted"}), frozenset({"id", "field", "accepted", "grader"}))
 SUMMARY_KEYS = (
     "expected_keys",
@@ -84,7 +84,10 @@ def label_ok(label: str) -> bool:
 
 
 def set_ok(name: str) -> bool:
-    return isinstance(name, str) and bool(SET_RE.fullmatch(name))
+    if not isinstance(name, str) or not SET_RE.fullmatch(name):
+        return False
+    low = name.lower()
+    return not any(b in low for b in BANNED_SUBSTR)
 
 
 def _load_refs(refs_dir: Path) -> dict[str, object]:
@@ -206,7 +209,20 @@ def cmd_build(a: argparse.Namespace) -> int:
                 print("output exists", file=sys.stderr)
                 return 1
             out.rmdir()
-        os.replace(str(tmp), str(out))
+        try:
+            os.rename(str(tmp), str(out))
+        except FileExistsError:
+            print("output exists", file=sys.stderr)
+            return 1
+        except PermissionError:
+            if out.exists():
+                print("output exists", file=sys.stderr)
+            else:
+                print("usage error", file=sys.stderr)
+            return 1
+        except OSError:
+            print("usage error", file=sys.stderr)
+            return 1
         replaced = True
     except OSError:
         print("usage error", file=sys.stderr)
@@ -229,19 +245,53 @@ def _empty_summary() -> dict[str, int]:
     return {k: 0 for k in SUMMARY_KEYS}
 
 
-def _extract_objects(text: str) -> list[str]:
-    found: list[str] = []
-    for m in OBJ_RE.finditer(text):
-        s = m.group(0)
-        if '"accepted"' in s or '"id"' in s or '"field"' in s:
-            found.append(s)
-    return found
+def _reject_dup_keys(pairs: list[tuple[str, object]]) -> dict:
+    out: dict = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError("duplicate property")
+        out[k] = v
+    return out
+
+
+def _is_scalar(v: object) -> bool:
+    return v is None or isinstance(v, (str, bool, int, float))
+
+
+def _reply_content_lines(text: str) -> tuple[list[str], int]:
+    lines = text.splitlines()
+    nonempty = [(i, ln) for i, ln in enumerate(lines) if ln.strip()]
+    extra_malformed = 0
+    skip: set[int] = set()
+    if nonempty:
+        first_i, first_ln = nonempty[0]
+        last_i, last_ln = nonempty[-1]
+        first_s = first_ln.strip()
+        last_s = last_ln.strip()
+        open_fence = first_s == _FENCE or first_s.lower() == _FENCE + "json"
+        close_fence = last_s == _FENCE
+        if open_fence and close_fence and first_i != last_i:
+            skip.add(first_i)
+            skip.add(last_i)
+        elif open_fence or close_fence:
+            extra_malformed = 1
+            if open_fence:
+                skip.add(first_i)
+            if close_fence:
+                skip.add(last_i)
+    content = [ln for i, ln in enumerate(lines) if i not in skip and ln.strip()]
+    return content, extra_malformed
 
 
 def _print_summary(summary: dict[str, int]) -> None:
     print(json.dumps({k: int(summary[k]) for k in SUMMARY_KEYS}))
 
 
+def _publish_no_clobber(tmp_name: str, dest: str) -> None:
+    os.link(tmp_name, dest)
+
+
+# Grader identity is the caller-asserted --grader argument; independence must come from the route and receipt, not from row labels.
 def cmd_merge(a: argparse.Namespace) -> int:
     out = Path(a.out)
     if out.exists():
@@ -296,21 +346,29 @@ def cmd_merge(a: argparse.Namespace) -> int:
             summary["missing"] += len(packet_ids) * len(FIELDS)
             continue
         try:
-            text = reply_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            text = reply_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
             summary["missing_reply_files"] += 1
             violations = True
             summary["missing"] += len(packet_ids) * len(FIELDS)
             continue
         covered: set[tuple[str, str]] = set()
-        for blob in _extract_objects(text):
+        content_lines, fence_malformed = _reply_content_lines(text)
+        if fence_malformed:
+            summary["malformed"] += fence_malformed
+            violations = True
+        for line in content_lines:
             try:
-                obj = json.loads(blob)
-            except json.JSONDecodeError:
+                obj = json.loads(line, object_pairs_hook=_reject_dup_keys)
+            except (json.JSONDecodeError, ValueError, TypeError):
                 summary["malformed"] += 1
                 violations = True
                 continue
             if not isinstance(obj, dict) or frozenset(obj.keys()) not in ROW_KEY_SETS:
+                summary["malformed"] += 1
+                violations = True
+                continue
+            if any(not _is_scalar(v) for v in obj.values()):
                 summary["malformed"] += 1
                 violations = True
                 continue
@@ -395,14 +453,23 @@ def cmd_merge(a: argparse.Namespace) -> int:
                     )
                     + "\n"
                 )
-        if out.exists():
-            print("output exists", file=sys.stderr)
+            fh.flush()
             try:
-                os.unlink(tmp_name)
+                os.fsync(fh.fileno())
             except OSError:
                 pass
+        try:
+            _publish_no_clobber(tmp_name, str(out))
+        except FileExistsError:
+            print("output exists", file=sys.stderr)
             return 1
-        os.replace(tmp_name, str(out))
+        except OSError:
+            print("usage error", file=sys.stderr)
+            return 1
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
         tmp_name = None
     except OSError:
         if tmp_name:
@@ -410,6 +477,7 @@ def cmd_merge(a: argparse.Namespace) -> int:
                 os.unlink(tmp_name)
             except OSError:
                 pass
+            tmp_name = None
         print("usage error", file=sys.stderr)
         return 1
     finally:

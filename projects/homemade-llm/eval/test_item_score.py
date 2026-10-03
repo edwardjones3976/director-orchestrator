@@ -1,12 +1,17 @@
 """Synthetic tests for item_score.py. Fixtures stay in temporary directories."""
 
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+
+import item_score
 
 TOOL = Path(__file__).resolve().parent / "item_score.py"
 FIELDS = ("non_goals", "constraints", "acceptance_checks", "evidence_requirements")
@@ -29,7 +34,10 @@ TOP_KEYS = {
     "packets_missing_candidate",
     "packets_malformed_candidate",
     "packets_unreadable_reference",
+    "status",
+    "packets_roster",
     "reference_items",
+    "reference_items_scored",
     "candidate_items",
     "per_field",
     "repeated_across_fields",
@@ -37,6 +45,7 @@ TOP_KEYS = {
     "zero_omission_packets",
     "packet_recall",
     "overall_recall",
+    "overall_recall_valid_candidates_only",
     "overall_precision",
 }
 TOP_KEYS_INPUTS = TOP_KEYS | {"spurious_in_context", "spurious_not_in_context"}
@@ -419,6 +428,10 @@ class ItemScoreTests(unittest.TestCase):
         for field in FIELDS:
             self.assertEqual(set(data["per_field"][field].keys()), PER_FIELD_KEYS)
         self.assertEqual(set(data["packet_recall"].keys()), {"median", "min", "max"})
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["overall_recall"], data["overall_recall_valid_candidates_only"])
+        self.assertEqual(data["packets_roster"], 1)
+        self.assertEqual(data["reference_items_scored"], data["reference_items"])
         out2 = self._out_path("with_inputs.json")
         proc, text = self._run(out2, extra=["--inputs", str(self.inputs)])
         self.assertEqual(proc.returncode, 0)
@@ -464,7 +477,181 @@ class ItemScoreTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(data["packets_unreadable_reference"], 2)
         self.assertEqual(data["packets_scored"], 1)
+        self.assertIsNone(data["overall_recall"])
+        for field in FIELDS:
+            self.assertIsNone(data["per_field"][field]["recall"])
+        self.assertEqual(data["status"], "incomplete")
         self.assertNotIn(marker, proc.stdout)
+
+    def test_unicode_and_empty_forms(self):
+        item_a = "hid-uni-a"
+        self._write(self.refs, item_a, empty_packet(non_goals=["\u043f\u0440\u0438\u0432\u0435\u0442"]))
+        self._write(self.cands, item_a, empty_packet(non_goals=["\u03b3\u03b5\u03b9\u03b1"]))
+        out = self._out_path("uni_diff.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        ng = data["per_field"]["non_goals"]
+        self.assertEqual(ng["correct"], 0)
+        self.assertEqual(ng["matched"], 0)
+        self.assertEqual(ng["spurious"], 1)
+        self.assertEqual(ng["omitted"], 1)
+        self.assertEqual(data["zero_error_packets"], 0)
+
+        self.refs.joinpath(f"{item_a}.json").unlink()
+        self.cands.joinpath(f"{item_a}.json").unlink()
+        item_b = "hid-uni-b"
+        self._write(self.refs, item_b, empty_packet(non_goals=["\u041f\u0440\u0438\u0432\u0435\u0442!!"]))
+        self._write(self.cands, item_b, empty_packet(non_goals=["\u043f\u0440\u0438\u0432\u0435\u0442"]))
+        out = self._out_path("uni_same.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        ng = data["per_field"]["non_goals"]
+        self.assertEqual(ng["correct"], 1)
+        self.assertEqual(ng["matched"], 1)
+        self.assertEqual(data["zero_error_packets"], 1)
+
+        self.refs.joinpath(f"{item_b}.json").unlink()
+        self.cands.joinpath(f"{item_b}.json").unlink()
+        item_c = "hid-punct-c"
+        self._write(self.refs, item_c, empty_packet(non_goals=["...---"]))
+        self._write(self.cands, item_c, empty_packet(non_goals=["???"]))
+        out = self._out_path("punct.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        ng = data["per_field"]["non_goals"]
+        self.assertEqual(ng["correct"], 0)
+        self.assertEqual(ng["matched"], 0)
+        self.assertEqual(ng["spurious"], 1)
+        self.assertEqual(ng["omitted"], 1)
+        self.assertEqual(ng["near_right_field"], 0)
+        self.assertEqual(data["zero_error_packets"], 0)
+
+        self.refs.joinpath(f"{item_c}.json").unlink()
+        self.cands.joinpath(f"{item_c}.json").unlink()
+        marker = self._mark("SECRETMARKER-emptyctx")
+        item_d = "hid-punct-d"
+        real = f"real reference item {marker}"
+        self._write(self.refs, item_d, empty_packet(non_goals=[real]))
+        self._write(self.cands, item_d, empty_packet(non_goals=[real, "!!!"]))
+        self._write(
+            self.inputs,
+            item_d,
+            {"context": [{"text": f"prefix {real} !!! suffix"}]},
+        )
+        out = self._out_path("punct_ctx.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 1)
+        self.assertEqual(data["per_field"]["non_goals"]["near_right_field"], 0)
+
+    def test_link_no_clobber(self):
+        marker = self._mark("SECRETMARKER-link")
+        item_id = "hid-link-k1"
+        self._write(self.refs, item_id, empty_packet(non_goals=[f"atomic {marker}"]))
+        self._write(self.cands, item_id, empty_packet(non_goals=[f"atomic {marker}"]))
+        isolated = self.root / "out_link"
+        isolated.mkdir()
+        out = isolated / "score.json"
+        sentinel = b"OTHER_WRITER_SENTINEL"
+        real_link = os.link
+
+        def wrap_create(src, dst, *args, **kwargs):
+            Path(dst).write_bytes(sentinel)
+            return real_link(src, dst, *args, **kwargs)
+
+        argv = [
+            "--refs",
+            str(self.refs),
+            "--candidates",
+            str(self.cands),
+            "--out",
+            str(out),
+        ]
+        buf_out = io.StringIO()
+        buf_err = io.StringIO()
+        with unittest.mock.patch.object(item_score.os, "link", wrap_create):
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = item_score.main(argv)
+        self._assert_clean(buf_out.getvalue(), buf_err.getvalue())
+        self.assertEqual(rc, 1)
+        self.assertIn("usage error", buf_err.getvalue())
+        self.assertEqual(out.read_bytes(), sentinel)
+        leftovers = [
+            p.name
+            for p in isolated.iterdir()
+            if p.name.startswith(".item_score_") and p.name.endswith(".tmp")
+        ]
+        self.assertEqual(leftovers, [])
+
+        out2 = isolated / "score2.json"
+
+        def boom(src, dst, *args, **kwargs):
+            raise OSError("boom")
+
+        argv2 = [
+            "--refs",
+            str(self.refs),
+            "--candidates",
+            str(self.cands),
+            "--out",
+            str(out2),
+        ]
+        buf_out = io.StringIO()
+        buf_err = io.StringIO()
+        with unittest.mock.patch.object(item_score.os, "link", boom):
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = item_score.main(argv2)
+        self._assert_clean(buf_out.getvalue(), buf_err.getvalue())
+        self.assertEqual(rc, 1)
+        self.assertIn("usage error", buf_err.getvalue())
+        self.assertFalse(out2.exists())
+        leftovers = [
+            p.name
+            for p in isolated.iterdir()
+            if p.name.startswith(".item_score_") and p.name.endswith(".tmp")
+        ]
+        self.assertEqual(leftovers, [])
+
+    def test_full_roster_recall(self):
+        marker = self._mark("SECRETMARKER-roster")
+        ref = empty_packet(
+            non_goals=[f"n {marker}"],
+            constraints=[f"c {marker}"],
+            acceptance_checks=[f"a {marker}"],
+            evidence_requirements=[f"e {marker}"],
+        )
+        self._write(self.refs, "hid-r1", ref)
+        self._write(self.refs, "hid-r2", ref)
+        self._write(self.cands, "hid-r1", ref)
+        out = self._out_path("miss.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["overall_recall"], 0.5)
+        self.assertEqual(data["overall_recall_valid_candidates_only"], 1.0)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_missing_candidate"], 1)
+        self.assertEqual(data["packets_roster"], 2)
+        self.assertEqual(data["reference_items"], 8)
+        self.assertEqual(data["reference_items_scored"], 4)
+
+        self._write(self.cands, "hid-r2", {"non_goals": "not-a-list"})
+        out2 = self._out_path("mal.json")
+        proc, text = self._run(out2)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["overall_recall"], 0.5)
+        self.assertEqual(data["overall_recall_valid_candidates_only"], 1.0)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_malformed_candidate"], 1)
+        self.assertEqual(data["packets_roster"], 2)
+        self.assertEqual(data["reference_items"], 8)
+        self.assertEqual(data["reference_items_scored"], 4)
 
 
 if __name__ == "__main__":
