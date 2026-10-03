@@ -31,8 +31,15 @@ spans into the verified source. Section names belong to audit metadata, not
 additional model-input fields. The shared input has only `objective`,
 `repository`, `title`, and `context`, as defined by `train/prompt_template.py`.
 
-Freeze candidate order before reading bodies: lexicographic SIG order, numeric
-KEP number and path within each SIG, one candidate per SIG each round. Qualified
+The census field `sig` is a legacy name for the original namespace: validated
+`sig-*` and historical `provider-*` paths remain in their own buckets. No entry
+is dropped or remapped because its namespace is a provider. Unsafe paths and
+unrecognized namespace prefixes are refused before status filtering.
+
+Freeze candidate order before reading bodies: lexicographic namespace order,
+numeric KEP number and path within each bucket, one candidate per bucket each
+round. The existing `sig-round-robin/numeric-id-path/v1` policy identifier is
+retained with this namespace interpretation. Qualified
 records keep that rank even when earlier candidates are refused. Qualification
 is independent of later record clocks. Approximately 130 sources is an estimate,
 not an output requirement; actual counts and every refusal must reconcile.

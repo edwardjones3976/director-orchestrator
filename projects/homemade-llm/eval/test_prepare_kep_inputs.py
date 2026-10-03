@@ -154,6 +154,86 @@ class PrepareKepInputsTests(unittest.TestCase):
         self.assertEqual([(row["kep_number"], row["selection_rank"]) for row in reverse_rows], [(29, 1), (39, 2)])
         self.assertEqual(manifest["order_sha256"], reverse_manifest["order_sha256"])
 
+    def test_provider_sources_keep_eligible_input_and_all_ineligible_census_entries(self):
+        items = [dict(number=423, sig="provider-aws", status="implementable", text=source(423)),
+                 dict(number=19, sig="sig-example", status="implemented", text=source(19))]
+        items.extend(dict(number=n, sig="provider-aws", status="provisional", text="Not an eligible body.")
+                     for n in (2313, 2314, 2315, 629, 630))
+        fixture = Fixture(self.root, items)
+        result = tool.prepare(**fixture.args())
+        _, rows, manifest = self.load()
+        self.assertEqual([(r["kep_number"], r["selection_rank"]) for r in rows], [(423, 0), (19, 1)])
+        self.assertEqual(rows[0]["source_ref"], "keps/provider-aws/423-synthetic/README.md")
+        self.assertEqual(rows[0]["source_group"], "licensed/kubernetes/enhancements/kep-423")
+        self.assertEqual(result["metadata_candidates"], 7)
+        self.assertEqual(result["status_candidates"], 2)
+        self.assertEqual(result["usable_inputs"], 2)
+        self.assertEqual(result["refused_by_reason"], {"INELIGIBLE_STATUS": 5})
+        census = manifest["qualification"]["census"]
+        self.assertEqual(len(census), 7)
+        provider = [entry for entry in census if entry["sig"] == "provider-aws"]
+        self.assertEqual(len(provider), 6)
+        self.assertEqual(sum(entry["reason"] == "INELIGIBLE_STATUS" for entry in provider), 5)
+        self.assertTrue(all(entry["selection_rank"] is None for entry in provider if entry["reason"]))
+
+    def test_provider_buckets_keep_frozen_round_robin_rank_and_census_order_independence(self):
+        items = [dict(number=2313, sig="provider-aws", status="implemented", text=source(2313).replace("## Non-Goals", "## Unmapped")),
+                 dict(number=423, sig="provider-aws", status="implementable", text=source(423)),
+                 dict(number=29, sig="provider-z", status="implemented", text=source(29)),
+                 dict(number=39, sig="sig-a", status="implemented", text=source(39)),
+                 dict(number=19, sig="sig-a", status="implemented", text=source(19)),
+                 dict(number=9, sig="sig-b", status="implemented", text=source(9))]
+        fixture = Fixture(self.root, items)
+        tool.prepare(**fixture.args())
+        _, rows, manifest = self.load()
+        expected = [(423, 0), (29, 1), (19, 2), (9, 3), (39, 5)]
+        self.assertEqual([(r["kep_number"], r["selection_rank"]) for r in rows], expected)
+        refused = next(entry for entry in manifest["qualification"]["census"] if entry["kep_number"] == 2313)
+        self.assertEqual(refused["sig"], "provider-aws")
+        self.assertEqual(refused["selection_rank"], 4)
+        self.assertEqual(refused["reason"], "MISSING_OR_EMPTY_SUPPORT_SECTION")
+        reverse_root = self.root / "reverse"
+        reverse_root.mkdir()
+        reverse = Fixture(reverse_root, list(reversed(items)))
+        tool.prepare(**reverse.args())
+        _, reverse_rows, reverse_manifest = self.load(reverse_root / "out")
+        self.assertEqual([(r["kep_number"], r["selection_rank"]) for r in reverse_rows], expected)
+        self.assertEqual(manifest["order_sha256"], reverse_manifest["order_sha256"])
+
+    def test_provider_extension_refuses_unsafe_or_unrecognized_namespace_and_path(self):
+        for index, (namespace, leaf) in enumerate((
+            ("team-aws", "19-synthetic"), ("provider-", "19-synthetic"),
+            ("provider-AWS", "19-synthetic"), ("provider_aws", "19-synthetic"),
+            ("provider-aws", ".."), ("provider-aws", "."),
+            ("provider-aws", "nested/19-synthetic"), ("provider-aws", "19\\escape"),
+        )):
+            with self.subTest(namespace=namespace, leaf=leaf):
+                case_root = self.root / str(index)
+                case_root.mkdir()
+                fixture = Fixture(case_root)
+                # Mutate metadata only, leaving the independently valid tree intact:
+                # census validation, not an archive failure, must catch this.
+                fixture.census["items"][0].update(sig=namespace, path=f"keps/{namespace}/{leaf}/kep.yaml", status="provisional")
+                fixture.refresh()
+                with self.assertRaisesRegex(tool.Refusal, "INVALID_CENSUS"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((case_root / "out").exists())
+
+    def test_provider_metadata_bucket_mismatch_and_duplicate_path_still_refused(self):
+        for mutation in ("bucket", "duplicate"):
+            with self.subTest(mutation=mutation):
+                case_root = self.root / mutation
+                case_root.mkdir()
+                fixture = Fixture(case_root, [dict(number=423, sig="provider-aws", status="implementable", text=source(423))])
+                if mutation == "bucket":
+                    fixture.census["items"][0]["sig"] = "sig-aws"
+                else:
+                    fixture.census["items"].append(copy.deepcopy(fixture.census["items"][0]))
+                fixture.refresh()
+                with self.assertRaisesRegex(tool.Refusal, "INVALID_CENSUS"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((case_root / "out").exists())
+
     def test_duplicate_positive_identity_refused(self):
         fixture = Fixture(self.root, [dict(number=19, sig="sig-a", status="implemented", text=source()),
                                       dict(number=19, sig="sig-b", status="implemented", text=source())])

@@ -265,7 +265,9 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         if not isinstance(entry, dict) or not isinstance(entry.get("status"), str):
             raise Refusal("INVALID_CENSUS")
         path, sig = entry.get("path"), entry.get("sig")
-        if not isinstance(path, str) or re.fullmatch(r"keps/sig-[a-z0-9-]+/[A-Za-z0-9._-]+/kep\.yaml", path) is None or sig != path.split("/")[1] or path in seen_paths:
+        # The legacy census field "sig" stores the original namespace, including
+        # historical provider-* groups; retain it as the round-robin bucket.
+        if not isinstance(path, str) or not safe_archive_name(path) or re.fullmatch(r"keps/(?:sig|provider)-[a-z0-9-]+/[A-Za-z0-9._-]+/kep\.yaml", path) is None or sig != path.split("/")[1] or path in seen_paths:
             raise Refusal("INVALID_CENSUS")
         seen_paths.add(path)
         decision = {"path": path, "sig": sig, "status": entry.get("status"), "kep_number": None,
