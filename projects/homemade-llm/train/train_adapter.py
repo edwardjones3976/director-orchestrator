@@ -42,6 +42,8 @@ WINNER_BASE = "Qwen/Qwen3-14B"
 WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
 FALLBACK_BASE = "Qwen/Qwen3-8B"
 FALLBACK_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
+# Approved root bytes, not a caller-supplied digest or a weight-list self-check.
+TRUSTED_DIGEST_ROOT_SHA256 = "832406c6f6675c92b2d1072ffa674c1873a1693a88d53293d8e17942961423ee"
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -205,11 +207,11 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
     }
 
 
-def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
+def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
     key = f"{base}@{revision}"
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        payload = json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
         fail(f"expected digests file is not usable: {exc}")
     if not isinstance(payload, dict):
         fail("expected digests file must be a JSON object")
@@ -222,6 +224,54 @@ def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
     return files
 
 
+def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        fail(f"expected digests file is not usable: {exc}")
+    return _expected_digest_files(data, base, revision)
+
+
+def load_authenticated_digests(
+    root_path: Path | None, path: Path, base: str, revision: str,
+) -> tuple[list[dict], dict[str, str]]:
+    """Authenticate root -> exact model/revision -> list bytes before parsing the list."""
+    if root_path is None:
+        fail("--trusted-digest-root is required for pinned M2 models")
+    try:
+        root_bytes = root_path.read_bytes()
+    except OSError as exc:
+        fail(f"trusted digest root is not usable: {exc}")
+    root_sha = hashlib.sha256(root_bytes).hexdigest()
+    if root_sha != TRUSTED_DIGEST_ROOT_SHA256:
+        fail("trusted digest root does not match the approved SHA-256")
+    try:
+        root = json.loads(root_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"trusted digest root is not usable: {exc}")
+    models = root.get("models") if isinstance(root, dict) else None
+    if not isinstance(models, list):
+        fail("trusted digest root has no models list")
+    matching = [item for item in models if isinstance(item, dict)
+                and item.get("hf_repo") == base and item.get("hf_revision") == revision]
+    if len(matching) != 1:
+        fail(f"trusted digest root has no unique approved entry for {base}@{revision}")
+    upstream_sha = matching[0].get("upstream_weight_digests_sha256")
+    if (not isinstance(upstream_sha, str) or len(upstream_sha) != 64
+            or any(char not in "0123456789abcdef" for char in upstream_sha)):
+        fail("approved model entry has no valid upstream digest-list SHA-256")
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        fail(f"expected digests file is not usable: {exc}")
+    if hashlib.sha256(data).hexdigest() != upstream_sha:
+        fail("upstream digest list does not match the approved root")
+    return _expected_digest_files(data, base, revision), {
+        "trusted_root_sha256": root_sha, "upstream_digest_list_sha256": upstream_sha,
+        "base": base, "revision": revision,
+    }
+
+
 def local_snapshot_dir(base: str, revision: str) -> Path:
     from huggingface_hub import snapshot_download
 
@@ -232,16 +282,26 @@ def digest_verification_before_load(
     base: str,
     revision: str,
     expected_digests_path: Path | None,
+    trusted_digest_root_path: Path | None = None,
 ) -> dict | None:
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the fallback pin")
+    requires_root = base in (WINNER_BASE, FALLBACK_BASE)
+    if requires_root and expected_digests_path is None:
+        fail("--expected-digests is required for pinned M2 models")
     if expected_digests_path is None:
         return None
-    expected_files = load_expected_digests(expected_digests_path, base, revision)
+    binding = {}
+    if requires_root or trusted_digest_root_path is not None:
+        expected_files, binding = load_authenticated_digests(
+            trusted_digest_root_path, expected_digests_path, base, revision,
+        )
+    else:
+        expected_files = load_expected_digests(expected_digests_path, base, revision)
     snapshot_dir = local_snapshot_dir(base, revision)
-    return verify_expected_digests(snapshot_dir, expected_files)
+    return {**verify_expected_digests(snapshot_dir, expected_files), **binding}
 
 
 def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
@@ -732,9 +792,12 @@ def train(
     *,
     winner: bool,
     expected_digests_path: Path | None = None,
+    trusted_digest_root_path: Path | None = None,
 ) -> dict[str, Any]:
     """QLoRA for ``steps`` on ``base@revision``. Thinking stays off. The mask is checked before ``trainer.train``."""
-    digest_verification = digest_verification_before_load(base, revision, expected_digests_path)
+    digest_verification = digest_verification_before_load(
+        base, revision, expected_digests_path, trusted_digest_root_path,
+    )
     started = time.time()
     set_seed(SEED)
     torch.cuda.reset_peak_memory_stats()
@@ -804,9 +867,12 @@ def run_probe(
     probe_rows_total: int | None,
     probe_seq_len: int,
     expected_digests_path: Path | None = None,
+    trusted_digest_root_path: Path | None = None,
 ) -> dict[str, Any]:
     """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
-    digest_verification = digest_verification_before_load(base, revision, expected_digests_path)
+    digest_verification = digest_verification_before_load(
+        base, revision, expected_digests_path, trusted_digest_root_path,
+    )
     set_seed(SEED)
     load_kwargs: dict[str, Any] = {}
     if digest_verification is not None:
@@ -958,6 +1024,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--probe-rows-total", type=int, default=None)
     parser.add_argument("--probe-seq-len", type=int, default=SEQ)
     parser.add_argument("--expected-digests", type=Path, default=None)
+    parser.add_argument("--trusted-digest-root", type=Path, default=None,
+                        help="Approved root file; its SHA-256 is pinned in the trainer.")
     args = parser.parse_args(argv)
     if len(args.revision) != 40 or any(char not in "0123456789abcdef" for char in args.revision):
         fail(f"revision {args.revision!r} is not a full 40-hex commit")
@@ -993,6 +1061,7 @@ def main(argv: list[str] | None = None) -> None:
             probe_rows_total=args.probe_rows_total,
             probe_seq_len=args.probe_seq_len,
             expected_digests_path=args.expected_digests,
+            trusted_digest_root_path=args.trusted_digest_root,
         )
     else:
         report = train(
@@ -1003,6 +1072,7 @@ def main(argv: list[str] | None = None) -> None:
             args.report,
             winner=args.winner,
             expected_digests_path=args.expected_digests,
+            trusted_digest_root_path=args.trusted_digest_root,
         )
     print(json.dumps(report, indent=2))
 

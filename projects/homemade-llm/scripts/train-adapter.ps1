@@ -70,6 +70,29 @@ if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
 if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-8b.json'
 }
+# The approved root has a different schema from ExpectedDigests. Authenticate
+# both byte sequences before GPU ownership or any model/cache access.
+$TrustedDigestRoot = ''
+$TrustedDigestRootSHA256 = '832406c6f6675c92b2d1072ffa674c1873a1693a88d53293d8e17942961423ee'
+if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase) {
+    $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v1.json'
+    $rootBytes = [IO.File]::ReadAllBytes($TrustedDigestRoot)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $rootHash = [Convert]::ToHexString($sha.ComputeHash($rootBytes)).ToLowerInvariant()
+        if ($rootHash -cne $TrustedDigestRootSHA256) { Write-Error 'trusted digest root does not match the approved SHA-256' }
+        $rootRecord = [Text.Encoding]::UTF8.GetString($rootBytes) | ConvertFrom-Json
+        $approved = @($rootRecord.models | Where-Object { $_.hf_repo -ceq $Base -and $_.hf_revision -ceq $Revision })
+        if ($approved.Count -ne 1) { Write-Error "trusted digest root has no unique approved entry for $Base@$Revision" }
+        $upstreamSHA = $approved[0].upstream_weight_digests_sha256
+        if ($upstreamSHA -cnotmatch '^[0-9a-f]{64}$') { Write-Error 'approved model entry has no valid upstream digest-list SHA-256' }
+        if ([string]::IsNullOrWhiteSpace($ExpectedDigests)) { Write-Error '-ExpectedDigests is required for pinned M2 models' }
+        $ExpectedDigests = [IO.Path]::GetFullPath($ExpectedDigests)
+        $listBytes = [IO.File]::ReadAllBytes($ExpectedDigests)
+        $listHash = [Convert]::ToHexString($sha.ComputeHash($listBytes)).ToLowerInvariant()
+        if ($listHash -cne $upstreamSHA) { Write-Error 'upstream digest list does not match the approved root' }
+    } finally { $sha.Dispose() }
+}
 if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = [IO.Path]::GetFullPath($ExpectedDigests)
     if (-not (Test-Path -LiteralPath $ExpectedDigests -PathType Leaf)) { Write-Error "expected digests file not found: $ExpectedDigests" }
@@ -115,6 +138,9 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
         $mounts += @('-v', "${ExpectedDigests}:/workspace/expected-digests.json:ro")
     }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
+        $mounts += @('-v', "${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro")
+    }
     $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
     $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -133,6 +159,9 @@ try {
     if ($Winner) { $dockerArgs += '--winner' }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
         $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
+        $dockerArgs += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
     }
     if ($Probe) {
         $dockerArgs += @('--probe', '--probe-seq-len', "$ProbeSeqLen")

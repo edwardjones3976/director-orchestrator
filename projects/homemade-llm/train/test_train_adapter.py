@@ -285,7 +285,7 @@ $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
 $Rows = 'accepted.jsonl'; $runId = 'dummy-run'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
-""" + f"$ExpectedDigests = '{digests}'\n" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+""" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
                 completed = subprocess.run(
                     [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True, text=True, timeout=30,
@@ -307,8 +307,12 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                     index = trainer.index("--expected-digests")
                     self.assertEqual(trainer[index + 1], "/workspace/expected-digests.json")
                     self.assertNotIn("--expected-digests", options)
+                    index = trainer.index("--trusted-digest-root")
+                    self.assertEqual(trainer[index + 1], "/workspace/trusted-digest-root.json")
+                    self.assertNotIn("--trusted-digest-root", options)
                 else:
                     self.assertNotIn("--expected-digests", args)
+                    self.assertNotIn("--trusted-digest-root", args)
                 self.assertIn("--winner", trainer)
                 self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
 
@@ -356,6 +360,156 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         path = root / name
         path.write_bytes(data)
         return {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+    def _trusted_chain(self, root: Path) -> tuple[Path, Path, str]:
+        # Synthetic metadata and weights only. Tests patch the fixed code pin,
+        # never add a runtime argument that can approve an arbitrary root.
+        entry = self._digest_entry(root, "model.safetensors", b"synthetic weights")
+        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        listing = root / "upstream.json"
+        listing.write_bytes(json.dumps({key: {"files": [entry]}}).encode())
+        trusted = root / "approved-root.json"
+        trusted.write_bytes(json.dumps({"models": [{
+            "hf_repo": train_adapter.WINNER_BASE,
+            "hf_revision": train_adapter.WINNER_REVISION,
+            "upstream_weight_digests_sha256": hashlib.sha256(listing.read_bytes()).hexdigest(),
+        }]}).encode())
+        return trusted, listing, hashlib.sha256(trusted.read_bytes()).hexdigest()
+
+    def test_authenticated_chain_matches_before_local_weight_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root) as snapshot:
+                result = train_adapter.digest_verification_before_load(
+                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                )
+            snapshot.assert_called_once_with(train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
+            self.assertEqual(result["reads"], 2)
+            self.assertEqual(result["trusted_root_sha256"], pin)
+            self.assertEqual(result["upstream_digest_list_sha256"], hashlib.sha256(listing.read_bytes()).hexdigest())
+
+    def test_changed_root_refused_before_parse_or_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            trusted.write_bytes(b"not even JSON")
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                with self.assertRaisesRegex(SystemExit, "root does not match"):
+                    train_adapter.digest_verification_before_load(
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                    )
+            snapshot.assert_not_called()
+
+    def test_self_consistent_changed_weights_and_list_cannot_reapprove_themselves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            entry = self._digest_entry(root, "model.safetensors", b"changed weights")
+            listing.write_bytes(json.dumps({
+                f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}": {"files": [entry]},
+            }).encode())
+            # The old weight-only check would accept this changed, self-consistent pair.
+            train_adapter.verify_expected_digests(root, [entry])
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                with self.assertRaisesRegex(SystemExit, "list does not match"):
+                    train_adapter.digest_verification_before_load(
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                    )
+            snapshot.assert_not_called()
+
+    def test_changed_list_is_authenticated_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trusted, listing, pin = self._trusted_chain(Path(tmp))
+            listing.write_bytes(b"not JSON")
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin):
+                with self.assertRaisesRegex(SystemExit, "list does not match"):
+                    train_adapter.load_authenticated_digests(
+                        trusted, listing, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION,
+                    )
+
+    def test_approved_root_refuses_wrong_model_revision_and_unapproved_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trusted, listing, pin = self._trusted_chain(Path(tmp))
+            for base, revision in (
+                (train_adapter.WINNER_BASE, "0" * 40),
+                ("org/another-model", train_adapter.WINNER_REVISION),
+                (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
+            ):
+                with self.subTest(base=base, revision=revision), \
+                     mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                     mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                    with self.assertRaisesRegex(SystemExit, "no unique approved entry"):
+                        train_adapter.digest_verification_before_load(base, revision, listing, trusted)
+                    snapshot.assert_not_called()
+
+    def test_direct_cli_cannot_bypass_root_by_omitting_winner_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            accepted = write_accepted(root, [row()])
+            _, listing, _ = self._trusted_chain(root)
+            for base, revision in (
+                (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
+            ):
+                for mode in ([], ["--probe"]):
+                    with self.subTest(base=base, mode=mode), \
+                         mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                         mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                        with self.assertRaisesRegex(SystemExit, "trusted-digest-root is required"):
+                            train_adapter.main([
+                                "--rows", str(accepted), "--report", str(root / "report-out.json"),
+                                "--base", base, "--revision", revision, "--expected-digests", str(listing),
+                                *mode,
+                            ])
+                        snapshot.assert_not_called()
+                        model.from_pretrained.assert_not_called()
+
+    def test_wrapper_authenticates_root_and_list_before_gpu_ownership(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate metadata preflight")
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        start = source.index("$TrustedDigestRoot = ''")
+        end = source.index("if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests))", start)
+        self.assertLess(end, source.index("$gpuLock ="))
+        block = source[start:end]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v1.json", str(trusted))
+            block = block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
+            for mode in ("matching", "changed_list", "changed_root", "fallback"):
+                trusted, listing, _ = self._trusted_chain(root)
+                if mode == "changed_list":
+                    listing.write_bytes(b"changed")
+                if mode == "changed_root":
+                    trusted.write_bytes(b"changed")
+                base = train_adapter.FALLBACK_BASE if mode == "fallback" else train_adapter.WINNER_BASE
+                revision = train_adapter.FALLBACK_REVISION if mode == "fallback" else train_adapter.WINNER_REVISION
+                preamble = (
+                    "$ErrorActionPreference = 'Stop'\n"
+                    f"$WinnerBase = '{train_adapter.WINNER_BASE}'; $FallbackBase = '{train_adapter.FALLBACK_BASE}'\n"
+                    f"$Base = '{base}'; $Revision = '{revision}'; $ExpectedDigests = '{listing}'\n"
+                )
+                result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", preamble + block],
+                                        capture_output=True, text=True, timeout=30)
+                with self.subTest(mode=mode):
+                    self.assertEqual(result.returncode == 0, mode == "matching", result.stderr)
+
+    def test_wrapper_root_mount_is_read_only_and_trainer_has_no_pin_override(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn('${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro', source)
+        self.assertLess(source.index('${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro'),
+                        source.index("'--entrypoint', 'python', $Image"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
 
     def test_verify_expected_digests_passes_with_two_reads(self):
         with tempfile.TemporaryDirectory() as tmp:
