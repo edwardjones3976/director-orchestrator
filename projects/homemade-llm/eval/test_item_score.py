@@ -48,7 +48,12 @@ TOP_KEYS = {
     "overall_recall_valid_candidates_only",
     "overall_precision",
 }
-TOP_KEYS_INPUTS = TOP_KEYS | {"spurious_in_context", "spurious_not_in_context"}
+TOP_KEYS_INPUTS = TOP_KEYS | {
+    "spurious_in_context",
+    "spurious_not_in_context",
+    "packets_context_unavailable",
+    "spurious_context_unknown",
+}
 
 
 def empty_packet(**fields):
@@ -762,6 +767,97 @@ class ItemScoreTests(unittest.TestCase):
         self.assertEqual(data["zero_error_packets"], 1)
         self.assertEqual(data["overall_recall"], 1.0)
         self.assertEqual(data["overall_precision"], 1.0)
+
+    def _fixture_spurious_context_packet(self, marker):
+        item_id = "hid-ctxunk-ctl"
+        real = f"real reference item {marker}"
+        extra = "Keep requests local"
+        ref = empty_packet(non_goals=[real])
+        cand = empty_packet(non_goals=[real, extra])
+        self._write(self.refs, item_id, ref)
+        self._write(self.cands, item_id, cand)
+        return item_id, extra
+
+    def test_context_unavailable_marks_unknown_not_outside(self):
+        marker = self._mark("SECRETMARKER-ctxunk")
+        item_id, extra = self._fixture_spurious_context_packet(marker)
+
+        self._write(
+            self.inputs,
+            item_id,
+            {"context": [{"text": extra}]},
+        )
+        out = self._out_path("ctx_valid.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["spurious_in_context"], 1)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+        self.assertEqual(data["spurious_context_unknown"], 0)
+        self.assertEqual(data["packets_context_unavailable"], 0)
+
+        outer_dup = (
+            '{"context": [{"text": "'
+            + extra
+            + '"}], "context": [{"text": "Other context"}]}'
+        )
+        (self.inputs / f"{item_id}.json").write_text(outer_dup, encoding="utf-8")
+        out = self._out_path("ctx_outer_dup.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_context_unavailable"], 1)
+        self.assertEqual(data["spurious_context_unknown"], 1)
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+
+        nested_dup = (
+            '{"context": [{"text": "'
+            + extra
+            + '", "text": "Other context"}]}'
+        )
+        (self.inputs / f"{item_id}.json").write_text(nested_dup, encoding="utf-8")
+        out = self._out_path("ctx_nested_dup.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_context_unavailable"], 1)
+        self.assertEqual(data["spurious_context_unknown"], 1)
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+
+        (self.inputs / f"{item_id}.json").unlink()
+        out = self._out_path("ctx_missing.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_context_unavailable"], 1)
+        self.assertEqual(data["spurious_context_unknown"], 1)
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+
+        (self.inputs / f"{item_id}.json").write_bytes(b"\xff\xfe not json")
+        out = self._out_path("ctx_garbage.json")
+        proc, text = self._run(out, extra=["--inputs", str(self.inputs)])
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertEqual(data["status"], "incomplete")
+        self.assertEqual(data["packets_context_unavailable"], 1)
+        self.assertEqual(data["spurious_context_unknown"], 1)
+        self.assertEqual(data["spurious_in_context"], 0)
+        self.assertEqual(data["spurious_not_in_context"], 0)
+
+        out = self._out_path("ctx_no_inputs.json")
+        proc, text = self._run(out)
+        self.assertEqual(proc.returncode, 0)
+        data = self._load(proc, text)
+        self.assertNotIn("packets_context_unavailable", data)
+        self.assertNotIn("spurious_context_unknown", data)
+        self.assertEqual(set(data.keys()), TOP_KEYS)
 
 
 if __name__ == "__main__":

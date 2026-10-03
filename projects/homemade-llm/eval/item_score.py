@@ -131,21 +131,23 @@ def _load_excluded(path):
     return excluded
 
 
-def _context_norm(path):
+def _context_for_scoring(path):
+    if not path.is_file():
+        return False, ""
     data = _load_json_data(path)
     if not isinstance(data, dict):
-        return ""
+        return False, ""
     blocks = data.get("context") or []
     if not isinstance(blocks, list):
-        return ""
+        return False, ""
     parts = []
     for block in blocks:
         if isinstance(block, dict) and isinstance(block.get("text"), str):
             parts.append(block["text"])
-    return norm(" ".join(parts))
+    return True, norm(" ".join(parts))
 
 
-def score_packet(ref_fields, cand_fields, context_norm):
+def score_packet(ref_fields, cand_fields, context_norm, context_available=True):
     ref_n = {f: [norm(x) for x in ref_fields[f]] for f in FIELDS}
     cand_n = {f: [norm(x) for x in cand_fields[f]] for f in FIELDS}
     ref_status = {f: [None] * len(ref_n[f]) for f in FIELDS}
@@ -209,6 +211,7 @@ def score_packet(ref_fields, cand_fields, context_norm):
     per_field = {}
     spurious_in_context = 0
     spurious_not_in_context = 0
+    spurious_context_unknown = 0
     for field in FIELDS:
         counts = _empty_field_counts()
         counts["reference_items"] = len(ref_n[field])
@@ -237,11 +240,14 @@ def score_packet(ref_fields, cand_fields, context_norm):
         counts["near_right_field"] = near
         per_field[field] = counts
         if context_norm is not None:
-            for extra in spurious_items:
-                if extra and extra in context_norm:
-                    spurious_in_context += 1
-                else:
-                    spurious_not_in_context += 1
+            if context_available:
+                for extra in spurious_items:
+                    if extra and extra in context_norm:
+                        spurious_in_context += 1
+                    else:
+                        spurious_not_in_context += 1
+            else:
+                spurious_context_unknown += len(spurious_items)
 
     form_fields = {}
     for field in FIELDS:
@@ -273,6 +279,7 @@ def score_packet(ref_fields, cand_fields, context_norm):
         "correct": sum(per_field[f]["correct"] for f in FIELDS),
         "spurious_in_context": spurious_in_context,
         "spurious_not_in_context": spurious_not_in_context,
+        "spurious_context_unknown": spurious_context_unknown,
         "repeated_across_fields": repeated,
         "zero_error": omitted == 0
         and misrouted == 0
@@ -356,6 +363,7 @@ def build_report(totals, field_totals, packet_recalls, use_inputs):
         totals["packets_missing_candidate"] == 0
         and totals["packets_malformed_candidate"] == 0
         and totals["packets_unreadable_reference"] == 0
+        and totals["packets_context_unavailable"] == 0
     ):
         status = "complete"
     else:
@@ -388,12 +396,18 @@ def build_report(totals, field_totals, packet_recalls, use_inputs):
     if use_inputs:
         report["spurious_in_context"] = totals["spurious_in_context"]
         report["spurious_not_in_context"] = totals["spurious_not_in_context"]
+        report["packets_context_unavailable"] = totals["packets_context_unavailable"]
+        report["spurious_context_unknown"] = totals["spurious_context_unknown"]
         ordered = {}
         for key, value in report.items():
             ordered[key] = value
             if key == "per_field":
                 ordered["spurious_in_context"] = report["spurious_in_context"]
                 ordered["spurious_not_in_context"] = report["spurious_not_in_context"]
+                ordered["packets_context_unavailable"] = report[
+                    "packets_context_unavailable"
+                ]
+                ordered["spurious_context_unknown"] = report["spurious_context_unknown"]
         return ordered
     return report
 
@@ -443,6 +457,8 @@ def run(argv):
         "zero_omission_packets": 0,
         "spurious_in_context": 0,
         "spurious_not_in_context": 0,
+        "packets_context_unavailable": 0,
+        "spurious_context_unknown": 0,
     }
     field_totals = {field: _empty_field_counts() for field in FIELDS}
     packet_recalls = []
@@ -488,9 +504,19 @@ def run(argv):
                 packet_recalls.append(0.0)
             continue
         ctx = None
+        ctx_available = True
         if use_inputs:
-            ctx = _context_norm(inputs_dir / f"{item_id}.json")
-        result = score_packet(ref_fields, cand_fields, ctx)
+            ctx_path = inputs_dir / f"{item_id}.json"
+            ctx_available, ctx_norm = _context_for_scoring(ctx_path)
+            ctx = ctx_norm
+            if not ctx_available:
+                totals["packets_context_unavailable"] += 1
+        result = score_packet(
+            ref_fields,
+            cand_fields,
+            ctx,
+            context_available=ctx_available if use_inputs else True,
+        )
         totals["packets_scored"] += 1
         totals["reference_items"] += result["reference_items"]
         totals["reference_items_scored"] += result["reference_items"]
@@ -502,6 +528,7 @@ def run(argv):
         totals["zero_omission_packets"] += int(result["zero_omission"])
         totals["spurious_in_context"] += result["spurious_in_context"]
         totals["spurious_not_in_context"] += result["spurious_not_in_context"]
+        totals["spurious_context_unknown"] += result["spurious_context_unknown"]
         if result["packet_recall"] is not None:
             packet_recalls.append(result["packet_recall"])
         for field in FIELDS:
