@@ -23,10 +23,6 @@ from types import ModuleType
 
 from jsonschema import Draft202012Validator
 
-from director_orchestrator.primary_activation_evidence import ActivationIdentity
-from director_orchestrator.primary_generation import resolved_deployment_digest
-
-
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/schemas/director-release-descriptor-v1.schema.json"
 MAX_BYTES = 4 * 1024 * 1024
@@ -91,31 +87,53 @@ def unlinked(path):
             "linked_path_refused")
 
 
-def launcher_module(path):
+def launcher_module(path, *, raw=None):
     """Load exact source bytes without consulting or writing an installed .pyc."""
     unlinked(path)
     require(path.is_file(), "trusted_descriptor_consumer_unavailable")
-    raw = bounded_read(path)
+    if raw is None:
+        raw = bounded_read(path)
     module = ModuleType("director_release_owner_launcher")
     module.__file__ = str(path)
     exec(compile(raw, str(path), "exec"), module.__dict__)
     return module, raw
 
 
+def account_home():
+    """The same OS account anchor as A2; no checkout import or environment claim."""
+    if os.name == "nt":
+        import ctypes
+        import uuid
+        folder = (ctypes.c_byte * 16).from_buffer_copy(
+            uuid.UUID("5E6C858F-0E22-4760-9AFE-EA3317B67173").bytes_le)
+        path = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(path)) != 0:
+            raise OSError("account profile unavailable")
+        try:
+            return Path(path.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path)
+    import pwd
+    home = pwd.getpwuid(os.geteuid()).pw_dir
+    require(home and os.path.isabs(home), "owner_root_invalid")
+    return Path(home)
+
+
 def installed_owner_launcher():
-    """Reuse A2's OS locator; only the installed copy reads owner authority."""
+    """Load captured installed A2 bytes at its existing OS-rooted authority."""
     try:
-        locator, _ = launcher_module(ROOT / "scripts" / "scorecard-launcher.py")
-        require(callable(getattr(locator, "owner_root", None)), "trusted_descriptor_consumer_unavailable")
-        root = locator.owner_root()
+        root = account_home() / ".director-scorecard"
         require(isinstance(root, Path) and root.is_absolute(), "owner_root_invalid")
-        installed, raw = launcher_module(root / "launcher.py")
+        path = root / "launcher.py"
+        require(path.is_file(), "trusted_descriptor_consumer_unavailable")
+        raw = bounded_read(path)
+        installed, _ = launcher_module(path, raw=raw)
         require(all(callable(getattr(installed, name, None)) for name in
                     ("owner_root", "release_descriptor", "read_descriptor")), "trusted_descriptor_consumer_unavailable")
         require(installed.owner_root() == root and
                 installed.release_descriptor() == root / "release-descriptor.json", "owner_root_changed")
         return installed, root, raw
-    except (OSError, ValueError, TypeError, AttributeError, SyntaxError, ImportError):
+    except (OSError, ValueError, TypeError, AttributeError, SyntaxError, ImportError, KeyError):
         raise ReleaseError("trusted_descriptor_consumer_unavailable") from None
 
 
@@ -224,26 +242,29 @@ class Release:
         self.path = Path(path)
         self.raw = bounded_read(self.path)
         self.spec = document(self.raw)
-        validator = Draft202012Validator(document(SCHEMA.read_bytes()))
-        require(not list(validator.iter_errors(self.spec)), "invalid_release_descriptor")
+        require(isinstance(self.spec, dict) and isinstance(self.spec.get("release_id"), str), "invalid_release_descriptor")
         self.descriptor_digest = sha(self.raw)
         self.owner_descriptor_digest = None
         self.owner_launcher, self.owner_root, self.owner_launcher_raw = installed_owner_launcher()
-        self.owner_check()  # Bind before consuming profiles or touching platform state.
+        self.owner_launcher_digest = sha(self.owner_launcher_raw)
+        self.owner_check()  # Authenticate the exact input before trusting its candidate.
         self.source = Path(self.spec["source"])
         require(self.source.is_absolute() and self.source.resolve() == ROOT.resolve(), "wrong_runner_checkout")
-        self.output = Path(self.spec["output_directory"])
         unlinked(self.source)
-        unlinked(self.output)
-        require(self.output.is_absolute() and self.output.is_dir() and not self.output.is_symlink(), "output_directory_unavailable")
-        require(not self.output.resolve().is_relative_to(self.source.resolve()), "output_must_be_outside_checkout")
-        require(Path(self.spec["snapshot"]["path"]).is_absolute(), "snapshot_path_invalid")
-        unlinked(Path(self.spec["snapshot"]["path"]))
+        timeout = self.spec.get("timeout_seconds")
+        require(type(timeout) is int and 1 <= timeout <= 900, "invalid_release_descriptor")
+        self.deadline = time.monotonic() + timeout
+        # No checkout locator runs. Candidate helpers are imported only after
+        # the installed reader has bound this exact input and Git has verified it.
+        self.source_check()
+        validator = Draft202012Validator(document(bounded_read(SCHEMA)))
+        require(not list(validator.iter_errors(self.spec)), "invalid_release_descriptor")
+        self.output = Path(self.spec["output_directory"])
+        self.output_check()
         for name in ("python", "powershell"):
             unlinked(Path(self.spec["executables"][name]))
             require(Path(self.spec["executables"][name]).is_absolute() and
                     Path(self.spec["executables"][name]).is_file(), "executable_unavailable")
-        self.deadline = time.monotonic() + self.spec["timeout_seconds"]
         self.runtime = dotenv(pinned_file(self.spec["runtime_env"]))
         self.bridge = dotenv(pinned_file(self.spec["bridge_env"]))
         self.manifest = document(pinned_file(self.spec["generation_manifest"]))
@@ -252,12 +273,23 @@ class Release:
         for pin in self.spec["compose_files"]:
             pinned_file(pin)
         self.rendered = None
+        self.observed_database = None
+
+    def output_check(self):
+        unlinked(self.output)
+        require(self.output.is_dir(), "output_directory_unavailable")
+        require(not paths_overlap(self.output, self.source), "output_must_be_outside_checkout")
+        snapshot = Path(self.spec["snapshot"]["path"])
+        unlinked(snapshot)
+        require(not paths_overlap(self.output, snapshot), "output_overlaps_snapshot")
 
     def run(self, arguments, *, input_bytes=None, env=None):
         return command(arguments, cwd=self.source, env=env or child_environment(),
                        deadline=self.deadline, input_bytes=input_bytes)
 
     def powershell(self, name, arguments):
+        self.owner_check()
+        self.source_check()
         return self.run([self.spec["executables"]["powershell"], "-NoProfile", "-NonInteractive", "-File",
                          str(self.source / "scripts" / name), *arguments])
 
@@ -279,6 +311,9 @@ class Release:
                 image["Config"].get("Entrypoint") in (None, []), "image_identity_mismatch")
 
     def selectors_check(self):
+        self.owner_check()
+        self.source_check()
+        from director_orchestrator.primary_activation_evidence import ActivationIdentity
         activation = ActivationIdentity(**self.manifest["activation"])
         candidate, pin = self.spec["candidate"], self.spec["generation_manifest"]["sha256"]
         require(activation.candidate_commit == candidate["commit"] and activation.candidate_tree == candidate["tree"]
@@ -305,6 +340,9 @@ class Release:
         # This is a selector comparison, not acceptance or full manifest verification.
 
     def compose_check(self):
+        self.owner_check()
+        self.source_check()
+        from director_orchestrator.primary_generation import resolved_deployment_digest
         env = child_environment()
         env.update(self.runtime)
         env.update(DIRECTOR_ENV_FILE=self.spec["runtime_env"]["path"],
@@ -362,6 +400,15 @@ class Release:
                    "token": token, "timeout": max(0.01, self.deadline - time.monotonic())}
         data = document(self.run([self.spec["executables"]["python"], "-B", "-c", BRIDGE_PROBE], input_bytes=encoded(request)))
         require(data.get("ok") is True and data.get("pinned_environment") is True, "bridge_not_ready")
+        self.owner_check()
+        self.source_check()
+        from director_orchestrator.host_provider_bridge_server import _configured_selection
+        expected = _configured_selection(
+            candidate_commit=self.spec["candidate"]["commit"], candidate_tree=self.spec["candidate"]["tree"],
+            generation_sha256=self.spec["generation_manifest"]["sha256"],
+            workspace=self.spec["snapshot"]["path"],
+            validation_dsn=self.bridge.get("DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN", ""))
+        require(data.get("configured_selection") == expected, "running_bridge_selection_mismatch")
         observed = data.get("configuration_digests", {})
         require(all(observed.get(name) == spec["configuration_digest"] for name, spec in self.validation["lanes"].items()),
                 "running_bridge_configuration_mismatch")
@@ -375,18 +422,27 @@ class Release:
         require(data.get("database_identity") == a["database_identity"] and
                 data.get("database_instance_id") == a["database_instance_id"], "database_binding_mismatch")
         require(data.get("occupied_slots") == [], "validation_slot_already_occupied")
+        self.observed_database = {key: data[key] for key in ("database_identity", "database_instance_id")}
 
     def live_config_check(self):
         # Existing read-only validator deliberately tests the paid target configuration
         # without constructing its activation or opening providers/control-plane stores.
         env = child_environment()
         env.update(self.runtime)
+        # Only this read-only child's hypothetical target enables the switches.
+        # Neither the protected profile nor any Compose/control child receives it.
+        env.update(ALLOW_PAID_RUNS="true", LANGGRAPH_PRIMARY_ENABLED="true",
+                   LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED="true",
+                   LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="true",
+                   LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED="false")
+        self.owner_check()
+        self.source_check()
         self.run([self.spec["executables"]["python"], "-B", str(self.source / "scripts/live-dispatch-preflight.py")], env=env)
 
     def verify_inputs(self):
         self.owner_check()
         require(bounded_read(self.path) == self.raw, "descriptor_changed")
-        unlinked(self.output)
+        self.output_check()
         for name in ("runtime_env", "bridge_env", "generation_manifest", "validation_manifest", "bridge_ca"):
             pinned_file(self.spec[name])
         for pin in self.spec["compose_files"]:
@@ -422,7 +478,9 @@ class Release:
                 checks.append({"check": name, "status": "PASS"})
             except Exception as error:
                 checks.append({"check": name, "status": "FAIL", "reason": str(error) if isinstance(error, ReleaseError) else type(error).__name__})
-                if name == "owner":
+                if name in ("owner", "source") or (isinstance(error, ReleaseError) and str(error) in {
+                        "source_not_clean", "source_identity_changed", "owner_launcher_changed", "owner_descriptor_changed",
+                        "owner_root_changed", "owner_descriptor_unavailable", "preparation_not_owner_pinned"}):
                     break
         if checks[0]["status"] == "PASS":
             try:
@@ -431,15 +489,17 @@ class Release:
                 checks.append({"check": "input_readback", "status": "FAIL", "reason": "input_changed_during_doctor"})
         return {"schema_version": "director-release-doctor/v1", "descriptor_sha256": self.descriptor_digest,
                 "owner_descriptor_sha256": self.owner_descriptor_digest,
+                "owner_launcher_sha256": self.owner_launcher_digest,
                 "checks": checks, "preparation_ready": all(item["status"] == "PASS" for item in checks),
                 "release_ready": False, "provider_calls": 0, "dependencies": DEPENDENCIES}
 
     def prepare(self, *, resume=False):
         self.owner_check()  # Refuse before even creating the local lock file.
+        self.output_check()
         journal = self.output / (self.spec["release_id"] + ".jsonl")
         target = self.output / (self.spec["release_id"] + ".activation.compose.json")
         with locked(journal.with_suffix(".lock")):
-            records = read_journal(journal, self.descriptor_digest, self.owner_descriptor_digest)
+            records = read_journal(journal, self.descriptor_digest, self.owner_descriptor_digest, self.owner_launcher_digest)
             if records:
                 require(resume, "use_resume_for_existing_journal")
                 self.verify_inputs()
@@ -451,6 +511,7 @@ class Release:
                     self.complete_render(journal, records[0]["output_sha256"])
                 return {"status": "PREPARED", "resumed": True, "recovered_receipt": len(records) == 1,
                         "owner_descriptor_sha256": self.owner_descriptor_digest,
+                        "owner_launcher_sha256": self.owner_launcher_digest,
                         "release_ready": False, "provider_calls": 0}
             require(not target.exists(), "unrecorded_output_requires_reconciliation")
             report = self.doctor()
@@ -458,6 +519,7 @@ class Release:
             self.verify_inputs()
             append_record(journal, {"event": "intent", "descriptor_sha256": self.descriptor_digest,
                                    "owner_descriptor_sha256": self.owner_descriptor_digest,
+                                   "owner_launcher_sha256": self.owner_launcher_digest,
                                    "step": "render_compose", "sequence": 1, "output_sha256": sha(self.rendered)})
             try:
                 with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
@@ -475,6 +537,7 @@ class Release:
         self.verify_inputs()  # Also required when recovering a completed local write.
         append_record(journal, {"event": "receipt", "descriptor_sha256": self.descriptor_digest,
                                "owner_descriptor_sha256": self.owner_descriptor_digest,
+                               "owner_launcher_sha256": self.owner_launcher_digest,
                                "step": "render_compose", "sequence": 2, "status": "COMPLETE", "output_sha256": digest})
 
     def rehearsal(self):
@@ -484,6 +547,7 @@ class Release:
         plan = self.spec["rehearsal"]
         sibling = Release(plan["descriptor"]["path"])
         require(sibling.owner_descriptor_digest == self.owner_descriptor_digest, "owner_descriptor_changed")
+        require(sibling.owner_launcher_digest == self.owner_launcher_digest, "owner_launcher_changed")
         require("rehearsal" not in sibling.spec, "recursive_rehearsal_refused")
         require(sibling.spec["candidate"] == self.spec["candidate"] and
                 sibling.spec["image_id"] == self.spec["image_id"], "sibling_candidate_mismatch")
@@ -493,9 +557,6 @@ class Release:
         for key in ("runtime_env", "bridge_env", "generation_manifest", "validation_manifest"):
             require(Path(sibling.spec[key]["path"]).resolve() != Path(self.spec[key]["path"]).resolve(),
                     "sibling_profile_not_isolated")
-        for key in ("database_identity", "database_instance_id"):
-            require(sibling.manifest["activation"][key] != self.manifest["activation"][key],
-                    "sibling_database_not_isolated")
         for key in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"):
             require(sibling.runtime.get(key) == "false", "sibling_must_be_unpaid")
         require(sibling.runtime.get("LANGGRAPH_PARALLEL_KILL_SWITCH") == "true", "sibling_must_be_unpaid")
@@ -509,10 +570,14 @@ class Release:
         self.source_check()
         self.selectors_check()
         self.compose_check()
+        self.database_check()
         report = sibling.doctor()
         require(report["preparation_ready"], "sibling_doctor_refused")
+        for key in ("database_identity", "database_instance_id"):
+            require(self.observed_database[key] != sibling.observed_database[key], "sibling_database_not_isolated")
         final_graph, sibling_graph = document(self.rendered), document(sibling.rendered)
-        isolated_sibling(final_graph, sibling_graph, plan["host_port"])
+        isolated_sibling(final_graph, sibling_graph, plan["host_port"],
+                         protected_paths=self.protected_paths() + sibling.protected_paths())
         base = [sibling.spec["executables"]["powershell"], "-NoProfile", "-NonInteractive", "-File",
                 str(sibling.source / "scripts/windows-langgraph-primary-control.ps1")]
         common = ["-EnvironmentFile", sibling.spec["runtime_env"]["path"], "-ComposeProject",
@@ -530,13 +595,31 @@ class Release:
         sibling.verify_inputs()
         return {"schema_version": "director-release-rehearsal-plan/v1", "status": "PLANNED", "executed": False,
                 "owner_descriptor_sha256": self.owner_descriptor_digest,
+                "owner_launcher_sha256": self.owner_launcher_digest,
                 "descriptor_sha256": self.descriptor_digest, "sibling_descriptor_sha256": sibling.descriptor_digest,
                 "compose_project": sibling.spec["compose_project"], "candidate": self.spec["candidate"],
                 "image_id": self.spec["image_id"], "cwd": str(sibling.source), "timeout_seconds": 1499,
                 "environment": {"COMPOSE_FILE": os.pathsep.join(pin["path"] for pin in sibling.spec["compose_files"]),
-                                "COMPOSE_PATH_SEPARATOR": os.pathsep},
+                                "COMPOSE_PATH_SEPARATOR": os.pathsep,
+                                "DIRECTOR_HOST_PORT": str(plan["host_port"]),
+                                "ALLOW_PAID_RUNS": "false",
+                                "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
+                                "LANGGRAPH_PARALLEL_KILL_SWITCH": "true"},
                 "steps": steps, "release_ready": False, "provider_calls": 0,
                 "dependencies": DEPENDENCIES, "on_uncertain_effect": "STOP_RECONCILE_WITHOUT_REPLAY"}
+
+    def protected_paths(self):
+        paths = [self.source, self.output, self.path, self.owner_root, self.spec["snapshot"]["path"]]
+        paths += [self.spec[key]["path"] for key in
+                  ("runtime_env", "bridge_env", "generation_manifest", "validation_manifest", "bridge_ca")]
+        paths += [pin["path"] for pin in self.spec["compose_files"]]
+        if self.bridge.get("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"):
+            paths.append(self.bridge["DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"])
+        if "rehearsal" in self.spec:
+            paths += [self.spec["rehearsal"][key]["path"] for key in ("descriptor", "acceptance_artifact")]
+        for path in paths:
+            unlinked(Path(path))
+        return paths
 
 
 def paths_overlap(left, right):
@@ -544,7 +627,7 @@ def paths_overlap(left, right):
     return left.is_relative_to(right) or right.is_relative_to(left)
 
 
-def isolated_sibling(final, sibling, host_port):
+def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
     """Check resolved Compose resources, not just a different project name."""
     project = sibling["name"]
     for kind in ("networks", "volumes"):
@@ -558,6 +641,16 @@ def isolated_sibling(final, sibling, host_port):
     final_ports = {str(port.get("published")) for service in final["services"].values() for port in service.get("ports", [])}
     final_binds = [mount["source"] for service in final["services"].values()
                    for mount in service.get("volumes", []) if mount.get("type") == "bind"]
+    # Compose overrides and env_file expansion can replace profile identities.
+    # Compare the values the resolved services will actually receive.
+    for key in ("SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID"):
+        final_values = {service.get("environment", {}).get(key) for service in final["services"].values()} - {None, ""}
+        sibling_values = {service.get("environment", {}).get(key) for service in sibling["services"].values()} - {None, ""}
+        require(not final_values.intersection(sibling_values), "sibling_slack_identity_not_isolated")
+    effective = sibling["services"]["orchestrator"].get("environment", {})
+    require(all(effective.get(key) == value for key, value in
+                (("ALLOW_PAID_RUNS", "false"), ("LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "false"),
+                 ("LANGGRAPH_PARALLEL_KILL_SWITCH", "true"))), "sibling_must_be_unpaid")
     for service in sibling["services"].values():
         require(not any(service.get(key) for key in ("network_mode", "pid", "ipc", "privileged", "devices",
                                                     "volumes_from", "container_name")), "sibling_host_resource_refused")
@@ -568,7 +661,7 @@ def isolated_sibling(final, sibling, host_port):
         for mount in service.get("volumes", []):
             if mount.get("type") == "bind" and not mount.get("read_only"):
                 unlinked(Path(mount["source"]))
-                require(all(not paths_overlap(mount["source"], source) for source in final_binds),
+                require(all(not paths_overlap(mount["source"], source) for source in [*final_binds, *protected_paths]),
                         "sibling_shared_write_mount")
     require(any(str(port.get("published")) == str(host_port) and port.get("target") == 8080
                 for port in sibling["services"]["orchestrator"].get("ports", [])), "sibling_host_port_mismatch")
@@ -611,7 +704,7 @@ def append_record(path, value):
         os.fsync(stream.fileno())
 
 
-def read_journal(path, descriptor_digest, owner_descriptor_digest):
+def read_journal(path, descriptor_digest, owner_descriptor_digest, owner_launcher_digest):
     if not path.exists():
         return []
     raw = bounded_read(path)
@@ -619,12 +712,14 @@ def read_journal(path, descriptor_digest, owner_descriptor_digest):
     result = [document(line) for line in raw.splitlines()]
     require(len(result) <= 2, "unexpected_journal_sequence")
     for number, entry in enumerate(result, 1):
-        fields = {"event", "descriptor_sha256", "owner_descriptor_sha256", "step", "sequence", "record_sha256", "output_sha256"}
+        fields = {"event", "descriptor_sha256", "owner_descriptor_sha256", "owner_launcher_sha256",
+                  "step", "sequence", "record_sha256", "output_sha256"}
         if number == 2:
             fields |= {"status"}
         require(isinstance(entry, dict) and set(entry) == fields, "invalid_journal_record")
         require(entry["sequence"] == number and entry["descriptor_sha256"] == descriptor_digest and
                 entry["owner_descriptor_sha256"] == owner_descriptor_digest and
+                entry["owner_launcher_sha256"] == owner_launcher_digest and
                 entry["step"] == "render_compose" and entry["event"] == ("intent" if number == 1 else "receipt"),
                 "journal_binding_mismatch")
         require(sha(encoded({k: v for k, v in entry.items() if k != "record_sha256"})) == entry["record_sha256"],

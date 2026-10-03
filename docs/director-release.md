@@ -37,7 +37,7 @@ a protected descriptor with these inputs; no secrets belong in the descriptor:
 | `snapshot` | Absolute path, repository, starting ref, remote, exact commit/tree |
 | `reviewers` | Planned independent and security actor names, checked against configured allowlists |
 | `executables` | Existing absolute `python` and `powershell` paths |
-| `output_directory` | Existing protected directory outside the checkout |
+| `output_directory` | Existing protected directory disjoint from the checkout and snapshot, including ancestors |
 | `timeout_seconds` | Shared whole-doctor subprocess deadline, 1–900 seconds |
 | `rehearsal` | Optional sibling descriptor pin, acceptance-artifact pin, fresh backup path and loopback host port |
 
@@ -57,7 +57,9 @@ output, DSNs, environment values, or HTTP bodies.
 
 ## One owner descriptor
 
-The reviewed A2 source's `owner_root()` locates the OS account's
+The runner uses A2's same OS account anchor (Windows Known Folder API or POSIX
+effective-UID account record) without executing a checkout locator. It locates the
+OS account's
 `.director-scorecard` directory (Windows `SHGetKnownFolderPath(FOLDERID_Profile)`;
 POSIX `pwd.getpwuid(os.geteuid()).pw_dir`). The runner loads the exact source
 bytes of `launcher.py` from that directory without reading or writing bytecode,
@@ -88,6 +90,16 @@ consumed. `HOME`, `USERPROFILE` and all `DIRECTOR_SCORECARD_*` claims cannot sel
 owner authority. This checks the owner's configuration under the existing
 protected-file trust boundary; it does not authenticate a scorecard run or
 protect against an actor who can rewrite the reviewed runner or owner installation.
+
+The W5 bootstrap, interpreter and dependency search paths must themselves be
+trusted. This is an owner-pin and source-identity boundary, not an OS sandbox.
+Only captured installed-launcher bytes execute during bootstrap. Its real A2
+reader authenticates the exact preparation descriptor before its candidate is
+trusted. The checkout commit/tree and cleanliness are then checked before reading
+the checkout schema or importing candidate helpers. No checkout
+`scorecard-launcher.py` is executed. Doctor stops on an owner or source failure;
+each checkout child and helper also rechecks those boundaries before use. The
+owner must protect these files against concurrent writers during execution.
 
 In the already-approved setup slot, the owner installs `launcher.py` from the
 reviewed evaluator commit and verifies its exact bytes, installs the single
@@ -140,12 +152,24 @@ After the owner binding passes, the doctor verifies:
    allowlists, without adding actors or issuing acceptance.
 5. `windows-host-provider-bridge.ps1 -Action Preflight`, followed by the existing
    authenticated GET `/v1/provider/configuration-digest`. Its running lane digests
-   and `pinned_environment` must match the supplied validation manifest.
+   and `pinned_environment` must match the supplied validation manifest. The same
+   endpoint's closed `configured_selection` object must match the selected
+   candidate commit/tree and generation, canonical workspace digest, and exact
+   validation-store configuration digest. These values are captured from the
+   serving process after pinned environment and service initialization. Neither
+   raw paths nor DSNs are returned. Missing, old or mismatched selection metadata
+   fails closed. This proves configured selection, not generation acceptance or
+   live database-instance identity.
 6. Existing database identity and instance UUID through `database_binding`
    with its default `bootstrap=False`, then a read-only query for occupied
    validation slots. Every observed slot blocks preparation; successful,
    unfinished, and ambiguous slots are never treated as unused.
-7. The existing read-only `live-dispatch-preflight.py`, followed by exact-byte
+7. The existing read-only `live-dispatch-preflight.py` checks a hypothetical live
+   target: only that validator child's environment enables its four target
+   switches and disables offline simulation. Protected profiles, Compose
+   rendering, the parent environment and the emitted sibling plan retain their
+   selected unpaid settings. Real validator failures remain failures. This is
+   followed by exact-byte
    rereads of the descriptor itself and all pinned files before writing anything.
 
 Platform children use closed stdin, a shared deadline, bounded captured output,
@@ -167,8 +191,8 @@ need the bootstrap follow-up below before first-generation preparation can pass.
 
 The output directory receives `<release_id>.activation.compose.json`,
 `<release_id>.jsonl`, and an OS-held `<release_id>.lock`. One writer acquires the
-lock, writes and flushes an intent bound to both preparation and whole owner
-descriptor digests with the intended output digest, creates the artifact
+lock, writes and flushes an intent bound to preparation, whole owner descriptor
+and installed-launcher digests with the intended output digest, creates the artifact
 exclusively, verifies its bytes, and flushes a digest-bound completion receipt.
 
 If interruption leaves a complete artifact whose bytes match the flushed intent,
@@ -176,9 +200,10 @@ If interruption leaves a complete artifact whose bytes match the flushed intent,
 rerun the doctor, render again, overwrite the artifact or execute any effect.
 The installed launcher bytes and complete owner descriptor are reread before
 completion. Every field and whitespace byte in the owner descriptor participates
-in the binding. Resume requires its current digest to equal the journal's;
+in the binding. A new process or `Release` instance must match both owner
+descriptor and installed-launcher digests against the intent and receipt;
 rotation, even with the same evaluator and preparation pins, remains held.
-Old journal records without `owner_descriptor_sha256` are refused without
+Old journal records without `owner_descriptor_sha256` or `owner_launcher_sha256` are refused without
 migration or replay. Both sibling and final bindings must come from the same
 owner descriptor bytes.
 An absent, partial or different artifact after intent, a truncated or changed
@@ -199,9 +224,16 @@ and explicitly unpaid switches. It cannot contain another rehearsal descriptor.
 Its image, database identity and generation must already have been provisioned
 through the existing approved controls; this interface does not bootstrap them.
 
-`rehearsal` compares the resolved graphs and refuses shared/external volumes or
-networks, driver options, host namespaces, shared writable bind paths, reused
-Slack identity, non-loopback ports and final-project port collisions. The backup
+`rehearsal` verifies both final and sibling database bindings through the existing
+read-only probe, then compares the observed identities and instance UUIDs. Stale
+manifest claims cannot substitute for either observation. It compares the
+resolved graphs and refuses shared/external volumes or networks, driver options,
+host namespaces, reused effective Slack tokens/channels (including Compose
+overrides), non-loopback ports and final-project port collisions. Writable sibling
+binds cannot overlap either release's checkout, snapshot, output, authority root,
+descriptor, pinned inputs or selected process-environment file, or any final
+Compose bind. Effective sibling Compose paid/live switches must remain false
+and its kill switch true even if an override replaces profile values. The backup
 path must be new and directly inside the sibling output directory.
 
 The result contains argv arrays for the existing control script, in gate order:
@@ -210,8 +242,10 @@ The result contains argv arrays for the existing control script, in gate order:
 The restore proof precedes activation as the existing acceptance chain requires.
 The separately pinned acceptance artifact is passed to `Accept`; the runner
 never considers its mere existence or a successful plan to be acceptance.
-The result also supplies the exact `cwd`, `COMPOSE_FILE` and
-`COMPOSE_PATH_SEPARATOR` needed by the existing control consumer.
+The result also supplies the exact `cwd`, `COMPOSE_FILE`,
+`COMPOSE_PATH_SEPARATOR`, `DIRECTOR_HOST_PORT` and unpaid switches needed by the
+existing control consumer. The host port is pinned in the emitted environment as
+well as argv so an inherited shell value cannot redirect Compose interpolation.
 
 Claude's assigned W6 operator executes this plan only within the separately authorized
 setup/rehearsal slot, preserving the existing control gates and durable command

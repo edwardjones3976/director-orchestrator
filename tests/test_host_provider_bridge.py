@@ -1680,13 +1680,27 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
                     self.assertEqual(dict(os.environ), before)
 
     def test_configuration_digest_endpoint_requires_the_owner_bearer(self) -> None:
-        from director_orchestrator.host_provider_bridge_server import _Handler
-        from director_orchestrator.provider_validation import production_configuration_digest
+        from director_orchestrator.host_provider_bridge_server import _Handler, _capture_configured_selection
+        from director_orchestrator.provider_validation import production_configuration_digest, PostgresValidationStore, ValidationBridgeService
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         server.executor = self.executor
-        server.validation_service = SimpleNamespace(
-            owner_token=self.OWNER, production=self.executor, account_files={"claude": (str(self.account),)},
-            team_route=None, openai_responses_route=None)
+        validation_store = PostgresValidationStore("postgresql://fixture:private-fixture@db/validation")
+        server.validation_service = ValidationBridgeService(store=validation_store,
+            owner_token=self.OWNER, capture_key="capture-fixture-" + "c" * 40,
+            production_executor=self.executor, account_files={"claude": (str(self.account),)})
+        generation_environment = {"DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "a" * 40,
+            "DIRECTOR_PROVIDER_VALIDATION_TREE": "b" * 40,
+            "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "c" * 64,
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "c" * 64}
+        with patch.dict(os.environ, generation_environment):
+            server.configured_selection = _capture_configured_selection(server.validation_service)
+        captured = dict(server.configured_selection)
+        no_connect = patch.object(validation_store, "connect", side_effect=AssertionError("metadata opened a database"))
+        no_dispatch = patch.object(server.validation_service, "run", side_effect=AssertionError("metadata dispatched a provider"))
+        no_connect.start()
+        no_dispatch.start()
+        self.addCleanup(no_connect.stop)
+        self.addCleanup(no_dispatch.stop)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -1706,7 +1720,11 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         self.assertEqual(get()[0], 401)
         self.assertEqual(get("Bearer wrong")[0], 401)
         self.assertEqual(get(self.OWNER)[0], 401)
-        status, body = get("Bearer " + self.OWNER)
+        with patch.dict(os.environ, {"DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "d" * 40,
+                "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "e" * 64,
+                "DIRECTOR_HOST_PROVIDER_WORKSPACE": str(self.root / "missing"),
+                "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "mutable-caller-profile"}):
+            status, body = get("Bearer " + self.OWNER)
         self.assertEqual(status, 200)
         expected = production_configuration_digest(self.executor, "claude", account_files=(str(self.account),))
         from director_orchestrator.bridge_attestation import argv_digest
@@ -1718,9 +1736,10 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
                 lane: {"argv_digest": argv_digest(self.executor.commands[lane]),
                        "read_only_attested": False}
                 for lane in ("claude", "grok")},
-            "pinned_environment": False})
+            "pinned_environment": False, "configured_selection": captured})
         text = body.decode("utf-8")
-        for secret_or_path in (self.OWNER, str(self.account), json.dumps(str(self.account))[1:-1], self.account.name):
+        for secret_or_path in (self.OWNER, validation_store.dsn, "private-fixture", str(self.root),
+                               str(self.account), json.dumps(str(self.account))[1:-1], self.account.name):
             self.assertNotIn(secret_or_path, text)
         # A routed lane reports the digest its route binds.
         server.validation_service = SimpleNamespace(
@@ -1732,6 +1751,39 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
                          (200, {"antigravity": "t" * 64, "claude": expected, "openai": "r" * 64}))
         server.validation_service = None
         self.assertEqual(get("Bearer " + self.OWNER)[0], 503)
+
+    def test_configured_selection_captures_actual_service_and_resolved_generation_without_io(self) -> None:
+        from director_orchestrator.host_provider_bridge_server import _capture_configured_selection, _configured_selection
+        from director_orchestrator.provider_validation import PostgresValidationStore, ValidationBridgeService
+        store = PostgresValidationStore("postgresql://fixture:selection-secret@db/validation")
+        service = ValidationBridgeService(store=store, production_executor=self.executor,
+            owner_token=self.OWNER, capture_key="capture-fixture-" + "c" * 40, account_files={})
+        environment = {"DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "a" * 40,
+            "DIRECTOR_PROVIDER_VALIDATION_TREE": "b" * 40,
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "c" * 64,
+            "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "",
+            # These do not replace the already initialized service's resources.
+            "DIRECTOR_HOST_PROVIDER_WORKSPACE": str(self.root / "unused"),
+            "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "not-the-selected-store"}
+        with patch.dict(os.environ, environment, clear=True), patch.object(store, "connect") as connect, \
+                patch.object(service, "run") as run, patch("subprocess.Popen") as spawn:
+            observed = _capture_configured_selection(service)
+            self.assertEqual(observed, _configured_selection(candidate_commit="a" * 40, candidate_tree="b" * 40,
+                generation_sha256="c" * 64, workspace=self.executor.cwd, validation_dsn=store.dsn))
+            for key, value in (("DIRECTOR_PROVIDER_VALIDATION_CANDIDATE", "bad"),
+                    ("DIRECTOR_PROVIDER_VALIDATION_TREE", ""),
+                    ("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "d" * 64)):
+                with self.subTest(key=key), patch.dict(os.environ, {key: value}), self.assertRaises((ValueError, RuntimeError)):
+                    _capture_configured_selection(service)
+            connect.assert_not_called()
+            run.assert_not_called()
+            spawn.assert_not_called()
+        text = json.dumps(observed)
+        self.assertNotIn("selection-secret", text)
+        self.assertNotIn(store.dsn, text)
+        other_store = _configured_selection(candidate_commit="a" * 40, candidate_tree="b" * 40,
+            generation_sha256="c" * 64, workspace=self.executor.cwd, validation_dsn=store.dsn + "-other")
+        self.assertNotEqual(observed["validation_store_configuration_sha256"], other_store["validation_store_configuration_sha256"])
 
     def test_check_environment_prints_pins_without_serving_or_calling_providers(self) -> None:
         from director_orchestrator import host_provider_bridge_server as server_module
