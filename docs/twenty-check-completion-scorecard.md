@@ -277,10 +277,11 @@ be bound to the running generation pin and read inside the collection window. Ca
 is no longer read for 05, so it can neither promote nor fail it. Check 05 remains candidate-dependent
 and contained: a direct read of a Director-written row is not independent of the candidate process
 that authored its generation, pending the separately assigned reviewed-image admission gate (A3)
-that establishes process/store consistency. The current lease observation uses the existing full
-`FRESH_FOR` horizon and stays contained on that basis too: A3 must still establish process ownership
-and a usable bounded lease horizon, including the normal 60-second lease case, before this check can
-reach a live PASS. Check 07 is unchanged and stays contained: its
+that establishes process/store consistency. Not covered: the old health predicate
+also compared the stored fence with the process's in-memory generation; the deployment checks do not
+establish that agreement, so A3 must (reviews 4168286426, 4168299362). The lease must still be live at
+the collection's final cutoff (`valid_until` is the lease expiry); a collection that outlasts one
+60-second lease period reports UNKNOWN until A3 re-reads the authority row at the final cutoff. Check 07 is unchanged and stays contained: its
 in-memory historical-plan and reconciliation-hold counters have no independent source yet.
 
 Round 5 remains **NOT CLOSED** for task history, deliveries and health. The
@@ -408,7 +409,19 @@ git -C <repository> show <evaluator_sha>:scripts/scorecard-launcher.py > $HOME\.
 ```
 
 The installed copy is what runs; `scripts/scorecard-launcher.py` in the
-repository is only its reviewed source. Check the installed file's bytes against
+repository is only its reviewed source.
+
+**Owner root (#287 item 34, 2026-10-02).** The launcher finds `.director-scorecard`
+under the account's profile folder as the operating system records it (Windows
+known folder `FOLDERID_Profile`; POSIX `pwd`), never through `HOME`,
+`USERPROFILE` or `HOMEDRIVE`/`HOMEPATH`. A launcher, descriptor or attestation
+directory copied under a caller-chosen home is not the installed launcher and
+refuses. The launcher hands the resolved account home to the evaluator it
+starts (`DIRECTOR_SCORECARD_OWNER_HOME`); each consumer independently resolves
+the OS account root and checks any forwarded claim against it. The evaluator
+reads owner files (descriptor, CI replica key, Security index) only from that
+OS-resolved root. A run the
+launcher did not start reads no owner files and is unattested. Check the installed file's bytes against
 that commit (`git hash-object`) before trusting it.
 
 The launcher writes a per-run receipt in the owner-controlled
@@ -1427,6 +1440,14 @@ extracted, and that pin is on `github/main`; `untrusted_checkout` repeats that
 and requires the pin to be an ancestor of the candidate. The CLI runs
 `untrusted_checkout` again after the collection, so a descriptor rotated to
 another `evaluator_sha` mid-run turns every check UNKNOWN (review 4112533825).
+**Whole-descriptor binding (#287 item 33, 2026-10-02):** the launcher hashes the
+exact descriptor bytes at launch, records that digest in the attestation and
+hands it to the evaluator (`DIRECTOR_SCORECARD_DESCRIPTOR_SHA256`). The
+evaluator refuses descriptor bytes with another digest, and the launcher
+rereads the descriptor before sealing. Any change during the run (security
+base, workflow pin, releases or evaluator pin) leaves the report unattested.
+`--verify-report` also requires the receipt's digest to match the descriptor
+installed now.
 The report limitations derive the contained check IDs from the same tuples
 used to suppress their collector results, derived from the input classification:
 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20,
