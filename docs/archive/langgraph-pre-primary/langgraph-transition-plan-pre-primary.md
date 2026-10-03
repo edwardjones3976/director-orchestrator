@@ -10,8 +10,8 @@ historical evidence and design intent at that time — not current operating
 instructions.
 
 For intended operations authority after merge and activation, see
-[langgraph-primary-operations.md](../langgraph-primary-operations.md). The tombstone
-at [langgraph-transition-plan.md](../langgraph-transition-plan.md) links here.
+[langgraph-primary-operations.md](../../langgraph-primary-operations.md). The tombstone
+at [langgraph-transition-plan.md](../../langgraph-transition-plan.md) links here.
 
 ---
 
