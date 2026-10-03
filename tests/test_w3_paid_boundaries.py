@@ -211,7 +211,7 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
                             packet_result_consumer=routing.RecordingResultConsumer())
                         f.addCleanup(activation.close)
                         engine, store = f._engine(settings, activation)
-                        record, assignment = f._record(agent=ProviderName.GEMINI)
+                        record, assignment = f._record(agent=ProviderName.GEMINI, workload_policy_version='v1' if scenario == 'workload_failure' else None)
                         if scenario == 'missing_packet':
                             record.provider_runs.append(ProviderRun(provider=assignment.agent,
                                 assignment_sequence=1, run_id='existing', status='completed'))
@@ -247,3 +247,42 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
                     finally:
                         activation.close()
                         f.directory.cleanup()
+
+
+    async def test_packet_exception_closure_survives_workload_finalization_failure(self):
+        from unittest.mock import AsyncMock, patch
+        from tests import test_engine_packet_runtime_routing as routing
+        for closed in (False, True):
+            with self.subTest(closed=closed):
+                f = routing.PacketRuntimeRoutingTests()
+                f.setUp()
+                settings = f._settings(langgraph_runtime_enabled=True,
+                    langgraph_runtime_live_dispatch_enabled=True, langgraph_runtime_task_writer_enabled=True)
+                transport = routing.RecordingTransport(f.result)
+                router = routing.StubPacketTaskRouter(f.work, routing.PacketBoundaryAdapter('gemini', transport))
+                activation = routing.RuntimeActivation(settings, packet_task_router=router)
+                try:
+                    engine, store = f._engine(settings, activation)
+                    record, assignment = f._record(agent=ProviderName.GEMINI, workload_policy_version='v1')
+                    store.create(record)
+                    engine._reserve_workload_dispatch = AsyncMock(return_value=SimpleNamespace())
+                    engine._finalize_workload_dispatch = AsyncMock(return_value=False)
+                    def close(current, assigned, **kwargs):
+                        if closed:
+                            record_provider_effect_observation(current, assigned, effect_key=kwargs['effect_key'],
+                                                               phase='dispatch', outcome='failed_pre_submit')
+                            store.save(current)
+                        return closed
+                    engine._close_failed_pre_submit_after_publication = close
+                    with patch.object(activation.runtime, 'run_packet', side_effect=ValueError('runtime refused')), patch(
+                        'director_orchestrator.engine.assignment_request_cost_bound', return_value=0.1):
+                        self.assertFalse(await engine._route_live_dispatch(record, assignment))
+                    saved = store.get(record.task_id)
+                    outcomes = {e.outcome for e in saved.task_effect_ledger if e.kind == 'provider_observation'}
+                    self.assertEqual(outcomes, {'failed_pre_submit'} if closed else {'ambiguous'})
+                    self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 0 if closed else 0.1))
+                    self.assertEqual(transport.sends, 0)
+                    engine._finalize_workload_dispatch.assert_awaited_once()
+                finally:
+                    activation.close()
+                    f.directory.cleanup()

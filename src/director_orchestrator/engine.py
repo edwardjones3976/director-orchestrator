@@ -1018,7 +1018,7 @@ class OrchestrationEngine:
         runtime_idempotency_key: str | None = None,
         parallel_member_effect_key: str | None = None,
     ) -> bool:
-        """Record pre-submit only after the exact runtime effect is closed."""
+        """Return exact effect closure; workload bookkeeping retains its own hold."""
 
         closed_pre_submit = self._close_failed_pre_submit_after_publication(
             record,
@@ -1029,7 +1029,7 @@ class OrchestrationEngine:
             parallel_member_effect_key=parallel_member_effect_key,
         )
         current = self.store.get(record.task_id) or record
-        finalized = await self._finalize_workload_dispatch(
+        await self._finalize_workload_dispatch(
             current,
             reservation,
             (
@@ -1038,7 +1038,9 @@ class OrchestrationEngine:
                 else WorkloadAttemptOutcome.INVOKED
             ),
         )
-        return closed_pre_submit and finalized
+        # A failed workload write cannot undo a durable no-submission receipt.
+        # Callers use this result for paid-effect classification and settlement.
+        return closed_pre_submit
 
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
     async def _stop_for_owner(
