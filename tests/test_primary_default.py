@@ -5699,18 +5699,14 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.6)
             self.assertLess(clock.monotonic() - started, 2.0)
             blocker.rollback()
-        # QA control for the cumulative bound (a test gap closed here; no product
-        # boundary changed): two ACCESS EXCLUSIVE locks, one on the projection
-        # table the read touches first and one on the delivery table it touches
-        # later, released in stages so that each wait alone fits the allowance
-        # while their sum exceeds it. The real read must refuse before the later
-        # lock is released; a per-stage allowance would instead finish late once
-        # the second lock cleared. Both waits, the join and the cleanup are
-        # bounded, and the blockers are released in `finally`.
-        allowance, first_release, second_release = 4.0, 1.2, 4.8
-        self.assertTrue(first_release < allowance and second_release - first_release < allowance < second_release)
+        # Issue #434: observe each blocked reader before releasing its lock;
+        # fixed release times race a loaded runner. Keep the later lock until
+        # refusal, with a bounded fallback so even a broken read can unwind.
+        # Also witness one absolute deadline at every stage: a fresh allowance
+        # per stage must fail even when the early lock is released immediately.
+        allowance, observation_cap = 4.0, 30.0
         released, waiting, worker_errors = {}, {}, []
-        stop, releaser = threading.Event(), None
+        stop, read_finished = threading.Event(), threading.Event()
         with (
             psycopg.connect(dsn, connect_timeout=5) as early,
             psycopg.connect(dsn, connect_timeout=5) as later,
@@ -5725,13 +5721,12 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
 
             def stage_releases():
                 try:
-                    for name, blocker, at, table in (
-                        ("early", early, first_release, "director_primary_task_projection"),
-                        ("later", later, second_release, "director_primary_slack_delivery"),
+                    for name, blocker, table in (
+                        ("early", early, "director_primary_task_projection"),
+                        ("later", later, "director_primary_slack_delivery"),
                     ):
-                        # Observe the actual blocked reader, not just the release
-                        # schedule: an unrelated database error must not pass.
-                        while not stop.is_set() and clock.monotonic() < origin + at:
+                        observe_until = clock.monotonic() + observation_cap
+                        while not stop.is_set() and clock.monotonic() < observe_until:
                             row = observer.execute(
                                 "SELECT pid FROM pg_locks WHERE locktype='relation' "
                                 "AND relation=%s::regclass AND NOT granted "
@@ -5743,32 +5738,54 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                                 waiting[name] = row[0]
                                 break
                             stop.wait(0.02)
-                        if stop.wait(max(0.0, origin + at - clock.monotonic())):
+                        if stop.is_set():
                             return
+                        if name not in waiting:
+                            raise AssertionError(f"reader never observed on {name} lock within 30s")
+                        if name == "later" and not read_finished.wait(observation_cap):
+                            raise AssertionError("read did not finish while later lock was held within 30s")
                         blocker.rollback()
                         released[name] = clock.monotonic() - origin
                 except Exception as error:
                     worker_errors.append(error)
+                finally:
+                    # Bound broken implementations too; never strand the reader.
+                    early.rollback()
+                    later.rollback()
 
             releaser = threading.Thread(target=stage_releases, name="qa-staged-lock-release", daemon=True)
             releaser.start()
             try:
-                with self.assertRaises((psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable,
-                                        psycopg.errors.TransactionTimeout, DeadlineExpired)):
-                    store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
-                refused_at = clock.monotonic() - origin
-                releaser.join(timeout=30)
-                self.assertFalse(releaser.is_alive(), "worker did not finish within 30s")
+                with patch("director_orchestrator.langgraph_postgres.require_deadline_remaining",
+                           wraps=require_deadline_remaining) as checked_deadlines:
+                    try:
+                        with self.assertRaises((psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable,
+                                                psycopg.errors.TransactionTimeout, DeadlineExpired)):
+                            store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
+                    finally:
+                        refused_at = clock.monotonic() - origin
+                        read_finished.set()
+                releaser.join(timeout=observation_cap + 1)
+                self.assertFalse(releaser.is_alive(), "worker did not finish within 31s")
                 self.assertEqual([], worker_errors)
                 self.assertEqual({"early", "later"}, set(waiting))
                 self.assertEqual(waiting["early"], waiting["later"])
                 self.assertLess(released["early"], refused_at)
-                self.assertLess(refused_at, released["later"])
-                self.assertLess(refused_at, allowance + 0.75)
+                # The later lock is released only after the read has finished, so the two instants can tie on a
+                # coarse monotonic clock (Windows); the event ordering, not the clock, proves refusal came first.
+                self.assertLessEqual(refused_at, released["later"])
+                self.assertLess(refused_at, allowance * 2)
+                checks = [call.args for call in checked_deadlines.call_args_list]
+                self.assertTrue({"connection acquisition", "transaction", "qualification readback projection",
+                                 "qualification readback slack_deliveries"}.issubset(
+                                     {what for deadline, what in checks}))
+                self.assertEqual(1, len({deadline for deadline, what in checks}),
+                                 "pool wait and SQL stages must share one absolute deadline")
             finally:
                 stop.set()
-                releaser.join(timeout=30)
-                self.assertFalse(releaser.is_alive(), "worker did not finish within 30s")
+                read_finished.set()
+                releaser.join(timeout=observation_cap + 1)
+                self.assertFalse(releaser.is_alive(), "worker did not finish within 31s")
         # The lane is intact afterwards and a normal read still completes.
         after = store.read_primary_qualification_evidence(record.task_id)
         self.assertTrue(after["complete"])
