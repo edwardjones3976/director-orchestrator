@@ -801,7 +801,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                         ):
                             with mock.patch.object(train_adapter, "run_probe_microsteps", return_value=(1.0, 9.0)):
                                 train_adapter.run_probe(
-                                    [row()],
+                                    [row() for _ in range(100)],
                                     train_adapter.WINNER_BASE,
                                     train_adapter.WINNER_REVISION,
                                     report_path,
