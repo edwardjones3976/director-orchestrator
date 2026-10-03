@@ -489,6 +489,17 @@ class RuntimeCheckpointConcurrencyTests(
             langgraph_runtime_task_writer_enabled=True,
             allow_paid_runs=True,
         )
+        from director_orchestrator.store import TaskStore
+        from tests.test_engine_packet_runtime_routing import PacketRuntimeRoutingTests
+
+        record, _ = PacketRuntimeRoutingTests()._record()
+        record.task_id = "DIR-CONCURRENT-CHECKPOINT"
+        record.provider_interaction_ledger = []
+        record.task_effect_ledger = []
+        record.plan_interaction_id = None
+        from tests.plan_binding_helpers import seed_production_plan_materialization
+        seed_production_plan_materialization(record)
+        TaskStore(settings.sqlite_path).create(record)
         activation = RuntimeActivation(
             settings,
             packet_task_router=StubPacketTaskRouter(),
