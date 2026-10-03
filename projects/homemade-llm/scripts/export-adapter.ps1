@@ -18,7 +18,8 @@ param(
     [string]$DockerPath,
     [Nullable[long]]$ProbeCFreeBytes,
     [Nullable[long]]$ProbeEFreeBytes,
-    [Nullable[long]]$ProbeLlmBytes
+    [Nullable[long]]$ProbeLlmBytes,
+    [string]$RunId = ''
 )
 
 $Checkpoint = [string[]](@($Checkpoint) | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -200,7 +201,38 @@ function Get-RunStagingRoot([string]$Target) {
     Get-NormalPath (Join-Path $staging $first)
 }
 
+function Assert-NoReparseExistingAncestors([string]$Path, [string]$Context) {
+    $pathN = Get-NormalPath $Path
+    $driveRoot = [IO.Path]::GetPathRoot($pathN)
+    if ([string]::IsNullOrEmpty($driveRoot)) { return }
+    if (Test-Path -LiteralPath $driveRoot) {
+        $item = Get-Item -LiteralPath $driveRoot -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Write-Error "${Context}: reparse point at $driveRoot"
+        }
+    }
+    $current = $driveRoot.TrimEnd('\')
+    $rel = $pathN.Substring($driveRoot.Length).TrimStart('\')
+    foreach ($seg in ($rel -split '[\\/]')) {
+        if ([string]::IsNullOrWhiteSpace($seg)) { continue }
+        $current = Join-Path $current $seg
+        if (-not (Test-Path -LiteralPath $current)) { continue }
+        $item = Get-Item -LiteralPath $current -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Write-Error "${Context}: reparse point at $current"
+        }
+    }
+}
+
 function Assert-NoReparseOnPath([string]$Root, [string]$Target, [string]$Context = 'Remove-StagedTree') {
+    Assert-NoReparseExistingAncestors $Root $Context
+    if (-not [string]::IsNullOrWhiteSpace($Target)) {
+        $targetN = Get-NormalPath $Target
+        $rootN = Get-NormalPath $Root
+        if (-not $targetN.Equals($rootN, [StringComparison]::OrdinalIgnoreCase)) {
+            Assert-NoReparseExistingAncestors $Target $Context
+        }
+    }
     $rootN = Get-NormalPath $Root
     $targetN = Get-NormalPath $Target
     $current = $rootN
@@ -225,7 +257,55 @@ function Assert-NoReparseOnPath([string]$Root, [string]$Target, [string]$Context
     }
 }
 
-function Remove-StagedTree([string]$Target) {
+function Assert-PhysicalStagingContainment([string]$RunPath, [string]$Context) {
+    $staging = Get-NormalPath $StagingRoot
+    $stagingResolved = $staging
+    if (Test-Path -LiteralPath $staging -PathType Container) {
+        $stagingResolved = Get-NormalPath ((Resolve-Path -LiteralPath $staging).Path)
+    }
+    if (Test-Path -LiteralPath $CHotRoot -PathType Container) {
+        $chotResolved = Get-NormalPath ((Resolve-Path -LiteralPath $CHotRoot).Path)
+        if (Test-PathIsUnder $stagingResolved $chotResolved) {
+            Write-Error "${Context}: StagingRoot $stagingResolved is under CHotRoot $chotResolved"
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($RunPath)) { return }
+    if (-not (Test-Path -LiteralPath $staging -PathType Container)) {
+        Write-Error "${Context}: staging root does not exist: $staging"
+    }
+    $stagingResolved = Get-NormalPath ((Resolve-Path -LiteralPath $staging).Path)
+    if (-not (Test-Path -LiteralPath $RunPath)) {
+        Write-Error "${Context}: run path does not exist: $RunPath"
+    }
+    $runResolved = Get-NormalPath ((Resolve-Path -LiteralPath $RunPath).Path)
+    if (-not (Test-PathIsUnder $runResolved $stagingResolved)) {
+        Write-Error "${Context}: $runResolved is not strictly inside $stagingResolved"
+    }
+}
+
+function Assert-StagingMarkerOwned([string]$RunStaging, [string]$OwnershipToken, [string]$Context = 'Remove-StagedTree') {
+    $marker = Join-Path $runStaging '.hl-export-staging'
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        Write-Error "${Context}: missing .hl-export-staging marker in $RunStaging"
+    }
+    try {
+        $doc = Get-Content -LiteralPath $marker -Raw -Encoding utf8 | ConvertFrom-Json
+    } catch {
+        Write-Error "${Context}: unreadable .hl-export-staging marker in $RunStaging"
+    }
+    $token = [string]$doc.ownershipToken
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        Write-Error "${Context}: .hl-export-staging marker has no ownership token in $RunStaging"
+    }
+    if (-not $token.Equals($OwnershipToken, [StringComparison]::Ordinal)) {
+        Write-Error "${Context}: .hl-export-staging ownership token does not match this execution"
+    }
+}
+
+function Remove-StagedTree([string]$Target, [string]$OwnershipToken) {
+    if ([string]::IsNullOrWhiteSpace($OwnershipToken)) {
+        Write-Error 'Remove-StagedTree: ownership token is required'
+    }
     if (-not (Test-Path -LiteralPath $Target)) {
         Write-Error "Remove-StagedTree: target does not exist: $Target"
     }
@@ -236,11 +316,9 @@ function Remove-StagedTree([string]$Target) {
         Write-Error "Remove-StagedTree: $resolved is not strictly inside $staging"
     }
     $runStaging = Get-RunStagingRoot $resolved
-    $marker = Join-Path $runStaging '.hl-export-staging'
-    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-        Write-Error "Remove-StagedTree: missing .hl-export-staging marker in $runStaging"
-    }
     Assert-NoReparseOnPath $staging $resolved
+    Assert-PhysicalStagingContainment $runStaging 'Remove-StagedTree'
+    Assert-StagingMarkerOwned $runStaging $OwnershipToken
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 
@@ -706,6 +784,12 @@ if ($Checkpoint.Count -lt 1) {
 if ($Name -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$') {
     Write-Error "parameter Name: must match ^[a-z0-9][a-z0-9-]{0,40}$, got '$Name'"
 }
+if ($RunId -and $RunId -cnotmatch '^[a-z0-9][a-z0-9-]{0,80}$') {
+    Write-Error "parameter RunId: must match ^[a-z0-9][a-z0-9-]{0,80}$, got '$RunId'"
+}
+if ($RunId -and $Checkpoint.Count -gt 1) {
+    Write-Error "parameter RunId: cannot be used with more than one checkpoint"
+}
 
 $utcStamp = Get-UtcStamp
 $snapshot = Get-SnapshotPath $BaseRepo $BaseRevision
@@ -715,7 +799,8 @@ $plans = [System.Collections.Generic.List[object]]::new()
 
 for ($n = 1; $n -le $Checkpoint.Count; $n++) {
     $ckpt = $Checkpoint[$n - 1]
-    $runFolder = Join-Path (Get-NormalPath $StagingRoot) "$Name-ckpt$n-$utcStamp"
+    $runLeaf = if ($RunId) { $RunId } else { "$Name-ckpt$n-$utcStamp" }
+    $runFolder = Join-Path (Get-NormalPath $StagingRoot) $runLeaf
     $output = Join-Path (Join-Path $CHotRoot 'models\m2') "$Name-ckpt$n-Q4_K_M.gguf"
     $report = Join-Path (Join-Path $CHotRoot 'reports') "m2-export-$Name-ckpt$n-$utcStamp.json"
     Write-Output "PLAN checkpoint=$n path=$ckpt"
@@ -750,6 +835,7 @@ foreach ($plan in $plans) {
     $output = $plan.Output
     $reportPath = $plan.Report
     $keepStaging = $null
+    $ownershipToken = $null
     $steps = New-StepClock
     $bf16Name = "$Name-bf16.gguf"
     $quantName = "$Name-Q4_K_M.gguf"
@@ -778,13 +864,36 @@ foreach ($plan in $plans) {
         End-Step $steps 'base_shards'
 
         Start-Step $steps 'staging'
-        New-Item -ItemType Directory -Path $runStaging -Force | Out-Null
-        $keepStaging = $runStaging
-        $marker = [ordered]@{
-            runId      = "$Name-ckpt$n-$utcStamp"
-            createdUtc = Get-UtcNowString
+        Assert-NoReparseExistingAncestors $runStaging 'export staging'
+        Assert-NoReparseExistingAncestors (Get-NormalPath $StagingRoot) 'export staging'
+        Assert-PhysicalStagingContainment '' 'export staging'
+        if (Test-Path -LiteralPath $runStaging) {
+            Write-Error "export staging: run folder already exists: $runStaging"
         }
-        Set-Content -LiteralPath (Join-Path $runStaging '.hl-export-staging') -Value ($marker | ConvertTo-Json) -Encoding utf8NoBOM
+        New-Item -ItemType Directory -Path $runStaging | Out-Null
+        $keepStaging = $runStaging
+        $ownershipToken = [guid]::NewGuid().ToString('d')
+        $runLeaf = if ($RunId) { $RunId } else { "$Name-ckpt$n-$utcStamp" }
+        $marker = [ordered]@{
+            runId           = $runLeaf
+            createdUtc      = Get-UtcNowString
+            ownershipToken  = $ownershipToken
+        }
+        $markerPath = Join-Path $runStaging '.hl-export-staging'
+        $markerJson = ($marker | ConvertTo-Json) + "`n"
+        $markerBytes = [Text.UTF8Encoding]::new($false).GetBytes($markerJson)
+        try {
+            $mfs = [System.IO.File]::Open($markerPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+                $mfs.Write($markerBytes, 0, $markerBytes.Length)
+            } finally {
+                $mfs.Dispose()
+            }
+        } catch {
+            Write-Error "export staging: could not create .hl-export-staging marker in $runStaging"
+        }
+        Assert-PhysicalStagingContainment $runStaging 'export staging'
+        Assert-NoReparseOnPath (Get-NormalPath $StagingRoot) $runStaging 'export staging'
         End-Step $steps 'staging'
 
         $hfHost = Get-NormalPath (Join-Path $CHotRoot 'hf')
@@ -807,7 +916,7 @@ foreach ($plan in $plans) {
 
         Start-Step $steps 'delete_merged'
         $mergedHost = Join-Path $workHost 'merged'
-        Remove-StagedTree $mergedHost
+        Remove-StagedTree $mergedHost $ownershipToken
         End-Step $steps 'delete_merged'
 
         Start-Step $steps 'quantise'
@@ -843,7 +952,7 @@ foreach ($plan in $plans) {
             -Steps $steps
         End-Step $steps 'report'
 
-        Remove-StagedTree $runStaging
+        Remove-StagedTree $runStaging $ownershipToken
         $keepStaging = $null
     } catch {
         if ($keepStaging) {

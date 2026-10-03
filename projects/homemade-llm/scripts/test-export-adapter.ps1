@@ -264,12 +264,60 @@ throw "unknown docker step"
     $env:HL_FAKE_TEMPLATE_SHA = $templateSha
     $env:HL_SHIM_JUNCTION_TARGET = $jTarget
 
+    function Get-ExportStagingHelperSource {
+        $exportScript = Join-Path $PSScriptRoot 'export-adapter.ps1'
+        $content = Get-Content -LiteralPath $exportScript -Raw -Encoding utf8
+        $start = $content.IndexOf('function Get-NormalPath')
+        $end = $content.IndexOf('function Get-RelativePath')
+        if ($start -lt 0 -or $end -le $start) { throw 'export helper extract failed' }
+        return $content.Substring($start, $end - $start)
+    }
+
+    function Invoke-RemoveStagedTreeProbe {
+        param(
+            [Parameter(Mandatory)][string]$StagingRootArg,
+            [Parameter(Mandatory)][string]$CHotRootArg,
+            [Parameter(Mandatory)][string]$Target,
+            [Parameter(Mandatory)][string]$OwnershipToken
+        )
+        $helpers = Get-ExportStagingHelperSource
+        $stagingEsc = $StagingRootArg.Replace("'", "''")
+        $chotEsc = $CHotRootArg.Replace("'", "''")
+        $targetEsc = $Target.Replace("'", "''")
+        $tokenEsc = $OwnershipToken.Replace("'", "''")
+        $cmd = @"
+`$ErrorActionPreference = 'Stop'
+`$StagingRoot = '$stagingEsc'
+`$CHotRoot = '$chotEsc'
+$helpers
+try {
+    Remove-StagedTree -Target '$targetEsc' -OwnershipToken '$tokenEsc'
+    'PROBE_OK'
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+        $prevEa = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $lines = @(& $shellExe -NoProfile -NonInteractive -Command $cmd 2>&1 | ForEach-Object { "$_" })
+            $code = $LASTEXITCODE
+            if ($null -eq $code) { $code = -1 }
+            return [pscustomobject]@{ Lines = @($lines); Code = [int]$code; Text = (Out-Text $lines) }
+        } finally {
+            $ErrorActionPreference = $prevEa
+        }
+    }
+
     function New-ExportArgs {
         param(
             [Parameter(Mandatory)][string[]]$Checkpoint,
             [switch]$Execute,
             [string]$Name = 'tstexp',
             [string]$StagingRoot = '',
+            [string]$RunId = '',
             [long]$ProbeCFreeBytes = -1,
             [long]$ProbeEFreeBytes = -1,
             [long]$ProbeLlmBytes = -1
@@ -283,6 +331,7 @@ throw "unknown docker step"
         [void]$a.Add('-Checkpoint')
         [void]$a.Add(($Checkpoint -join ','))
         [void]$a.Add('-Name'); [void]$a.Add($Name)
+        if ($RunId) { [void]$a.Add('-RunId'); [void]$a.Add($RunId) }
         [void]$a.Add('-BaseRevision'); [void]$a.Add($rev)
         [void]$a.Add('-CHotRoot'); [void]$a.Add($cRoot)
         [void]$a.Add('-StagingRoot'); [void]$a.Add($StagingRoot)
@@ -875,6 +924,93 @@ throw "unknown docker step"
     Assert ($null -ne $kept -and (Test-Path -LiteralPath $kept)) 'docker-fail quantise: staging kept'
     Assert ((Get-GuardFingerprint) -eq $fpBeforeFail) 'docker-fail quantise: nothing outside staging changed'
     $env:HL_SHIM_FAIL = ''
+
+    # --- T-A ancestor junction on StagingRoot ---
+    Clear-Artifacts
+    $ajOutside = Join-Path $root 'ancestor-outside'
+    $ajLink = Join-Path $root 'ancestor-junction'
+    if (Test-Path -LiteralPath $ajLink) { Remove-TreeSafe $ajLink }
+    if (Test-Path -LiteralPath $ajOutside) { Remove-TreeSafe $ajOutside }
+    New-Item -ItemType Directory -Path $ajOutside -Force | Out-Null
+    New-Item -ItemType Junction -Path $ajLink -Target $ajOutside | Out-Null
+    $ajStaging = Join-Path $ajLink 'stage'
+    $ancestRunId = 'ancest-run-1'
+    $physStage = Join-Path $ajOutside 'stage'
+    $physRun = Join-Path $physStage $ancestRunId
+    $physMerged = Join-Path $physRun 'merged'
+    New-Item -ItemType Directory -Path $physMerged -Force | Out-Null
+    $ancestSentinel = Join-Path $physMerged 'keep-ancestor.bin'
+    [IO.File]::WriteAllBytes($ancestSentinel, [Text.Encoding]::UTF8.GetBytes('KEEP-ANCESTOR'))
+    $ancestSentSha = Get-Sha256File $ancestSentinel
+    try {
+        $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -StagingRoot $ajStaging -RunId $ancestRunId)
+        $text = Out-Text $r.Lines
+        Assert ($r.Code -ne 0 -and $text -match 'reparse point') 't-a: ancestor junction export refused'
+        Assert ((Get-ShimLogLines).Count -eq 0) 't-a: ancestor junction no docker'
+        Assert ((Get-Sha256File $ancestSentinel) -eq $ancestSentSha) 't-a: ancestor sentinel unchanged after export refuse'
+
+        New-Item -ItemType Directory -Path $physRun -Force | Out-Null
+        $foreignTok = [guid]::NewGuid().ToString('d')
+        $markerDoc = @{ runId = $ancestRunId; ownershipToken = $foreignTok } | ConvertTo-Json -Compress
+        [IO.File]::WriteAllText((Join-Path $physRun '.hl-export-staging'), $markerDoc)
+        $logicalMerged = Join-Path (Join-Path $ajStaging $ancestRunId) 'merged'
+        $probe = Invoke-RemoveStagedTreeProbe -StagingRootArg $ajStaging -CHotRootArg $cRoot -Target $logicalMerged -OwnershipToken $foreignTok
+        Assert ($probe.Code -ne 0 -and $probe.Text -match 'reparse point') 't-a: Remove-StagedTree refuses ancestor junction route'
+        Assert ((Get-Sha256File $ancestSentinel) -eq $ancestSentSha) 't-a: ancestor sentinel unchanged after Remove-StagedTree refuse'
+    } finally {
+        if (Test-Path -LiteralPath $ajLink) {
+            $ajItem = Get-Item -LiteralPath $ajLink -Force
+            if ($ajItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                [System.IO.Directory]::Delete($ajLink, $false)
+            }
+        }
+        if (Test-Path -LiteralPath $ajOutside) { Remove-TreeSafe $ajOutside }
+    }
+
+    # --- T-B run directory collision and foreign ownership token ---
+    Clear-Artifacts
+    $collisionRunId = 'collision-run-1'
+    $preRun = Join-Path $eRoot $collisionRunId
+    New-Item -ItemType Directory -Path $preRun -Force | Out-Null
+    $priorToken = [guid]::NewGuid().ToString('d')
+    $priorMarker = @{ runId = $collisionRunId; createdUtc = '2020-01-01T00:00:00Z'; ownershipToken = $priorToken } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText((Join-Path $preRun '.hl-export-staging'), $priorMarker)
+    $collisionSentinel = Join-Path $preRun 'collision-sentinel.bin'
+    [IO.File]::WriteAllBytes($collisionSentinel, [Text.Encoding]::UTF8.GetBytes('COLLISION-SENTINEL'))
+    $collisionSentSha = Get-Sha256File $collisionSentinel
+    $priorMarkerSha = Get-Sha256File (Join-Path $preRun '.hl-export-staging')
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -RunId $collisionRunId)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'run folder already exists') 't-b: pre-existing run folder refused'
+    Assert ((Get-ShimLogLines).Count -eq 0) 't-b: collision no docker'
+    Assert (-not (Test-Path -LiteralPath $outCkpt1)) 't-b: collision no output file'
+    Assert ((Get-Sha256File $collisionSentinel) -eq $collisionSentSha) 't-b: collision sentinel unchanged'
+    Assert ((Get-Sha256File (Join-Path $preRun '.hl-export-staging')) -eq $priorMarkerSha) 't-b: prior marker unchanged'
+
+    Clear-Artifacts
+    $foreignRunId = 'foreign-token-run'
+    $foreignRun = Join-Path $eRoot $foreignRunId
+    New-Item -ItemType Directory -Path $foreignRun -Force | Out-Null
+    $foreignTok = [guid]::NewGuid().ToString('d')
+    $wrongTok = [guid]::NewGuid().ToString('d')
+    $foreignMarker = @{ runId = $foreignRunId; ownershipToken = $foreignTok } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText((Join-Path $foreignRun '.hl-export-staging'), $foreignMarker)
+    $foreignSentinel = Join-Path $foreignRun 'foreign-sentinel.bin'
+    [IO.File]::WriteAllBytes($foreignSentinel, [Text.Encoding]::UTF8.GetBytes('FOREIGN-SENTINEL'))
+    $foreignSentSha = Get-Sha256File $foreignSentinel
+    $foreignMarkerSha = Get-Sha256File (Join-Path $foreignRun '.hl-export-staging')
+    $probe = Invoke-RemoveStagedTreeProbe -StagingRootArg $eRoot -CHotRootArg $cRoot -Target $foreignRun -OwnershipToken $wrongTok
+    Assert ($probe.Code -ne 0 -and $probe.Text -match 'ownership token') 't-b: Remove-StagedTree refuses foreign ownership token'
+    Assert ((Get-Sha256File $foreignSentinel) -eq $foreignSentSha) 't-b: foreign sentinel unchanged'
+    Assert ((Get-Sha256File (Join-Path $foreignRun '.hl-export-staging')) -eq $foreignMarkerSha) 't-b: foreign marker unchanged'
+
+    # --- T-C normal run removes owned staging (covered by happy path; re-check marker token cleanup) ---
+    Clear-Artifacts
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -RunId 'owned-run-1')
+    Assert ($r.Code -eq 0) 't-c: owned run exit 0'
+    $stagingKids = @()
+    if (Test-Path -LiteralPath $eRoot) { $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force) }
+    Assert ($stagingKids.Count -eq 0) 't-c: owned staging folder removed after success'
 
     # --- 13. Delete guard ---
     Clear-Artifacts
