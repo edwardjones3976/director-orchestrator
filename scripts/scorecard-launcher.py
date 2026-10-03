@@ -55,7 +55,11 @@ def account_home() -> Path:
         finally:
             ctypes.windll.ole32.CoTaskMemFree(path)
     import pwd
-    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:
+        raise OSError("the account profile folder could not be resolved") from error
+    return Path(home)
 
 
 def owner_root() -> Path:
@@ -135,7 +139,10 @@ def read_attestation(nonce: str, root: Path | None = None) -> dict | None:
 
 
 def run_attestation(root: Path) -> dict | None:
-    receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
+    try:
+        receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
+    except OSError:
+        return None
     if receipt is None or receipt.get("report_sha256") is not None:
         return None
     try:

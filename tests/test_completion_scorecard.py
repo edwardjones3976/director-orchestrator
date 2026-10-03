@@ -110,6 +110,7 @@ from contextlib import ExitStack, closing, nullcontext, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
@@ -1165,6 +1166,57 @@ def installed_launcher_command(installed, home, *arguments, isolated=True):
     )
     return [sys.executable, *(["-I"] if isolated else []), "-c", bootstrap, str(installed), str(home),
             *[str(argument) for argument in arguments]]
+
+
+class OwnerAccountLookupTests(unittest.TestCase):
+    """Missing POSIX account records refuse every consumer without trusting environment fallbacks."""
+
+    def setUp(self):
+        self.launcher = sc._launcher()
+        source = Path(__file__).resolve().parents[1] / "scripts" / "director-scorecard.py"
+        spec = importlib.util.spec_from_file_location("missing_uid_scorecard", source)
+        self.cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.cli)
+        self.uid = 424242
+        self.lookup = Mock(side_effect=KeyError(self.uid))
+        stack = self.enterContext(ExitStack())
+        stack.enter_context(patch.dict(sys.modules, {"pwd": SimpleNamespace(getpwuid=self.lookup)}))
+        unavailable = SimpleNamespace(name="posix", geteuid=lambda: self.uid, environ={
+            "HOME": "/caller/home", "USERPROFILE": "/caller/profile",
+            pse.OWNER_HOME_ENV: "/caller/owner", pse.DESCRIPTOR_ENV: "a" * 64,
+        })
+        for module in (self.launcher, self.cli, pse):
+            stack.enter_context(patch.object(module, "os", unavailable))
+
+    def test_missing_uid_normalizes_all_account_lookups(self):
+        for module in (self.launcher, self.cli, pse):
+            with self.subTest(module=module.__name__), self.assertRaisesRegex(OSError, "could not be resolved"):
+                module.account_home()
+        self.assertEqual(self.lookup.call_count, 3)
+        self.lookup.assert_called_with(self.uid)
+
+    def test_missing_uid_leaves_descriptor_and_authority_consumers_unavailable(self):
+        self.assertIsNone(self.cli.release_descriptor())
+        self.assertEqual(self.cli.launch_refusal(), "evaluator revision not pinned")
+        self.assertIsNone(pse.owner_home())
+        self.assertIsNone(pse.cli_release_descriptor())
+        with patch.object(sc, "CI_REPLICA_KEY", None):
+            self.assertIsNone(sc._ci_replica_key())
+
+    def test_missing_uid_leaves_the_score_unattested(self):
+        with patch.object(sc, "_launcher", return_value=self.launcher):
+            report = sc.score("a" * 40, [])
+        self.assertFalse(report["attested"])
+        self.assertEqual(report["passed"], "UNATTESTED")
+        self.assertFalse(report["activation_authorized"])
+
+    def test_missing_uid_launcher_returns_clean_refusal(self):
+        stderr = io.StringIO()
+        with patch.object(self.launcher, "sys", SimpleNamespace(
+                flags=SimpleNamespace(isolated=True), stderr=stderr)):
+            self.assertEqual(self.launcher.main([]), 2)
+        self.assertIn("the owner account home could not be resolved", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
 
 class ScorecardGitTrustTests(unittest.TestCase):

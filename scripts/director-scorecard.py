@@ -58,7 +58,11 @@ def account_home() -> Path:
         finally:
             ctypes.windll.ole32.CoTaskMemFree(path)
     import pwd
-    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:
+        raise OSError("the account profile folder could not be resolved") from error
+    return Path(home)
 
 
 def release_descriptor() -> Path | None:
