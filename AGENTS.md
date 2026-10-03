@@ -60,6 +60,16 @@ The owner-appointed succession order is ChatGPT/Codex Director (#1), Claude
 (#2, while Codex is unavailable), then Cursor (#3, while both are unavailable).
 The acting lead performs all Director duties within existing authority. Keep
 one acting lead and preserve explicitly appointed project Directors.
+The three provider administrators are **ChatGPT/Codex, Claude and Cursor**;
+Cursor is not a non-admin provider. The owner is above this chain. Codex may
+overrule/delegate to Claude and Cursor; Claude may overrule/delegate to Cursor.
+The owner approves macro plans; administrators decide individual assignments
+and subordinate plans within existing delegation and deterministic gates.
+For the current Director-Orchestrator completion plan, the owner appointed
+**Claude as completion Director**, with Codex providing overall accountability
+and support. This applies while Codex is available too and excludes Homemade LLM
+and other projects. Do not start a competing completion plan. See the canonical
+[administrator definition](docs/project-leadership.md#administrators-and-chain-of-command).
 Perplexity and Firecrawl retain their public-research roles.
 Read `docs/project-leadership.md` before assigning work. Runtime coordination
 status remains a recorded deployment fact and does not create standing role
@@ -76,7 +86,8 @@ authority.
 - This leadership decision does not attest live provider routing. The deployed
   runtime keeps its recorded provider until a real replacement passes all gates.
 - Work already in flight keeps its writer and evidence; new assignments follow
-  the ChatGPT/Codex Director's direction. Only the sole author and its provider family are barred from reviewing or accepting on authorship grounds; any provider with counted lines may never merge that pull request.
+  the responsible Director's direction, currently Claude for Director-Orchestrator
+  completion. Only the sole author and its provider family are barred from reviewing or accepting on authorship grounds; any provider with counted lines may never merge that pull request.
 
 Follow [Staff and nightly briefings](docs/team-staff-and-briefings.md): keep the
 staff/contact/task/repair records current and publish the daily briefing at

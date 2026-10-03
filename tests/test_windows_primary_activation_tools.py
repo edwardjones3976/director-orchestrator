@@ -1427,7 +1427,12 @@ Write-Output 'slot-checks-passed'
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         visible = [line.strip() for line in claude.splitlines() if line.strip() and "[[" not in line]
         self.assertIn("@AGENTS.md", visible)
-        self.assertIn("no standing director role", claude.lower())
+        normalized = " ".join(claude.replace("**", "").split())
+        self.assertIn("Claude is administrator #2", normalized)
+        self.assertIn("Claude the Director for completing Director-Orchestrator", normalized)
+        self.assertIn("including while Codex is available", normalized)
+        self.assertIn("This appointment excludes Homemade LLM and every other project", normalized)
+        self.assertNotIn("no standing director role", normalized.lower())
         self.assertIn("docs/project-leadership.md", claude)
 
 
