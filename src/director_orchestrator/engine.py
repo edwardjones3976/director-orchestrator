@@ -1018,7 +1018,7 @@ class OrchestrationEngine:
         runtime_idempotency_key: str | None = None,
         parallel_member_effect_key: str | None = None,
     ) -> bool:
-        """Record pre-submit only after the exact runtime effect is closed."""
+        """Return exact effect closure; workload bookkeeping retains its own hold."""
 
         closed_pre_submit = self._close_failed_pre_submit_after_publication(
             record,
@@ -1029,7 +1029,7 @@ class OrchestrationEngine:
             parallel_member_effect_key=parallel_member_effect_key,
         )
         current = self.store.get(record.task_id) or record
-        finalized = await self._finalize_workload_dispatch(
+        await self._finalize_workload_dispatch(
             current,
             reservation,
             (
@@ -1038,7 +1038,9 @@ class OrchestrationEngine:
                 else WorkloadAttemptOutcome.INVOKED
             ),
         )
-        return closed_pre_submit and finalized
+        # A failed workload write cannot undo a durable no-submission receipt.
+        # Callers use this result for paid-effect classification and settlement.
+        return closed_pre_submit
 
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
     async def _stop_for_owner(
@@ -2074,8 +2076,7 @@ class OrchestrationEngine:
                             outcome="failed_pre_submit",
                         )
                         self.store.save(record)
-                    if closed_pre_submit:
-                        self._settle_unsubmitted_spend(record, assignment, task_effect_key)
+                    self._settle_unsubmitted_spend(record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -2126,8 +2127,7 @@ class OrchestrationEngine:
                                 parallel_member_effect_key=member.effect_key,
                             )
                         )
-                    if closed_pre_submit:
-                        self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
+                    self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -5984,8 +5984,28 @@ class OrchestrationEngine:
 
     def _retry_spend_settlements(self, record: TaskRecord) -> bool:
         """Repair durable side records without repeating provider I/O."""
+        # The zero-charge write and the hold write can both fail. Discover
+        # those retries from the already durable closure and outstanding spend,
+        # rather than requiring a second successfully persisted error marker.
+        retry_keys = set()
         if record.error and record.error.startswith("spend_settlement_failed:"):
-            key = record.error.split(":", 1)[1]
+            retry_keys.add(record.error.split(":", 1)[1])
+        outstanding = {}
+        if self.provider_spend is not None:
+            for intent in record.task_effect_ledger:
+                if (intent.kind != "provider_intent" or intent.plan_generation != record.plan_generation
+                        or intent.provider not in ProviderDailySpendLedger._SUPPORTED):
+                    continue
+                outcomes = {item.outcome for item in record.task_effect_ledger
+                            if item.kind == "provider_observation" and item.effect_key == intent.effect_key}
+                if outcomes != {"failed_pre_submit"}:
+                    continue
+                if intent.provider not in outstanding:
+                    outstanding[intent.provider] = set(self.provider_spend.unreconciled(
+                        intent.provider, stale_after=timedelta(0)))
+                if intent.effect_key in outstanding[intent.provider]:
+                    retry_keys.add(intent.effect_key)
+        for key in sorted(retry_keys):
             outcomes = {item.outcome for item in record.task_effect_ledger
                         if item.kind == "provider_observation" and item.effect_key == key}
             if outcomes == {"failed_pre_submit"}:
