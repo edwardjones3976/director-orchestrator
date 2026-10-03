@@ -190,6 +190,41 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(saved.provider_runs, [])
             self.assertEqual(saved.provider_contact_attempts, [])
 
+    async def test_zero_charge_recovery_without_a_durable_hold_marker(self):
+        import sqlite3
+        from itertools import product
+        from unittest.mock import AsyncMock, patch
+        from director_orchestrator.models import TaskStatus
+        for outcome, entry in product(('failed_pre_submit', 'ambiguous'), ('helper', 'run')):
+            with self.subTest(outcome=outcome, entry=entry), tempfile.TemporaryDirectory() as root:
+                settings, store, record, assignment = fixtures.ProviderSpendSettlementTests()._world(root)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment, phase='dispatch', max_task_budget_usd=10)
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                record_provider_effect_observation(record, assignment, effect_key=key,
+                                                   phase='dispatch', outcome=outcome)
+                record.status = TaskStatus.DONE
+                store.save(record)
+                with patch.object(engine.provider_spend, 'record_charge', side_effect=sqlite3.OperationalError('locked')), \
+                        patch.object(store, 'save', side_effect=sqlite3.OperationalError('locked')):
+                    self.assertFalse(engine._settle_unsubmitted_spend(record, assignment, key))
+                saved = store.get(record.task_id)
+                self.assertIsNone(saved.error)
+                self.assertEqual(engine.provider_spend.exposure(assignment.agent), (1, 1.0))
+                restarted = OrchestrationEngine(settings, store)
+                adapter = AsyncMock()
+                restarted.providers[assignment.agent] = adapter
+                if entry == 'run':
+                    await restarted.run(record.task_id)
+                else:
+                    self.assertTrue(restarted._retry_spend_settlements(saved))
+                self.assertTrue(restarted._retry_spend_settlements(store.get(record.task_id)))
+                expected = 0 if outcome == 'failed_pre_submit' else 1.0
+                self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, expected))
+                adapter.dispatch.assert_not_awaited()
+                self.assertEqual(saved.provider_runs, [])
+                self.assertEqual(saved.provider_contact_attempts, [])
+
     async def test_packet_pre_submit_exits_and_missing_replay_evidence(self):
         from unittest.mock import AsyncMock, patch
         from tests import test_engine_packet_runtime_routing as routing

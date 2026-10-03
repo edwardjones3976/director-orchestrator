@@ -5984,8 +5984,28 @@ class OrchestrationEngine:
 
     def _retry_spend_settlements(self, record: TaskRecord) -> bool:
         """Repair durable side records without repeating provider I/O."""
+        # The zero-charge write and the hold write can both fail. Discover
+        # those retries from the already durable closure and outstanding spend,
+        # rather than requiring a second successfully persisted error marker.
+        retry_keys = set()
         if record.error and record.error.startswith("spend_settlement_failed:"):
-            key = record.error.split(":", 1)[1]
+            retry_keys.add(record.error.split(":", 1)[1])
+        outstanding = {}
+        if self.provider_spend is not None:
+            for intent in record.task_effect_ledger:
+                if (intent.kind != "provider_intent" or intent.plan_generation != record.plan_generation
+                        or intent.provider not in ProviderDailySpendLedger._SUPPORTED):
+                    continue
+                outcomes = {item.outcome for item in record.task_effect_ledger
+                            if item.kind == "provider_observation" and item.effect_key == intent.effect_key}
+                if outcomes != {"failed_pre_submit"}:
+                    continue
+                if intent.provider not in outstanding:
+                    outstanding[intent.provider] = set(self.provider_spend.unreconciled(
+                        intent.provider, stale_after=timedelta(0)))
+                if intent.effect_key in outstanding[intent.provider]:
+                    retry_keys.add(intent.effect_key)
+        for key in sorted(retry_keys):
             outcomes = {item.outcome for item in record.task_effect_ledger
                         if item.kind == "provider_observation" and item.effect_key == key}
             if outcomes == {"failed_pre_submit"}:
