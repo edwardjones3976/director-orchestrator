@@ -116,16 +116,20 @@ def _is_weight_manifest_path(rel: str) -> bool:
     return rel.endswith(".safetensors") or rel.endswith(".bin")
 
 
-def _collect_snapshot_weight_files(snapshot_dir: Path) -> list[str]:
-    """Relative paths of weight shards under ``snapshot_dir`` (symlinks resolved for existence)."""
+def _collect_snapshot_files(snapshot_dir: Path) -> list[str]:
+    """Cover every cached input, including configs/tokenizers and future formats.
+
+    Hugging Face cache file symlinks are read and hashed through their targets.
+    Directory symlinks and non-regular entries cannot hide uncovered inputs.
+    """
     found: list[str] = []
     for path in snapshot_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        name = path.name
-        if not (name.endswith(".safetensors") or name.endswith(".bin")):
-            continue
-        found.append(path.relative_to(snapshot_dir).as_posix())
+        if path.is_symlink() and path.is_dir():
+            fail("snapshot directory symlinks are not supported")
+        if path.is_file():
+            found.append(path.relative_to(snapshot_dir).as_posix())
+        elif not path.is_dir():
+            fail("snapshot contains a non-regular or missing input")
     return sorted(found)
 
 
@@ -155,13 +159,20 @@ def _index_weight_map_shards(snapshot_dir: Path) -> tuple[set[str], bool]:
 
 
 def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], reads: int = 2) -> dict:
-    """Each listed file must match size and SHA-256 on ``reads`` consecutive full reads."""
+    """Authenticate every snapshot file before parsing any model-loading input.
+
+    A weights-only approved list is insufficient when other snapshot files are
+    present. Missing trusted metadata is a refusal, never a locally minted hash.
+    """
     if reads < 1:
         fail("reads must be positive")
     seen_paths: set[str] = set()
     manifest_weight_paths: list[str] = []
     for entry in expected_files:
         rel = entry["path"]
+        if (not isinstance(rel, str) or "\\" in rel or ":" in rel
+                or any(part in ("", ".", "..") for part in rel.split("/"))):
+            fail("digest manifest paths must be confined relative snapshot files")
         if rel in seen_paths:
             fail(f"duplicate path in digest manifest: {rel}")
         seen_paths.add(rel)
@@ -169,19 +180,12 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
             manifest_weight_paths.append(rel)
     if not manifest_weight_paths:
         fail("digest manifest lists no weight file")
-    index_shards, weight_map_checked = _index_weight_map_shards(snapshot_dir)
-    manifest_weight_set = set(manifest_weight_paths)
-    if weight_map_checked:
-        for shard in sorted(index_shards):
-            if shard not in manifest_weight_set:
-                fail(f"digest manifest does not list index shard: {shard}")
-            shard_path = snapshot_dir / shard
-            if not shard_path.is_file():
-                fail(f"index shard missing from snapshot: {shard}")
-    on_disk_weights = _collect_snapshot_weight_files(snapshot_dir)
-    for rel in on_disk_weights:
-        if rel not in manifest_weight_set:
-            fail(f"weight file not covered by the digest manifest: {rel}")
+    on_disk_files = _collect_snapshot_files(snapshot_dir)
+    for rel in on_disk_files:
+        if rel not in seen_paths:
+            if _is_weight_manifest_path(rel):
+                fail(f"weight file not covered by the digest manifest: {rel}")
+            fail(f"snapshot input lacks an approved digest: {rel}")
     total_bytes = 0
     for entry in expected_files:
         rel = entry["path"]
@@ -198,12 +202,25 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
             if actual_sha != expected_sha:
                 fail(f"digest mismatch for {rel} on read {read_index}")
         total_bytes += expected_size
+    # The index is executable loading metadata too: do not parse it before its
+    # own bytes (and every other cached file) have passed the approved hashes.
+    index_shards, weight_map_checked = _index_weight_map_shards(snapshot_dir)
+    manifest_weight_set = set(manifest_weight_paths)
+    if weight_map_checked:
+        for shard in sorted(index_shards):
+            if shard not in manifest_weight_set:
+                fail(f"digest manifest does not list index shard: {shard}")
+            shard_path = snapshot_dir / shard
+            if not shard_path.is_file():
+                fail(f"index shard missing from snapshot: {shard}")
     return {
         "files": len(expected_files),
         "reads": reads,
         "bytes": total_bytes,
         "weight_files": len(manifest_weight_paths),
         "weight_map_checked": weight_map_checked,
+        "snapshot_files": len(on_disk_files),
+        "snapshot_coverage": "all_regular_files",
     }
 
 

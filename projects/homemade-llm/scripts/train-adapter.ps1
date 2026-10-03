@@ -72,6 +72,8 @@ if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
 }
 # The approved root has a different schema from ExpectedDigests. Authenticate
 # both byte sequences before GPU ownership or any model/cache access.
+# The trainer also requires approved digests for every snapshot file, including
+# tokenizer/config/index metadata; a weights-only list cannot authorize a load.
 $TrustedDigestRoot = ''
 $TrustedDigestRootSHA256 = '832406c6f6675c92b2d1072ffa674c1873a1693a88d53293d8e17942961423ee'
 if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase) {

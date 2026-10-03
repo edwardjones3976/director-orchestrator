@@ -364,7 +364,9 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
     def _trusted_chain(self, root: Path) -> tuple[Path, Path, str]:
         # Synthetic metadata and weights only. Tests patch the fixed code pin,
         # never add a runtime argument that can approve an arbitrary root.
-        entry = self._digest_entry(root, "model.safetensors", b"synthetic weights")
+        snapshot = root / "snapshot"
+        snapshot.mkdir(exist_ok=True)
+        entry = self._digest_entry(snapshot, "model.safetensors", b"synthetic weights")
         key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
         listing = root / "upstream.json"
         listing.write_bytes(json.dumps({key: {"files": [entry]}}).encode())
@@ -381,7 +383,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
             root = Path(tmp)
             trusted, listing, pin = self._trusted_chain(root)
             with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
-                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root) as snapshot:
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshot") as snapshot:
                 result = train_adapter.digest_verification_before_load(
                     train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
                 )
@@ -407,12 +409,12 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             trusted, listing, pin = self._trusted_chain(root)
-            entry = self._digest_entry(root, "model.safetensors", b"changed weights")
+            entry = self._digest_entry(root / "snapshot", "model.safetensors", b"changed weights")
             listing.write_bytes(json.dumps({
                 f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}": {"files": [entry]},
             }).encode())
             # The old weight-only check would accept this changed, self-consistent pair.
-            train_adapter.verify_expected_digests(root, [entry])
+            train_adapter.verify_expected_digests(root / "snapshot", [entry])
             with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
                  mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
                 with self.assertRaisesRegex(SystemExit, "list does not match"):
@@ -511,6 +513,121 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         self.assertEqual(raised.exception.code, 0)
         self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
 
+    def _complete_trusted_snapshot(self, root: Path) -> tuple[Path, Path, str]:
+        trusted, listing, _ = self._trusted_chain(root)
+        snapshot = root / "snapshot"
+        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        payload = json.loads(listing.read_bytes())
+        for name, data in (
+            ("config.json", b'{"model_type":"synthetic"}'),
+            ("tokenizer.json", b'{"synthetic_tokenizer":true}'),
+            ("model.safetensors.index.json", b'{"weight_map":{"layer":"model.safetensors"}}'),
+        ):
+            payload[key]["files"].append(self._digest_entry(snapshot, name, data))
+        listing.write_bytes(json.dumps(payload).encode())
+        approved = json.loads(trusted.read_bytes())
+        approved["models"][0]["upstream_weight_digests_sha256"] = hashlib.sha256(listing.read_bytes()).hexdigest()
+        trusted.write_bytes(json.dumps(approved).encode())
+        return trusted, listing, hashlib.sha256(trusted.read_bytes()).hexdigest()
+
+    def test_complete_snapshot_authenticates_metadata_and_reports_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._complete_trusted_snapshot(root)
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshot"):
+                result = train_adapter.digest_verification_before_load(
+                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                )
+            self.assertEqual(result["snapshot_coverage"], "all_regular_files")
+            self.assertEqual(result["snapshot_files"], 4)
+            self.assertEqual(result["files"], 4)
+            self.assertEqual(result["weight_files"], 1)
+            self.assertTrue(result["weight_map_checked"])
+
+    def test_corrupt_snapshot_loading_metadata_refused_before_index_parse_or_model_load(self):
+        for name in ("config.json", "tokenizer.json", "model.safetensors.index.json"):
+            for mode in ([], ["--probe"]):
+                with self.subTest(name=name, mode=mode), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    accepted = write_accepted(root, [row()])
+                    trusted, listing, pin = self._complete_trusted_snapshot(root)
+                    snapshot = root / "snapshot"
+                    path = snapshot / name
+                    path.write_bytes(b"!" * path.stat().st_size)
+                    self.assertEqual((snapshot / "model.safetensors").read_bytes(), b"synthetic weights")
+                    with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                         mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                         mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                         mock.patch.object(train_adapter, "_index_weight_map_shards") as parse_index:
+                        with self.assertRaisesRegex(SystemExit, "digest mismatch for " + name.replace(".", r"\.")):
+                            train_adapter.main([
+                                "--rows", str(accepted), "--report", str(root / "metrics.json"),
+                                "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                                "--expected-digests", str(listing), "--trusted-digest-root", str(trusted), *mode,
+                            ])
+                        parse_index.assert_not_called()
+                        model.from_pretrained.assert_not_called()
+
+    def test_unlisted_snapshot_input_requires_existing_approved_digest_before_model_load(self):
+        for name in ("config.json", "tokenizer.json", "model.safetensors.index.json", "future-format.data"):
+            for mode in ([], ["--probe"]):
+                with self.subTest(name=name, mode=mode), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    accepted = write_accepted(root, [row()])
+                    trusted, listing, pin = self._trusted_chain(root)
+                    snapshot = root / "snapshot"
+                    (snapshot / name).write_bytes(b"unapproved synthetic metadata")
+                    with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                         mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                         mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                         mock.patch.object(train_adapter, "_index_weight_map_shards") as parse_index:
+                        with self.assertRaisesRegex(SystemExit, "snapshot input lacks an approved digest"):
+                            train_adapter.main([
+                                "--rows", str(accepted), "--report", str(root / "metrics.json"),
+                                "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                                "--expected-digests", str(listing), "--trusted-digest-root", str(trusted), *mode,
+                            ])
+                        parse_index.assert_not_called()
+                        model.from_pretrained.assert_not_called()
+                    self.assertEqual((snapshot / "model.safetensors").read_bytes(), b"synthetic weights")
+
+    def test_index_parsed_only_after_all_snapshot_files_pass_both_digest_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._complete_trusted_snapshot(root)
+            snapshot = root / "snapshot"
+            seen = []
+            real_hash = train_adapter._sha256_file
+            real_parse = train_adapter._index_weight_map_shards
+
+            def record_hash(path):
+                seen.append(path.name)
+                return real_hash(path)
+
+            def parse_after_hashes(path):
+                self.assertEqual(len(seen), 8)
+                for name in ("model.safetensors", "config.json", "tokenizer.json", "model.safetensors.index.json"):
+                    self.assertEqual(seen.count(name), 2)
+                return real_parse(path)
+
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                 mock.patch.object(train_adapter, "_sha256_file", side_effect=record_hash), \
+                 mock.patch.object(train_adapter, "_index_weight_map_shards", side_effect=parse_after_hashes) as parse:
+                train_adapter.digest_verification_before_load(
+                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                )
+            parse.assert_called_once_with(snapshot)
+
+    def test_digest_paths_cannot_escape_complete_snapshot_coverage(self):
+        for name in ("../escape.bin", "/absolute.bin", "C:/escape.bin", "folder\\escape.bin"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(SystemExit, "confined relative snapshot files"):
+                    train_adapter.verify_expected_digests(
+                        Path(tmp), [{"path": name, "sha256": "a" * 64, "size": 1}],
+                    )
+
     def test_verify_expected_digests_passes_with_two_reads(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -527,6 +644,8 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                     "bytes": len(b"alpha") + len(b"beta"),
                     "weight_files": 2,
                     "weight_map_checked": False,
+                    "snapshot_files": 2,
+                    "snapshot_coverage": "all_regular_files",
                 },
             )
 
@@ -565,8 +684,11 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 encoding="utf-8",
             )
             entry = self._digest_entry(root, shard_a, b"only-a")
+            index = root / "model.safetensors.index.json"
+            index_entry = {"path": index.name, "sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+                           "size": index.stat().st_size}
             with self.assertRaises(SystemExit) as raised:
-                train_adapter.verify_expected_digests(root, [entry])
+                train_adapter.verify_expected_digests(root, [entry, index_entry])
             self.assertIn(shard_b, str(raised.exception))
 
     def test_verify_expected_digests_uncovered_weight_on_disk(self):
