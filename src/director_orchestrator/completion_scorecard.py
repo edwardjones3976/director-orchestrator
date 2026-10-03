@@ -218,6 +218,9 @@ class Observation:
     _origin: object = field(default=None, repr=False, compare=False)
     # The latest stamp at which a PASS still holds (a capture's expiry less FRESH_FOR), if time-limited.
     valid_until: Any = field(default=None, repr=False, compare=False)
+    # The absolute expiry of the underlying fact (05's lease), if sooner than the usual freshness window: the scored
+    # evidence never outlives it (review 4169019848).
+    expires_cap: Any = field(default=None, repr=False, compare=False)
     # When the observation was actually made: after every read it rests on, so never backdated.
     _made: Any = field(default=None, repr=False, compare=False)
 
@@ -582,16 +585,7 @@ def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observat
                        f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at, end)
     binding = runtime.binding
     result = []
-    # The persisted owner row alone is not ownership: this process must hold the live writer lease.
-    owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True,
-                                  "writer_lease_ready": True})
-    generation = primary.get("intake_fencing_generation")
-    if owner is not None:
-        owner = owner and type(generation) is int and generation > 0
-    result.append(_observation("05", owner, "Observed database-derived intake owner and fencing health.",
-                               health_url, {key: primary.get(key) for key in
-                               ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation",
-                                "writer_lease_ready")}, at, **binding))
+    # 05 is graded from the evaluator's own store snapshot (_intake_authority_observation), not health.
     active = _all_fields(primary, {"primary_runtime_active": True, "effect_executor_ready": True,
                                    "reconciliation_worker_ready": True})
     if active is not None:
@@ -1465,7 +1459,10 @@ COLLECTOR_INPUTS = {
     "04": _DEPLOYMENT_INPUTS + _SLACK_INPUTS + (
         ("n8n active status workflow, executions and credential update time via bound database", "T"),
         ("candidate n8n/workflows/director-status.json", "C"),),
-    "05": _DEPLOYMENT_INPUTS + (("/health intake owner, legacy disablement, writer lease and fence", "C"),),
+    "05": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (
+        ("intake-authority row in the same snapshot; lease token compared with owner settings; a direct read of "
+         "this Director-written row is not independent of the candidate process that authored its generation "
+         "pending the reviewed-image admission gate (A3)", "C"),),
     "06": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
     "07": _DEPLOYMENT_INPUTS + _CONSISTENCY_INPUTS + (("/health holds, ambiguity and intake fence", "C"),),
     "08": _DEPLOYMENT_INPUTS + _ROUTE_INPUTS + _SLACK_INPUTS + _TASK_INPUTS + _RENDER_INPUTS + _CONSISTENCY_INPUTS,
@@ -1500,6 +1497,53 @@ _CONTAINED_RUNTIME = tuple(
     if (key in _PENDING_TRUST_PROOF or any(trust == "C" for _, trust in inputs))
     and key not in _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE
 )
+
+
+def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
+    """05 from the persisted intake-authority row in the evaluator's own snapshot: LangGraph owns intake, legacy
+    intake is disabled, the fence is positive, and a live writer lease is held under this deployment's owner token.
+    A direct read of this Director-written row does not make it independent of the candidate process that authored
+    its generation: 05 stays candidate-dependent and contained (see COLLECTOR_INPUTS) pending the separately
+    assigned reviewed-image admission gate (A3), which will establish process/store consistency."""
+    binding = runtime.binding
+    if consistency is None:
+        return _observation("05", None, "The evaluator-owned read-only consistency snapshot was unavailable; the "
+                            "candidate's health is not ownership evidence.", _CONSISTENCY_SOURCE, {}, at, **binding)
+    authority = consistency.get("intake_authority")
+    generation = consistency.get("generation") if isinstance(consistency.get("generation"), dict) else {}
+    pin = generation.get("manifest_sha256")
+    if (not isinstance(pin, str) or not _HEX64.fullmatch(pin)
+            or not runtime.read_in_window(consistency.get("captured_at"))
+            or not _same(pin, runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))):
+        return _observation("05", None, "The consistency snapshot is not bound to the running generation pin.",
+                            _CONSISTENCY_SOURCE, {}, at, **binding)
+    if not isinstance(authority, dict):
+        return _observation("05", None, "The snapshot has no intake-authority row.", _CONSISTENCY_SOURCE, {}, at, **binding)
+    fence = authority.get("fencing_generation")
+    facts = {key: authority.get(key) for key in
+             ("intake_owner", "legacy_new_intake_disabled", "fencing_generation", "lease_live",
+              "owner_token_matches", "lease_expires_at")}
+    if any(type(authority.get(key)) is not bool
+           for key in ("legacy_new_intake_disabled", "lease_live", "owner_token_matches")) or type(fence) is not int:
+        return _observation("05", None, "The intake-authority row is malformed.", _CONSISTENCY_SOURCE, facts, at, **binding)
+    # The lease's actual absolute expiry (never the owner token) is retained so a PASS revalidates through the
+    # collection's final cutoff via the existing FRESH_FOR/valid_until finalization path. Missing, malformed or
+    # timezone-naive values fail closed (never PASS); an already-past expiry fails closed through `owned` below.
+    try:
+        expires = _when(authority.get("lease_expires_at"))
+    except (ValueError, TypeError):
+        return _observation("05", None, "The intake-authority lease expiry is missing or malformed.",
+                            _CONSISTENCY_SOURCE, facts, at, **binding)
+    owned = (authority.get("intake_owner") == "langgraph" and authority["legacy_new_intake_disabled"]
+             and authority["lease_live"] and authority["owner_token_matches"] and fence > 0 and expires > at)
+    return _observation("05", owned, "The persisted intake authority read in the evaluator's snapshot "
+                        + ("shows LangGraph owning intake under this deployment's live writer lease with a positive fence."
+                           if owned else "does not show LangGraph owning intake under this deployment's live writer "
+                           "lease with legacy intake disabled and a positive fence."),
+                        _CONSISTENCY_SOURCE, facts, at, **binding,
+                        # The lease must still be live at the final cutoff. Subtracting FRESH_FOR would demand a
+                        # five-minute remaining lifetime the 60 s renewing lease never has (review 4168742770).
+                        valid_until=expires if owned else None, expires_cap=expires if owned else None)
 
 
 def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: dict | None) -> Observation:
@@ -3068,6 +3112,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             except _SOURCE_ERRORS:
                 unknown(("06", "08"), "The approval task could not be read; no retry was made.", _SLACK_SOURCE)
         try:
+            put([_intake_authority_observation(at, runtime, consistency)])
+        except _SOURCE_ERRORS:
+            unknown(("05",), "The intake-authority snapshot could not be evaluated.", _CONSISTENCY_SOURCE)
+        try:
             put([_reconciliation_observation(at, runtime, consistency)])
         except _SOURCE_ERRORS:
             unknown(("07",), "The consistency snapshot could not be evaluated.", _CONSISTENCY_SOURCE)
@@ -3612,7 +3660,8 @@ def _finalize(observations: list[Observation], finished: datetime, *, live: bool
     out = []
     for item in observations:
         stamp = min(item._made, finished) if live and isinstance(item._made, datetime) else finished
-        item = replace(item, observed_at=stamp, expires_at=stamp + FRESH_FOR)
+        expires = stamp + FRESH_FOR if item.expires_cap is None else min(stamp + FRESH_FOR, item.expires_cap)
+        item = replace(item, observed_at=stamp, expires_at=expires)
         # Time-limited evidence must hold through the collection's FINAL cutoff (not only its own stamp): check 12's
         # capture expiries, check 15's UTC-day rollover.
         if item.passed is True and item.valid_until is not None and max(stamp, finished) > item.valid_until:
