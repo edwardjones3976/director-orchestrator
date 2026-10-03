@@ -55,7 +55,13 @@ def account_home() -> Path:
         finally:
             ctypes.windll.ole32.CoTaskMemFree(path)
     import pwd
-    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:  # an effective UID with no passwd/NSS entry (arbitrary-UID containers)
+        raise OSError("the account has no passwd entry") from error
+    if not home or not os.path.isabs(home):
+        raise OSError("the account home is not an absolute path")
+    return Path(home)
 
 
 def owner_root() -> Path:
@@ -135,7 +141,10 @@ def read_attestation(nonce: str, root: Path | None = None) -> dict | None:
 
 
 def run_attestation(root: Path) -> dict | None:
-    receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
+    try:
+        receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
+    except OSError:
+        return None
     if receipt is None or receipt.get("report_sha256") is not None:
         return None
     try:

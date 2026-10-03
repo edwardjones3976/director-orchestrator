@@ -102,6 +102,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import types
 import re
 import tempfile
 import time
@@ -110,6 +111,7 @@ from contextlib import ExitStack, closing, nullcontext, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
@@ -1165,6 +1167,95 @@ def installed_launcher_command(installed, home, *arguments, isolated=True):
     )
     return [sys.executable, *(["-I"] if isolated else []), "-c", bootstrap, str(installed), str(home),
             *[str(argument) for argument in arguments]]
+
+
+class OwnerAccountLookupTests(unittest.TestCase):
+    """Missing POSIX account records refuse every consumer without trusting environment fallbacks."""
+
+    def setUp(self):
+        self.launcher = sc._launcher()
+        source = Path(__file__).resolve().parents[1] / "scripts" / "director-scorecard.py"
+        spec = importlib.util.spec_from_file_location("missing_uid_scorecard", source)
+        self.cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.cli)
+        self.uid = 424242
+        self.lookup = Mock(side_effect=KeyError(self.uid))
+        stack = self.enterContext(ExitStack())
+        stack.enter_context(patch.dict(sys.modules, {"pwd": SimpleNamespace(getpwuid=self.lookup)}))
+        unavailable = SimpleNamespace(name="posix", geteuid=lambda: self.uid, environ={
+            "HOME": "/caller/home", "USERPROFILE": "/caller/profile",
+            pse.OWNER_HOME_ENV: "/caller/owner", pse.DESCRIPTOR_ENV: "a" * 64,
+        })
+        for module in (self.launcher, self.cli, pse):
+            stack.enter_context(patch.object(module, "os", unavailable))
+
+    def test_missing_uid_normalizes_all_account_lookups(self):
+        for module in (self.launcher, self.cli, pse):
+            with self.subTest(module=module.__name__), self.assertRaisesRegex(OSError, "no passwd entry"):
+                module.account_home()
+        self.assertEqual(self.lookup.call_count, 3)
+        self.lookup.assert_called_with(self.uid)
+
+    def test_missing_uid_leaves_descriptor_and_authority_consumers_unavailable(self):
+        self.assertIsNone(self.cli.release_descriptor())
+        self.assertEqual(self.cli.launch_refusal(), "evaluator revision not pinned")
+        self.assertIsNone(pse.owner_home())
+        self.assertIsNone(pse.cli_release_descriptor())
+        with patch.object(sc, "CI_REPLICA_KEY", None):
+            self.assertIsNone(sc._ci_replica_key())
+
+    def test_missing_uid_leaves_the_score_unattested(self):
+        with patch.object(sc, "_launcher", return_value=self.launcher):
+            report = sc.score("a" * 40, [])
+        self.assertFalse(report["attested"])
+        self.assertEqual(report["passed"], "UNATTESTED")
+        self.assertFalse(report["activation_authorized"])
+
+    def test_missing_uid_launcher_returns_clean_refusal(self):
+        stderr = io.StringIO()
+        with patch.object(self.launcher, "sys", SimpleNamespace(
+                flags=SimpleNamespace(isolated=True), stderr=stderr)):
+            self.assertEqual(self.launcher.main([]), 2)
+        self.assertIn("the owner account home could not be resolved", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+
+class PosixAccountLookupTests(unittest.TestCase):
+    """Copilot review of #420: a POSIX effective UID with no passwd entry (or an unusable home) must fail closed as
+    OSError, which every caller already refuses on, never as a KeyError traceback."""
+
+    def modules(self):
+        import importlib.util
+        root = Path(__file__).resolve().parents[1]
+        from director_orchestrator import primary_scorecard_evidence as evidence
+        found = {"evidence": evidence.account_home}
+        for name, script in (("launcher", "scorecard-launcher.py"), ("evaluator", "director-scorecard.py")):
+            spec = importlib.util.spec_from_file_location("posix_lookup_" + name, root / "scripts" / script)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            found[name] = module.account_home
+        return found
+
+    def lookup(self, function, entry):
+        fake = types.SimpleNamespace(getpwuid=entry)
+        with patch.object(os, "name", "posix"), patch.object(os, "geteuid", create=True, return_value=4242),                 patch.dict(sys.modules, {"pwd": fake}):
+            return function()
+
+    def test_missing_passwd_entry_and_unusable_home_are_oserror(self):
+        def missing(uid):
+            raise KeyError(uid)
+        for name, function in self.modules().items():
+            for label, entry in (("missing", missing),
+                                 ("empty", lambda uid: types.SimpleNamespace(pw_dir="")),
+                                 ("relative", lambda uid: types.SimpleNamespace(pw_dir="home/owner"))):
+                with self.subTest(module=name, case=label), self.assertRaises(OSError):
+                    self.lookup(function, entry)
+
+    def test_a_valid_passwd_entry_is_the_account_home(self):
+        for name, function in self.modules().items():
+            with self.subTest(module=name):
+                home = self.lookup(function, lambda uid: types.SimpleNamespace(pw_dir=os.path.abspath(os.sep + "home")))
+                self.assertEqual(os.path.abspath(os.sep + "home"), str(home))
 
 
 class ScorecardGitTrustTests(unittest.TestCase):
