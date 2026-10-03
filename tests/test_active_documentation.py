@@ -20,6 +20,44 @@ SPEC.loader.exec_module(guard)
 
 
 class ActiveDocumentationTests(unittest.TestCase):
+    def test_current_completion_guidance_has_one_scoped_lead(self):
+        leadership = " ".join((ROOT / "docs/project-leadership.md").read_text(
+            encoding="utf-8"
+        ).replace("**", "").split())
+        staff = " ".join((ROOT / "docs/team-staff-and-briefings.md").read_text(
+            encoding="utf-8"
+        ).replace("**", "").split())
+        for clause in (
+            "Codex remains overall accountable; Claude directs Director-Orchestrator completion priorities",
+            "current owner appointment of Claude as Director-Orchestrator completion lead supersedes earlier Codex-only completion instructions for that scope",
+            "This assignment excludes Homemade LLM and every other project",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, leadership)
+        for stale in (
+            "immediate ChatGPT/Codex Director authority for priorities",
+            "immediate ChatGPT/Codex appointment supersedes historical prose assigning project leadership to Claude",
+        ):
+            self.assertNotIn(stale, leadership)
+        self.assertIn("| 2 | Claude | Director-Orchestrator completion lead, including while Codex is available", staff)
+        self.assertIn("Claude's current completion appointment does not require Codex's absence", staff)
+        self.assertIn("Claude completion lead / deputy", staff)
+        self.assertNotIn("Director and site foreman; owns outcomes, priorities, routing", staff)
+        self.assertNotIn("| 2 | Claude | Deputy; performs the Director's duties while Codex is unavailable", staff)
+
+    def test_mandatory_research_keeps_inter_provider_scope(self):
+        leadership = " ".join((ROOT / "docs/project-leadership.md").read_text(
+            encoding="utf-8"
+        ).split())
+        self.assertIn(
+            "Technical/development questions between providers require Perplexity or Firecrawl research before an answer",
+            leadership,
+        )
+        self.assertIn("If those routes are unavailable, return the explicit research gap", leadership)
+        self.assertIn("Coordination questions are answered directly", leadership)
+        self.assertIn("conditional research policy", leadership)
+        self.assertNotIn("Technical questions still require Perplexity or Firecrawl research", leadership)
+
     def test_bootstrap_and_pr246_docs_do_not_assign_claude_standing_leadership(self):
         bootstrap = ROOT / "docs/templates/project-bootstrap"
         surfaces = [

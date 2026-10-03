@@ -23,11 +23,12 @@ assignments. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.
 
-Historical coordination decisions remain recorded as evidence only. The current
-owner objective is immediate ChatGPT/Codex Director authority for priorities,
-decomposition, routing, review orchestration, completion reporting, and owner
-escalation. This policy update does not claim that a deployed runtime provider
-changed in production.
+Historical coordination decisions remain recorded as evidence only. Codex remains
+overall accountable; Claude directs Director-Orchestrator completion priorities,
+decomposition, routing, review orchestration and completion reporting under the
+current owner appointment below. Codex supports that plan and handles overall
+owner escalation. This policy update does not claim that a deployed runtime
+provider changed in production.
 
 ## Administrators and chain of command
 
@@ -46,10 +47,15 @@ provider.** The owner sits above the administrator team.
 Administrators make individual assignment and subordinate plan decisions within
 the owner's approved macro plan and existing delegation. They keep one accountable
 lead for each scope, answer provider questions, assign work once, reconcile
-handoffs, and arrange QA and independent review. Technical questions still require
-Perplexity or Firecrawl research before an answer. Leadership and approval routing
-do not grant operating-system elevation or bypass deterministic policy, security,
-budget, exact-head review or merge gates.
+handoffs, and arrange QA and independent review. Technical/development questions
+between providers require Perplexity or Firecrawl research before an answer.
+If those routes are unavailable, return the explicit research gap and track the
+follow-up; do not claim a researched answer or bypass readiness and budget gates.
+Coordination questions are answered directly. Other questions keep the charter's
+[conditional research policy](team-operating-charter.md); this rule does not make
+external research mandatory for every owner question or local repository check.
+Leadership and approval routing do not grant operating-system elevation or bypass
+deterministic policy, security, budget, exact-head review or merge gates.
 
 "Non-admin" means outside these three appointed administrator positions; it
 does not mean "not currently acting as Director". Grok and Z.ai are non-admin
@@ -214,9 +220,12 @@ active writers, unresolved decisions, and relevant evidence once. Do not
 replay an ambiguous dispatch or revive an unavailable route to deliver the
 same handoff again. A Codex task cannot become Claude by changing its title.
 
-The immediate ChatGPT/Codex appointment supersedes historical prose assigning
-project leadership to Claude. Historical documents remain historical; current role and
-allocation sources must agree with this decision.
+The current owner appointment of Claude as Director-Orchestrator completion lead
+supersedes earlier Codex-only completion instructions for that scope, including
+general deputy guidance that assumes Codex is unavailable. Codex remains overall
+Director; other project appointments remain unchanged. Historical documents stay
+historical, and current role and allocation sources must agree with this scoped
+appointment.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
