@@ -2887,7 +2887,12 @@ class OrchestrationEngine:
                 pass
 
     async def _run_locked(self, task_id: str) -> None:
-        record = self.store.get(task_id)
+        try:
+            record = self.store.get(task_id)
+        except (sqlite3.Error, OSError):
+            # No readable task means no authority to dispatch or overwrite its
+            # durable state. A later resume retries the same recovery entry.
+            return
         if record is None:
             return
         try:
@@ -5778,6 +5783,14 @@ class OrchestrationEngine:
         return True
 
     def _settle_unsubmitted_spend(self, record: TaskRecord, assignment: Assignment, key: str) -> bool:
+        try:
+            return self._settle_unsubmitted_spend_once(record, assignment, key)
+        except (sqlite3.Error, OSError):
+            # Closure is already durable. Read/hold-cleanup failures must not
+            # turn accounting recovery into a terminal provider failure.
+            return False
+
+    def _settle_unsubmitted_spend_once(self, record: TaskRecord, assignment: Assignment, key: str) -> bool:
         current = self.store.get(record.task_id)
         if current is None or current.plan_generation != record.plan_generation:
             return False
@@ -5984,6 +5997,15 @@ class OrchestrationEngine:
 
     def _retry_spend_settlements(self, record: TaskRecord) -> bool:
         """Repair durable side records without repeating provider I/O."""
+        try:
+            return self._retry_spend_settlements_once(record)
+        except (sqlite3.Error, OSError):
+            # A hold cannot be required while that same store is unavailable.
+            # Retain the last durable state and reservation; stop this resume
+            # before provider work and rediscover it on the next invocation.
+            return False
+
+    def _retry_spend_settlements_once(self, record: TaskRecord) -> bool:
         # The zero-charge write and the hold write can both fail. Discover
         # those retries from the already durable closure and outstanding spend,
         # rather than requiring a second successfully persisted error marker.

@@ -225,6 +225,60 @@ class PaidBoundaryAsyncTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved.provider_runs, [])
                 self.assertEqual(saved.provider_contact_attempts, [])
 
+    async def test_public_resume_preserves_storage_failure_recovery(self):
+        import sqlite3
+        from contextlib import ExitStack
+        from unittest.mock import AsyncMock, patch
+        from director_orchestrator.models import TaskStatus
+        for failure in ('initial_read', 'discovery', 'closure_read', 'charge_and_hold', 'refresh_read', 'clear_hold'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root:
+                settings, store, record, assignment = fixtures.ProviderSpendSettlementTests()._world(root)
+                engine = OrchestrationEngine(settings, store)
+                key = reserve_provider_effect(record, assignment, phase='dispatch', max_task_budget_usd=10)
+                engine._reserve_provider_daily_spend(assignment, effect_key=key)
+                record_provider_effect_observation(record, assignment, effect_key=key,
+                                                   phase='dispatch', outcome='failed_pre_submit')
+                record.status = TaskStatus.DONE
+                if failure == 'clear_hold':
+                    record.error = 'spend_settlement_failed:' + key
+                store.save(record)
+                restarted = OrchestrationEngine(settings, store)
+                adapter = AsyncMock()
+                restarted.providers[assignment.agent] = adapter
+                restarted._status_post = AsyncMock()
+                original_get = store.get
+                reads = 0
+                def fail_read(task_id):
+                    nonlocal reads
+                    reads += 1
+                    target = {'initial_read': 1, 'closure_read': 2, 'refresh_read': 3}.get(failure)
+                    if reads == target:
+                        raise sqlite3.OperationalError('locked')
+                    return original_get(task_id)
+                for _ in range(2):
+                    reads = 0
+                    with ExitStack() as patches:
+                        patches.enter_context(patch.object(store, 'get', side_effect=fail_read))
+                        if failure == 'discovery':
+                            patches.enter_context(patch.object(restarted.provider_spend, 'unreconciled',
+                                side_effect=sqlite3.OperationalError('locked')))
+                        if failure == 'charge_and_hold':
+                            patches.enter_context(patch.object(restarted.provider_spend, 'record_charge',
+                                side_effect=sqlite3.OperationalError('locked')))
+                        if failure in ('charge_and_hold', 'clear_hold'):
+                            patches.enter_context(patch.object(store, 'save', side_effect=OSError('unavailable')))
+                        await restarted.run(record.task_id)
+                    self.assertEqual(store.get(record.task_id).status, TaskStatus.DONE)
+                    expected = 0 if failure in ('refresh_read', 'clear_hold') else 1.0
+                    self.assertEqual(restarted.provider_spend.exposure(assignment.agent), (1, expected))
+                recovered = OrchestrationEngine(settings, store)
+                self.assertTrue(recovered._retry_spend_settlements(store.get(record.task_id)))
+                self.assertEqual(recovered.provider_spend.exposure(assignment.agent), (1, 0))
+                self.assertIsNone(store.get(record.task_id).error)
+                adapter.dispatch.assert_not_awaited()
+                self.assertEqual(store.get(record.task_id).provider_runs, [])
+                self.assertEqual(store.get(record.task_id).provider_contact_attempts, [])
+
     async def test_packet_pre_submit_exits_and_missing_replay_evidence(self):
         from unittest.mock import AsyncMock, patch
         from tests import test_engine_packet_runtime_routing as routing
