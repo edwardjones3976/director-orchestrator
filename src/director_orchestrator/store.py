@@ -309,6 +309,7 @@ class TaskStore:
             # free pages, so every writer enables physical page scrubbing before
             # any migration or update.
             connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("PRAGMA journal_size_limit = 0")
             with connection:
                 yield connection
 
@@ -359,6 +360,10 @@ class TaskStore:
                     payload_json TEXT,
                     closed INTEGER NOT NULL DEFAULT 0
                 )"""
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS runtime_result_lifecycle "
+                "ON runtime_result_payloads(task_id, closed, correlation_id)"
             )
             connection.execute(
                 """INSERT OR IGNORE INTO privacy_cleanup_state(
@@ -976,6 +981,7 @@ class TaskStore:
         try:
             connection.execute("PRAGMA busy_timeout = 200")
             connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("PRAGMA journal_size_limit = 0")
             row = connection.execute(
                 """SELECT pending_generation, completed_generation
                 FROM privacy_cleanup_state WHERE singleton = 1"""
