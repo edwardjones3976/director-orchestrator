@@ -2760,9 +2760,19 @@ class EngineRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 ],
             )
             _seed_verified_plan(record)
-            _seed_verified_run(record, record.provider_runs[0])
+            run = record.provider_runs[0]
+            run.plan_generation = record.plan_generation
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
+                                               outcome="submitted", run_id=run.run_id)
+            run.interaction_id, _ = _seed_verified_interaction(
+                record, provider=run.provider, phase=ProviderInteractionPhase.DISPATCH,
+                assignment_sequence=assignment.sequence, result=run.result,
+                effect_key=key, run_id=run.run_id)
             store.create(record)
             engine = OrchestrationEngine(settings, store)
+            engine._reserve_provider_daily_spend(assignment, effect_key=key,
+                                                 context=assignment.public_research_query)
             engine.director = Director()
             engine.providers[ProviderName.PERPLEXITY] = NoRedispatchAdapter()
 

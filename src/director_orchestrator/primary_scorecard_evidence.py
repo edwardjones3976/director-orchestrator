@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import hmac
 import json
 import os
 import re
@@ -1231,6 +1232,28 @@ def _global_task_evidence(connection, schema, usage_tables):
     return counts
 
 
+def _intake_authority(connection, schema, expected_token) -> dict | None:
+    """The persisted intake-authority row, read in the caller's snapshot. The lease
+    token is compared here with the owner-supplied setting and never returned. The lease's actual
+    absolute expiry is retained (it is not a secret) so the collector can revalidate a PASS through
+    its own FRESH_FOR/valid_until finalization path instead of trusting a single snapshot-time flag."""
+    row = connection.execute(
+        f"SELECT intake_owner, owner_token, fencing_generation, legacy_new_intake_disabled, lease_expires_at,"
+        f" lease_expires_at > now() AS lease_live FROM {schema}.director_primary_intake_authority"
+        " WHERE singleton").fetchone()
+    if row is None:
+        return None
+    token = row["owner_token"]
+    return {"intake_owner": row["intake_owner"],
+            "legacy_new_intake_disabled": row["legacy_new_intake_disabled"],
+            "fencing_generation": _plain(row["fencing_generation"]),
+            "lease_live": row["lease_live"],
+            "lease_expires_at": _plain(row["lease_expires_at"]),
+            "owner_token_matches": bool(isinstance(expected_token, str) and len(expected_token) >= 32
+                                        and isinstance(token, str)
+                                        and hmac.compare_digest(token.encode(), expected_token.encode()))}
+
+
 def consistency_report(settings, identity, *, tasks=(), connection=None, environment=None,
                        local_artifact=None, authority_secrets=None) -> dict:
     """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
@@ -1261,6 +1284,7 @@ def consistency_report(settings, identity, *, tasks=(), connection=None, environ
             connection.execute("SET LOCAL lock_timeout = '5s'")
             _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
+            authority = _intake_authority(connection, schema, settings.langgraph_primary_owner_token)
             present = connection.execute(
                 "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage",
                 [f"{schema}.director_primary_provider_{name}" for name in ("spend", "usage")]).fetchone()
@@ -1343,6 +1367,7 @@ def consistency_report(settings, identity, *, tasks=(), connection=None, environ
                            "image_id": environment.get("DIRECTOR_RUNTIME_IMAGE_ID")},
             "captured_at": _plain(counts["captured_at"]),
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
+            "intake_authority": authority,
             # None (over the row cap) is not a count: check 07 reads the snapshot as malformed, never as zero.
             "counts": {**{key: int(counts[key]) for key in _COUNT_KEYS},
                        **evidence_counts},
