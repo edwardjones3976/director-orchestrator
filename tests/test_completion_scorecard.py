@@ -3308,6 +3308,8 @@ class ReviewedImageAdmissionTests(unittest.TestCase):
             self.assertIsNone(found[key].passed)
             self.assertEqual(found[key].explanation, "collector not yet trusted")
             self.assertNotIn("reviewed_image_trust", found[key].facts)
+            # The refusal reason is still recorded, so the report can explain why nothing was admitted.
+            self.assertTrue(found[key].facts["reviewed_image_admission"].startswith("refused: no Director runtime"))
 
     def test_a_contradiction_is_fail_and_an_unknown_keeps_its_own_reason(self):
         failed = sc._observation("12", False, "combined_live_ready is false", "fixture", {}, NOW,
@@ -3326,6 +3328,15 @@ class ReviewedImageAdmissionTests(unittest.TestCase):
         self.assertIsNone(found["03"].passed)
         self.assertIn("No source was collected", found["03"].explanation)
         self.assertIs(found["05"].passed, True)
+        # It is not marked admitted, so the report keeps it in the contained set.
+        self.assertNotIn("reviewed_image_trust", found["03"].facts)
+        report = sc.score(SHA, list(found.values()), now=datetime.now(timezone.utc), runtime_sha=SHA, image_id=IMAGE)
+        text = " ".join(report["limitations"])
+        contained = next(line for line in report["limitations"] if "are contained by" in line)
+        self.assertIn(" 03", contained.split(" are contained")[0].replace(",", " "))
+        admitted = next(line for line in report["limitations"] if "were admitted under" in line)
+        self.assertNotIn(" 03", admitted.split(" were admitted")[0].replace(",", " "))
+        self.assertIn("were admitted under reviewed-image trust", text)
 
     def test_the_report_names_what_was_admitted_and_what_is_contained(self):
         def limitations(found):

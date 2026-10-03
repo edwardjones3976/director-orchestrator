@@ -3095,8 +3095,11 @@ def _apply_reviewed_image_admission(candidate_sha: str, held: _Held, deployed: l
                                     others: list[Observation], started: datetime) -> list[Observation]:
     """Release the held originals over the containment UNKNOWNs when the gate holds; otherwise record why not."""
     if not held.observations:
-        return deployed
-    reason, facts = _reviewed_image_gate(candidate_sha, held, others)
+        # No runtime was discovered (or collection stopped before one was read): nothing to release, but the
+        # report still says why the contained checks were not admitted.
+        reason, facts = "no Director runtime evidence was held; the runtime was not discovered", {}
+    else:
+        reason, facts = _reviewed_image_gate(candidate_sha, held, others)
     contained = set(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)
     out = []
     for item in deployed:
@@ -3108,8 +3111,11 @@ def _apply_reviewed_image_admission(candidate_sha: str, held: _Held, deployed: l
             out.append(_relabel(replace(held.observations[item.check_id], _made=started),
                                 {"reviewed_image_trust": facts}, ADMISSION_NOTE))
         else:
+            # Not admitted: `reviewed_image_trust` is the marker _containment_limitations reads as admission, so
+            # a placeholder with no collected source must not carry it and stays reported as contained.
             out.append(_relabel(replace(item, explanation="No source was collected for this check in this run."),
-                                {"reviewed_image_trust": facts}))
+                                {"reviewed_image_admission": "not admitted: no source was collected",
+                                 "reviewed_image_gate": facts}))
     return out
 
 
