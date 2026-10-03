@@ -200,14 +200,14 @@ function Get-RunStagingRoot([string]$Target) {
     Get-NormalPath (Join-Path $staging $first)
 }
 
-function Assert-NoReparseOnPath([string]$Root, [string]$Target) {
+function Assert-NoReparseOnPath([string]$Root, [string]$Target, [string]$Context = 'Remove-StagedTree') {
     $rootN = Get-NormalPath $Root
     $targetN = Get-NormalPath $Target
     $current = $rootN
     if (Test-Path -LiteralPath $current) {
         $item = Get-Item -LiteralPath $current -Force
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            Write-Error "Remove-StagedTree: reparse point at $current"
+            Write-Error "${Context}: reparse point at $current"
         }
     }
     $rel = $targetN.Substring($rootN.Length).TrimStart('\')
@@ -216,11 +216,11 @@ function Assert-NoReparseOnPath([string]$Root, [string]$Target) {
         if ([string]::IsNullOrWhiteSpace($seg)) { continue }
         $current = Join-Path $current $seg
         if (-not (Test-Path -LiteralPath $current)) {
-            Write-Error "Remove-StagedTree: missing path $current"
+            Write-Error "${Context}: missing path $current"
         }
         $item = Get-Item -LiteralPath $current -Force
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            Write-Error "Remove-StagedTree: reparse point at $current"
+            Write-Error "${Context}: reparse point at $current"
         }
     }
 }
@@ -254,6 +254,29 @@ function Get-RelativePath([string]$Root, [string]$Full) {
     $fullN
 }
 
+function Assert-NormalizedRelativePath([string]$Rel, [string]$Context) {
+    $ok = $true
+    if ([string]::IsNullOrEmpty($Rel)) {
+        $ok = $false
+    } elseif ($Rel.Contains('\') -or $Rel.Contains(':') -or $Rel.StartsWith('/')) {
+        $ok = $false
+    } else {
+        foreach ($seg in ($Rel.Split('/'))) {
+            if ([string]::IsNullOrEmpty($seg) -or $seg -eq '.' -or $seg -eq '..') {
+                $ok = $false
+                break
+            }
+            if ($seg.EndsWith(' ') -or $seg.EndsWith('.')) {
+                $ok = $false
+                break
+            }
+        }
+    }
+    if (-not $ok) {
+        Write-Error "${Context}: invalid relative path $Rel"
+    }
+}
+
 function Assert-AdapterHashes([string]$AdapterDir) {
     $hashFile = Join-Path $AdapterDir 'adapter-hashes.json'
     if (-not (Test-Path -LiteralPath $hashFile -PathType Leaf)) {
@@ -267,28 +290,73 @@ function Assert-AdapterHashes([string]$AdapterDir) {
     if ($names -notcontains 'adapter_config.json' -or $names -notcontains 'adapter_model.safetensors') {
         Write-Error "adapter hash gate: adapter-hashes.json must list adapter_config.json and adapter_model.safetensors"
     }
-    $result = [ordered]@{}
-    $listedFull = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $unique = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($prop in $doc.files.PSObject.Properties) {
+        $rel = [string]$prop.Name
+        Assert-NormalizedRelativePath $rel 'adapter hash gate'
+        $expectedRaw = [string]$prop.Value
+        if ($expectedRaw -notmatch '^[0-9a-fA-F]{64}$') {
+            Write-Error "adapter hash gate: invalid hash value $rel"
+        }
+        if (-not $unique.Add($rel)) {
+            Write-Error "adapter hash gate: duplicate path $rel"
+        }
+    }
+    $adapterN = Get-NormalPath $AdapterDir
+    $insidePrefix = $adapterN + [IO.Path]::DirectorySeparatorChar
     foreach ($prop in $doc.files.PSObject.Properties) {
         $rel = [string]$prop.Name
         $expected = ([string]$prop.Value).ToLower()
-        $full = Join-Path $AdapterDir ($rel -replace '/', '\')
+        $full = [IO.Path]::GetFullPath((Join-Path $AdapterDir ($rel -replace '/', '\')))
+        $fullN = Get-NormalPath $full
+        if (-not $fullN.StartsWith($insidePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Error "adapter hash gate: path not inside adapter directory: $rel"
+        }
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
             Write-Error "adapter hash gate: $rel expected=$expected actual=missing"
         }
-        [void]$listedFull.Add((Get-NormalPath $full))
+        Assert-NoReparseOnPath $AdapterDir $full 'adapter hash gate'
+    }
+    $stack = [System.Collections.Generic.Stack[string]]::new()
+    $stack.Push($adapterN)
+    $diskFiles = [System.Collections.Generic.List[string]]::new()
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        $dirItem = Get-Item -LiteralPath $dir -Force
+        if ($dirItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Write-Error "adapter hash gate: reparse point at $dir"
+        }
+        foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force)) {
+            if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                Write-Error "adapter hash gate: reparse point at $($child.FullName)"
+            }
+            if ($child.PSIsContainer) {
+                $stack.Push($child.FullName)
+            } else {
+                [void]$diskFiles.Add($child.FullName)
+            }
+        }
+    }
+    $hashFileN = Get-NormalPath $hashFile
+    foreach ($fullFile in $diskFiles) {
+        if ((Get-NormalPath $fullFile).Equals($hashFileN, [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        $rel = Get-RelativePath $AdapterDir $fullFile
+        if (-not $unique.Contains($rel)) {
+            Write-Error "adapter hash gate: unlisted file $rel"
+        }
+    }
+    $result = [ordered]@{}
+    foreach ($prop in $doc.files.PSObject.Properties) {
+        $rel = [string]$prop.Name
+        $expected = ([string]$prop.Value).ToLower()
+        $full = [IO.Path]::GetFullPath((Join-Path $AdapterDir ($rel -replace '/', '\')))
         $actual = Get-FileSha256 $full
         if ($actual -ne $expected) {
             Write-Error "adapter hash gate: $rel expected=$expected actual=$actual"
         }
         $result[$rel] = $actual
-    }
-    Get-ChildItem -LiteralPath $AdapterDir -Recurse -File -Force | ForEach-Object {
-        $norm = Get-NormalPath $_.FullName
-        if (-not $listedFull.Contains($norm)) {
-            $rel = Get-RelativePath $AdapterDir $_.FullName
-            Write-Host "unlisted adapter file ignored: $rel"
-        }
     }
     $result
 }
@@ -306,6 +374,71 @@ function Assert-BaseShards([string]$Snapshot) {
     $files = @($prop.Value.files)
     if ($files.Count -lt 1) {
         Write-Error "base shard gate: no files listed for $key"
+    }
+    $snapN = Get-NormalPath $Snapshot
+    $insidePrefix = $snapN + [IO.Path]::DirectorySeparatorChar
+    $seenExpected = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $expectedSafe = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $duplicate = [System.Collections.Generic.List[string]]::new()
+    foreach ($shard in $files) {
+        $rel = [string]$shard.path
+        Assert-NormalizedRelativePath $rel 'base shard gate'
+        if (-not $seenExpected.Add($rel)) {
+            [void]$duplicate.Add($rel)
+            Write-Error "base shard gate: duplicate path $rel"
+        }
+        $nameFull = [IO.Path]::GetFullPath((Join-Path $Snapshot ($rel -replace '/', '\')))
+        $nameN = Get-NormalPath $nameFull
+        if (-not $nameN.StartsWith($insidePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Error "base shard gate: path not inside snapshot: $rel"
+        }
+        if ($rel.EndsWith('.safetensors', [StringComparison]::OrdinalIgnoreCase)) {
+            [void]$expectedSafe.Add($rel)
+        }
+    }
+    $indexPath = Join-Path $Snapshot 'model.safetensors.index.json'
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) {
+        Write-Error "base shard gate: missing model.safetensors.index.json"
+    }
+    $indexDoc = Get-Content -LiteralPath $indexPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if ($null -eq $indexDoc.weight_map) {
+        Write-Error "base shard gate: index has no weight_map"
+    }
+    $indexed = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($wm in $indexDoc.weight_map.PSObject.Properties) {
+        $rel = [string]$wm.Value
+        Assert-NormalizedRelativePath $rel 'base shard gate'
+        $nameFull = [IO.Path]::GetFullPath((Join-Path $Snapshot ($rel -replace '/', '\')))
+        $nameN = Get-NormalPath $nameFull
+        if (-not $nameN.StartsWith($insidePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Error "base shard gate: path not inside snapshot: $rel"
+        }
+        [void]$indexed.Add($rel)
+    }
+    $present = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    Get-ChildItem -LiteralPath $Snapshot -Recurse -File -Force -Filter *.safetensors | ForEach-Object {
+        $rel = Get-RelativePath $Snapshot $_.FullName
+        [void]$present.Add($rel)
+    }
+    $setsEqual = $indexed.SetEquals($expectedSafe) -and $expectedSafe.SetEquals($present)
+    if (-not $setsEqual -or $duplicate.Count -gt 0) {
+        $absent = [System.Collections.Generic.List[string]]::new()
+        $unexpected = [System.Collections.Generic.List[string]]::new()
+        $unindexed = [System.Collections.Generic.List[string]]::new()
+        foreach ($x in $indexed) {
+            if (-not $present.Contains($x)) { [void]$absent.Add($x) }
+        }
+        foreach ($x in $expectedSafe) {
+            if (-not $present.Contains($x) -and -not $absent.Contains($x)) { [void]$absent.Add($x) }
+        }
+        foreach ($x in $present) {
+            if (-not $expectedSafe.Contains($x) -or -not $indexed.Contains($x)) { [void]$unexpected.Add($x) }
+            if (-not $indexed.Contains($x)) { [void]$unindexed.Add($x) }
+        }
+        foreach ($x in $expectedSafe) {
+            if (-not $indexed.Contains($x) -and -not $unindexed.Contains($x)) { [void]$unindexed.Add($x) }
+        }
+        Write-Error ("base shard gate: absent=" + ($absent -join ',') + " unexpected=" + ($unexpected -join ',') + " unindexed=" + ($unindexed -join ',') + " duplicate=" + ($duplicate -join ','))
     }
     $result = [System.Collections.Generic.List[object]]::new()
     foreach ($shard in $files) {
@@ -328,17 +461,24 @@ function Assert-BaseShards([string]$Snapshot) {
 }
 
 function New-StepClock {
+    $script:StepStartUtc = @{}
     [ordered]@{}
 }
 
-function Start-Step([hashtable]$Steps, [string]$Name) {
-    $Steps[$Name] = [ordered]@{ start = (Get-UtcNowString); end = $null }
+function Start-Step([System.Collections.IDictionary]$Steps, [string]$Name) {
+    $t = [datetime]::UtcNow
+    $script:StepStartUtc[$Name] = $t
+    $Steps[$Name] = [ordered]@{ start = $t.ToString('yyyy-MM-ddTHH:mm:ssZ'); end = $null; durationSeconds = $null }
 }
 
-function End-Step([hashtable]$Steps, [string]$Name) {
-    if ($Steps.Contains($Name)) {
-        $Steps[$Name].end = Get-UtcNowString
+function End-Step([System.Collections.IDictionary]$Steps, [string]$Name) {
+    if (-not $Steps.Contains($Name)) {
+        Write-Error "step clock: unknown step $Name"
     }
+    $tEnd = [datetime]::UtcNow
+    $tStart = $script:StepStartUtc[$Name]
+    $Steps[$Name].end = $tEnd.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $Steps[$Name].durationSeconds = [double]($tEnd - $tStart).TotalSeconds
 }
 
 function Write-ExportReport {
@@ -362,6 +502,9 @@ function Write-ExportReport {
     $dir = Split-Path -Parent $ReportPath
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    if (Test-Path -LiteralPath $ReportPath) {
+        Write-Error "report: output already exists: $ReportPath"
     }
     $report = [ordered]@{
         name                  = $Name
@@ -396,7 +539,30 @@ function Write-ExportReport {
         image_digest          = (Get-ImageDigest)
     }
     $json = $report | ConvertTo-Json -Depth 10
-    Set-Content -LiteralPath $ReportPath -Value $json -Encoding utf8NoBOM
+    $claimed = $false
+    $fs = $null
+    try {
+        try {
+            $fs = [System.IO.File]::Open($ReportPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        } catch {
+            Write-Error "report: output already exists: $ReportPath"
+        }
+        $claimed = $true
+        $payload = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $fs.Write($payload, 0, $payload.Length)
+        $fs.Dispose()
+        $fs = $null
+    } catch {
+        if ($claimed) {
+            if ($null -ne $fs) {
+                try { $fs.Dispose() } catch { }
+            }
+            if (Test-Path -LiteralPath $ReportPath) {
+                Remove-Item -LiteralPath $ReportPath -Force
+            }
+        }
+        throw
+    }
 }
 
 function Publish-Gguf([string]$Source, [string]$Dest) {
@@ -407,48 +573,52 @@ function Publish-Gguf([string]$Source, [string]$Dest) {
     if (Test-Path -LiteralPath $Dest) {
         Write-Error "publish: output already exists: $Dest"
     }
-    $part = "$Dest.part"
-    if (Test-Path -LiteralPath $part) {
-        Remove-Item -LiteralPath $part -Force
-    }
     $bytes = (Get-Item -LiteralPath $Source -Force).Length
     Assert-StorageGuard 'publish' $bytes | Out-Null
+    $claimed = $false
+    $fs = $null
     try {
-        Copy-Item -LiteralPath $Source -Destination $part -Force
+        try {
+            $fs = [System.IO.File]::Open($Dest, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        } catch {
+            Write-Error "publish: output already exists: $Dest"
+        }
+        $claimed = $true
+        $srcFs = [System.IO.File]::Open($Source, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        try {
+            $srcFs.CopyTo($fs)
+        } finally {
+            $srcFs.Dispose()
+        }
+        $fs.Dispose()
+        $fs = $null
         $srcHash = Get-FileSha256 $Source
-        $copy1 = Get-FileSha256 $part
-        $copy2 = Get-FileSha256 $part
+        $copy1 = Get-FileSha256 $Dest
+        $copy2 = Get-FileSha256 $Dest
         if ($srcHash -ne $copy1 -or $copy1 -ne $copy2) {
             Write-Error "publish: hash mismatch source=$srcHash copy1=$copy1 copy2=$copy2"
         }
-        Rename-Item -LiteralPath $part -NewName (Split-Path -Leaf $Dest)
+        $out1 = Get-FileSha256 $Dest
+        $out2 = Get-FileSha256 $Dest
+        if ($out1 -ne $out2) {
+            Write-Error "publish: two reads of $Dest differ read1=$out1 read2=$out2"
+        }
+        [pscustomobject]@{
+            path   = $Dest
+            size   = (Get-Item -LiteralPath $Dest -Force).Length
+            sha1   = $out1
+            sha2   = $out2
+        }
     } catch {
-        if (Test-Path -LiteralPath $part) {
-            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
-        }
-        if ((Test-Path -LiteralPath $Dest) -and -not (Test-Path -LiteralPath $Source)) {
-            # do not delete anything outside staging; Dest is on C: only if rename happened
-        }
-        if (Test-Path -LiteralPath $Dest) {
-            $final1 = Get-FileSha256 $Dest
-            $final2 = Get-FileSha256 $Dest
-            if ($final1 -ne $srcHash -or $final2 -ne $srcHash) {
-                Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+        if ($claimed) {
+            if ($null -ne $fs) {
+                try { $fs.Dispose() } catch { }
+            }
+            if (Test-Path -LiteralPath $Dest) {
+                Remove-Item -LiteralPath $Dest -Force
             }
         }
         throw
-    }
-    $out1 = Get-FileSha256 $Dest
-    $out2 = Get-FileSha256 $Dest
-    if ($out1 -ne $out2) {
-        Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
-        Write-Error "publish: two reads of $Dest differ read1=$out1 read2=$out2"
-    }
-    [pscustomobject]@{
-        path   = $Dest
-        size   = (Get-Item -LiteralPath $Dest -Force).Length
-        sha1   = $out1
-        sha2   = $out2
     }
 }
 
