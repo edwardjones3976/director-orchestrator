@@ -65,6 +65,59 @@ outputs are refused without replacement. No usable input means no successful
 published input artifact. Errors and stdout contain counts and reasons only,
 never source excerpts. A dry run qualifies and validates without publishing.
 
+Publication reserves the destination directory with atomic `mkdir`, then installs
+the staged files without replacement using hard links. `manifest.json` is the
+last, atomic commit marker: consumers must ignore a directory lacking it. This
+does not claim an atomic two-file directory rename. An interrupted publication
+may leave an incomplete reserved directory; a later invocation refuses that
+directory instead of deleting or overwriting it. Filesystem support for hard
+links is required; unsupported filesystems fail rather than falling back to
+replacement. Protected held-out paths and symlinked artifact/output paths are
+refused.
+
+## Constructor interface
+
+`eval/prepare_kep_inputs.py` takes `--archive`, `--tree`, `--census`, `--license`,
+`--policy`, `--policy-sha256`, and `--out`; `--dry-run` publishes nothing. The first
+four files have immutable production pins in the tool. The policy must be frozen
+before source reads, contain exactly these keys, and bind the actual new policy
+bytes through the command's expected SHA-256:
+
+```json
+{
+  "protocol": "kep-input-selection/v2",
+  "repository": "kubernetes/enhancements",
+  "commit": "f7be055669b365e9b4ab3905bda6ef385e0c84ca",
+  "statuses": ["implemented", "implementable"],
+  "creation_date_filter": null,
+  "required_sections": ["Non-Goals", "Notes/Constraints/Caveats", "Alpha Graduation Criteria", "Test Plan"],
+  "order": "sig-round-robin/numeric-id-path/v1",
+  "frozen_at": "<actual explicit UTC time before construction>",
+  "authority": "issue299/comment5973258630"
+}
+```
+
+The citation binds the declared policy; it is not a signed owner-approval receipt.
+Source/group identity and external admission still require the normal independent
+review and recorded work-order gates. Goals and the four supporting sections are
+context; visibly nonempty Summary and Motivation are included when present.
+Missing title or Goals are input-usability refusals distinct from section
+qualification. A zero-usable-input result exits nonzero and prints only its
+aggregate census counts/reasons. Successful manifests retain every metadata
+candidate disposition and refusal reason.
+
+Per-record SHA-256 covers the exact JSONL line including its LF. Qualification
+SHA-256 covers the canonical qualification object embedded in the manifest;
+qualification includes the frozen-order digest and census but no record
+generation timestamps, so there is no cyclic record hash. Source capture is the
+new v2 archive-member read, not a backdated claim about historical capture.
+
+Only the shared, standard-library `prompt_template` input helpers are imported.
+The constructor never imports the target-bearing generator or held-out validator.
+Literal secret-marker screening is conservative and does not constitute a full
+secret scan or admission verdict. The authorized host performs remaining scan,
+review and consumer-binding checks before any model work.
+
 The tool is qualified with synthetic archive/source fixtures only. The eventual
 authorized host corpus run must recheck all pins before reading public proposal
 bodies. Existing KEP-2802 extraction and v1 artifacts are preserved.
