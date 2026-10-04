@@ -1,4 +1,3 @@
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]] -->
 # Director R1 preparation, doctor and sibling rehearsal
 
 `scripts/director-release.py` inspects pinned inputs, prepares a Compose artifact,
@@ -38,7 +37,7 @@ a protected descriptor with these inputs; no secrets belong in the descriptor:
 | `reviewers` | Planned independent and security actor names, checked against configured allowlists |
 | `executables` | Existing absolute `python` and `powershell` paths |
 | `output_directory` | Existing protected directory disjoint from the checkout and snapshot, including ancestors |
-| `timeout_seconds` | Shared whole-doctor subprocess deadline, 1–900 seconds |
+| `timeout_seconds` | Shared whole-doctor subprocess deadline, 1-900 seconds |
 | `rehearsal` | Optional sibling descriptor pin, acceptance-artifact pin, fresh backup path and loopback host port |
 
 The descriptor and executables are operator inputs, authenticated for preparation
@@ -142,9 +141,17 @@ After the owner binding passes, the doctor verifies:
 
 1. A clean source checkout at the exact descriptor commit/tree and an already
    present project image with matching source labels and immutable image ID.
+   The actual Git child disables fsmonitor, hooks and untracked-cache execution;
+   executable clean/smudge/process filters and submodule checkouts are refused
+   before status. It does not change the operator's Git configuration.
 2. Matching runtime, bridge, generation, and validation selectors; validation
    expiration inside the existing 24-hour limit. This is a selector check, not
-   full fresh-generation authority validation.
+   full fresh-generation authority validation. The snapshot repository/ref and
+   effective execution commit/tree must match the runtime profile: explicit
+   project-execution pins take precedence, otherwise candidate pins apply.
+   Selected generations require an explicit supported acceptance mode, its
+   required paths and a correctly formed registry/adoption digest. A missing
+   mode defaults to `github-v1` in the control script and is refused here.
 3. The existing `resolved_deployment_digest` contract, including the Slack
    gateway's exact image, explicit `pull_policy: never`, and the nonempty read-only
    `/repository` snapshot mount.
@@ -175,8 +182,10 @@ After the owner binding passes, the doctor verifies:
 Platform children use closed stdin, a shared deadline, bounded captured output,
 and no shell. Raw probe inputs go through temporary stdin, not command-line
 arguments. Inherited provider keys, Git overrides, `COMPOSE_FILE`, and
-`DOCKER_HOST` are not forwarded. Docker still uses the operator's configured
-local context; image identity is checked in that context. Windows Program Files
+`DOCKER_HOST` are not forwarded. The doctor resolves the configured Docker context,
+refuses remote/TLS endpoints, and pins its local Unix socket or Windows named pipe
+and daemon ID. Later Docker checks use that endpoint with ambient Docker selectors
+removed. Windows Program Files
 variables are retained because Docker discovers its Compose plugin there. The descriptor's
 protected profiles and explicit executable paths remain trusted local inputs.
 
@@ -234,18 +243,54 @@ binds cannot overlap either release's checkout, snapshot, output, authority root
 descriptor, pinned inputs or selected process-environment file, or any final
 Compose bind. Effective sibling Compose paid/live switches must remain false
 and its kill switch true even if an override replaces profile values. The backup
-path must be new and directly inside the sibling output directory.
+path must be new and directly inside the sibling output directory. Each output
+directory must also be disjoint from the other release's protected paths,
+including its snapshot. The health mapping must use TCP (omitted protocol means
+TCP); a UDP mapping is insufficient.
 
-The result contains argv arrays for the existing control script, in gate order:
+The supported service graph is orchestrator, slackbot, n8n and their optional
+`langgraph-primary-db` / `n8n-db` dependencies. Slackbot may depend on both
+orchestrator and n8n. Extra services, alternate gateway commands, auxiliary
+startup commands, external gateway routes and unsupported n8n/Postgres settings
+are refused. Both application services require explicit unpaid/live/kill
+switches; the separate ChatGPT bridge must be disabled. All startable images
+must be immutable, already cached and explicitly `pull_policy: never`. Builds
+are forbidden on auxiliary services; the existing control uses `--no-build` for
+the application starts. Auxiliary n8n/Postgres images must use the sanctioned
+image repositories without command/entrypoint overrides.
+
+The sibling project must have no existing containers or prior-image record.
+n8n state must be fresh: only new, project-scoped named volumes or ephemeral
+image state are supported. Reused databases/workflows, bind-mounted n8n state
+and alternate database hosts are refused because Director paid switches cannot
+constrain arbitrary stored workflows. These restrictions require explicit sibling
+Compose overrides for the stock graph's pull policies and gateway unpaid flags;
+the runner never rewrites the production graph or profile. Previously provisioned
+isolated primary database storage remains subject to the existing identity checks.
+
+Offline rehearsal supports only `provider-v2` and `provider-v3-two-party`, exactly
+as `PrepareOfflineHandoff` does. `owner-local-evidence-v1` can satisfy doctor
+selector checks but cannot emit this offline plan. The sibling profile must also
+set `DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` before the plan is produced.
+
+The result contains executable launcher `argv` arrays and separate inspection-only
+`control_argv` arrays for the existing control script, in gate order:
 `Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `StageRuntime`,
 `PrepareOfflineHandoff`, `ActivateOffline`, `Health`, `Rollback`, `Health`.
 The restore proof precedes activation as the existing acceptance chain requires.
 The separately pinned acceptance artifact is passed to `Accept`; the runner
 never considers its mere existence or a successful plan to be acceptance.
-The result also supplies the exact `cwd`, `COMPOSE_FILE`,
-`COMPOSE_PATH_SEPARATOR`, `DIRECTOR_HOST_PORT` and unpaid switches needed by the
-existing control consumer. The host port is pinned in the emitted environment as
-well as argv so an inherited shell value cannot redirect Compose interpolation.
+Each executable `argv` invokes a fixed Python launcher which actually replaces
+the control child's environment with the emitted allowlist. The result declares
+`environment_mode: replace`; it is not an overlay or a promise that JSON null
+unsets a variable. This binds `cwd`, the local `DOCKER_HOST`, `COMPOSE_FILE`,
+`COMPOSE_PATH_SEPARATOR`, `DIRECTOR_HOST_PORT` and unpaid switches. Ambient
+`DOCKER_CONTEXT`, TLS/certificate/config selectors and provider keys cannot reach
+the control child. Before each step the launcher rechecks daemon identity and
+every cached image ID; before the first step it also rechecks fresh project/n8n
+state. Any prior-image record must remain within the verified candidate image,
+so rollback cannot select an uninspected older image. Execute `argv` in order;
+running `control_argv` directly discards these protections and is unsupported.
 
 Claude's assigned W6 operator executes this plan only within the separately authorized
 setup/rehearsal slot, preserving the existing control gates and durable command
@@ -305,7 +350,11 @@ the installed scorecard execution/attestation path. Real
 `docker compose config` output exercises resource isolation without starting
 containers, and the actual control script's parameter block is bound by
 PowerShell with its runtime body omitted. A short-lived Python subprocess checks
-deadline cleanup and sanitized failures. No provider, production database or
+deadline cleanup and sanitized failures. A harmless real Git fsmonitor fixture
+first demonstrates marker execution, then proves the source gate suppresses it.
+The emitted launcher's real child records its environment under hostile ambient
+Docker selectors; Docker observations alone are mocked in that test. Negative
+fixtures cover auxiliary services/images, fresh state, TCP mapping, snapshot
+authority and acceptance mode. No provider, production database or
 live rehearsal is started by the suite. Exact-head full-suite, CI, security and
-Claude review evidence remain required.
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]] -->
+independent review evidence remain required.

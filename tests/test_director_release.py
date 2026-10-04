@@ -1,6 +1,6 @@
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:35 UTC | BEGIN]]
 """Preparation contracts using the real A2 reader in isolated temporary owner roots."""
 import copy
+import base64
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict, replace
 import importlib.util
@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("director_release_under_test", ROOT / "scripts/director-release.py")
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
+REAL_COMMAND = release.command
 PREFLIGHT_SPEC = importlib.util.spec_from_file_location("preflight_contract_fixture", ROOT / "tests/test_live_dispatch_preflight.py")
 PREFLIGHT_FIXTURE = importlib.util.module_from_spec(PREFLIGHT_SPEC)
 PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT_FIXTURE)
@@ -50,7 +51,7 @@ class ReleasePreparationTests(unittest.TestCase):
             database_instance_id="11111111-1111-4111-8111-111111111111",
             postgres_schema="director_primary_v1", checkpoint_namespace="fixture-primary-v1"))
         self.compose = {"name": "fixture-director", "services": {
-            "orchestrator": {"image": self.image,
+            "orchestrator": {"image": self.image, "pull_policy": "never",
                 "command": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
                 "environment": {"DIRECTOR_RUNTIME_IMAGE": self.image, "DIRECTOR_RUNTIME_IMAGE_ID": self.image,
                     "DIRECTOR_ASGI_APP": "director_orchestrator.main:app", "ALLOW_PAID_RUNS": "false",
@@ -58,7 +59,10 @@ class ReleasePreparationTests(unittest.TestCase):
                     "ORCHESTRATOR_SHARED_SECRET": "fixture-protected-value"},
                 "volumes": [{"type": "bind", "source": str(self.snapshot), "target": "/repository", "read_only": True}]},
             "slackbot": {"image": self.image, "pull_policy": "never",
-                "command": ["python", "-m", "director_orchestrator.slack_bot"]}}}
+                "command": ["python", "-m", "director_orchestrator.slack_bot"],
+                "environment": {"ALLOW_PAID_RUNS": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
+                                "LANGGRAPH_PARALLEL_KILL_SWITCH": "true"}},
+            "n8n": {"image": "docker.n8n.io/n8nio/n8n:latest@sha256:" + "9" * 64, "pull_policy": "never"}}}
         self.manifest = {"version": "director-primary-generation/v1", "activation": self.activation,
             "image_id": self.image, "resolved_compose_sha256": resolved_deployment_digest(self.compose, self.image),
             "journal_path": "/data/fresh.sqlite3", "registry_path": "/data/registry.json",
@@ -76,6 +80,12 @@ class ReleasePreparationTests(unittest.TestCase):
                 "binding": asdict(ProviderActivationBinding("grok", "workspace", "v1", "v1", "v1", "v1", "v1")),
                 "configuration_digest": "e" * 64, "cost_units": 2, "work_packet": packet}}}
         self.runtime = {"LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA": self.candidate,
+            "REPOSITORY_ALLOWLIST": "fixture/project", "ALLOWED_STARTING_REFS": "main",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": "provider-v3-two-party",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH": "/data/registry.json",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256": "d" * 64,
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH": "/data/acceptance.sqlite3",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY": "/data",
             "LANGGRAPH_PRIMARY_PINNED_TREE_SHA": self.tree,
             "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": self.generation,
             "DIRECTOR_PROVIDER_VALIDATION_GENERATION": self.generation,
@@ -168,6 +178,16 @@ class ReleasePreparationTests(unittest.TestCase):
             self.source_calls.append((argv, kwargs))
         else:
             self.calls.append((argv, kwargs))
+        if argv[:2] == ["git", "config"]:
+            return b""
+        if argv[:2] == ["docker", "context"]:
+            return release.encoded([{"Endpoints": {"docker": {"Host": "npipe:////./pipe/docker_engine"}}}])
+        if argv[:2] == ["docker", "info"]:
+            return b"fixture-daemon"
+        if argv[:2] == ["docker", "volume"]:
+            return b""
+        if argv[:2] == ["docker", "ps"]:
+            return b""
         if argv[:2] == ["git", "rev-parse"]:
             return self.reply_changes.get("commit" if argv[-1] == "HEAD^{commit}" else "tree",
                 (self.candidate if argv[-1] == "HEAD^{commit}" else self.tree).encode())
@@ -766,6 +786,7 @@ class ReleasePreparationTests(unittest.TestCase):
         generation = spec["generation_manifest"]["sha256"]
         runtime = dict(self.runtime, LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256=generation,
                        DIRECTOR_PROVIDER_VALIDATION_GENERATION=generation, ALLOW_PAID_RUNS="false",
+                       DIRECTOR_PROVIDER_VALIDATION_ENABLED="false",
                        LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false", LANGGRAPH_PARALLEL_KILL_SWITCH="true",
                        DIRECTOR_HOST_PORT="18080")
         spec["runtime_env"] = self.pin_env("sibling-runtime.env", runtime)
@@ -789,7 +810,7 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual(actions, ["Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
                                    "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"])
         for step in report["steps"]:
-            argv = step["argv"]
+            argv = step["control_argv"]
             self.assertEqual(argv[argv.index("-ComposeProject") + 1], "fixture-sibling")
             self.assertEqual(argv[argv.index("-EnvironmentFile") + 1], sibling["runtime_env"]["path"])
         self.assertEqual(report["environment"]["COMPOSE_FILE"], self.spec["compose_files"][0]["path"])
@@ -798,6 +819,227 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual(report["environment"]["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
         self.assertFalse(any("windows-langgraph-primary-control.ps1" in str(arg) for call, _ in self.calls for arg in call))
         self.assertEqual(list(Path(sibling["output_directory"]).iterdir()), [])
+
+    def test_actual_launcher_replaces_environment_and_rechecks_daemon_and_images(self):
+        self.sibling()
+        ambient = {"DOCKER_HOST": "tcp://remote:2376", "DOCKER_CONTEXT": "remote",
+                   "DOCKER_CONFIG": "/untrusted", "DOCKER_TLS_VERIFY": "1", "DOCKER_CERT_PATH": "/untrusted",
+                   "COMPOSE_FILE": "wrong.yml", "OPENAI_API_KEY": "fixture-never-forward"}
+        with patch.dict(os.environ, ambient):
+            plan = release.Release(self.descriptor).rehearsal()
+            step = plan["steps"][0]
+            payload = json.loads(base64.b64decode(step["argv"][-1]))
+            payload["control_argv"] = [sys.executable, "-I", "-c",
+                "import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps(dict(os.environ)))",
+                str(self.root / "observed-environment.json")]
+            observed_calls = []
+            def read(argv, **kwargs):
+                observed_calls.append((argv, kwargs))
+                if argv[1] == "info":
+                    return payload["daemon_id"].encode()
+                if argv[1] in ("ps", "volume"):
+                    return b""
+                return release.encoded([{"Id": payload["images"][argv[-1]]}])
+            # Only Docker observation is mocked. The emitted launcher invokes a
+            # real harmless child, which records its actual replacement env.
+            with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
+                    patch.object(subprocess, "check_output", side_effect=read):
+                exec(compile(step["argv"][-2], "emitted-launcher", "exec"), {})
+            observed = json.loads((self.root / "observed-environment.json").read_text())
+            self.assertEqual(observed["DOCKER_HOST"], "npipe:////./pipe/docker_engine")
+            for key in ambient.keys() - {"DOCKER_HOST", "COMPOSE_FILE"}:
+                self.assertNotIn(key, observed)
+            self.assertEqual(observed["COMPOSE_FILE"], payload["environment"]["COMPOSE_FILE"])
+            self.assertTrue(all(item[1]["env"] == payload["environment"] for item in observed_calls))
+            for change in ("daemon", "image", "rollback"):
+                with self.subTest(change=change):
+                    def drift(argv, **kwargs):
+                        if argv[1] == "info":
+                            return b"different-daemon" if change == "daemon" else payload["daemon_id"].encode()
+                        if argv[1] in ("ps", "volume"):
+                            return b""
+                        return release.encoded([{"Id": "sha256:" + "0" * 64 if change == "image" else payload["images"][argv[-1]]}])
+                    if change == "rollback":
+                        Path(payload["prior_images"]).write_text('{"orchestrator_image_id":"unverified"}')
+                    with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
+                            patch.object(subprocess, "check_output", side_effect=drift), \
+                            patch.object(subprocess, "run") as child:
+                        with self.assertRaises(SystemExit):
+                            exec(compile(step["argv"][-2], "emitted-launcher", "exec"), {})
+                        child.assert_not_called()
+
+    def test_real_git_fsmonitor_cannot_execute_before_dirty_gate(self):
+        marker, hook = self.root / "hook-ran", self.root / "fsmonitor-hook"
+        hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() + '"\nprintf "token\\0"\n', encoding="utf-8")
+        hook.chmod(0o700)
+        def git(*args, env=None):
+            return subprocess.check_output(["git", *args], cwd=self.source,
+                                           env=env or release.child_environment(), stderr=subprocess.DEVNULL)
+        git("init", "-q")
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
+        git("config", "core.fsmonitor", hook.as_posix())
+        unsafe_env = {key: value for key, value in release.child_environment().items() if not key.startswith("GIT_CONFIG_")}
+        git("status", "--porcelain=v2", env=unsafe_env)
+        self.assertTrue(marker.exists(), "fixture must demonstrate executable fsmonitor before testing its suppression")
+        marker.unlink()
+        tool = release.Release.__new__(release.Release)
+        tool.source, tool.deadline = self.source, time.monotonic() + 30
+        tool.spec = {"candidate": {"commit": git("rev-parse", "HEAD").decode().strip(),
+                                    "tree": git("rev-parse", "HEAD^{tree}").decode().strip()}}
+        with patch.object(release, "command", REAL_COMMAND):
+            with self.assertRaisesRegex(release.ReleaseError, "source_not_clean"):
+                tool.source_check()
+        self.assertFalse(marker.exists())
+        git("config", "filter.fixture.clean", hook.as_posix())
+        with patch.object(release, "command", REAL_COMMAND):
+            with self.assertRaisesRegex(release.ReleaseError, "executable_git_filter_refused"):
+                tool.source_check()
+        self.assertFalse(marker.exists())
+
+    def test_supported_graph_covers_transitive_services_and_rejects_unsafe_variants(self):
+        self.sibling()
+        graph = copy.deepcopy(self.sibling_compose)
+        graph["services"].update({name: {"image": "postgres:16@sha256:" + "1" * 64, "pull_policy": "never"}
+                                   for name in ("n8n-db", "langgraph-primary-db")})
+        graph["services"]["slackbot"]["depends_on"] = {"orchestrator": {}, "n8n": {}}
+        graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {}}
+        graph["services"]["n8n"].update(depends_on={"n8n-db": {}},
+            environment={"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db"})
+        release.isolated_sibling(self.compose, graph, 18080)
+        changes = [
+            ("n8n", "image", "n8n:latest"), ("n8n-db", "pull_policy", "always"),
+            ("n8n", "build", {"context": "."}), ("n8n", "command", ["sh", "-c", "unapproved"]),
+            ("slackbot", "depends_on", {"rogue": {}}),
+            ("slackbot", "command", ["python", "-c", "unapproved"]),
+            ("slackbot", "environment", {"ALLOW_PAID_RUNS": "true"}),
+            ("orchestrator", "environment", dict(graph["services"]["orchestrator"]["environment"], CHATGPT_BRIDGE_ALLOW_PAID_RUNS="true")),
+            ("slackbot", "environment", dict(graph["services"]["slackbot"]["environment"], ORCHESTRATOR_BASE_URL="https://production")),
+            ("n8n", "environment", {"NODE_OPTIONS": "--require malicious"}),
+            ("n8n", "environment", {"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "production"}),
+            ("n8n-db", "environment", {"POSTGRES_INITDB_ARGS": "unapproved"}),
+        ]
+        for name, key, value in changes:
+            with self.subTest(service=name, key=key):
+                changed = copy.deepcopy(graph)
+                changed["services"][name][key] = value
+                with self.assertRaises(release.ReleaseError):
+                    release.isolated_sibling(self.compose, changed, 18080)
+        graph["services"]["rogue"] = copy.deepcopy(graph["services"]["n8n"])
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_service_graph_unsupported"):
+            release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_health_mapping_requires_tcp(self):
+        self.sibling()
+        port = self.sibling_compose["services"]["orchestrator"]["ports"][0]
+        for protocol in (None, "tcp", "udp"):
+            with self.subTest(protocol=protocol):
+                if protocol is None:
+                    port.pop("protocol", None)
+                else:
+                    port["protocol"] = protocol
+                if protocol == "udp":
+                    with self.assertRaisesRegex(release.ReleaseError, "sibling_host_port_mismatch"):
+                        release.isolated_sibling(self.compose, self.sibling_compose, 18080)
+                else:
+                    release.isolated_sibling(self.compose, self.sibling_compose, 18080)
+
+    def test_acceptance_modes_and_required_inputs_match_control(self):
+        for mode in (None, "github-v1", "unknown", "provider-v2", "provider-v3-two-party"):
+            with self.subTest(mode=mode):
+                runtime = dict(self.runtime)
+                runtime.pop("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE")
+                if mode is not None:
+                    runtime["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE"] = mode
+                if mode in ("provider-v2", "provider-v3-two-party"):
+                    release.acceptance_inputs(runtime)
+                    for key in ("PATH", "SHA256", "DIRECTORY"):
+                        changed = dict(runtime)
+                        changed.pop("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_" + key)
+                        with self.assertRaisesRegex(release.ReleaseError, "generation_acceptance_inputs_missing"):
+                            release.acceptance_inputs(changed)
+                else:
+                    with self.assertRaisesRegex(release.ReleaseError, "generation_acceptance_mode_unsupported"):
+                        release.acceptance_inputs(runtime)
+        invalid = dict(self.runtime, LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256="wrong")
+        with self.assertRaisesRegex(release.ReleaseError, "generation_acceptance_digest_invalid"):
+            release.acceptance_inputs(invalid)
+
+    def test_offline_plan_rejects_owner_local_mode_and_enabled_validation(self):
+        sibling = self.sibling()
+        original = release.dotenv(Path(sibling["runtime_env"]["path"]).read_bytes())
+        for key, value, error in (
+                ("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "owner-local-evidence-v1", "sibling_offline_acceptance_mode_unsupported"),
+                ("DIRECTOR_PROVIDER_VALIDATION_ENABLED", "true", "sibling_offline_handoff_profile_invalid")):
+            with self.subTest(key=key):
+                sibling["runtime_env"] = self.pin_env("sibling-runtime.env", dict(original, **{key: value}))
+                self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+                self.save()
+                with self.assertRaisesRegex(release.ReleaseError, error):
+                    release.Release(self.descriptor).rehearsal()
+
+    def test_remote_docker_context_is_refused_before_image_lookup(self):
+        tool = release.Release(self.descriptor)
+        def platform(argv, **kwargs):
+            if argv[:2] == ["docker", "context"]:
+                return release.encoded([{"Endpoints": {"docker": {"Host": "tcp://remote:2376"}}}])
+            return self.platform(argv, **kwargs)
+        with patch.object(release, "command", side_effect=platform):
+            with self.assertRaisesRegex(release.ReleaseError, "docker_target_not_local"):
+                tool.image_check()
+        self.assertFalse(any(argv[:3] == ["docker", "image", "inspect"] for argv, _ in self.calls))
+
+    def test_snapshot_must_match_effective_runtime_authority(self):
+        tool = release.Release(self.descriptor)
+        original = copy.deepcopy(tool.spec["snapshot"])
+        for key in ("repository", "starting_ref", "commit", "tree"):
+            with self.subTest(key=key):
+                tool.spec["snapshot"] = dict(original, **{key: "wrong"})
+                with self.assertRaisesRegex(release.ReleaseError, "runtime_snapshot_authority_mismatch"):
+                    tool.selectors_check()
+        tool.spec["snapshot"] = original
+        tool.runtime["LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA"] = "1" * 40
+        with self.assertRaisesRegex(release.ReleaseError, "runtime_snapshot_authority_invalid"):
+            tool.selectors_check()
+        tool.runtime["LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA"] = "2" * 40
+        with self.assertRaisesRegex(release.ReleaseError, "runtime_snapshot_authority_mismatch"):
+            tool.selectors_check()
+        tool.spec["snapshot"].update(commit="1" * 40, tree="2" * 40)
+        tool.selectors_check()
+
+    def test_cross_release_output_snapshot_overlap_is_refused_before_probes(self):
+        sibling = self.sibling()
+        sibling_snapshot = self.root / "separate-snapshot"
+        sibling_snapshot.mkdir()
+        sibling["snapshot"]["path"] = str(sibling_snapshot)
+        self.spec["output_directory"] = str(sibling_snapshot)
+        self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+        self.save()
+        with self.assertRaisesRegex(release.ReleaseError, "cross_release_output_overlap"):
+            release.Release(self.descriptor).rehearsal()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(sibling_snapshot.iterdir()), [])
+
+    def test_rehearsal_requires_cached_images_fresh_state_and_no_prior_rollback(self):
+        sibling = self.sibling()
+        tool = release.Release(self.root / "sibling.json")
+        graph = self.sibling_compose
+        graph["services"]["n8n"]["volumes"] = [{"type": "volume", "source": "data", "target": "/home/node/.n8n"}]
+        tool.rehearsal_images(graph)
+        for defect in ("container", "image", "volume", "prior"):
+            with self.subTest(defect=defect):
+                def platform(argv, **kwargs):
+                    if defect == "container" and argv[:2] == ["docker", "ps"]:
+                        return b"existing-container"
+                    if defect == "image" and argv[:3] == ["docker", "image", "inspect"] and "n8n" in argv[-1]:
+                        raise release.ReleaseError("platform_check_failed")
+                    if defect == "volume" and argv[:2] == ["docker", "volume"]:
+                        return b"fixture-sibling_data"
+                    return self.platform(argv, **kwargs)
+                if defect == "prior":
+                    Path(tool.prior_images_path()).write_text("{}")
+                with patch.object(release, "command", side_effect=platform):
+                    with self.assertRaises(release.ReleaseError):
+                        tool.rehearsal_images(graph)
 
     def test_rehearsal_rejects_resolved_slack_overrides_even_when_profiles_differ(self):
         sibling = self.sibling()
@@ -925,7 +1167,7 @@ class ReleasePreparationTests(unittest.TestCase):
         harness = self.root / "control-parameters-only.ps1"
         harness.write_text(parameters + '\n$PSBoundParameters | ConvertTo-Json -Compress\n', encoding="utf-8")
         for step in plan["steps"]:
-            arguments = step["argv"][step["argv"].index("-File") + 2:]
+            arguments = step["control_argv"][step["control_argv"].index("-File") + 2:]
             result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness), *arguments],
                                     cwd=self.root, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, "generated arguments rejected by actual control parameter contract")
@@ -996,4 +1238,3 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-# [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:35 UTC | END]]
