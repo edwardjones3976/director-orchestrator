@@ -6778,30 +6778,200 @@ class ScorecardCollectorTests(unittest.TestCase):
             world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
             self.assertEqual(world.state("15"), "PASS")
 
-    def test_insertion_between_ledger_reads_cannot_pass_check_15(self):
-        from director_orchestrator.models import ProviderName
+    def _ledger_interleaving_15(self, provider, journal_mode, event, *, rejected_reorder=False):
+        import sqlite3
+        from contextlib import closing, ExitStack, nullcontext
         from director_orchestrator.providers import ProviderDailySpendLedger
         from director_orchestrator.store import TaskStore
 
         with tempfile.TemporaryDirectory() as folder:
             store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
             ledger = ProviderDailySpendLedger(store.path)
-            monitor, world = self.spend_monitor_world(store, ProviderName.GROK)
-            read = monitor.provider_spend.reservations
+            monitor, world = self.spend_monitor_world(store, provider)
+            with closing(sqlite3.connect(store.path)) as db:
+                self.assertEqual(db.execute("PRAGMA journal_mode=" + journal_mode).fetchone()[0],
+                                 journal_mode.lower())
 
-            def insert_before_return(*args, **kwargs):
-                previous = read(*args, **kwargs)
-                if kwargs.get("include_released") is False:
-                    ledger.reserve(provider=ProviderName.GROK, effect_key="a" * 64, estimated_cost_usd=0.75,
-                                   request_limit=10, budget_usd=1.0, serialize=True, now=NOW)
+            def reserve(key, *, at=NOW, serialized=True, amount=0.75):
+                # Serialized admission holds the remaining cap: a $0.75 admission
+                # cap seeds exactly $0.75, observed against the monitor's $1 cap.
+                ledger.reserve(provider=provider, effect_key=key, estimated_cost_usd=amount,
+                               request_limit=10, budget_usd=amount, serialize=serialized, now=at)
+
+            if event == "insert":
+                # Keep a stale bounded prior-day request so BOTH coherent sides
+                # are UNKNOWN. An empty, coherent before-view could legitimately
+                # PASS: a snapshot cannot attest to a future insertion.
+                reserve("b" * 64, at=NOW - timedelta(days=1), serialized=False, amount=0.25)
+                before = (0, 1, 0, 0.0)
+                after = (1, 1, 1, 0.75)
+                before_totals, after_totals = (0, 0.0), (1, 0.75)
+                write = lambda: reserve("a" * 64)
+                expected_state = later_state = "UNKNOWN"
+            else:
+                reserve("a" * 64)
+                before_totals = after_totals = (1, 0.75)
+                if event == "settle":
+                    before, after = (1, 0, 1, 0.75), (1, 0, 0, 1.50)
+                    write = lambda: ledger.record_charge(
+                        provider=provider, effect_key="a" * 64, actual_cost_usd=1.50, now=NOW)
+                    expected_state, later_state = "UNKNOWN", "FAIL"
+                else:
+                    ledger.record_charge(provider=provider, effect_key="a" * 64,
+                                         actual_cost_usd=0.0, request_exists=False, now=NOW)
+                    if event == "release":
+                        before, after = (1, 0, 0, 0.0), (0, 0, 0, 0.0)
+                        after_totals = (0, 0.0)
+                        write = lambda: ledger.release_not_created(provider=provider, effect_key="a" * 64)
+                        expected_state = later_state = "PASS"
+                    else:
+                        self.assertEqual(event, "restore")
+                        ledger.release_not_created(provider=provider, effect_key="a" * 64)
+                        before, after = (0, 0, 0, 0.0), (1, 0, 0, 1.50)
+                        before_totals = (0, 0.0)
+                        write = lambda: ledger.record_charge(
+                            provider=provider, effect_key="a" * 64, actual_cost_usd=1.50, now=NOW)
+                        expected_state, later_state = "PASS", "FAIL"
+
+            # Hook a shared SQL read body, not a separate-connection public helper.
+            # Settlement occurs immediately AFTER exposure, BEFORE outstanding.
+            method = "_exposure" if event == "settle" else "_reservations"
+            read = getattr(monitor.provider_spend, method)
+            connect = ledger._connect
+            attempts = []
+            reader_connections = []
+
+            def interleave(connection, *args, **kwargs):
+                previous = read(connection, *args, **kwargs)
+                if not attempts and (event == "settle" or kwargs.get("include_released") is False):
+                    reader_connections.append(connection)
+                    self.assertEqual(connection.in_transaction, not rejected_reorder)
+                    try:
+                        # The writer uses the real accounting API on a SECOND
+                        # connection; timeout=0 forbids a blocking timing test.
+                        with patch.object(ledger, "_connect", side_effect=lambda: connect(timeout=0)):
+                            write()
+                    except sqlite3.OperationalError as exc:
+                        self.assertEqual(exc.sqlite_errorcode, sqlite3.SQLITE_BUSY)
+                        attempts.append("busy")
+                    else:
+                        attempts.append("committed")
                 return previous
 
-            with patch.object(monitor.provider_spend, "reservations", side_effect=insert_before_return):
-                daily = monitor._daily_accounting("grok", NOW)
-            self.assertEqual((daily["provider_request_count"], daily["unreconciled_request_count"],
-                              daily["unsettled_request_count"]), (0, 0, 1))
-            world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
-            self.assertEqual(world.state("15"), "UNKNOWN")
+            with ExitStack() as stack:
+                if rejected_reorder:
+                    # Negative control: exactly the rejected exposure-before-
+                    # outstanding order, using the old independent public reads.
+                    # No production source is reverted and no fake values supplied.
+                    stack.enter_context(patch.object(
+                        monitor.provider_spend, "read_snapshot",
+                        side_effect=lambda: nullcontext(monitor.provider_spend)))
+                stack.enter_context(patch.object(monitor.provider_spend, method, side_effect=interleave))
+                daily = monitor._daily_accounting(provider.value, NOW)
+
+            def values(observation):
+                return tuple(observation[key] for key in (
+                    "provider_request_count", "unreconciled_request_count",
+                    "unsettled_request_count", "exposure_usd"))
+
+            self.assertEqual(attempts, ["committed" if journal_mode == "WAL" or rejected_reorder else "busy"])
+            # The reader is promptly closed on return, not left to garbage collection.
+            with self.assertRaises(sqlite3.ProgrammingError):
+                reader_connections[0].execute("SELECT 1")
+            if rejected_reorder:
+                self.assertEqual(event, "settle")
+                self.assertEqual(values(daily), (1, 0, 0, 0.75))  # Impossible coherent state.
+                expected_state = "PASS"
+            else:
+                self.assertEqual(values(daily), before)
+                if provider.value == "grok":
+                    self.assertEqual((daily["request_count"], daily["reserved_cost_usd"]), before_totals)
+            world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+            state = world.state("15")
+            self.assertEqual(state, expected_state)
+            if event in {"insert", "settle"} and not rejected_reorder:
+                self.assertNotEqual(state, "PASS")
+
+            if attempts == ["busy"]:
+                # The failed commit was rolled back. After the reader closes,
+                # the same real mutation succeeds immediately without a retry loop.
+                with patch.object(ledger, "_connect", side_effect=lambda: connect(timeout=0)):
+                    write()
+            later = monitor._daily_accounting(provider.value, NOW)
+            self.assertEqual(values(later), after)
+            if provider.value == "grok":
+                self.assertEqual((later["request_count"], later["reserved_cost_usd"]), after_totals)
+            world.payload["usage_monitor"]["daily_accounting"][provider.value] = later
+            self.assertEqual(world.state("15"), later_state)
+
+    def test_insertion_between_ledger_reads_cannot_pass_check_15(self):
+        from director_orchestrator.models import ProviderName
+
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            for journal_mode in ("DELETE", "WAL"):
+                with self.subTest(provider=provider, journal_mode=journal_mode):
+                    self._ledger_interleaving_15(provider, journal_mode, "insert")
+
+    def test_settlement_between_ledger_reads_cannot_pass_check_15(self):
+        from director_orchestrator.models import ProviderName
+
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            for journal_mode in ("DELETE", "WAL"):
+                with self.subTest(provider=provider, journal_mode=journal_mode):
+                    self._ledger_interleaving_15(provider, journal_mode, "settle")
+
+    def test_rejected_reorder_settlement_false_pass_control_15(self):
+        from director_orchestrator.models import ProviderName
+
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            for journal_mode in ("DELETE", "WAL"):
+                with self.subTest(provider=provider, journal_mode=journal_mode):
+                    self._ledger_interleaving_15(provider, journal_mode, "settle", rejected_reorder=True)
+
+    def test_release_restore_between_ledger_reads_is_coherent_15(self):
+        from director_orchestrator.models import ProviderName
+
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            for journal_mode in ("DELETE", "WAL"):
+                for event in ("release", "restore"):
+                    with self.subTest(provider=provider, journal_mode=journal_mode, event=event):
+                        self._ledger_interleaving_15(provider, journal_mode, event)
+
+    def test_ledger_snapshot_is_established_at_entry_read_only_and_closed_on_error(self):
+        import sqlite3
+        from contextlib import closing
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = ProviderDailySpendLedger(str(Path(folder) / "spend.sqlite3"))
+            provider = ProviderName.GROK
+            with closing(sqlite3.connect(ledger.path)) as db:
+                self.assertEqual(db.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+            connect = ledger._connect
+            with self.assertRaisesRegex(RuntimeError, "reader failed"):
+                with ledger.read_snapshot() as snapshot:
+                    # Commit before calling ANY exposed read method: entry itself
+                    # must already have pinned the empty view.
+                    with patch.object(ledger, "_connect", side_effect=lambda: connect(timeout=0)):
+                        ledger.reserve(provider=provider, effect_key="a" * 64, estimated_cost_usd=0.75,
+                                       request_limit=10, budget_usd=0.75, serialize=True, now=NOW)
+                    self.assertEqual(snapshot.totals(provider, now=NOW), (0, 0.0))
+                    self.assertEqual(snapshot.reservations(provider, now=NOW), [])
+                    self.assertEqual(snapshot.reservations(provider, now=NOW, include_released=False), [])
+                    self.assertEqual(snapshot.exposure(provider, now=NOW), (0, 0.0))
+                    self.assertEqual(snapshot.unreconciled(provider, stale_after=timedelta(0), now=NOW), [])
+                    self.assertEqual(snapshot.unsettled_not_proven_bounded(provider), [])
+                    with self.assertRaises(sqlite3.OperationalError) as caught:
+                        snapshot._connection.execute(
+                            "UPDATE provider_daily_spend_reservations SET estimated_cost_usd = 0")
+                    self.assertEqual(caught.exception.sqlite_errorcode, sqlite3.SQLITE_READONLY)
+                    raise RuntimeError("reader failed")
+            with self.assertRaises(sqlite3.ProgrammingError):
+                snapshot.totals(provider, now=NOW)
+            with ledger.read_snapshot() as later:
+                self.assertEqual(later.exposure(provider, now=NOW), (1, 0.75))
+                self.assertEqual(later.unsettled_not_proven_bounded(provider), ["a" * 64])
 
     def test_ledger_bounds_14(self):
         self.assertEqual(row(sc.score(SHA, now=NOW), "14")["scope"], "coordination")
