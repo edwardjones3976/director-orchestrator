@@ -22,7 +22,11 @@ Map Non-Goals to `non_goals`; actual Notes/Constraints/Caveats limits to `constr
 
 Every target span must lie wholly inside a validated cited context span. Rows carry `promotion_status: construction_only`; the generator permits only `dev`, and the schema permits only `dev` or validator quarantine. Training promotion is not implemented by this construction route and requires a separately reviewed admission/promotion change. The bound extraction timestamp stays `generated_at`; `scrubbed_at` records the successful scan time.
 
-Use an explicit `licensed_extraction` provenance route and a hashed extraction record. No model name, inference receipt or real-history label may be fabricated. Existing source/context integrity, scrub, schema, canonical row identity and leak checks still apply.
+Use an explicit `licensed_extraction` provenance route and a hashed extraction record. The immutable `LICENSED_EXTRACTION_ADMISSIONS` allowlist binds each admission digest to explicit extraction-record digests; membership in the 224-candidate manifest alone does not prove qualification or frozen selection order. For admission `efaf1df009bae28ea6b57b72abc19f5c8864120e74de45e512533ab9cbc46ba9`, only the current first-source KEP-2802 record `c65d1a5b33952219fae0d7d7545de382782e0422ae0d8470c1b1334514d252e2` permits construction. Historical KEP-2079 and every other unlisted, nonqualifying, out-of-order or altered record are refused. Expanding this binding requires a separately reviewed change; it admits no new corpus or qualification policy and does not establish whole-row acceptance or training promotion.
+
+Each constructed row uses its validated extraction record's `generated_at`, including when records have different timestamps in one call. The command-wide `--generated-at` does not replace those timestamps. Admission/capture/record chronology and the successful scan's `scrubbed_at` still apply. Other generation routes retain their command-wide timestamp semantics.
+
+No model name, inference receipt or real-history label may be fabricated. Existing source/context integrity, scrub, schema, canonical row identity and leak checks still apply.
 
 ## Acceptance and scope
 

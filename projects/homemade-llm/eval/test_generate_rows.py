@@ -168,6 +168,7 @@ class GenerateRowsTests(unittest.TestCase):
         row = json.loads(self.out.read_text(encoding="utf-8"))
         self.assertEqual(row["source_provider"], "anthropic_api")
         self.assertEqual(row["source_model"], "claude-sonnet-5")
+        self.assertEqual(row["generated_at"], UTC)
         self.assertEqual(row["receipt_ref"], "receipts/anthropic/20260929T053200Z.json")
         self.assertEqual(row["row_id"], validate_rows.canonical_row_id(row["input"], row["target"]))
         self.assertEqual(row["scrub"]["scan_report_ref"], "reports/scan-dataset-test.json")
@@ -3129,6 +3130,160 @@ class NativeHotRootAccountingTests(unittest.TestCase):
 
 
 class LicensedExtractionTests(unittest.TestCase):
+    def synthetic_selection(self, root):
+        """Candidate census includes an earlier nonqualifying and a later qualifying source."""
+        def write(ref, value):
+            data = value if isinstance(value, bytes) else (json.dumps(value, sort_keys=True) + "\n").encode("utf-8")
+            (root / ref).write_bytes(data)
+            return hashlib.sha256(data).hexdigest()
+
+        sources, records = [], []
+        for number in (19, 29, 39):
+            title, objective = f"KEP{number}: Synthetic scope", f"Describe synthetic scope{number} eligibility."
+            target = {
+                "non_goals": [f"Do not require unrelated scope{number} protocols.\n"],
+                "constraints": [f"Scope{number} might depend on optional platform support.\n"],
+                "acceptance_checks": [f"Alpha requires scope{number} validation before enabling the feature.\n"],
+                "evidence_requirements": [f"Test scope{number} operations with both endpoints.\n"],
+            }
+            # KEP19 deliberately lacks the required Summary despite having four literal targets.
+            qualification = "" if number == 19 else "## Summary\nSynthetic eligibility.\n"
+            source = (f"# {title}\n{objective}\n" + qualification
+                      + "## Motivation\nA synthetic need.\n## Goals\nBound synthetic scope.\n"
+                      + "".join(f"## {field}\n" + "".join(items) for field, items in target.items()))
+            ref = f"source-{number}.md"
+            data = source.encode("utf-8")
+            digest = write(ref, data)
+            sources.append({"kep_number": number, "path": f"keps/sig-example/{number}-Synthetic-Scope/README.md",
+                            "source_ref": ref, "source_sha256": digest,
+                            "source_git_blob": hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()})
+            item = {"repository": "kubernetes/enhancements", "title": title, "objective": objective,
+                    "context": [{"kind": "assignment_packet", "source_ref": ref, "source_sha256": digest, "text": source}]}
+            records.append({"protocol": "kep-extraction/v1", "source_group": f"licensed/kubernetes/enhancements/kep-{number}",
+                            "kep_number": number, "source_ref": ref, "source_sha256": digest,
+                            "generated_at": UTC if number != 39 else "2026-09-28T20:01:00Z", "input": item,
+                            "context_spans": [{"start": 0, "end": len(source)}], "target": target,
+                            "target_spans": {field: [{"start": source.index(text), "end": source.index(text) + len(text)}
+                                                     for text in texts] for field, texts in target.items()}})
+        manifest = {"protocol": "kep-source-manifest/v1", "repository": "kubernetes/enhancements", "commit": "a" * 40,
+                    "sources": sources}
+        admission = {"protocol": "kep-corpus-admission/v1", "repository": manifest["repository"], "commit": manifest["commit"],
+                     "license": "Apache-2.0", "license_ref": "LICENSE", "license_sha256": write("LICENSE", b"Apache-2.0\n"),
+                     "selection_policy_ref": "policy.json", "selection_policy_sha256": write("policy.json", {
+                         "order": [19, 29, 39], "required_sections": ["Summary", "Motivation", "Goals"],
+                         "first_qualified": 29}),
+                     "manifest_ref": "manifest.json", "manifest_sha256": write("manifest.json", manifest),
+                     "policy_frozen_at": "2026-09-27T10:00:00Z", "captured_at": "2026-09-28T10:00:00Z",
+                     "recorded_at": "2026-09-28T11:00:00Z", "disposition": "construction_only"}
+        admission_sha = write("admission.json", admission)
+        candidates = []
+        for record in records:
+            record["admission_sha256"] = admission_sha
+            ref = f"record-{record['kep_number']}.json"
+            candidates.append({"source_group": record["source_group"], "split": "dev", "input": record["input"],
+                               "source_provenance": {"kind": "licensed_extraction", "admission_ref": "admission.json",
+                               "admission_sha256": admission_sha, "extraction_ref": ref, "extraction_sha256": write(ref, record)}})
+        return write, admission_sha, candidates, records
+
+    def test_production_selection_is_immutable_and_binds_only_current_first_record(self):
+        admission = "efaf1df009bae28ea6b57b72abc19f5c8864120e74de45e512533ab9cbc46ba9"
+        selected = "c65d1a5b33952219fae0d7d7545de382782e0422ae0d8470c1b1334514d252e2"
+        self.assertEqual(dict(generate_rows.LICENSED_EXTRACTION_ADMISSIONS), {admission: frozenset({selected})})
+        self.assertNotIn("c5ee0c1a962bcff4bc106b4f9b25092530d9b2c4bb151898d80ef6d39b9f6185",
+                         generate_rows.LICENSED_EXTRACTION_ADMISSIONS[admission])
+        with self.assertRaises(TypeError):
+            generate_rows.LICENSED_EXTRACTION_ADMISSIONS[admission] = frozenset()
+
+    def test_manifest_members_outside_frozen_selection_and_mutated_records_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write, admission, candidates, records = self.synthetic_selection(root)
+            selected = candidates[1]["source_provenance"]["extraction_sha256"]
+            pins = {admission: frozenset({selected})}
+            with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", pins):
+                self.assertEqual(generate_rows.validate_licensed_extraction(candidates[1], root, "selected"), records[1])
+                for index, reason in ((0, "earlier nonqualifying manifest member"), (2, "later out-of-order manifest member")):
+                    # These candidates satisfy the old manifest/literal-span gate.
+                    with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", {
+                            admission: frozenset({candidates[index]["source_provenance"]["extraction_sha256"]})}):
+                        self.assertEqual(generate_rows.validate_licensed_extraction(candidates[index], root, reason), records[index])
+                    with self.subTest(alternate=reason), self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
+                        generate_rows.validate_licensed_extraction(candidates[index], root, reason)
+                    self.assertIn("outside the pinned qualified selection", errors.getvalue())
+                mutated = json.loads(json.dumps(records[1]))
+                mutated["generated_at"] = "2026-09-28T20:00:01Z"  # Otherwise valid chronology and literal spans.
+                digest = write("mutated.json", mutated)
+                forged = json.loads(json.dumps(candidates[1]))
+                forged["source_provenance"].update(extraction_ref="mutated.json", extraction_sha256=digest)
+                with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
+                    generate_rows.validate_licensed_extraction(forged, root, "rehashed mutation")
+                self.assertIn("outside the pinned qualified selection", errors.getvalue())
+                forged["source_provenance"]["extraction_sha256"] = selected
+                with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
+                    generate_rows.validate_licensed_extraction(forged, root, "forged allowed digest")
+                self.assertIn("artifact bytes changed", errors.getvalue())
+
+    def test_bound_record_chronology_still_refuses_before_output_or_scrub(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            set_a, set_b = write_sets(root)
+            write, admission, candidates, records = self.synthetic_selection(root)
+            out = root / "rows.jsonl"
+            deny = Mock(side_effect=AssertionError("invalid chronology attempted transport or scrub"))
+            for timestamp in ("2026-09-28T10:59:59Z", "2026-09-28T20:04:00Z", "2026-02-30T20:00:00Z"):
+                with self.subTest(record_generated_at=timestamp):
+                    record = json.loads(json.dumps(records[2]))
+                    record["generated_at"] = timestamp
+                    altered = json.loads(json.dumps(candidates[2]))
+                    altered["source_provenance"]["extraction_sha256"] = write("record-39.json", record)
+                    pins = {admission: frozenset({candidates[1]["source_provenance"]["extraction_sha256"],
+                                                 altered["source_provenance"]["extraction_sha256"]})}
+                    with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", pins), \
+                            patch.object(generate_rows.local_transport, "utc_now", return_value="2026-09-28T20:03:00Z"), \
+                            patch.multiple(generate_rows, prepare_local_model=deny, local_dispatch=deny,
+                                           native_dispatch=deny, quote_dispatch=deny, live_dispatch=deny, github_chronology=deny), \
+                            patch.object(generate_rows.local_transport, "http_json", deny), \
+                            self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()):
+                        generate_rows.generate([candidates[1], altered], provider="repository_history",
+                            set_a=set_a, set_b=set_b, out=out, source_root=root, terms_verified_at=UTC,
+                            generated_at="2026-09-28T20:02:00Z", dry_run=False, scrub=deny)
+                    self.assertFalse(out.exists())
+            deny.assert_not_called()
+
+    def test_multiple_bound_record_timestamps_survive_generation_without_transport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            set_a, set_b = write_sets(root)
+            write, admission, candidates, records = self.synthetic_selection(root)
+            candidates, records = candidates[1:], records[1:]
+            pins = {admission: frozenset(row["source_provenance"]["extraction_sha256"] for row in candidates)}
+            out = root / "rows.jsonl"
+            scenarios = root / "scenarios.jsonl"
+            scenarios.write_text("".join(json.dumps(row) + "\n" for row in candidates), encoding="utf-8")
+            deny = Mock(side_effect=AssertionError("synthetic extraction attempted transport"))
+            scrub = Mock(return_value="reports/synthetic-scrub.json")
+            now = "2026-09-28T20:03:00Z"
+            with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", pins), \
+                    patch.multiple(generate_rows, prepare_local_model=deny, local_dispatch=deny,
+                                   native_dispatch=deny, quote_dispatch=deny, live_dispatch=deny, github_chronology=deny), \
+                    patch.object(generate_rows.local_transport, "http_json", deny), \
+                    patch.object(generate_rows.local_transport, "utc_now", return_value=now):
+                report = generate_rows.generate(generate_rows.load_scenarios(scenarios, 2), provider="repository_history",
+                    set_a=set_a, set_b=set_b, out=out, source_root=root, terms_verified_at=UTC,
+                    generated_at="2026-09-28T20:02:00Z", dry_run=False, scrub=scrub)
+            self.assertEqual(report, {"dry_run": False, "rows": 2, "receipts": 0,
+                                      "extraction_records": 2, "disposition": "construction_only"})
+            rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([row["generated_at"] for row in rows], [record["generated_at"] for record in records])
+            for row, candidate, record in zip(rows, candidates, records):
+                self.assertEqual(row["receipt_sha256"], candidate["source_provenance"]["extraction_sha256"])
+                self.assertEqual(row["target"], record["target"])
+                self.assertEqual((row["split"], row["promotion_status"], row["scrub"]["scrubbed_at"]),
+                                 ("dev", "construction_only", now))
+                self.assertFalse(list(generate_rows._schema_validator().iter_errors(row)))
+            scrub.assert_called_once()
+            deny.assert_not_called()
+
     def test_extraction_cli_refuses_nondefault_transport_options_before_source_read(self):
         argv = ["--provider", "repository_history", "--scenarios", "unused.jsonl", "--set-a", "unused-a",
                 "--set-b", "unused-b", "--out", "unused-out.jsonl", "--terms-verified-at", UTC, "--dry-run"]
@@ -3213,7 +3368,8 @@ class LicensedExtractionTests(unittest.TestCase):
                     terms_verified_at=UTC, generated_at=UTC, dry_run=options.pop("dry_run", False),
                     scrub=scrub, **options)
 
-            with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", frozenset({admission_sha})), \
+            with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", {
+                    admission_sha: frozenset({candidate["source_provenance"]["extraction_sha256"]})}), \
                     patch.multiple(generate_rows, prepare_local_model=deny, local_dispatch=deny,
                                    native_dispatch=deny, quote_dispatch=deny, live_dispatch=deny, github_chronology=deny), \
                     patch.object(generate_rows.local_transport, "http_json", deny):
@@ -3297,7 +3453,10 @@ class LicensedExtractionTests(unittest.TestCase):
                         altered = json.loads(json.dumps(candidate))
                         altered["input"] = bad["input"]
                         altered["source_provenance"]["extraction_sha256"] = write("extraction.json", bad)
-                        with self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
+                        # Rebind only synthetic pins to keep exercising the semantic gates.
+                        with patch.object(generate_rows, "LICENSED_EXTRACTION_ADMISSIONS", {
+                                admission_sha: frozenset({altered["source_provenance"]["extraction_sha256"]})}), \
+                                self.assertRaises(SystemExit), patch("sys.stderr", io.StringIO()) as errors:
                             run(altered)
                         if defect in ("disjoint", "partial"):
                             self.assertIn("wholly contained in a cited context span", errors.getvalue())
