@@ -51,6 +51,15 @@ class ReleasePreparationTests(unittest.TestCase):
         # Most tests fake the native boundary while still executing emitted
         # launcher logic. The real containment regression restores both helpers.
         def launch(argv, **kwargs):
+            if kwargs.get("stdout") is not None:
+                # Owned-probe reads use the same mocked native boundary as
+                # observations, while exercising the real deadline/output loop.
+                raw = subprocess.check_output(argv, env=kwargs["env"], cwd=kwargs["cwd"])
+                kwargs["stdout"].write(raw)
+                class ReadProcess:
+                    returncode = 0
+                    def poll(inner): return 0
+                return ReadProcess(), object()
             class Process:
                 def wait(inner, timeout):
                     result = subprocess.run(argv, **kwargs, check=True, timeout=timeout)
@@ -170,6 +179,7 @@ class ReleasePreparationTests(unittest.TestCase):
         self.calls = []
         self.source_calls = []
         self.reply_changes = {}
+        self.probe_rows = {}
         command_patch = patch.object(release, "command", side_effect=self.platform)
         command_patch.start()
         self.addCleanup(command_patch.stop)
@@ -231,6 +241,18 @@ class ReleasePreparationTests(unittest.TestCase):
             return b"fixture-sibling_director-data\nfixture-sibling_langgraph-primary-db-data\n"
         if argv[:2] == ["docker", "network"]:
             return b""
+        if argv[:2] == ["docker", "ps"] and any(str(value).startswith("name=^/") for value in argv):
+            name = next(value[len("name=^/"):-1] for value in argv if str(value).startswith("name=^/"))
+            return "\n".join(key for key, row in self.probe_rows.items() if row["Name"] == "/" + name).encode()
+        if argv[:2] == ["docker", "inspect"] and argv[-1] in self.probe_rows:
+            return release.encoded([self.probe_rows[argv[-1]]])
+        if argv[:2] == ["docker", "wait"] and argv[-1] in self.probe_rows:
+            return b"0\n"
+        if argv[:2] == ["docker", "logs"] and argv[-1] in self.probe_rows:
+            return release.encoded(self.sibling_activation)
+        if argv[:2] == ["docker", "rm"] and argv[-1] in self.probe_rows:
+            del self.probe_rows[argv[-1]]
+            return argv[-1].encode()
         if argv[:2] == ["docker", "ps"]:
             if "label=com.docker.compose.service=slackbot" in argv:
                 return b"fixture-gateway"
@@ -252,6 +274,15 @@ class ReleasePreparationTests(unittest.TestCase):
                 "Entrypoint": None}}])
         if argv[:2] == ["docker", "compose"]:
             if argv[-1] == release.LOCAL_DATABASE_PROBE:
+                if "--detach" in argv:
+                    name = argv[argv.index("--name") + 1]
+                    container = release.sha(name.encode())
+                    self.probe_rows[container] = {"Id": container, "Name": "/" + name, "Image": self.image,
+                        "HostConfig": {"RestartPolicy": {"Name": "no"}},
+                        "Config": {"Labels": {"org.director.release.probe": argv[argv.index("--label") + 1].partition("=")[2],
+                            "com.docker.compose.project": "fixture-sibling", "com.docker.compose.service": "orchestrator",
+                            "com.docker.compose.oneoff": "True"}}}
+                    return container.encode()
                 return release.encoded(self.sibling_activation)
             self.assertEqual(argv[-3:], ["config", "--format", "json"])
             self.assertIn(str(self.root / "compose.yml"), argv)
@@ -837,6 +868,9 @@ class ReleasePreparationTests(unittest.TestCase):
             {"type": "volume", "source": "director-data", "target": "/data"})
         self.sibling_compose["services"]["n8n"]["volumes"] = [
             {"type": "volume", "source": "n8n-data", "target": "/home/node/.n8n"}]
+        self.sibling_compose["services"]["n8n"]["environment"] = {
+            "N8N_HOST": "localhost", "N8N_PORT": "5678", "N8N_PROTOCOL": "http", "N8N_SECURE_COOKIE": "false",
+            "N8N_DIAGNOSTICS_ENABLED": "false", "N8N_PERSONALIZATION_ENABLED": "false", "N8N_BLOCK_ENV_ACCESS_IN_NODE": "true"}
         self.sibling_compose["services"]["langgraph-primary-db"] = {
             "image": "postgres:17-alpine@sha256:" + "1" * 64, "pull_policy": "never",
             "environment": {"POSTGRES_USER": "director_primary", "POSTGRES_DB": "director_primary",
@@ -921,6 +955,10 @@ class ReleasePreparationTests(unittest.TestCase):
             observed_calls = []
             def read(argv, **kwargs):
                 observed_calls.append((argv, kwargs))
+                if argv[0] == "docker" and (
+                        (argv[1] in ("inspect", "wait", "logs", "rm") and argv[-1] in self.probe_rows) or
+                        (argv[1] == "ps" and any(str(arg).startswith("name=^/fixture-sibling-probe-") and str(arg).endswith("$") for arg in argv))):
+                    return self.platform(argv, **kwargs)
                 if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                     return self.platform(argv, **kwargs)
                 if argv[1] == "info":
@@ -942,6 +980,10 @@ class ReleasePreparationTests(unittest.TestCase):
             for change in ("daemon", "image", "rollback"):
                 with self.subTest(change=change):
                     def drift(argv, **kwargs):
+                        if argv[0] == "docker" and (
+                                (argv[1] in ("inspect", "wait", "logs", "rm") and argv[-1] in self.probe_rows) or
+                                (argv[1] == "ps" and any(str(arg).startswith("name=^/fixture-sibling-probe-") and str(arg).endswith("$") for arg in argv))):
+                            return self.platform(argv, **kwargs)
                         if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
@@ -1021,6 +1063,10 @@ class ReleasePreparationTests(unittest.TestCase):
                             return REAL_COMMAND(argv, cwd=kwargs["cwd"], env=kwargs["env"],
                                                 deadline=time.monotonic() + 30, input_bytes=kwargs.get("input"),
                                                 executable=str(Path(shutil.which("git")).resolve()))
+                        if argv[0] == "docker" and (
+                                (argv[1] in ("inspect", "wait", "logs", "rm") and argv[-1] in self.probe_rows) or
+                                (argv[1] == "ps" and any(str(arg).startswith("name=^/fixture-sibling-probe-") and str(arg).endswith("$") for arg in argv))):
+                            return self.platform(argv, **kwargs)
                         if argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
@@ -1069,7 +1115,7 @@ class ReleasePreparationTests(unittest.TestCase):
                     exec(compile(step["argv"][-2], "launcher", "exec"), {})
                     self.assertGreater(child.call_args.kwargs["timeout"], health + quiescence)
 
-    def test_sibling_rejects_duplicate_host_bindings_but_allows_distinct_protocols(self):
+    def test_sibling_rejects_duplicate_and_nonstock_host_bindings(self):
         self.sibling()
         graph = copy.deepcopy(self.sibling_compose)
         port = copy.deepcopy(graph["services"]["orchestrator"]["ports"][0])
@@ -1077,9 +1123,12 @@ class ReleasePreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "sibling_port_collision"):
             release.isolated_sibling(self.compose, graph, 18080)
         graph["services"]["n8n"]["ports"][0]["protocol"] = "udp"
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_stock"):
+            release.isolated_sibling(self.compose, graph, 18080)
+        graph["services"]["n8n"]["ports"][0].update(protocol="tcp", published="5678")
         release.isolated_sibling(self.compose, graph, 18080)
         graph["services"]["orchestrator"]["ports"].append(copy.deepcopy(port))
-        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_collision"):
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_stock"):
             release.isolated_sibling(self.compose, graph, 18080)
 
     def test_supported_graph_covers_transitive_services_and_rejects_unsafe_variants(self):
@@ -1095,7 +1144,7 @@ class ReleasePreparationTests(unittest.TestCase):
         graph["services"]["slackbot"]["depends_on"] = {"orchestrator": {}, "n8n": {}}
         graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {}}
         graph["services"]["n8n"].update(depends_on={"n8n-db": {}},
-            environment={"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db", "DB_POSTGRESDB_DATABASE": "n8n",
+            environment={**graph["services"]["n8n"]["environment"], "DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db", "DB_POSTGRESDB_DATABASE": "n8n",
                          "DB_POSTGRESDB_USER": "n8n", "DB_POSTGRESDB_PASSWORD": "fixture", "DB_POSTGRESDB_PORT": "5432"})
         release.isolated_sibling(self.compose, graph, 18080)
         changes = [
@@ -1135,7 +1184,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 else:
                     port["protocol"] = protocol
                 if protocol == "udp":
-                    with self.assertRaisesRegex(release.ReleaseError, "sibling_host_port_mismatch"):
+                    with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_stock"):
                         release.isolated_sibling(self.compose, self.sibling_compose, 18080)
                 else:
                     release.isolated_sibling(self.compose, self.sibling_compose, 18080)
@@ -1656,7 +1705,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 if defect == "readiness":
                     raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
             def observe(argv, **kwargs):
-                if argv[:2] == ["docker", "compose"]:
+                if argv[:2] == ["docker", "logs"]:
                     events.append("identity")
                     return release.encoded(dict(self.sibling_activation,
                         database_instance_id="wrong" if defect == "identity" else self.sibling_activation["database_instance_id"]))
@@ -1784,7 +1833,7 @@ class ReleasePreparationTests(unittest.TestCase):
         graph["services"]["n8n-db"] = {"image": "postgres:17-alpine@sha256:" + "1" * 64,
             "pull_policy": "never", "logging": {"driver": "local"},
             "environment": {"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture-password"}}
-        graph["services"]["n8n"]["environment"] = {"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db",
+        graph["services"]["n8n"]["environment"] = {**graph["services"]["n8n"]["environment"], "DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db",
             "DB_POSTGRESDB_PORT": "5432", "DB_POSTGRESDB_DATABASE": "n8n", "DB_POSTGRESDB_USER": "n8n",
             "DB_POSTGRESDB_PASSWORD": "fixture-password"}
         for key in ("DB_POSTGRESDB_PORT", "DB_POSTGRESDB_DATABASE", "DB_POSTGRESDB_USER", "DB_POSTGRESDB_PASSWORD"):
@@ -2040,7 +2089,143 @@ except m['ReleaseError']: pass
                 self.launch_fixture(step)
             self.assertEqual(self.launched, [])
 
-    def test_stage_rechecks_ports_but_does_not_reject_its_started_database(self):
+    def test_database_probe_owns_cleanup_and_never_accepts_unknown_outcomes(self):
+        self.sibling()
+        step = next(item for item in release.Release(self.descriptor).rehearsal()["steps"] if item["action"] == "Preflight")
+        for mode in ("success", "restart-empty", "restart-always", "restart-missing", "wait-timeout", "create-timeout", "create-absent", "cleanup-failure", "absence-unavailable",
+                     "identity-name", "identity-owner", "identity-project", "identity-service", "identity-oneoff", "identity-id", "identity-image"):
+            rows, removed = {}, []
+            selected = {}
+            container_id = "e" * 64
+            def observe(argv, **kwargs):
+                if argv[:2] == ["docker", "compose"] and argv[-1] == release.LOCAL_DATABASE_PROBE:
+                    name = argv[argv.index("--name") + 1] if "--name" in argv else "anonymous-probe"
+                    owner = argv[argv.index("--label") + 1].partition("=")[2] if "--label" in argv else ""
+                    selected.update(name=name, owner=owner)
+                    rows[container_id] = {"Id": container_id, "Name": "/" + name,
+                        "Image": self.image,
+                        "HostConfig": {"RestartPolicy": {"Name": "" if mode == "restart-empty" else "no"}},
+                        "Config": {"Labels": {"org.director.release.probe": owner, "com.docker.compose.project": "fixture-sibling",
+                            "com.docker.compose.service": "orchestrator", "com.docker.compose.oneoff": "True"}}}
+                    if mode.startswith("identity-"):
+                        field = mode.partition("-")[2]
+                        if field in ("name", "id", "image"):
+                            rows[container_id][{"name": "Name", "id": "Id", "image": "Image"}[field]] = "unrelated"
+                        else:
+                            key = "org.director.release.probe" if field == "owner" else "com.docker.compose." + field
+                            rows[container_id]["Config"]["Labels"][key] = "unrelated"
+                    if mode == "restart-always": rows[container_id]["HostConfig"]["RestartPolicy"]["Name"] = "always"
+                    if mode == "restart-missing": rows[container_id].pop("HostConfig")
+                    if mode == "create-absent": rows.clear()
+                    if mode in ("create-timeout", "create-absent") or (mode == "wait-timeout" and "--detach" not in argv):
+                        raise subprocess.TimeoutExpired(argv, 1)
+                    return container_id.encode() if "--detach" in argv else release.encoded(self.sibling_activation)
+                if argv[:2] == ["docker", "ps"] and any(str(value).startswith("name=^/") for value in argv):
+                    if mode == "absence-unavailable" and removed:
+                        raise subprocess.CalledProcessError(1, argv)
+                    return (container_id if rows else "").encode()
+                if argv[:2] == ["docker", "inspect"] and argv[-1] == container_id:
+                    return release.encoded(list(rows.values()))
+                if argv[:2] == ["docker", "wait"]:
+                    if mode == "wait-timeout": raise subprocess.TimeoutExpired(argv, 1)
+                    return b"0\n"
+                if argv[:2] == ["docker", "logs"]:
+                    return release.encoded(self.sibling_activation)
+                if argv[:2] == ["docker", "rm"]:
+                    removed.append(argv[-1])
+                    if mode == "cleanup-failure": raise subprocess.CalledProcessError(1, argv)
+                    rows.clear()
+                    return container_id.encode()
+                return None
+            with self.subTest(mode=mode):
+                if mode in ("success", "restart-empty"):
+                    self.launch_fixture(step, observe=observe)
+                    self.assertEqual(len(self.launched), 1)
+                else:
+                    with self.assertRaises((SystemExit, subprocess.TimeoutExpired)) as error:
+                        self.launch_fixture(step, observe=observe)
+                    self.assertEqual(self.launched, [])
+                    self.assertIn(selected["name"], str(error.exception))
+                    self.assertIn(selected["owner"], str(error.exception))
+                if mode.startswith("identity-"):
+                    self.assertEqual(removed, [], "never remove an object outside the authenticated probe identity")
+                    self.assertTrue(rows)
+                elif mode == "cleanup-failure":
+                    self.assertEqual(removed, [container_id])
+                    self.assertTrue(rows)
+                elif mode == "create-absent":
+                    self.assertEqual(removed, [])
+                    self.assertFalse(rows)
+                else:
+                    self.assertEqual(removed, [container_id])
+                    self.assertFalse(rows, "client completion/timeout must not leave its daemon-owned probe behind")
+
+    def test_owned_probe_client_bounds_output_and_reaps_real_descendants(self):
+        import ast
+        import tempfile as tempfiles
+        node = next(item for item in ast.parse(release.REHEARSAL_LAUNCH).body
+                    if isinstance(item, ast.FunctionDef) and item.name == "probe_read")
+        namespace = {"time": time, "tempfile": tempfiles, "os": os, "subprocess": subprocess,
+            "launch_contained_process": REAL_CONTAINED_LAUNCH, "stop_contained_process": REAL_CONTAINED_STOP,
+            "env": release.child_environment(), "v": {"executables": {}, "cwd": str(self.root)}}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "actual-emitted-probe-client", "exec"), namespace)
+        read = namespace["probe_read"]
+        self.assertEqual(read([sys.executable, "-I", "-B", "-c", "print('fixture')"], time.monotonic() + 10), b"fixture\r\n" if os.name == "nt" else b"fixture\n")
+        with self.assertRaisesRegex(RuntimeError, "output limit|client failed"):
+            read([sys.executable, "-I", "-B", "-c", "import sys; sys.stdout.write('x' * (4*1024*1024+1))"], time.monotonic() + 10)
+        marker, ready = self.root / "probe-grandchild-survived", self.root / "probe-client-ready"
+        grandchild = "import pathlib,sys,time; time.sleep(1.5); pathlib.Path(sys.argv[1]).write_text('escaped')"
+        detach = "creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.DETACHED_PROCESS" if os.name == "nt" else "close_fds=True"
+        parent = ("import pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[3],sys.argv[1]], " +
+                  detach + "); pathlib.Path(sys.argv[2]).write_text('ready'); time.sleep(20)")
+        start = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "probe deadline"):
+            read([sys.executable, "-I", "-B", "-c", parent, str(marker), str(ready), grandchild], start + 5.5)
+        self.assertLess(time.monotonic() - start, 5.5)
+        self.assertTrue(ready.exists())
+        time.sleep(1.6)
+        self.assertFalse(marker.exists(), "bounded probe cleanup left its client grandchild alive")
+
+    def test_sibling_ports_only_publish_stock_application_targets(self):
+        self.sibling()
+        for name, target, protocol in (("langgraph-primary-db", 5432, "tcp"), ("slackbot", 8080, "tcp"),
+                                       ("orchestrator", 5432, "tcp"), ("n8n", 5678, "udp"), ("n8n", 9999, "tcp")):
+            graph = copy.deepcopy(self.sibling_compose)
+            graph["services"][name].setdefault("ports", []).append(
+                {"host_ip": "127.0.0.1", "published": "15678", "target": target, "protocol": protocol})
+            with self.subTest(service=name, target=target, protocol=protocol), self.assertRaises(release.ReleaseError):
+                release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_sibling_n8n_requires_stock_safe_setting_values(self):
+        self.sibling()
+        safe = self.sibling_compose["services"]["n8n"]["environment"]
+        for key, value in (("N8N_HOST", "remote.invalid"), ("N8N_PORT", "9999"), ("N8N_PROTOCOL", "https"),
+                           ("N8N_SECURE_COOKIE", "true"), ("N8N_DIAGNOSTICS_ENABLED", "true"),
+                           ("N8N_PERSONALIZATION_ENABLED", "true"), ("N8N_BLOCK_ENV_ACCESS_IN_NODE", "false")):
+            for missing in (False, True):
+                graph = copy.deepcopy(self.sibling_compose)
+                if missing: graph["services"]["n8n"]["environment"].pop(key)
+                else: graph["services"]["n8n"]["environment"][key] = value
+                with self.subTest(key=key, missing=missing), self.assertRaises(release.ReleaseError):
+                    release.isolated_sibling(self.compose, graph, 18080)
+        self.assertEqual(safe["N8N_PORT"], "5678")
+
+    def test_n8n_published_port_must_match_the_selected_runtime_profile(self):
+        sibling = self.sibling()
+        self.sibling_compose["services"]["n8n"]["ports"] = [
+            {"host_ip": "127.0.0.1", "published": "15678", "target": 5678, "protocol": "tcp"}]
+        self.repin_graph(sibling, self.sibling_compose)
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_stock"):
+            release.Release(self.descriptor).rehearsal()
+        runtime = release.dotenv(Path(sibling["runtime_env"]["path"]).read_bytes())
+        runtime["N8N_HOST_PORT"] = "15678"
+        sibling["runtime_env"] = self.pin_env("sibling-runtime.env", runtime)
+        self.repin_graph(sibling, self.sibling_compose)
+        plan = release.Release(self.descriptor).rehearsal()
+        payload = json.loads(base64.b64decode(plan["steps"][0]["argv"][-1]))
+        self.assertEqual(next(item for item in payload["ports"] if item["service"] == "n8n")["published"], "15678")
+
+    def test_stage_rechecks_ports_without_a_database_exception(self):
         import socket
         self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
@@ -2058,8 +2243,9 @@ except m['ReleaseError']: pass
                 self.assertEqual(self.launched, [])
                 payload["ports"][0]["service"] = "langgraph-primary-db"
                 step["argv"][-1] = base64.b64encode(release.encoded(payload)).decode()
-                self.launch_fixture(step)
-                self.assertEqual(len(self.launched), 1)
+                with self.assertRaisesRegex(SystemExit, "port"):
+                    self.launch_fixture(step)
+                self.assertEqual(self.launched, [])
 
     def test_registry_bind_requires_existing_exact_owner_directory(self):
         self.sibling()

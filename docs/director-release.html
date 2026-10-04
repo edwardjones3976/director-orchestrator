@@ -293,6 +293,20 @@ the observed final identity. A host read-only query also requires unused
 validation slots. These checks repeat before subsequent controls. They never
 bootstrap an identity or validation schema. A failed start or proof stops the
 plan for reconciliation; planning itself starts nothing and reports no DB PASS.</p>
+<p>Each container database probe runs detached with a fresh request-owned name and
+label, using the pinned Docker executable, context and image. Its 30-second
+deadline includes cleanup, with time reserved to stop and reap the host client
+tree. Bounded inspection authenticates the exact container ID, name, ownership
+label, Compose project/service and image before waiting or removing that object.
+The created probe must also have restart disabled. Success, timeout and failure
+all require reconciliation of that owned object and a successful bounded daemon
+query proving its current absence. An unrelated or mismatched object is never
+removed, and an unavailable absence query is not proof of cleanup. A failed or
+ambiguous create remains failed even if the name is currently absent, because
+the daemon might complete that request later. The name and ownership label are
+reported for reconciliation; the launcher does not retry or issue a new probe
+identity after that uncertain action. Killing a Docker client does not reverse
+daemon effects. No database or provider write is part of this probe.</p>
 <p>The runner compares the resolved graphs <strong>and all actual final-project containers</strong>,
 including stopped containers, using Docker inspection. Their bind sources, volume
 names, attached networks and configured published ports participate in isolation.
@@ -310,8 +324,11 @@ not make the Docker API read-only. Effective sibling Compose paid/live switches 
 and its kill switch true even if an override replaces profile values. The backup
 path must be new and directly inside the sibling output directory. Each output
 directory must also be disjoint from the other release's protected paths,
-including its snapshot. The health mapping must use TCP (omitted protocol means
-TCP); a UDP mapping is insufficient.</p>
+including its snapshot. Published ports are limited to one loopback TCP mapping
+each for orchestrator target 8080 and n8n target 5678, using the host ports in the
+selected runtime profile. Database services and slackbot cannot publish ports;
+the databases retained after the final stop therefore have no supported host
+listener. Alternate targets, UDP and extra mappings are refused.</p>
 <p>The supported complete rehearsal graph is orchestrator, slackbot, n8n,
 <code>langgraph-primary-db</code>, and optional <code>n8n-db</code>. Slackbot may depend on both
 orchestrator and n8n. Extra services, alternate gateway commands, auxiliary
@@ -382,7 +399,13 @@ with the stock Compose project/volume labels and local driver, without driver
 options. Their observed identities, including creation time and mountpoint, are
 pinned and checked before each action. The runner never creates or deletes them.
 For the PostgreSQL n8n topology, effective host, port, database, user and password
-must match the stock n8n database service; errors contain no secret values.</p>
+must match the stock n8n database service; errors contain no secret values.
+The effective n8n settings must also retain the stock values:
+<code>N8N_HOST=localhost</code>, <code>N8N_PORT=5678</code>,
+<code>N8N_PROTOCOL=http</code>, <code>N8N_SECURE_COOKIE=false</code>,
+<code>N8N_DIAGNOSTICS_ENABLED=false</code>,
+<code>N8N_PERSONALIZATION_ENABLED=false</code> and
+<code>N8N_BLOCK_ENV_ACCESS_IN_NODE=true</code>. Missing or altered values are refused.</p>
 <p>Complete rehearsal also requires nonempty isolated effective Slack bot token,
 app token and channel settings. After offline activation and rollback start the
 gateway, bounded inspection must prove exactly one intended sibling gateway
@@ -416,10 +439,10 @@ only the existing successful <code>StageRuntime</code>, <code>ActivateOffline</c
 switch edits included. Formatting changes from the writer are allowed; an edited
 DSN, credential, image, switch or other value is not. Pins are checked again
 immediately before invoking each action. Inputs are not silently re-pinned.</p>
-<p>Immediately before the first mutating step, each declared loopback TCP or UDP
+<p>Immediately before the first mutating step, each declared loopback TCP
 port must be available to bind. The check repeats before <code>StageRuntime</code>
-publishes application ports, excluding the primary database port already started
-by this plan. The check does not reserve a port: another process can claim it
+publishes application ports. No database-port exception applies. The check does
+not reserve a port: another process can claim it
 between checking and starting. A later start failure still stops the plan.</p>
 <p>Before each step the launcher also rechecks the pinned source commit,
 tree and cleanliness, both before probes and immediately before launching the control

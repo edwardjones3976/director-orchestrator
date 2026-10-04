@@ -375,7 +375,7 @@ exec(SOURCE_PROOF)
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
 REHEARSAL_LAUNCH = r"""
-import base64,hashlib,json,pathlib,re,socket,stat,subprocess,sys,time
+import base64,hashlib,json,os,pathlib,re,socket,stat,subprocess,sys,tempfile,time,uuid
 v=json.loads(base64.b64decode(sys.argv[1]))
 env=v['environment']
 def read(args,**kwargs):
@@ -420,11 +420,60 @@ def input_check():
         if digest(raw)!=pin['sha256']: raise SystemExit('initial runtime profile changed')
     elif digest(encoded(dotenv(raw)))!=pin['values_sha256']:
         raise SystemExit('runtime profile differs from expected control transition')
+def probe_read(args,deadline):
+    # Reserve the last five seconds for verified host-client tree cleanup.
+    if time.monotonic()>=deadline-5: raise RuntimeError('probe deadline')
+    with tempfile.TemporaryFile() as out,tempfile.TemporaryFile() as err:
+        p,g=launch_contained_process(args,executable=v['executables'].get(args[0],args[0]),env=env,cwd=v['cwd'],
+            stdin=subprocess.DEVNULL,stdout=out,stderr=err)
+        try:
+            while p.poll() is None:
+                if time.monotonic()>=deadline-5 or max(os.fstat(out.fileno()).st_size,os.fstat(err.fileno()).st_size)>4*1024*1024:
+                    raise RuntimeError('probe deadline or output limit')
+                time.sleep(.02)
+            if p.returncode or time.monotonic()>=deadline-5 or max(os.fstat(out.fileno()).st_size,os.fstat(err.fileno()).st_size)>4*1024*1024:
+                raise RuntimeError('probe client failed')
+            out.seek(0)
+            return out.read(4*1024*1024+1)
+        finally: stop_contained_process(p,g,grace_seconds=max(0,min(5,deadline-time.monotonic())))
+def owned_database_probe(db):
+    deadline=time.monotonic()+30; work=deadline-10
+    owner=uuid.uuid4().hex; name=v['project']+'-probe-'+owner; selected=None; failed=False
+    print('database probe name='+name+' owner='+owner,file=sys.stderr,flush=True)
+    query=['docker','ps','-a','--no-trunc','--filter','name=^/'+name+'$','--format','{{.ID}}']
+    def identity(container,limit):
+        if not re.fullmatch('[0-9a-f]{64}',container) or selected and container!=selected: raise RuntimeError('probe identity')
+        rows=json.loads(probe_read(['docker','inspect',container],limit))
+        if len(rows)!=1: raise RuntimeError('probe identity')
+        row=rows[0]; labels=row.get('Config',{}).get('Labels',{})
+        if row.get('Id')!=container or row.get('Name')!='/'+name or row.get('Image')!=v['runtime_image'] or any(labels.get(k)!=value for k,value in
+            {'org.director.release.probe':owner,'com.docker.compose.project':v['project'],'com.docker.compose.service':'orchestrator','com.docker.compose.oneoff':'True'}.items()):
+            raise RuntimeError('probe identity')
+        return row
+    try:
+        if probe_read(query,work).strip(): raise RuntimeError('probe name occupied')
+        selected=probe_read([*db['compose'],'run','--detach','--no-deps','--pull','never','-T','--name',name,
+            '--label','org.director.release.probe='+owner,'--entrypoint','python','orchestrator','-c',LOCAL_DATABASE_PROBE],work).decode().strip()
+        if identity(selected,work).get('HostConfig',{}).get('RestartPolicy',{}).get('Name') not in ('','no'):
+            raise RuntimeError('probe restart policy')
+        if probe_read(['docker','wait',selected],work).strip()!=b'0': raise RuntimeError('probe exit')
+        raw=probe_read(['docker','logs','--tail','100',selected],work)
+    except BaseException: failed=True
+    finally:
+        try:
+            ids=probe_read(query,deadline).decode().splitlines()
+            if ids:
+                if len(ids)!=1: raise RuntimeError('probe identity')
+                identity(ids[0],deadline)
+                probe_read(['docker','rm','--force',ids[0]],deadline)
+            if probe_read(query,deadline).strip(): raise RuntimeError('probe remains')
+        except BaseException: raise SystemExit('database probe cleanup unverified; reconcile name='+name+' owner='+owner) from None
+    if failed: raise SystemExit('database probe failed; reconcile name='+name+' owner='+owner) from None
+    return raw
 def database_check():
     db=v.get('local_database')
     if not db: return
-    actual=json.loads(read([*db['compose'],'run','--rm','--no-deps','--pull','never','-T','--entrypoint','python',
-                           'orchestrator','-c',LOCAL_DATABASE_PROBE]))
+    actual=json.loads(owned_database_probe(db))
     if any(actual.get(key)!=db['expected'][key] or actual.get(key)==db['final'][key]
            for key in ('database_identity','database_instance_id')):
         raise SystemExit('sibling database identity not isolated')
@@ -480,7 +529,6 @@ input_check()
 source_check()
 if v['first_step'] or v['action']=='StageRuntime':
     for port in v['ports']:
-        if not v['first_step'] and port.get('service')=='langgraph-primary-db': continue
         kind=socket.SOCK_STREAM if port['protocol']=='tcp' else socket.SOCK_DGRAM
         with socket.socket(socket.AF_INET,kind) as sock:
             if hasattr(socket,'SO_EXCLUSIVEADDRUSE'): sock.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
@@ -943,6 +991,7 @@ class Release:
                 database_url.path == "/director_primary", "sibling_backup_database_route_unsupported")
         final_resources = resource_inventory(self.run, self.spec["compose_project"])
         isolated_sibling(final_graph, sibling_graph, plan["host_port"],
+                         n8n_host_port=sibling.runtime.get("N8N_HOST_PORT", "5678"),
                          protected_paths=self.protected_paths() + sibling.protected_paths(),
                          final_resources=final_resources, docker_host=self.docker_environment["DOCKER_HOST"],
                          registry_path=sibling.runtime.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY"))
@@ -1256,7 +1305,8 @@ def stock_mounts(graph, *, registry_path=None):
         require({target for target, key in STOCK_MOUNTS[name].items() if key} <= seen, "sibling_mount_unsupported")
 
 
-def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host="", registry_path=None):
+def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host="", registry_path=None,
+                     n8n_host_port="5678"):
     """Check resolved Compose resources, not just a different project name."""
     project = sibling["name"]
     allowed_dependencies = {"orchestrator": {"langgraph-primary-db"}, "slackbot": {"orchestrator", "n8n"},
@@ -1309,6 +1359,10 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
             (n8n.get("DB_TYPE", "sqlite") != "postgresdb" or
              (n8n.get("DB_POSTGRESDB_HOST") == "n8n-db" and "n8n-db" in sibling["services"])),
             "sibling_n8n_configuration_unsupported")
+    require(all(str(n8n.get(key)) == value for key, value in {
+        "N8N_HOST": "localhost", "N8N_PORT": "5678", "N8N_PROTOCOL": "http", "N8N_SECURE_COOKIE": "false",
+        "N8N_DIAGNOSTICS_ENABLED": "false", "N8N_PERSONALIZATION_ENABLED": "false", "N8N_BLOCK_ENV_ACCESS_IN_NODE": "true"}.items()),
+        "sibling_n8n_configuration_unsupported")
     if n8n.get("DB_TYPE", "sqlite") == "postgresdb":
         database = sibling["services"]["n8n-db"].get("environment", {})
         require(str(n8n.get("DB_POSTGRESDB_PORT", "5432")) == "5432" and
@@ -1359,10 +1413,11 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
     require(sibling["services"]["slackbot"].get("command") == ["python", "-m", "director_orchestrator.slack_bot"] and
             not sibling["services"]["slackbot"].get("entrypoint"), "sibling_gateway_command_unsupported")
     sibling_ports = set()
-    for service in sibling["services"].values():
+    for name, service in sibling["services"].items():
         require(not any(service.get(key) for key in ("network_mode", "pid", "ipc", "privileged", "devices",
                                                     "volumes_from", "container_name", "configs", "secrets",
                                                     "extra_hosts", "develop", "use_api_socket")), "sibling_host_resource_refused")
+        require(len(service.get("ports", [])) <= (1 if name in ("orchestrator", "n8n") else 0), "sibling_port_not_stock")
         for port in service.get("ports", []):
             published = str(port.get("published", ""))
             require(port.get("host_ip") == "127.0.0.1" and published.isdigit() and
@@ -1371,6 +1426,9 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
             binding = (int(published), port.get("protocol", "tcp"))
             require(binding not in sibling_ports, "sibling_port_collision")
             sibling_ports.add(binding)
+            require(port.get("target") == (8080 if name == "orchestrator" else 5678) and
+                    port.get("protocol", "tcp") == "tcp" and
+                    published == str(host_port if name == "orchestrator" else n8n_host_port), "sibling_port_not_stock")
         for mount in service.get("volumes", []):
             source = str(mount.get("source", ""))
             pipe = source.replace("\\", "/").lower().startswith("//./pipe/")
