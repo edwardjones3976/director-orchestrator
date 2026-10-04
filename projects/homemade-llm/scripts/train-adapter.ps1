@@ -2,8 +2,12 @@
 # M2-T1: run train/train_adapter.py inside the pinned Unsloth image.
 #   .\train-adapter.ps1 -Rows C:\llm\datasets\director-v1\accepted.jsonl
 #       20-step dry run on the smoke base (the M0 pins).
-#   .\train-adapter.ps1 -Rows <jsonl> -Winner
+#   .\train-adapter.ps1 -Rows <jsonl> -Winner -Probe
 #       D-M2-6 probe on Qwen/Qwen3-14B at 40c069824f4251a91eefaf281ebe4c544efd3e18.
+#   .\train-adapter.ps1 -Rows <jsonl> -Epochs 4
+#       Epoch-mode training: one adapter leaf per epoch under models\m2\<run id>.
+# -Winner is only valid together with -Probe; -Epochs is a training mode and
+#   excludes -Steps, -Probe, -Winner and -Fallback.
 # Refuses a short revision, a winner probe pointed at any other base, a hot root
 # off C:, a stored Hugging Face token in the mounted cache, and a second GPU job.
 [CmdletBinding()]
@@ -16,6 +20,7 @@ param(
     [string]$MergeSource = 'unsloth/qwen3-0.6b',
     [string]$MergeRevision = 'db4e90b8359f816f09bf5c944797ce116f26da3c',
     [int]$Steps = 20,
+    [int]$Epochs = 0,
     [switch]$Winner,
     [switch]$Fallback,
     [switch]$Probe,
@@ -32,7 +37,15 @@ $WinnerRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18'
 $FallbackBase = 'Qwen/Qwen3-8B'
 $FallbackRevision = 'b968826d9c46dd6066d109eabc6255188de91218'
 if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually exclusive' }
+if ($Winner -and -not $Probe) { Write-Error '-Winner is only valid together with -Probe' }
 if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
+if ($PSBoundParameters.ContainsKey('Epochs')) {
+    if ($Epochs -lt 1 -or $Epochs -gt 6) { Write-Error '-Epochs must be between 1 and 6' }
+    if ($PSBoundParameters.ContainsKey('Steps')) { Write-Error '-Epochs and -Steps are mutually exclusive; pass exactly one' }
+    if ($Probe) { Write-Error '-Epochs is a training mode and cannot be combined with -Probe' }
+    if ($Winner) { Write-Error '-Epochs cannot be combined with -Winner (winner pinning is probe-only)' }
+    if ($Fallback) { Write-Error '-Epochs cannot be combined with -Fallback' }
+}
 if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
 if ($Winner) {
     foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
@@ -148,7 +161,13 @@ try {
     $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
         '-v', "${code}:/code:ro",
-        '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision", '-e', "ADAPTER_STEPS=$Steps",
+        '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision") + $(if ($Epochs) {
+        # Epoch mode runs against the persistent models/m2 mount and derives its
+        # run directory from the report id; no steps env in epoch mode.
+        @('-e', 'ADAPTER_MODELS_DIR=/workspace/models/m2')
+    } else {
+        @('-e', "ADAPTER_STEPS=$Steps")
+    }) + @(
         '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
         $dockerArgs += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
@@ -156,8 +175,8 @@ try {
     $dockerArgs += @(
         '--entrypoint', 'python', $Image, '/code/train_adapter.py',
         '--rows', ("/workspace/rows/" + (Split-Path $Rows -Leaf)),
-        '--base', $Base, '--revision', $Revision, '--steps', "$Steps",
-        '--report', "/workspace/reports/$runId.json")
+        '--base', $Base, '--revision', $Revision,
+        '--report', "/workspace/reports/$runId.json") + $(if ($Epochs) { @('--epochs', "$Epochs") } else { @('--steps', "$Steps") })
     if ($Winner) { $dockerArgs += '--winner' }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
         $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')

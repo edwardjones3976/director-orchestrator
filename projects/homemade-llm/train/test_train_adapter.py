@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -79,6 +80,24 @@ def write_accepted(directory: Path, rows: list[dict]) -> Path:
         "n_accepted": len(rows), "rows_per_split": counts,
     }), encoding="utf-8")
     return path
+
+
+def make_reparse_link(link: Path, target: Path) -> bool:
+    """Create a symlink, or on Windows a directory junction when symlinks are
+    unavailable. Returns False when the host permits neither."""
+    try:
+        link.symlink_to(target)
+        return True
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt" and target.is_dir():
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+            return os.path.isjunction(link) or link.is_symlink()
+        except (OSError, NotImplementedError, ImportError):
+            return False
+    return False
 
 
 class TrainAdapterTests(unittest.TestCase):
@@ -210,6 +229,24 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertEqual(train_adapter.PROBE_GRAD_ACCUM, 8)
         self.assertEqual(train_adapter.TRAIN_GRAD_ACCUM, 8)
 
+    def test_smoke_arguments_still_use_steps_without_epoch_saving(self):
+        args = train_adapter.sft_arguments("out", 20)
+        self.assertEqual(args["max_steps"], 20)
+        self.assertEqual(args["save_strategy"], "no")
+        self.assertNotIn("num_train_epochs", args)
+        self.assertEqual(args["learning_rate"], 2e-4)
+
+    def test_epoch_arguments_use_epochs_per_epoch_saving_and_unset_max_steps(self):
+        args = train_adapter.sft_arguments("out", None, epochs=4)
+        self.assertEqual(args["num_train_epochs"], 4)
+        self.assertEqual(args["max_steps"], -1)
+        self.assertEqual(args["save_strategy"], "epoch")
+        self.assertEqual(args["learning_rate"], train_adapter.EPOCH_LEARNING_RATE)
+        self.assertEqual(args["learning_rate"], 1e-4)
+        self.assertEqual(args["lr_scheduler_type"], "cosine")
+        self.assertEqual(args["gradient_accumulation_steps"], 8)
+        self.assertNotIn("save_total_limit", args)
+
     def test_pinned_revision_must_match_the_loaded_commit(self):
         pin = "a" * 40
         self.assertEqual(train_adapter.resolve_commit(pin, "org/model", pin), pin)
@@ -246,6 +283,30 @@ class TrainAdapterTests(unittest.TestCase):
             path = write_accepted(Path(tmp), [row()])
             train_adapter.main(["--rows", str(path), "--report", str(Path(tmp, "missing.json")), "--check-only"])
             self.assertFalse(Path(tmp, "missing.json").exists())
+
+    def test_training_run_rejects_conflicting_or_missing_mode_flags_before_model_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            cases = [
+                (["--steps", "20", "--epochs", "3"], "exactly one of --steps or --epochs, not both"),
+                (["--epochs", "0"], "--epochs must be 1 to 6"),
+                (["--epochs", "7"], "--epochs must be 1 to 6"),
+                (["--epochs", "x"], None),
+                ([], "needs exactly one of --steps or --epochs"),
+                (["--epochs", "3", "--probe"], "--epochs cannot be combined with --probe"),
+            ]
+            for extra, message in cases:
+                with self.subTest(extra=extra):
+                    with mock.patch.object(train_adapter, "FastLanguageModel") as model:
+                        with self.assertRaises(SystemExit) as raised:
+                            train_adapter.main([
+                                "--rows", str(path), "--report", str(Path(tmp, "out.json")),
+                                "--base", train_adapter.SMOKE_BASE, "--revision", train_adapter.SMOKE_REVISION,
+                                *extra,
+                            ])
+                        if message is not None:
+                            self.assertIn(message, str(raised.exception))
+                    model.from_pretrained.assert_not_called()
 
     def test_winner_flag_rejects_a_different_pin(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -321,6 +382,96 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 self.assertIn("--winner", trainer)
                 self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
 
+    def test_wrapper_epoch_mode_serialized_arguments_map_output_and_skip_steps(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate Docker argument construction")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        start = source.index("    $dockerArgs = ")
+        end = source.index("    function Get-AdapterState", start)
+        construction = source[start:end]
+        command = """
+$ErrorActionPreference = 'Stop'
+$mounts = @('-v', 'dummy:/workspace/models/m2')
+$name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
+$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20; $Epochs = 4
+$Rows = 'accepted.jsonl'; $runId = 'dummy-run'
+$Winner = $false; $Probe = $false; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
+$PSBoundParameters = @{}
+$ExpectedDigests = ''
+$TrustedDigestRoot = ''
+""" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+        completed = subprocess.run(
+            [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        args = json.loads(completed.stdout)
+        image = args.index("dummy-image")
+        self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
+        self.assertEqual(args[image + 1], "/code/train_adapter.py")
+        options, trainer = args[:image], args[image + 2:]
+        self.assertNotIn("-e", trainer)
+        self.assertNotIn("--steps", args)
+        self.assertNotIn("ADAPTER_STEPS=20", args)
+        self.assertEqual(options[options.index("ADAPTER_MODELS_DIR=/workspace/models/m2") - 1], "-e")
+        self.assertIn("ADAPTER_BASE=dummy-base", options)
+        self.assertIn("HF_HOME=/workspace/hf", options)
+        self.assertNotIn("HF_HUB_OFFLINE=1", args)
+        self.assertEqual(trainer[:2], ["--rows", "/workspace/rows/accepted.jsonl"])
+        self.assertIn("--epochs", trainer)
+        self.assertEqual(trainer[trainer.index("--epochs") + 1], "4")
+        self.assertIn("--report", trainer)
+        self.assertEqual(trainer[trainer.index("--report") + 1], "/workspace/reports/dummy-run.json")
+        self.assertNotIn("--winner", trainer)
+        self.assertNotIn("--probe", trainer)
+
+    def test_wrapper_guard_block_refuses_winner_without_probe_and_bad_epochs(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate wrapper argument guards")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        start = source.index("if ($Winner -and $Fallback)")
+        end = source.index("if ($Steps -lt 1)", start)
+        guards = source[start:end]
+        cases = [
+            ({"Winner": "$true", "Probe": "$false"}, "-Winner is only valid together with -Probe"),
+            ({"Epochs": "0"}, "-Epochs must be between 1 and 6"),
+            ({"Epochs": "7"}, "-Epochs must be between 1 and 6"),
+            ({"Epochs": "4", "Steps": "20"}, "-Epochs and -Steps are mutually exclusive"),
+            ({"Epochs": "4", "Probe": "$true"}, "-Epochs is a training mode"),
+            ({"Epochs": "4"}, None),
+            ({"Winner": "$true", "Probe": "$true"}, None),
+        ]
+        for overrides, message in cases:
+            with self.subTest(overrides=overrides, message=message):
+                bound = "@{ " + "; ".join(
+                    f"{name} = {value}" for name, value in overrides.items() if name in ("Epochs", "Steps")
+                ) + " }"
+                setup = "\n".join(
+                    f"${name} = {value}" for name, value in overrides.items()
+                )
+                command = (
+                    "$ErrorActionPreference = 'Stop'\n"
+                    "$Winner = $false; $Fallback = $false; $Probe = $false; "
+                    "$Epochs = 0; $Steps = 20; $PSBoundParameters = @{}\n"
+                    + setup + "\n"
+                    + (f"$PSBoundParameters = {bound}\n" if bound != "@{  }" else "")
+                    + guards + "\n'GUARDS-PASSED'"
+                )
+                completed = subprocess.run(
+                    [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if message is None:
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertIn("GUARDS-PASSED", completed.stdout)
+                else:
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertIn(message, completed.stderr + completed.stdout)
+
     def test_length_statistics_on_a_known_list(self):
         lengths = [10, 20, 30, 40, 50]
         stats = train_adapter.length_statistics(lengths)
@@ -338,6 +489,40 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         )
         self.assertEqual(train_adapter.PROBE_WARMUP_MICROSTEPS, 10)
         self.assertEqual(train_adapter.PROBE_TIMED_MICROSTEPS, 40)
+
+    def test_warmup_boundary_discards_pending_gradients_without_a_step(self):
+        fake_torch = mock.MagicMock()
+        fake_torch.cuda.is_available = mock.MagicMock(return_value=False)
+        fake_optimizer = fake_torch.optim.AdamW.return_value
+        fake_model = mock.MagicMock()
+        fake_model.parameters = mock.MagicMock(side_effect=lambda: iter([mock.MagicMock()]))
+        with mock.patch.object(train_adapter, "torch", fake_torch):
+            # 10 warm-up microsteps at accumulation 8: one update at 8, then the
+            # 2 pending microsteps are discarded (zero_grad, no extra step).
+            train_adapter.run_probe_microsteps(
+                fake_model, [{"input_ids": [1], "attention_mask": [1], "labels": [-100, 2]}],
+                warmup_microsteps=10, timed_microsteps=0, gradient_accumulation=8,
+            )
+            self.assertEqual(fake_optimizer.step.call_count, 1)
+            self.assertEqual(fake_optimizer.zero_grad.call_count, 2)
+            # The timed phase keeps the previous behaviour: a trailing partial
+            # window still performs its optimizer update.
+            fake_torch.reset_mock()
+            fake_optimizer.reset_mock()
+            fake_torch.cuda.is_available = mock.MagicMock(return_value=False)
+            fake_torch.optim.AdamW.return_value = fake_optimizer
+            train_adapter.run_probe_microsteps(
+                fake_model, [{"input_ids": [1], "attention_mask": [1], "labels": [-100, 2]}],
+                warmup_microsteps=0, timed_microsteps=10, gradient_accumulation=8,
+            )
+            self.assertEqual(fake_optimizer.step.call_count, 2)
+            self.assertEqual(fake_optimizer.zero_grad.call_count, 2)
+        self.assertEqual(train_adapter.PROBE_WARMUP_MICROSTEPS % train_adapter.PROBE_GRAD_ACCUM, 2)
+        kwargs = self._minimal_probe_report_kwargs()
+        kwargs["warmup_discarded_microsteps"] = train_adapter.PROBE_WARMUP_MICROSTEPS % train_adapter.PROBE_GRAD_ACCUM
+        report = train_adapter.build_probe_report(**kwargs)
+        self.assertEqual(report["warmup_pending_gradients"], "discarded_at_boundary_without_step")
+        self.assertEqual(report["warmup_discarded_microsteps"], 2)
 
     def test_probe_extrapolation_and_contingency(self):
         self.assertAlmostEqual(train_adapter.extrapolate_wall_seconds(96, 2.0), 576.0)
@@ -365,6 +550,38 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         path = root / name
         path.write_bytes(data)
         return {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+    def _assert_exporter_adapter_hashes(self, leaf: Path) -> None:
+        """A re-implementation of the exporter's Assert-AdapterHashes gate."""
+        manifest = json.loads((leaf / "adapter-hashes.json").read_text(encoding="utf-8"))
+        self.assertIn("files", manifest)
+        names = list(manifest["files"])
+        for mandatory in ("adapter_config.json", "adapter_model.safetensors"):
+            self.assertIn(mandatory, names)
+        seen: set[str] = set()
+        for rel in names:
+            self.assertNotIn("\\", rel)
+            self.assertNotIn(":", rel)
+            self.assertFalse(rel.startswith("/"))
+            for segment in rel.split("/"):
+                self.assertNotIn(segment, ("", ".", ".."))
+                self.assertFalse(segment.endswith((" ", ".")))
+            self.assertRegex(manifest["files"][rel], r"^[0-9a-fA-F]{64}$")
+            self.assertNotIn(rel.lower(), seen)
+            seen.add(rel.lower())
+            full = leaf / rel
+            self.assertTrue(full.is_file(), rel)
+            self.assertFalse(full.is_symlink() or os.path.isjunction(full))
+            self.assertEqual(
+                hashlib.sha256(full.read_bytes()).hexdigest(),
+                manifest["files"][rel].lower(),
+            )
+        for path in sorted(leaf.rglob("*")):
+            if path.name == "adapter-hashes.json" and path.parent == leaf:
+                continue
+            self.assertFalse(path.is_symlink() or os.path.isjunction(path), str(path))
+            if path.is_file():
+                self.assertIn(path.relative_to(leaf).as_posix(), names)
 
     def _trusted_chain(self, root: Path) -> tuple[Path, Path, str]:
         # Synthetic metadata and weights only. Tests patch the fixed code pin,
@@ -462,7 +679,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
                 (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
             ):
-                for mode in ([], ["--probe"]):
+                for mode in (["--steps", "20"], ["--probe"]):
                     with self.subTest(base=base, mode=mode), \
                          mock.patch.object(train_adapter, "FastLanguageModel") as model, \
                          mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
@@ -560,7 +777,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
 
     def test_corrupt_snapshot_loading_metadata_refused_before_index_parse_or_model_load(self):
         for name in ("config.json", "tokenizer.json", "model.safetensors.index.json"):
-            for mode in ([], ["--probe"]):
+            for mode in (["--steps", "20"], ["--probe"]):
                 with self.subTest(name=name, mode=mode), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     accepted = write_accepted(root, [row()])
@@ -584,7 +801,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
 
     def test_unlisted_snapshot_input_requires_existing_approved_digest_before_model_load(self):
         for name in ("config.json", "tokenizer.json", "model.safetensors.index.json", "future-format.data"):
-            for mode in ([], ["--probe"]):
+            for mode in (["--steps", "20"], ["--probe"]):
                 with self.subTest(name=name, mode=mode), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     accepted = write_accepted(root, [row()])
@@ -640,6 +857,50 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                     train_adapter.verify_expected_digests(
                         Path(tmp), [{"path": name, "sha256": "a" * 64, "size": 1}],
                     )
+
+    def test_digest_traversal_refusal_precedes_duplicate_and_digest_checks(self):
+        # A clean-looking name that resolves outside must be refused by
+        # containment, not by the duplicate, missing-file or digest checks.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "outside.bin").write_bytes(b"outside the snapshot")
+            if not make_reparse_link(snapshot / "linked", elsewhere):
+                self.skipTest("no reparse-point creation is permitted on this host")
+            entries = [
+                {"path": "linked/outside.bin", "sha256": "a" * 64, "size": 29},
+                {"path": "linked/outside.bin", "sha256": "b" * 64, "size": 1},
+            ]
+            with self.assertRaisesRegex(SystemExit, "escapes the expected directory"):
+                train_adapter.verify_expected_digests(snapshot, entries)
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp)
+            entry = {"path": "gone/../gone.bin", "sha256": "a" * 64, "size": 1}
+            with self.assertRaisesRegex(SystemExit, "confined relative snapshot files"):
+                train_adapter.verify_expected_digests(snapshot, [entry])
+
+    def test_digest_index_entries_must_stay_inside_the_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            weights = self._digest_entry(snapshot, "model-00001-of-00001.safetensors", b"synthetic weights")
+            index_payload = json.dumps({"weight_map": {"model.layers.0": "../../outside.bin"}})
+            (snapshot / "model.safetensors.index.json").write_text(index_payload, encoding="utf-8")
+            index_entry = {
+                "path": "model.safetensors.index.json",
+                "sha256": hashlib.sha256(index_payload.encode()).hexdigest(),
+                "size": len(index_payload),
+            }
+            # The manifest itself is clean; only the index weight_map escapes.
+            # The confinement refusal fires instead of the membership check
+            # that would otherwise complain about an unlisted shard.
+            entries = [weights, index_entry]
+            with self.assertRaisesRegex(SystemExit, "digest index paths must be confined"):
+                train_adapter.verify_expected_digests(snapshot, entries)
 
     def test_verify_expected_digests_passes_with_two_reads(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -965,6 +1226,24 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         self.assertIn("ContainsKey('TimeoutMinutes')", text)
         self.assertIn("$TimeoutMinutes = 150", text)
 
+    def test_wrapper_winner_requires_probe_and_epoch_switch_guards(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("-Winner is only valid together with -Probe", text)
+        self.assertIn("-Rows <jsonl> -Winner -Probe", text)
+        self.assertIn("-Rows <jsonl> -Epochs 4", text)
+        self.assertIn("'-Epochs must be between 1 and 6'", text)
+        self.assertIn("'-Epochs and -Steps are mutually exclusive; pass exactly one'", text)
+        self.assertIn("ContainsKey('Epochs')", text)
+        self.assertIn("ContainsKey('Steps')", text)
+        # The persistent models mount and the read-only trust mounts stay.
+        self.assertIn("@('models\\m2', 'models/m2')", text)
+        self.assertIn(":/workspace/rows:ro", text)
+        self.assertIn(":/code:ro", text)
+        self.assertIn(":/workspace/trusted-digest-root.json:ro", text)
+        self.assertIn(":/workspace/expected-digests.json:ro", text)
+        self.assertIn("ADAPTER_MODELS_DIR=/workspace/models/m2", text)
+
     def _minimal_probe_report_kwargs(self) -> dict:
         return {
             "run": "probe",
@@ -1029,6 +1308,231 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                                     )
             self.assertIn("exceed SEQ", str(raised.exception))
             trainer_mock.assert_not_called()
+
+    def test_epoch_train_creates_leaves_and_a_truthful_report(self):
+        class FakeModel:
+            def __init__(self):
+                self.config = types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION)
+                self.saves = 0
+
+            def save_pretrained(self, directory):
+                # PEFT-style adapter save: mandatory files plus an optional README.
+                Path(directory, "adapter_config.json").write_text('{"r": 16}', encoding="utf-8")
+                Path(directory, "adapter_model.safetensors").write_bytes(b"adapter weights")
+                Path(directory, "README.md").write_text("adapter", encoding="utf-8")
+                self.saves += 1
+
+        class FakeTrainer:
+            seen_args = None
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                FakeTrainer.seen_args = kwargs["args"].__dict__
+
+            def train(self):
+                callback = self.kwargs["callbacks"][0]
+                for epoch in range(1, self.kwargs["args"].num_train_epochs + 1):
+                    state = types.SimpleNamespace(epoch=float(epoch), global_step=epoch * 8)
+                    callback.on_epoch_end(None, state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        fake_model = FakeModel()
+        fake_tokenizer = mock.MagicMock()
+        fake_tokenizer.apply_chat_template = mock.MagicMock(
+            side_effect=lambda *args, **kwargs: [1, 2, 3, 4] if kwargs.get("add_generation_prompt") else [1, 2, 3, 4, 5, 6])
+        fake_flm = mock.MagicMock()
+        fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+        fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+        cuda = mock.MagicMock()
+        cuda.max_memory_reserved = mock.MagicMock(return_value=8.0 * 2**30)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_path = root / "reports" / "m2-run.json"
+            with mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}):
+                with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
+                    with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                        with mock.patch.object(train_adapter, "Dataset", mock.MagicMock()):
+                            with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                                with mock.patch.object(train_adapter, "SFTConfig", lambda **kwargs: types.SimpleNamespace(**kwargs)):
+                                    with mock.patch.object(train_adapter, "SFTTrainer", FakeTrainer):
+                                        report = train_adapter.train(
+                                            [row()],
+                                            train_adapter.SMOKE_BASE,
+                                            train_adapter.SMOKE_REVISION,
+                                            None,
+                                            report_path,
+                                            winner=False,
+                                            epochs=3,
+                                        )
+            run_dir = root / "models" / "m2-run"
+            self.assertEqual(report["completed_epochs"], 3)
+            self.assertEqual(report["export_ready"], True)
+            self.assertEqual(report["output_dir"], str(run_dir))
+            self.assertEqual(FakeTrainer.seen_args["num_train_epochs"], 3)
+            self.assertEqual(FakeTrainer.seen_args["max_steps"], -1)
+            self.assertEqual(FakeTrainer.seen_args["save_strategy"], "epoch")
+            self.assertEqual([entry["epoch"] for entry in report["checkpoints"]], [1, 2, 3])
+            for entry in report["checkpoints"]:
+                leaf = Path(entry["dir"])
+                self.assertEqual(leaf.name, f"epoch-{entry['epoch']:02d}")
+                self.assertEqual(entry["global_step"], entry["epoch"] * 8)
+                self.assertRegex(entry["manifest_sha256"], r"^[0-9a-f]{64}$")
+                self.assertEqual(
+                    sorted(path.name for path in leaf.iterdir()),
+                    ["README.md", "adapter-hashes.json", "adapter_config.json", "adapter_model.safetensors"],
+                )
+                self.assertEqual(entry["files"], ["README.md", "adapter_config.json", "adapter_model.safetensors"])
+                manifest = json.loads((leaf / "adapter-hashes.json").read_text(encoding="utf-8"))
+                self.assertEqual(set(manifest["files"]), set(entry["files"]))
+                self._assert_exporter_adapter_hashes(leaf)
+            final = report["final_adapter"]
+            self.assertEqual(final["dir"], str(run_dir / "epoch-03"))
+            self.assertEqual(final["manifest_sha256"], report["checkpoints"][-1]["manifest_sha256"])
+            self.assertFalse((run_dir / "epoch-03" / "adapter_model.safetensors").samefile(run_dir / "epoch-01" / "adapter_model.safetensors"))
+
+    def _scratch_leaf(self, root: Path, extra: dict[str, bytes] | None = None) -> Path:
+        leaf = root / "epoch-01"
+        leaf.mkdir(parents=True)
+        files = {
+            "adapter_config.json": b'{"r": 16}',
+            "adapter_model.safetensors": b"adapter weights",
+            "README.md": b"adapter",
+            **(extra or {}),
+        }
+        for name, data in files.items():
+            (leaf / name).write_bytes(data)
+        return leaf
+
+    def test_scratch_leaf_manifest_covers_every_file_and_passes_exporter_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            leaf = self._scratch_leaf(Path(tmp), extra={"tokenizer_config.json": b"tokenizer"})
+            files, manifest_sha256 = train_adapter.write_leaf_manifest(leaf)
+            self.assertEqual(
+                sorted(files), ["README.md", "adapter_config.json", "adapter_model.safetensors", "tokenizer_config.json"]
+            )
+            self.assertRegex(manifest_sha256, r"^[0-9a-f]{64}$")
+            self._assert_exporter_adapter_hashes(leaf)
+
+    def test_scratch_leaf_fixtures_fail_the_exporter_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tampered = self._scratch_leaf(root / "tampered")
+            train_adapter.write_leaf_manifest(tampered)
+            (tampered / "adapter_model.safetensors").write_bytes(b"tampered")
+            with self.assertRaises(AssertionError):
+                self._assert_exporter_adapter_hashes(tampered)
+            missing = self._scratch_leaf(root / "missing")
+            train_adapter.write_leaf_manifest(missing)
+            (missing / "adapter_config.json").unlink()
+            with self.assertRaises(AssertionError):
+                self._assert_exporter_adapter_hashes(missing)
+            unlisted = self._scratch_leaf(root / "unlisted")
+            train_adapter.write_leaf_manifest(unlisted)
+            (unlisted / "optimizer.pt").write_bytes(b"optimizer")
+            with self.assertRaises(AssertionError):
+                self._assert_exporter_adapter_hashes(unlisted)
+
+    def test_manifest_writer_refuses_rewrites_reparse_and_case_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            leaf = self._scratch_leaf(root / "rewrite")
+            train_adapter.write_leaf_manifest(leaf)
+            with self.assertRaisesRegex(SystemExit, "already exists"):
+                train_adapter.write_leaf_manifest(leaf)
+            # A hand-written manifest with case-colliding keys must fail the gate.
+            collision = self._scratch_leaf(root / "collision")
+            (collision / "adapter-hashes.json").write_text(json.dumps(
+                {"files": {
+                    "adapter_config.json": "a" * 64,
+                    "ADAPTER_CONFIG.json": "a" * 64,
+                    "adapter_model.safetensors": "a" * 64,
+                }}), encoding="utf-8")
+            with self.assertRaises(AssertionError):
+                self._assert_exporter_adapter_hashes(collision)
+            linked = self._scratch_leaf(root / "linked")
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "stolen.safetensors").write_bytes(b"stolen")
+            if not make_reparse_link(linked / "linked", elsewhere):
+                self.skipTest("no reparse-point creation is permitted on this host")
+            with self.assertRaisesRegex(SystemExit, "reparse point"):
+                train_adapter.write_leaf_manifest(linked)
+
+    def test_unsafe_leaf_relative_names_are_refused(self):
+        for name in ("../escape.safetensors", "/absolute.safetensors", "C:/escape.safetensors", "dir\\escape.safetensors", "a/../b.safetensors", "trailing. /x"):
+            with self.subTest(name=name):
+                with self.assertRaises(SystemExit):
+                    train_adapter.require_confined_relative_path(
+                        name, Path("c:/safe"), "adapter leaf names must be confined")
+
+    def test_run_output_directory_is_never_reused_or_clobbered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root)}):
+                report_path = root / "reports" / "m2-run.json"
+                run_dir = train_adapter.create_run_directory(report_path)
+                self.assertEqual(run_dir, root / "m2-run")
+                with self.assertRaisesRegex(SystemExit, "already exists"):
+                    train_adapter.create_run_directory(report_path)
+                (root / "m2-other").mkdir()
+                with self.assertRaisesRegex(SystemExit, "already exists"):
+                    train_adapter.create_run_directory(root / "reports" / "m2-other.json")
+
+    def test_epoch_train_failure_leaves_evidence_but_no_export_ready_record(self):
+        class FakeModel:
+            def __init__(self):
+                self.config = types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION)
+
+            def save_pretrained(self, directory):
+                Path(directory, "adapter_config.json").write_text('{"r": 16}', encoding="utf-8")
+                Path(directory, "adapter_model.safetensors").write_bytes(b"adapter weights")
+
+        class FailingTrainer:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def train(self):
+                callback = self.kwargs["callbacks"][0]
+                state = types.SimpleNamespace(epoch=1.0, global_step=8)
+                callback.on_epoch_end(None, state, None)
+                raise RuntimeError("training exploded")
+
+        fake_model = FakeModel()
+        fake_tokenizer = mock.MagicMock()
+        fake_tokenizer.apply_chat_template = mock.MagicMock(
+            side_effect=lambda *args, **kwargs: [1, 2, 3, 4] if kwargs.get("add_generation_prompt") else [1, 2, 3, 4, 5, 6])
+        fake_flm = mock.MagicMock()
+        fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+        fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+        cuda = mock.MagicMock()
+        cuda.max_memory_reserved = mock.MagicMock(return_value=8.0 * 2**30)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_path = root / "reports" / "m2-fail.json"
+            with mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}):
+                with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
+                    with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                        with mock.patch.object(train_adapter, "Dataset", mock.MagicMock()):
+                            with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                                with mock.patch.object(train_adapter, "SFTConfig", lambda **kwargs: types.SimpleNamespace(**kwargs)):
+                                    with mock.patch.object(train_adapter, "SFTTrainer", FailingTrainer):
+                                        with self.assertRaises(RuntimeError):
+                                            train_adapter.train(
+                                                [row()],
+                                                train_adapter.SMOKE_BASE,
+                                                train_adapter.SMOKE_REVISION,
+                                                None,
+                                                report_path,
+                                                winner=False,
+                                                epochs=3,
+                                            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["completed_epochs"], 1)
+            self.assertEqual(report["export_ready"], False)
+            self.assertIsNone(report["final_adapter"])
+            leaf = root / "models" / "m2-fail" / "epoch-01"
+            self.assertTrue((leaf / "adapter_config.json").is_file())
+            self.assertTrue((leaf / "adapter-hashes.json").is_file())
 
     def test_from_pretrained_uses_local_files_only_when_digests_verified(self):
         with tempfile.TemporaryDirectory() as tmp:
