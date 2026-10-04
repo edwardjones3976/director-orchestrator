@@ -2086,9 +2086,10 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 # even though real approval, restart, offline and metered rows now exist.
                 with patch.object(sc, "_runtime", return_value=([], runtime)), \
                         patch.object(sc, "_deployment_state", return_value=()):
+                    held = sc._Held()
                     collected, _ = sc._deployment_observations(started, SHA, DEPLOYMENT,
                         channel=None, gateway=None, topology=False, drills={}, approval_task=offline_tasks[0],
-                        trials=None, rubric_path=None, paid_thread=None, paid_rubric_path=None)
+                        trials=None, rubric_path=None, paid_thread=None, paid_rubric_path=None, held=held)
                 by_check = {item.check_id: item for item in collected}
                 for check in ("06", "08", "10", "11", "15", "20"):
                     self.assertIsNone(by_check[check].passed, check)
@@ -2098,6 +2099,11 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 # owner token, live lease) — but it stays contained pending the A3 reviewed-image admission
                 # gate, so the live collection path must still report it as UNKNOWN, never PASS.
                 self.assertIsNone(by_check["05"].passed)
+                # The admission gate is handed the real graded original, not the containment placeholder, and the
+                # running identity it compares with the owner's pin (no gateway was named, so it is not bound).
+                self.assertIs(held.observations["05"].passed, True)
+                self.assertEqual(held.identity["director_image_id"], runtime.image_id)
+                self.assertIs(held.identity["gateway_bound"], False)
             self.primary.coordinator.create_intake(self.primary.coordinator_fixtures.request("DIR-LG-FADE"))
             hostile, _ = sc._trusted_collection(runtime, ["DIR-LG-FADE"])
             verdict = sc._reconciliation_observation(started, runtime, hostile)
@@ -3209,6 +3215,160 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertIn("--gateway require --live", rejected.stderr)
 
 
+TREE = "d" * 40
+REVIEWED = {"candidate_commit": SHA, "candidate_tree": TREE, "director_image_id": IMAGE}
+CONTAINED = sorted(set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
+
+
+class ReviewedImageAdmissionTests(unittest.TestCase):
+    """Owner ruling 2026-10-02 (#313): Director-written evidence counts only for exactly the reviewed release."""
+
+    def collect(self, *, descriptor=None, identity=None, github=True, scan="scan-1", ci=True, security=True,
+                adoption=True, originals=None, drop=(), fill_held=True):
+        descriptor = {**EVALUATED, "reviewed_release": dict(REVIEWED)} if descriptor is None else descriptor
+        graded = {key: sc._observation(key, True, f"graded {key}", "fixture", {"k": key}, NOW,
+                                       candidate_sha=SHA if key == "17" else None, runtime_sha=SHA, image_id=IMAGE)
+                  for key in CONTAINED if key not in drop}
+        graded.update(originals or {})
+        if not adoption:
+            graded["17"] = dataclasses.replace(graded["17"], passed=None)
+        who = {"runtime_sha": SHA, "runtime_tree": TREE, "director_image_id": IMAGE, "gateway_bound": True,
+               **(identity or {})}
+
+        def phase(*args, held=None, **kwargs):
+            if fill_held:
+                held.observations, held.identity = dict(graded), who
+            return [sc._observation(key, None, "collector not yet trusted", "fixture", {}, NOW, runtime_sha=SHA,
+                                    image_id=IMAGE, candidate_sha=SHA if key == "17" else None)
+                    for key in CONTAINED], ("steady",)
+
+        def ci_observation(*args, **kwargs):
+            return sc._observation("16", True if ci else None, "ci", "gh", {}, NOW, candidate_sha=SHA)
+
+        def security_observation(*args, **kwargs):
+            return sc._observation("18", True if security else None, "scan", "workbench", {}, NOW, candidate_sha=SHA)
+
+        with patch.object(sc, "_deployment_observations", side_effect=phase), \
+                patch.object(sc, "_still_deployed", side_effect=lambda items, *rest: items), \
+                patch.object(sc, "_ci_observation", side_effect=ci_observation), \
+                patch.object(sc, "_security_observation", side_effect=security_observation), \
+                patch.object(sc, "cli_release_descriptor", return_value=descriptor):
+            return {item.check_id: item for item in sc.collect(
+                SHA, deployment=DEPLOYMENT, github=github, security_scan_id=scan)}
+
+    def assert_contained(self, found, why=None):
+        for key in CONTAINED:
+            with self.subTest(check=key):
+                self.assertIsNone(found[key].passed)
+                if key not in ("16", "18"):
+                    self.assertEqual(found[key].explanation, "collector not yet trusted")
+                    if why:
+                        refusal = found[key].facts["reviewed_image_admission"]
+                        self.assertTrue(refusal.startswith("refused: "), refusal)
+                        self.assertIn(why, refusal)
+
+    def test_every_condition_holding_admits_the_held_originals_with_a_visible_label(self):
+        found = self.collect()
+        for key in set(CONTAINED) - {"16", "18"}:
+            with self.subTest(check=key):
+                self.assertIs(found[key].passed, True)
+                self.assertIn("reviewed-image trust", found[key].explanation)
+                label = found[key].facts["reviewed_image_trust"]
+                self.assertEqual(label["required_checks"], {"16": "PASS", "17": "PASS", "18": "PASS"})
+                self.assertEqual(label["pinned"], REVIEWED)
+                self.assertEqual(found[key].digest, hashlib.sha256(
+                    json.dumps(found[key].facts, sort_keys=True, allow_nan=False).encode()).hexdigest())
+
+    def test_each_unmet_condition_leaves_containment_exactly_as_it_was(self):
+        cases = {
+            "no pin": ({"descriptor": EVALUATED}, "no valid reviewed_release"),
+            "malformed pin": ({"descriptor": {**EVALUATED, "reviewed_release": {**REVIEWED, "extra": "x"}}},
+                              "no valid reviewed_release"),
+            "another image": ({"identity": {"director_image_id": "sha256:" + "9" * 64}}, "not the pinned reviewed image"),
+            "another running commit": ({"identity": {"runtime_sha": OTHER}}, "not one commit"),
+            "another pinned commit": ({"descriptor": {**EVALUATED, "reviewed_release": {**REVIEWED,
+                                                                                       "candidate_commit": OTHER}}},
+                                       "not one commit"),
+            "another tree": ({"identity": {"runtime_tree": "e" * 40}}, "not the pinned reviewed tree"),
+            "unbound gateway": ({"identity": {"gateway_bound": False}}, "gateway was not shown"),
+            "CI not PASS": ({"ci": False}, "checks 16 did not pass"),
+            "CI not collected": ({"github": False}, "checks 16 did not pass"),
+            "Security not PASS": ({"security": False}, "checks 18 did not pass"),
+            "Security not collected": ({"scan": None}, "checks 18 did not pass"),
+            "adoption not PASS": ({"adoption": False}, "checks 17 did not pass"),
+        }
+        for name, (options, why) in cases.items():
+            with self.subTest(case=name):
+                self.assert_contained(self.collect(**options), why)
+
+    def test_no_held_evidence_means_no_admission(self):
+        # The runtime could not be discovered (or the phase was replaced): nothing to release.
+        found = self.collect(fill_held=False)
+        for key in set(CONTAINED) - {"16", "18"}:
+            self.assertIsNone(found[key].passed)
+            self.assertEqual(found[key].explanation, "collector not yet trusted")
+            self.assertNotIn("reviewed_image_trust", found[key].facts)
+            # The refusal reason is still recorded, so the report can explain why nothing was admitted.
+            self.assertTrue(found[key].facts["reviewed_image_admission"].startswith("refused: no Director runtime"))
+
+    def test_a_contradiction_is_fail_and_an_unknown_keeps_its_own_reason(self):
+        failed = sc._observation("12", False, "combined_live_ready is false", "fixture", {}, NOW,
+                                 runtime_sha=SHA, image_id=IMAGE)
+        unknown = sc._observation("06", None, "the restart chronology is missing", "fixture", {}, NOW,
+                                  runtime_sha=SHA, image_id=IMAGE)
+        found = self.collect(originals={"12": failed, "06": unknown})
+        self.assertIs(found["12"].passed, False)
+        self.assertIn("reviewed-image trust", found["12"].explanation)
+        self.assertIsNone(found["06"].passed)
+        self.assertEqual(found["06"].explanation, "the restart chronology is missing")
+        self.assertIn("reviewed_image_trust", found["06"].facts)
+
+    def test_a_check_with_no_collected_source_is_never_admitted_as_trusted(self):
+        found = self.collect(drop=("03",))
+        self.assertIsNone(found["03"].passed)
+        self.assertIn("No source was collected", found["03"].explanation)
+        self.assertIs(found["05"].passed, True)
+        # It is not marked admitted, so the report keeps it in the contained set.
+        self.assertNotIn("reviewed_image_trust", found["03"].facts)
+        report = sc.score(SHA, list(found.values()), now=datetime.now(timezone.utc), runtime_sha=SHA, image_id=IMAGE)
+        text = " ".join(report["limitations"])
+        contained = next(line for line in report["limitations"] if "are contained by" in line)
+        self.assertIn(" 03", contained.split(" are contained")[0].replace(",", " "))
+        admitted = next(line for line in report["limitations"] if "were admitted under" in line)
+        self.assertNotIn(" 03", admitted.split(" were admitted")[0].replace(",", " "))
+        self.assertIn("were admitted under reviewed-image trust", text)
+
+    def test_the_report_names_what_was_admitted_and_what_is_contained(self):
+        def limitations(found):
+            report = sc.score(SHA, list(found.values()), now=datetime.now(timezone.utc),
+                              runtime_sha=SHA, image_id=IMAGE)
+            return " ".join(report["limitations"])
+
+        admitted = limitations(self.collect())
+        self.assertIn("admitted under reviewed-image trust", admitted)
+        self.assertNotIn("are contained by the trusted-collection follow-up", admitted)
+        contained = limitations(self.collect(descriptor=EVALUATED))
+        self.assertIn("are contained by the trusted-collection follow-up", contained)
+        self.assertNotIn("admitted under reviewed-image trust", contained)
+
+    def test_the_reviewed_release_pin_is_strict(self):
+        from director_orchestrator.primary_scorecard_evidence import reviewed_release_pin
+        self.assertEqual(reviewed_release_pin({**EVALUATED, "reviewed_release": dict(REVIEWED)}), REVIEWED)
+        for name, descriptor in {
+            "absent": EVALUATED,
+            "another version": {**EVALUATED, "version": "x", "reviewed_release": dict(REVIEWED)},
+            "extra field": {**EVALUATED, "reviewed_release": {**REVIEWED, "gateway_image_id": IMAGE}},
+            "missing field": {**EVALUATED, "reviewed_release": {"candidate_commit": SHA}},
+            "uppercase hex": {**EVALUATED, "reviewed_release": {**REVIEWED, "candidate_commit": "A" * 40}},
+            "short tree": {**EVALUATED, "reviewed_release": {**REVIEWED, "candidate_tree": "d" * 39}},
+            "bare image digest": {**EVALUATED, "reviewed_release": {**REVIEWED, "director_image_id": "c" * 64}},
+            "not a mapping": {**EVALUATED, "reviewed_release": [REVIEWED]},
+        }.items():
+            with self.subTest(case=name):
+                self.assertIsNone(reviewed_release_pin(descriptor))
+        self.assertIsNone(reviewed_release_pin(None))
+
+
 class ScorecardCollectorTests(unittest.TestCase):
     """Every collector: a positive case, a negative control and UNKNOWN on a missing source."""
 
@@ -3362,7 +3522,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         # independently bound daemon/store facts. Live containment still applies.
         observed = wrong_env.report(only_deployment=True)
         self.assertEqual(row(observed, "19")["status"], "UNKNOWN")
-        self.assertEqual(row(observed, "05")["status"], "PASS")  # store-bound, not health
+        # 05 reads the store, but a discarded (foreign) health response cannot confirm that this process holds
+        # the fence the store shows, so it is UNKNOWN, never PASS.
+        self.assertEqual(row(observed, "05")["status"], "UNKNOWN")
         self.assertEqual(row(observed, "17")["status"], "PASS")  # direct rule fixture only
 
     def test_no_committed_channel_or_legacy_endpoint(self):
@@ -3430,10 +3592,19 @@ class ScorecardCollectorTests(unittest.TestCase):
                 world = self.world(evaluate_rules=True)
                 world.consistency["intake_authority"]["lease_expires_at"] = broken_expiry
                 self.assertEqual(world.state("05"), "UNKNOWN")
-        # A candidate reporting no lease cannot fail a check its own store proves either.
+        # Cross-check: the store owns the fence, so the process must report holding that same fence. Health
+        # alone never promotes 05 (no snapshot, no PASS above); a process that denies the fence is a contradiction.
         unhealthy = self.world(evaluate_rules=True)
         unhealthy.payload["langgraph_primary"]["writer_lease_ready"] = False
-        self.assertEqual(unhealthy.state("05"), "PASS")
+        self.assertEqual(unhealthy.state("05"), "FAIL")
+        stale = self.world(evaluate_rules=True)
+        stale.payload["langgraph_primary"]["intake_fencing_generation"] = 82
+        self.assertEqual(stale.state("05"), "FAIL")
+        for field in ("writer_lease_ready", "intake_fencing_generation"):
+            with self.subTest(missing=field):
+                silent = self.world(evaluate_rules=True)
+                del silent.payload["langgraph_primary"][field]
+                self.assertEqual(silent.state("05"), "UNKNOWN")
         # A lease that is live at observation time but expires before the collection finalizes cannot
         # remain a PASS: the existing FRESH_FOR/valid_until finalization path revalidates it to UNKNOWN.
         expiring = self.world(evaluate_rules=True)
