@@ -320,12 +320,13 @@ class ProviderDailySpendLedger:
                 )
                 return
             updated = connection.execute(
-                """UPDATE provider_daily_spend_reservations
-                SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
+                f"""UPDATE provider_daily_spend_reservations
+                SET actual_cost_usd = CASE WHEN {_VALID_ACTUAL_CHARGE} THEN MAX(actual_cost_usd, ?)
+                                          ELSE ? END,
                     released_at = CASE WHEN request_exists THEN NULL ELSE released_at END,
                     settled_at = COALESCE(settled_at, ?)
                 WHERE provider = ? AND effect_key = ?""",
-                (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
+                (float(actual_cost_usd), float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
             ).rowcount
             if not updated:
                 connection.execute(

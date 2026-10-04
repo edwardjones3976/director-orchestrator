@@ -288,6 +288,71 @@ class ProviderDailySpendLedgerTests(unittest.TestCase):
                 self.assertEqual(ledger.unreconciled(
                     ProviderName.GEMINI, stale_after=timedelta(0), now=tomorrow), [key])
 
+    def test_valid_charge_recovers_invalid_stored_amount_and_is_idempotent(self):
+        import sqlite3
+        from contextlib import closing
+        from datetime import timedelta
+        now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        for actual in ("unpriced", float("inf"), -0.1, None):
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as directory:
+                ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+                key = "a" * 64
+                ledger.reserve(provider=ProviderName.GEMINI, effect_key=key, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0, now=now)
+                with closing(sqlite3.connect(ledger.path)) as connection, connection:
+                    if actual == -0.1:
+                        # Model a legacy/corrupt persisted row without changing production constraints.
+                        connection.execute("CREATE TABLE charge_copy AS SELECT * FROM provider_daily_spend_reservations")
+                        connection.execute("DROP TABLE provider_daily_spend_reservations")
+                        connection.execute("ALTER TABLE charge_copy RENAME TO provider_daily_spend_reservations")
+                    connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?", (actual,))
+                    before = connection.execute("SELECT * FROM provider_daily_spend_reservations").fetchone()
+                    columns = [column[1] for column in connection.execute("PRAGMA table_info(provider_daily_spend_reservations)")]
+                ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.2, now=now)
+                self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=now), (1, 0.2))
+                self.assertEqual(ledger.unreconciled(ProviderName.GEMINI, stale_after=timedelta(0), now=now), [])
+                with closing(sqlite3.connect(ledger.path)) as connection:
+                    after = connection.execute("SELECT * FROM provider_daily_spend_reservations").fetchone()
+                for index, column in enumerate(columns):
+                    if column not in ("actual_cost_usd", "settled_at", "request_exists"):
+                        self.assertEqual(after[index], before[index], column)
+                ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.2, now=now)
+                with closing(sqlite3.connect(ledger.path)) as connection:
+                    self.assertEqual(connection.execute("SELECT * FROM provider_daily_spend_reservations").fetchall(), [after])
+
+    def test_valid_charges_remain_monotonic_and_released_rows_keep_their_behavior(self):
+        import sqlite3
+        from contextlib import closing
+        now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        for initial in (0.0, 0.2):
+            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as directory:
+                ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+                key = "a" * 64
+                ledger.reserve(provider=ProviderName.GEMINI, effect_key=key, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0, now=now)
+                for charge, expected in ((initial, initial), (0.0, initial), (0.4, 0.4)):
+                    ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=charge, now=now)
+                    self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=now), (1, expected))
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+            key = "a" * 64
+            ledger.reserve(provider=ProviderName.GEMINI, effect_key=key, estimated_cost_usd=0.75,
+                           request_limit=10, budget_usd=1.0, now=now)
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.0,
+                                 request_exists=False, now=now)
+            ledger.release_not_created(provider=ProviderName.GEMINI, effect_key=key)
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.0,
+                                 request_exists=False, now=now)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=now), (0, 0.0))
+            with closing(sqlite3.connect(ledger.path)) as connection:
+                self.assertIsNotNone(connection.execute(
+                    "SELECT released_at FROM provider_daily_spend_reservations").fetchone()[0])
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=0.2, now=now)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=now), (1, 0.2))
+            with closing(sqlite3.connect(ledger.path)) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT released_at, request_exists FROM provider_daily_spend_reservations").fetchone(), (None, 1))
+
     def test_malformed_serialized_charge_holds_admission_across_utc_days(self):
         import sqlite3
         from contextlib import closing

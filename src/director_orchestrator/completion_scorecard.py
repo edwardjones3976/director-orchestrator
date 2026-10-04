@@ -141,6 +141,8 @@ REPOSITORY = "edwardjones3976/director-orchestrator"
 MAX_BYTES = 2 * 1024 * 1024
 FRESH_FOR = timedelta(minutes=5)
 _COLLECTED = object()
+# providers.assignment_request_cost_bound: these requests use serialized admission, not monetary bounds.
+_REQUEST_COST_UNBOUNDED_PROVIDERS = frozenset({"gemini", "perplexity"})
 # Exact selectors. There is no default deployment and no committed channel.
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 _CHANNEL = re.compile(r"[CG][A-Z0-9]{8,20}")
@@ -2389,7 +2391,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     entry = ((consistency or {}).get("tasks") or {}).get(task_id)
     receipts = entry.get("approval_receipts") if isinstance(entry, dict) else None
     receipts = receipts if isinstance(receipts, list) else []
-    failures, gaps, joined = [], 0, []
+    # Receipt joins need a complete read; positive delivery/Slack/order violations do not.
+    failures, receipt_failures, gaps, joined = [], [], 0, []
     for delivery in approvals:
         slack_ts = delivery.get("slack_ts")
         decided = _when(delivery["owner_decision_at"]) if delivery.get("owner_decision_at") else None
@@ -2451,7 +2454,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             else:
                 receipted = False
         if len(matches) > 1:
-            failures.append("one approved delivery matches more than one approval_resume receipt")
+            receipt_failures.append("one approved delivery matches more than one approval_resume receipt")
         if delivery.get("owner_decision") == "approve":
             joined += matches
         if not (_delivery_settled(delivery) and slack_ts and delivery.get("owner_decision") == "approve"
@@ -2463,22 +2466,25 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     # The reverse join: every approval_resume receipt of this task belongs to exactly one approved delivery. A
     # receipt no delivery claims, or one two deliveries claim, is a resume the Slack record does not account for.
     if sorted(joined) != list(range(len(receipts))):
-        failures.append("an approval_resume receipt is not the one receipt of exactly one approved delivery")
+        receipt_failures.append("an approval_resume receipt is not the one receipt of exactly one approved delivery")
     # And every approval prompt the bot posted in the thread (render_notification's pending header) is one of the
     # approval deliveries: a prompt with no delivery row is an approval surface the ledger does not account for.
     header = task_id + " — OWNER DECISION REQUIRED"
     posted = {m.get("ts") for m in messages if m.get("user") == t.bot and t.m.reply_header(m.get("text", "")) == header}
     if complete and not posted <= {delivery.get("slack_ts") for delivery in approvals}:
         failures.append("a posted approval prompt has no approval delivery")
+    receipts_complete = isinstance(entry, dict) and entry.get("approval_receipts_truncated") is False
+    if receipts_complete:
+        failures += receipt_failures
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
                "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
-    if not isinstance(entry, dict) or entry.get("approval_receipts_truncated") is not False:
-        # The receipt read is not proven complete, so neither a pass nor a fail can be drawn from its joins.
+    if not receipts_complete:
         facts08["approval_receipts_truncated"] = entry.get("approval_receipts_truncated") if isinstance(entry, dict) else None
-        passed08, explanation08 = None, "The approval_resume receipt read is truncated or not proven complete."
-    elif failures:
+    if failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
+    elif not receipts_complete:
+        passed08, explanation08 = None, "The approval_resume receipt read is truncated or not proven complete."
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
                                          "an approval_resume command receipt re-read from the control plane whose command "
@@ -2971,13 +2977,15 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                 used = value["exposure_usd"]
                 if used > budget:
                     over.append("usage monitor " + str(provider))
-            if attempted and type(value["unreconciled_request_count"]) is not int and str(provider) not in over:
-                # A ledger-accounted provider's real requests carry their cost in the durable ledger: every settled
-                # request has a recorded actual charge exactly when unreconciled_request_count is 0 (a positive count
-                # is graded above), and an unsettled one counts at its reservation in exposure_usd. Only a monitor
-                # that cannot say is unpriced. Never the probes' price visibility (cost_visibility_complete) or the
-                # grok-only reserved total, which made Gemini and Perplexity a false UNKNOWN (#287 item 13, review
-                # 4112697684). Unknown cost is not zero.
+            unsettled = value.get("unsettled_request_count")
+            if attempted and str(provider) not in over and (
+                type(value["unreconciled_request_count"]) is not int
+                or (provider in _REQUEST_COST_UNBOUNDED_PROVIDERS
+                    and (type(unsettled) is not int or unsettled != 0))
+            ):
+                # Unbounded real requests need valid actual charges, including fresh in-flight reservations.
+                # Neither a reservation estimate nor the probes' price visibility proves their final cost.
+                # Grok retains its bounded-reservation rule. Unknown cost is not zero.
                 unpriced.append(str(provider))
     budgets = None
     if paid is not None and consistency is not None:

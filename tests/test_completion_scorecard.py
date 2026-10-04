@@ -206,7 +206,7 @@ def health():
 def accounting(**values):
     """One provider's usage-monitor daily accounting, in the producer's key set (usage.py _daily_accounting)."""
     row = {"request_count": 0, "usage_check_count": 0, "provider_request_count": None,
-           "unreconciled_request_count": None,
+           "unreconciled_request_count": None, "unsettled_request_count": None,
            "retry_count": 0, "quota_failure_count": 0, "total_tokens": 0,
            "reported_cost_usd": 0.0, "cost_visibility_complete": True, "daily_request_limit": None,
            "daily_budget_usd": None, "reserved_cost_usd": None}
@@ -5451,13 +5451,57 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertEqual(case.state("08"), "UNKNOWN")
 
     def test_truncated_approval_receipt_read_is_unknown_not_fail_08(self):
-        """#287 item 12: a receipt list cut at its per-task cap draws neither a pass nor a fail."""
+        """#287 item 12: receipt-dependent failures from a capped read remain UNKNOWN."""
         cut = self.world(evaluate_rules=True)
         entry = cut.consistency["tasks"][APPROVAL_TASK]
         entry["approval_receipts"].append({**entry["approval_receipts"][0], "command_id_sha256": "0" * 64})
         self.assertEqual(cut.state("08"), "FAIL")  # the extra receipt alone is a contradiction
         entry["approval_receipts_truncated"] = True
         self.assertEqual(cut.state("08"), "UNKNOWN")
+
+    def test_independent_approval_violation_survives_incomplete_receipts_08(self):
+        self.assertEqual(self.world(evaluate_rules=True).state("08"), "PASS")
+        for flag in (True, None):
+            for violation in ("posted_prompt", "execution_order"):
+                with self.subTest(flag=flag, violation=violation):
+                    case = self.world(evaluate_rules=True)
+                    entry = case.consistency["tasks"][APPROVAL_TASK]
+                    if flag is None:
+                        del entry["approval_receipts_truncated"]
+                    else:
+                        entry["approval_receipts_truncated"] = flag
+                    # Include a receipt-dependent contradiction; only the independent failure should be reported.
+                    entry["approval_receipts"].append({**entry["approval_receipts"][0], "command_id_sha256": "0" * 64})
+                    if violation == "posted_prompt":
+                        prompt = next(m for m in case.threads[ts(30000)] if m.get("ts") == ts(30005))
+                        case.threads[ts(30000)].append({**prompt, "ts": ts(30007), "client_msg_id": "approval-client-2"})
+                        expected = "a posted approval prompt has no approval delivery"
+                    else:
+                        readback = case.tasks[APPROVAL_TASK]["qualification_evidence"]
+                        readback["provider_attempts"][0]["recorded_at"] = iso(1789210000 + 30008.5)
+                        readback["assignments"][0]["reserved_at"] = iso(1789210000 + 30008)
+                        expected = "a provider attempt began before its execution approval was authorized"
+                    result = row(case.report(), "08")
+                    self.assertEqual(result["status"], "FAIL")
+                    self.assertEqual(result["evidence"][0]["facts"]["failures"], [expected])
+
+    def test_missing_receipt_from_truncated_read_is_unknown_08(self):
+        case = self.world(evaluate_rules=True)
+        entry = case.consistency["tasks"][APPROVAL_TASK]
+        entry["approval_receipts"] = []
+        entry["approval_receipts_truncated"] = True
+        self.assertEqual(case.state("08"), "UNKNOWN")
+
+    def test_bounded_grok_does_not_require_unsettled_count_15(self):
+        for unsettled in (1, None, "missing"):
+            with self.subTest(unsettled=unsettled):
+                case = self.world(evaluate_rules=True)
+                daily = case.payload["usage_monitor"]["daily_accounting"]["grok"]
+                daily.update(provider_request_count=1, unreconciled_request_count=0,
+                             unsettled_request_count=unsettled)
+                if unsettled == "missing":
+                    del daily["unsettled_request_count"]
+                self.assertEqual(case.state("15"), "PASS")
 
     def test_outcomes_and_ledger_rows_are_a_bijection_10_20(self):
         """Sweep (one-directional joins): outcomes and assignments pair one-to-one by sequence, both ways."""
@@ -6423,6 +6467,35 @@ class ScorecardCollectorTests(unittest.TestCase):
         with patch.object(sc, "_run_json", side_effect=ValueError("offline")):
             return sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
 
+    def test_fresh_unsettled_request_reaches_monitor_and_check_15(self):
+        from director_orchestrator.config import Settings
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import TaskStore
+        from director_orchestrator.usage import UsageMonitor
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+            ledger = ProviderDailySpendLedger(store.path)
+            ledger.reserve(provider=ProviderName.GEMINI, effect_key="a" * 64, estimated_cost_usd=0.75,
+                           request_limit=10, budget_usd=1.0, now=NOW)
+            settings = dataclasses.replace(Settings(), gemini_daily_budget_usd=1.0, gemini_daily_request_limit=10)
+            monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: object()})
+            world = self.world(evaluate_rules=True)
+            self.assertEqual(world.state("15"), "PASS")
+            world.payload["usage_monitor"]["providers"].append("gemini")
+            daily = monitor._daily_accounting("gemini", NOW)
+            self.assertEqual(daily["provider_request_count"], 1)
+            self.assertEqual(daily["unreconciled_request_count"], 0)
+            self.assertEqual(daily["unsettled_request_count"], 1)
+            self.assertEqual(daily["exposure_usd"], 0.75)
+            world.payload["usage_monitor"]["daily_accounting"]["gemini"] = daily
+            self.assertEqual(world.state("15"), "UNKNOWN")
+            ledger.record_charge(provider=ProviderName.GEMINI, effect_key="a" * 64,
+                                 actual_cost_usd=0.8, now=NOW)
+            world.payload["usage_monitor"]["daily_accounting"]["gemini"] = monitor._daily_accounting("gemini", NOW)
+            self.assertEqual(world.state("15"), "PASS")
+
     def test_malformed_persisted_charge_reaches_monitor_and_check_15(self):
         import sqlite3
         from contextlib import closing
@@ -6566,9 +6639,20 @@ class ScorecardCollectorTests(unittest.TestCase):
                 ledger = self.world(evaluate_rules=True)
                 ledger.payload["usage_monitor"]["providers"].append(provider)
                 ledger.payload["usage_monitor"]["daily_accounting"][provider] = accounting(
-                    request_count=2, provider_request_count=2, unreconciled_request_count=0,
+                    request_count=2, provider_request_count=2, unreconciled_request_count=0, unsettled_request_count=0,
                     cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None,
                     daily_budget_usd=5.0, exposure_usd=0.4)
+                self.assertEqual(ledger.state("15"), "PASS")
+                daily = ledger.payload["usage_monitor"]["daily_accounting"][provider]
+                for unsettled in (1, None, False, 0.0, "0", -1):
+                    with self.subTest(unsettled=unsettled):
+                        daily["unsettled_request_count"] = unsettled
+                        report = ledger.report()
+                        self.assertEqual(row(report, "15")["status"], "UNKNOWN")
+                        self.assertIn(provider, row(report, "15")["explanation"])
+                del daily["unsettled_request_count"]
+                self.assertEqual(ledger.state("15"), "UNKNOWN")
+                daily["unsettled_request_count"] = 0
                 self.assertEqual(ledger.state("15"), "PASS")
                 ledger.payload["usage_monitor"]["daily_accounting"][provider]["unreconciled_request_count"] = 1
                 self.assertEqual(ledger.state("15"), "UNKNOWN")

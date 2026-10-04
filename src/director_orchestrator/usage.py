@@ -283,6 +283,8 @@ class UsageMonitor:
             # Settled real requests whose provider reported no cost (review 4112533824): they count at their
             # reservation, a lower bound, so check 15 cannot pass while any exists. None: not ledger-accounted.
             "unreconciled_request_count": self._unreconciled_request_count(provider, records, now),
+            # Include fresh in-flight work: an unbounded reservation is not a known actual charge.
+            "unsettled_request_count": self._unreconciled_request_count(provider, records, now, stale_after=timedelta(0)),
             "exposure_usd": self._exposure_usd(provider, attempted, now),
             "retry_count": retry_count,
             "quota_failure_count": quota_failures,
@@ -309,7 +311,9 @@ class UsageMonitor:
                   for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
         return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now, include_released=False))
 
-    def _unreconciled_request_count(self, provider: str, records: list[UsageCheckRecord], now: datetime) -> int | None:
+    def _unreconciled_request_count(
+        self, provider: str, records: list[UsageCheckRecord], now: datetime, *, stale_after: timedelta | None = None
+    ) -> int | None:
         try:
             name = ProviderName(provider)
         except ValueError:
@@ -319,7 +323,8 @@ class UsageMonitor:
         probes = {_probe_key(record.cycle_id, provider, attempt)
                   for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
         # A reservation still unsettled after the provider timeout counts too (review 4112697677).
-        stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
+        if stale_after is None:
+            stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
         return sum(key not in probes for key in self.provider_spend.unreconciled(name, stale_after=stale_after, now=now))
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
