@@ -48,6 +48,7 @@ import time
 import hmac
 import math
 import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -1293,13 +1294,10 @@ class TaskStore:
         """Return the generation encoded in a production idempotency key, if any."""
         task_id = str(work["task_id"])
         key = str(work["idempotency_key"])
-        prefix = f"{task_id}:"
-        if not key.startswith(prefix):
+        match = re.fullmatch(re.escape(task_id) + r":(\d+):\d+:[0-9a-fA-F]{64}", key)
+        if match is None:
             return None
-        generation, separator, _rest = key[len(prefix):].partition(":")
-        if not separator or not generation.isascii() or not generation.isdigit():
-            return None
-        return int(generation)
+        return int(match.group(1))
 
     def reserve_runtime_result(self, work: dict) -> None:
         """Bind recovery storage before I/O; a reset deletes this authority too."""
