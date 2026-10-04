@@ -178,6 +178,34 @@ class TestPrimaryScore(unittest.TestCase):
         self.assertTrue(res["incomplete"])
         self.assertEqual(res["incomplete_groups"], ["g1"])
 
+    def test_per_field_exact(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"], constraints=[], acceptance_checks=["B"])]
+        cands = {"r1": _full_cand(non_goals=["A"], constraints=["C"], acceptance_checks=[])}
+        res = evaluate_primary_score(refs, cands, ["g1"])
+        
+        self.assertIn("per_field_exact", res)
+        exact = res["per_field_exact"]
+        
+        self.assertEqual(set(exact.keys()), {"non_goals", "constraints", "acceptance_checks", "evidence_requirements"})
+        
+        for f, pair in exact.items():
+            self.assertIs(type(pair["numerator"]), int)
+            self.assertIs(type(pair["denominator"]), int)
+            self.assertGreater(pair["denominator"], 0)
+            self.assertAlmostEqual(pair["numerator"] / pair["denominator"], res["per_field"][f])
+            
+        self.assertEqual(exact["non_goals"], {"numerator": 1, "denominator": 1})
+        self.assertEqual(exact["constraints"], {"numerator": 0, "denominator": 1})
+        self.assertEqual(exact["acceptance_checks"], {"numerator": 0, "denominator": 1})
+        self.assertEqual(exact["evidence_requirements"], {"numerator": 1, "denominator": 1})
+        
+        refs_inc = [_ref_row("r1", "g1")]
+        cands_inc = {}
+        res_inc = evaluate_primary_score(refs_inc, cands_inc, ["g1"])
+        self.assertTrue(res_inc["incomplete"])
+        self.assertIn("per_field_exact", res_inc)
+        self.assertEqual(res_inc["per_field_exact"]["non_goals"], {"numerator": 1, "denominator": 1})
+
 
 class TestSelectCheckpoint(unittest.TestCase):
     def test_highest_score_wins(self):
@@ -716,6 +744,32 @@ class TestStrictStatusBooleans(unittest.TestCase):
         self.assertTrue(res["evidence_complete"])
         self.assertTrue(is_selectable(res))
 
+
+
+class TestPerFieldExactAdditional(unittest.TestCase):
+    def test_reduced_hand_count_two_thirds_and_all_four_fields(self):
+        refs = [_ref_row("r1", "g1", constraints=["A", "B"])]
+        res = evaluate_primary_score(refs, {"r1": _full_cand(constraints=["A"])}, ["g1"],
+                                     expected_packets={"g1": ["r1"]})
+        self.assertEqual(res["per_field_exact"]["constraints"], {"numerator": 2, "denominator": 3})
+        self.assertEqual(set(res["per_field_exact"]), {"non_goals", "constraints", "acceptance_checks", "evidence_requirements"})
+        for field, pair in res["per_field_exact"].items():
+            self.assertIs(type(pair["numerator"]), int)
+            self.assertIs(type(pair["denominator"]), int)
+            self.assertGreater(pair["denominator"], 0)
+            self.assertEqual(pair["numerator"] / pair["denominator"], res["per_field"][field])
+
+    def test_empty_policy_both_empty_one_sided_and_incomplete_are_distinct(self):
+        for reference, candidate, expected in (([], [], 1), (["A"], [], 0), ([], ["A"], 0)):
+            with self.subTest(reference=reference, candidate=candidate):
+                res = evaluate_primary_score([_ref_row("r1", "g1", non_goals=reference)],
+                    {"r1": _full_cand(non_goals=candidate)}, ["g1"], expected_packets={"g1": ["r1"]})
+                self.assertEqual(res["per_field_exact"]["non_goals"], {"numerator": expected, "denominator": 1})
+        missing = evaluate_primary_score([_ref_row("r1", "g1")], {}, ["g1"], expected_packets={"g1": ["r1"]})
+        self.assertTrue(missing["incomplete"])
+        self.assertFalse(is_selectable(missing))
+        self.assertEqual(missing["primary"], 0.0)
+        self.assertEqual(missing["per_field_exact"]["non_goals"], {"numerator": 1, "denominator": 1})
 
 if __name__ == '__main__':
     unittest.main()

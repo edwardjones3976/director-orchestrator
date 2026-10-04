@@ -461,6 +461,37 @@ def load_training_rows(path: Path) -> list[dict[str, Any]]:
         fail(f"no train rows in {path}")
     return trainable
 
+def load_dev_rows(path: Path) -> list[dict[str, Any]]:
+    """Read accepted dev rows strictly; malformed evidence is never skipped."""
+    if path.name != "accepted.jsonl" or not path.is_file():
+        fail("trainer requires the validator's accepted.jsonl")
+    report_path = path.with_name("report.json")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected_dev = report["rows_per_split"]["dev"]
+        if type(expected_dev) is not int or expected_dev < 0:
+            raise ValueError("invalid dev count")
+        expected_total = report["n_accepted"]
+        if type(expected_total) is not int or expected_total < 0:
+            raise ValueError("invalid accepted count")
+        dev_rows, seen = [], 0
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError("accepted row is not an object")
+            _require_accepted_row(row, line_number)
+            seen += 1
+            if row["split"] == "dev":
+                _validate_dev_row(row, "dev")
+                dev_rows.append(row)
+        if seen != expected_total or len(dev_rows) != expected_dev:
+            raise ValueError("dev rows do not match the validator report")
+        return dev_rows
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        fail("validator dev evidence is not usable: " + type(exc).__name__)
+
 
 def _require_accepted_row(row: dict[str, Any], line_number: int) -> None:
     """A row the validator kept: clear leak checks, a real target, and train or dev."""
@@ -688,55 +719,6 @@ def coverage_for_rows(rows: list[dict[str, Any]], tokenize) -> float:
     return sum(coverages) / len(coverages)
 
 
-def build_report(
-    *,
-    run: str,
-    base: str,
-    revision: str,
-    rows: int,
-    steps: int,
-    mask_coverage: float,
-    peak_reserved_gib: float | None,
-    loss: float | None,
-    wall_seconds: float,
-    winner: bool,
-    resolved_commit: str,
-    digest_verification: dict | None = None,
-    epochs: int | None = None,
-    checkpoints: list[dict[str, Any]] | None = None,
-    final_adapter: dict[str, Any] | None = None,
-    export_ready: bool | None = None,
-    output_dir: str | None = None,
-    trainer_epoch: float | None = None,
-) -> dict[str, Any]:
-    report = {
-        "run": run,
-        "base": base,
-        "base_revision": revision,
-        "base_resolved_commit": resolved_commit,
-        "rows": rows,
-        "steps": steps,
-        "mask_coverage": round(mask_coverage, 6),
-        "peak_reserved_vram_gib": None if peak_reserved_gib is None else round(peak_reserved_gib, 3),
-        "loss": loss,
-        "wall_seconds": round(wall_seconds, 1),
-        "gguf_sha256": None,
-        "winner_probe": winner,
-        "digest_verification": digest_verification,
-        "thinking": "disabled",
-    }
-    # Epoch-mode evidence: only completed epochs and their pinned manifests.
-    if epochs is not None:
-        report["completed_epochs"] = len(checkpoints or [])
-        report["completed_epoch_ids"] = [entry["epoch"] for entry in checkpoints or []]
-        report["trainer_epoch"] = trainer_epoch
-        report["checkpoints"] = checkpoints or []
-        report["final_adapter"] = final_adapter
-        report["export_ready"] = bool(export_ready)
-        report["output_dir"] = output_dir
-    return report
-
-
 def token_lengths(encoded: list[dict[str, list[int]]]) -> list[int]:
     return [len(example["input_ids"]) for example in encoded]
 
@@ -845,6 +827,7 @@ def build_probe_report(
     max_tokens: int,
     digest_verification: dict | None = None,
     warmup_discarded_microsteps: int | None = None,
+    probe_executed: bool = True,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "run": run,
@@ -860,10 +843,11 @@ def build_probe_report(
         "length_gate_pass": length_gate_passed,
         "sequence_length": sequence_length,
         "warmup_microsteps": warmup_microsteps,
+        "probe_executed": probe_executed,
         # The warm-up phase boundary discards its pending partial accumulation
         # window (zero_grad without an optimizer step) so warm-up microsteps
         # never contribute to an optimizer update at this accumulation.
-        "warmup_pending_gradients": "discarded_at_boundary_without_step",
+        "warmup_pending_gradients": "discarded_at_boundary_without_step" if probe_executed else "not_run",
         "warmup_discarded_microsteps": warmup_discarded_microsteps,
         "timed_microsteps": timed_microsteps,
         "gradient_accumulation": gradient_accumulation,
@@ -1015,32 +999,406 @@ def epoch_leaf_name(epoch: int) -> str:
     return f"epoch-{epoch:02d}"
 
 
-class EpochLeafCallback(TrainerCallback):
-    """Turn each finished epoch into a clean adapter-only leaf directory.
+def _canonical_sha(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
 
-    The Trainer's own epoch checkpoint keeps optimizer/RNG/trainer state for
-    the run; the leaf written here is export input only. Assumption to confirm
-    on the real host: the pinned peft ``save_pretrained`` writes the adapter
-    files. Inherited TrainerCallback events implement the supported lifecycle.
-    """
 
-    def __init__(self, model: Any, run_dir: Path, checkpoints: list[dict[str, Any]]):
-        self.model = model
-        self.run_dir = run_dir
-        self.checkpoints = checkpoints
+def _atomic_state_write(run_dir: Path, payload: dict[str, Any]) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    destination = run_dir / "best-state.json"
+    temporary = destination.with_name(destination.name + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, sort_keys=True, indent=2, allow_nan=False)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, destination)
+
+
+def _initial_failure_state(run_dir: Path, reason: str) -> None:
+    sequence = 1
+    existing = run_dir / "best-state.json"
+    if existing.exists() or existing.is_symlink():
+        if existing.is_symlink() or getattr(os.path, "isjunction", lambda _p: False)(existing) or not existing.is_file():
+            raise ValueError("existing best state is not a regular run-local file")
+
+        def unique_pairs(pairs: Any) -> dict[str, Any]:
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate key in existing best state")
+                result[key] = value
+            return result
+
+        def reject_constant(value: str) -> Any:
+            raise ValueError("non-finite constant in existing best state")
+
+        payload = json.loads(existing.read_text(encoding="utf-8"),
+                             object_pairs_hook=unique_pairs, parse_constant=reject_constant)
+        if (not isinstance(payload, dict) or payload.get("format") != "route-r-dev-state/v1"
+                or not isinstance(payload.get("state"), str) or payload["state"] not in {"running", "stopped", "failed"}
+                or type(payload.get("sequence")) is not int or payload["sequence"] < 1):
+            raise ValueError("existing best state is malformed")
+        # The callback constructor may already have recorded a more precise
+        # failure before train() could assign its returned object. Retain those
+        # exact run-owned bytes and the sequence instead of resetting to one.
+        if payload["state"] == "failed":
+            return
+        sequence = payload["sequence"] + 1
+    _atomic_state_write(run_dir, {
+        "format": "route-r-dev-state/v1", "dev_roster_sha256": None,
+        "expected_packets_sha256": None, "evaluations": [], "best_epoch": None,
+        "best_primary": None, "best_per_field": {}, "epochs_without_improvement": 0,
+        "stop_reason": reason, "state": "failed", "sequence": sequence,
+    })
+
+
+def _require_hex(value: Any, length: int, label: str) -> None:
+    if not isinstance(value, str) or len(value) != length or any(c not in "0123456789abcdef" for c in value):
+        raise ValueError(f"invalid {label}")
+
+
+def _validate_dev_row(row: Any, split: str) -> None:
+    if not isinstance(row, dict) or row.get("split") != split:
+        raise ValueError(f"invalid {split} row")
+    for field in ("row_id", "source_group"):
+        if not isinstance(row.get(field), str) or not row[field].strip():
+            raise ValueError(f"invalid {split} {field}")
+    target = row.get("target")
+    if not isinstance(target, dict) or set(target) != set(TARGET_FIELDS):
+        raise ValueError("target must contain exactly the four fields")
+    for items in target.values():
+        if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
+            raise ValueError("invalid target items")
+    source = row.get("input")
+    if not isinstance(source, dict):
+        raise ValueError("invalid row input")
+    prompt_template.input_contract(source)
+    for key in ("objective", "repository", "title"):
+        if not isinstance(source.get(key), str) or not source[key].strip():
+            raise ValueError("invalid input field")
+    if "context" in source and prompt_template.context_shape_errors(source["context"]):
+        raise ValueError("invalid cited context")
+
+
+def prepare_dev_context(train_rows: list[dict[str, Any]], dev_rows: list[dict[str, Any]],
+                        identity: dict[str, str]) -> dict[str, Any]:
+    import copy
+    if not isinstance(train_rows, list) or not train_rows or not isinstance(dev_rows, list) or not dev_rows:
+        raise ValueError("train and dev rows must be non-empty lists")
+    train_ids, train_groups, dev_ids, packets = set(), set(), set(), {}
+    for row in train_rows:
+        _validate_dev_row(row, "train")
+        if row["row_id"] in train_ids:
+            raise ValueError("duplicate training row id")
+        train_ids.add(row["row_id"])
+        train_groups.add(row["source_group"])
+    for row in dev_rows:
+        _validate_dev_row(row, "dev")
+        if row["row_id"] in dev_ids:
+            raise ValueError("duplicate dev row id")
+        if row["row_id"] in train_ids or row["source_group"] in train_groups:
+            raise ValueError("train/dev row or source_group overlap")
+        dev_ids.add(row["row_id"])
+        packets.setdefault(row["source_group"], []).append(row["row_id"])
+    roster = sorted(packets)
+    if len(roster) < 20:
+        raise ValueError("epoch mode requires at least 20 distinct dev groups")
+    packets = {group: sorted(packets[group]) for group in roster}
+    if not isinstance(identity, dict) or set(identity) != {"base_revision", "weights_manifest_sha256", "template_sha256"}:
+        raise ValueError("invalid frozen dev identity")
+    for key, length in (("base_revision", 40), ("weights_manifest_sha256", 64), ("template_sha256", 64)):
+        _require_hex(identity[key], length, key)
+    return copy.deepcopy({"dev_rows": dev_rows, "train_rows": train_rows, "train_ids": train_ids,
+                          "roster": roster, "expected_packets": packets, "identity": identity})
+
+
+class DevEvaluationCallback(TrainerCallback):
+    STOP_REASONS = frozenset({"max_epochs", "requested_epochs_completed", "two_epochs_without_improvement",
+                              "primary_drop_gt_5pp", "field_drop_gt_5pp"})
+
+    def __init__(self, model: Any, run_dir: Path, checkpoints: list[dict[str, Any]],
+                 frozen_dev_context: dict[str, Any], max_epochs: int,
+                 predict_fn: Any = None, score_fn: Any = None,
+                 requested_epochs: int | None = None) -> None:
+        self.model, self.run_dir, self.checkpoints = model, run_dir, checkpoints
+        self.best_primary = None
+        self.best_per_field = {}
+        self.best_epoch_end_primary = None
+        self.best_epoch = None
+        self.epochs_without_improvement = 0
+        self.evaluations = []
+        self.stop_reason = None
+        self.state = "running"
+        self.sequence = 0
+        self.midpoints_done, self.epoch_ends_done = set(), set()
+        self.dev_roster_sha256 = self.expected_packets_sha256 = None
+        try:
+            if type(max_epochs) is not int or not EPOCH_MODE_MIN <= max_epochs <= EPOCH_MODE_MAX:
+                raise ValueError("invalid maximum epochs")
+            self.max_epochs = max_epochs
+            self.requested_epochs = max_epochs if requested_epochs is None else requested_epochs
+            if type(self.requested_epochs) is not int or not 1 <= self.requested_epochs <= max_epochs:
+                raise ValueError("invalid requested epochs")
+            context = prepare_dev_context(frozen_dev_context["train_rows"], frozen_dev_context["dev_rows"], frozen_dev_context["identity"])
+            if (frozen_dev_context["roster"] != context["roster"]
+                    or frozen_dev_context["expected_packets"] != context["expected_packets"]
+                    or set(frozen_dev_context.get("train_ids", context["train_ids"])) != context["train_ids"]):
+                raise ValueError("frozen context roster mismatch")
+            self.dev_rows, self.frozen_roster = context["dev_rows"], context["roster"]
+            self.expected_packets, self.identity = context["expected_packets"], context["identity"]
+            self.dev_roster_sha256 = _canonical_sha(self.frozen_roster)
+            self.expected_packets_sha256 = _canonical_sha(self.expected_packets)
+            import sys
+            eval_dir = str(Path(__file__).parent.parent / "eval")
+            if eval_dir not in sys.path:
+                sys.path.insert(0, eval_dir)
+            import predict_dev
+            import dev_selection
+            template_bytes = predict_dev._default_template_source()
+            if not isinstance(template_bytes, bytes) or hashlib.sha256(template_bytes).hexdigest() != ADMITTED_TEMPLATE_SHA256:
+                raise ValueError("template digest mismatch")
+            if self.identity["template_sha256"] != ADMITTED_TEMPLATE_SHA256:
+                raise ValueError("frozen template identity mismatch")
+            self.predict_fn = predict_dev.run_predictions if predict_fn is None else predict_fn
+            self.score_fn = dev_selection.evaluate_primary_score if score_fn is None else score_fn
+            self.primary_fraction_fn = dev_selection.primary_fraction
+            self.select_checkpoint_fn = dev_selection.select_checkpoint
+            if self.checkpoints:
+                raise ValueError("callback requires a fresh checkpoint list")
+            self._write_state()
+        except BaseException as exc:
+            self._mark_failed("initialization_" + type(exc).__name__)
+            raise
+
+    def _mark_failed(self, reason: str) -> None:
+        self.state, self.stop_reason = "failed", reason
+        self._write_state()
+
+    def _fail_run(self, reason: str, exc: Exception | None = None) -> None:
+        self._mark_failed(reason)
+        if exc is not None:
+            raise exc
+        raise ValueError(reason)
+
+    def _write_state(self, failure_reason: str | None = None) -> None:
+        if failure_reason is not None:
+            self.stop_reason = failure_reason
+        def pair(value: Any) -> Any:
+            return None if value is None else {"numerator": value.numerator, "denominator": value.denominator}
+        next_sequence = self.sequence + 1
+        _atomic_state_write(self.run_dir, {
+            "format": "route-r-dev-state/v1", "dev_roster_sha256": self.dev_roster_sha256,
+            "expected_packets_sha256": self.expected_packets_sha256, "evaluations": self.evaluations,
+            "best_epoch": self.best_epoch, "best_primary": pair(self.best_primary),
+            "best_epoch_end_primary": pair(self.best_epoch_end_primary),
+            "best_per_field": {field: pair(value) for field, value in sorted(self.best_per_field.items())},
+            "epochs_without_improvement": self.epochs_without_improvement, "stop_reason": self.stop_reason,
+            "state": self.state, "sequence": next_sequence,
+        })
+        self.sequence = next_sequence
+
+    @staticmethod
+    def _exact_score(pair: Any, summary: Any, label: str) -> Any:
+        from fractions import Fraction
+        if not isinstance(pair, dict) or set(pair) != {"numerator", "denominator"}:
+            raise ValueError("malformed exact " + label)
+        numerator, denominator = pair["numerator"], pair["denominator"]
+        if type(numerator) is not int or type(denominator) is not int or denominator <= 0:
+            raise ValueError("invalid exact " + label)
+        value = Fraction(numerator, denominator)
+        if value < 0 or value > 1 or (value.numerator, value.denominator) != (numerator, denominator):
+            raise ValueError("out of range or unreduced " + label)
+        if type(summary) not in (int, float) or not math.isfinite(summary) or abs(float(value) - summary) > 1e-12:
+            raise ValueError("invalid or inconsistent summary " + label)
+        return value
+
+    def _evaluate(self, epoch: int, kind: str, manifest_sha256: str, control: Any, tokenizer: Any) -> None:
+        from fractions import Fraction
+        try:
+            if tokenizer is None:
+                raise ValueError("missing tokenizer")
+            _require_hex(manifest_sha256, 64, "leaf manifest digest")
+            identity = {**self.identity, "adapter_sha256": manifest_sha256}
+            expected_binding = {
+                "source_label": "checkpoint", "seed": 1234, "max_new_tokens": SEQ, "thinking": False,
+                "roster": self.frozen_roster, "row_ids": sorted(row["row_id"] for row in self.dev_rows),
+                "identity": identity, "expected_packets_sha256": self.expected_packets_sha256,
+                "input_sha256": {row["row_id"]: _canonical_sha(row["input"]) for row in self.dev_rows},
+            }
+            # Pass isolated copies: an injected hook cannot mutate the frozen cohort.
+            import copy
+            preds = self.predict_fn(copy.deepcopy(self.dev_rows), self.model, tokenizer,
+                frozen_roster=list(self.frozen_roster), expected_packets=copy.deepcopy(self.expected_packets),
+                max_new_tokens=SEQ, source_label="checkpoint", identity=dict(identity))
+            if (not isinstance(preds, dict) or preds.get("complete") is not True
+                    or preds.get("binding") != expected_binding
+                    or type(preds["binding"].get("seed")) is not int
+                    or type(preds["binding"].get("max_new_tokens")) is not int
+                    or preds["binding"].get("thinking") is not False
+                    or preds.get("schema_invalid_row_ids") != []
+                    or not isinstance(preds.get("predictions"), dict)
+                    or set(preds["predictions"]) != set(expected_binding["row_ids"])):
+                raise ValueError("prediction completeness or binding mismatch")
+            for prediction in preds["predictions"].values():
+                if (not isinstance(prediction, dict) or set(prediction) != set(TARGET_FIELDS)
+                        or any(not isinstance(items, list) or any(not isinstance(item, str) for item in items)
+                               for items in prediction.values())):
+                    raise ValueError("malformed prediction")
+            scores = self.score_fn(copy.deepcopy(self.dev_rows), copy.deepcopy(preds["predictions"]),
+                frozen_roster=list(self.frozen_roster), schema_invalid_row_ids=[],
+                expected_packets=copy.deepcopy(self.expected_packets))
+            if (not isinstance(scores, dict) or "group_results" in scores
+                    or scores.get("roster_bound") is not True or scores.get("diagnostic_only") is not False
+                    or scores.get("incomplete") is not False
+                    or type(scores.get("groups")) is not int or scores["groups"] != len(self.frozen_roster)
+                    or scores.get("incomplete_groups") != []):
+                raise ValueError("non-selectable primary result")
+            primary_frac = self._exact_score(scores.get("primary_exact"), scores.get("primary"), "primary")
+            if self.primary_fraction_fn(scores) != primary_frac:
+                raise ValueError("primary helper mismatch")
+            exact, summaries = scores.get("per_field_exact"), scores.get("per_field")
+            if not isinstance(exact, dict) or set(exact) != set(TARGET_FIELDS) or not isinstance(summaries, dict) or set(summaries) != set(TARGET_FIELDS):
+                raise ValueError("malformed per_field_exact")
+            fields = {field: self._exact_score(exact[field], summaries[field], field) for field in TARGET_FIELDS}
+            self.evaluations.append({"epoch": epoch, "kind": kind,
+                "primary": {"numerator": primary_frac.numerator, "denominator": primary_frac.denominator},
+                "per_field": {field: {"numerator": value.numerator, "denominator": value.denominator} for field, value in fields.items()},
+                "leaf_manifest_sha256": manifest_sha256})
+            if self.best_primary is not None and self.best_primary - primary_frac > Fraction(1, 20):
+                self.stop_reason = "primary_drop_gt_5pp"
+            if any(self.best_per_field.get(field, value) - value > Fraction(1, 20) for field, value in fields.items()):
+                self.stop_reason = self.stop_reason or "field_drop_gt_5pp"
+            if kind == "epoch_end":
+                if self.best_epoch_end_primary is None or primary_frac > self.best_epoch_end_primary:
+                    self.best_epoch_end_primary, self.best_epoch = primary_frac, epoch
+                    self.epochs_without_improvement = 0
+                else:
+                    self.epochs_without_improvement += 1
+                if self.epochs_without_improvement >= 2:
+                    self.stop_reason = self.stop_reason or "two_epochs_without_improvement"
+                if epoch >= self.max_epochs:
+                    self.stop_reason = self.stop_reason or "max_epochs"
+                elif epoch >= self.requested_epochs:
+                    self.stop_reason = self.stop_reason or "requested_epochs_completed"
+            self.best_primary = primary_frac if self.best_primary is None else max(self.best_primary, primary_frac)
+            for field, value in fields.items():
+                self.best_per_field[field] = max(self.best_per_field.get(field, value), value)
+            if self.stop_reason is not None:
+                self.state = "stopped"
+                control.should_training_stop = True
+            self._write_state()
+        except BaseException as exc:
+            self._mark_failed("evaluation_" + type(exc).__name__)
+            raise
+
+    def on_step_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+        if self.state != "running":
+            return control
+        try:
+            progress = actual_trainer_epoch(state)
+            if progress is None:
+                raise ValueError("missing epoch progress")
+            if 0.5 <= progress < 1 and 1 not in self.midpoints_done:
+                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01")
+                _, digest = write_leaf_manifest(leaf_dir)
+                self._evaluate(1, "midpoint", digest, control, kwargs.get("processing_class") or kwargs.get("tokenizer"))
+                self.midpoints_done.add(1)
+            return control
+        except BaseException as exc:
+            if self.state != "failed":
+                self._mark_failed("midpoint_" + type(exc).__name__)
+            raise
 
     def on_epoch_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
-        progress = actual_trainer_epoch(state)
-        # Trainer also emits this event when stopping inside an epoch. Saving
-        # that adapter as a completed epoch would invent completion evidence.
-        if progress is None or progress < 1 or not progress.is_integer():
+        try:
+            progress = actual_trainer_epoch(state)
+            if progress is None or progress < 1 or not progress.is_integer():
+                raise ValueError("unfinished epoch end")
+            epoch = int(progress)
+            if epoch in self.epoch_ends_done:
+                return control
+            if self.state != "running" or epoch != len(self.epoch_ends_done) + 1 or epoch > self.requested_epochs:
+                raise ValueError("out of order epoch end")
+            if 1 not in self.midpoints_done:
+                raise ValueError("midpoint_missing")
+            step = getattr(state, "global_step", None)
+            if type(step) is not int or step < 0:
+                raise ValueError("invalid global step")
+            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
+            entry = leaf_report_entry(leaf_dir, epoch=epoch, global_step=step)
+            _require_hex(entry.get("manifest_sha256"), 64, "leaf manifest digest")
+            self.checkpoints.append(entry)
+            self._evaluate(epoch, "epoch_end", entry["manifest_sha256"], control, kwargs.get("processing_class") or kwargs.get("tokenizer"))
+            self.epoch_ends_done.add(epoch)
             return control
-        epoch = int(progress)
-        leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
-        self.checkpoints.append(
-            leaf_report_entry(leaf_dir, epoch=epoch, global_step=int(state.global_step))
-        )
+        except BaseException as exc:
+            if self.state != "failed":
+                self._mark_failed("midpoint_missing" if str(exc) == "midpoint_missing" else "epoch_end_" + type(exc).__name__)
+            raise
+
+    def on_train_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+        if self.state == "failed":
+            raise ValueError("callback failed")
+        if self.state == "running":
+            self._fail_run("training_ended_without_completed_epochs")
         return control
+
+    def completed_selection(self) -> dict[str, str] | None:
+        from fractions import Fraction
+        if self.state != "stopped" or self.stop_reason not in self.STOP_REASONS:
+            raise ValueError("callback is not a valid terminal stop")
+        end_evals = [record for record in self.evaluations if record["kind"] == "epoch_end"]
+        count = len(end_evals)
+        if count == 0:
+            return None
+        expected_ids = list(range(1, count + 1))
+        if ([entry["epoch"] for entry in self.checkpoints] != expected_ids
+                or [record["epoch"] for record in end_evals] != expected_ids
+                or self.epoch_ends_done != set(expected_ids)
+                or len([record for record in self.evaluations if record["kind"] == "midpoint"]) != 1
+                or self.midpoints_done != {1}):
+            raise ValueError("incomplete cadence or checkpoint roster")
+        if self.stop_reason in {"requested_epochs_completed", "max_epochs"} and count != self.requested_epochs:
+            raise ValueError("natural completion epoch mismatch")
+        candidates = []
+        for entry, record in zip(self.checkpoints, end_evals):
+            digest = entry.get("manifest_sha256")
+            _require_hex(digest, 64, "completed leaf digest")
+            if record["leaf_manifest_sha256"] != digest or entry["dir"] != str(self.run_dir / epoch_leaf_name(entry["epoch"])):
+                raise ValueError("checkpoint/evaluation leaf mismatch")
+            # Evidence is re-read, not re-written, before publishing selection.
+            manifest_path = Path(entry["dir"]) / ADAPTER_HASHES_NAME
+            require_confined_relative_path(ADAPTER_HASHES_NAME, Path(entry["dir"]), "completed leaf manifest")
+            if (manifest_path.is_symlink() or getattr(os.path, "isjunction", lambda _p: False)(manifest_path)
+                    or not manifest_path.is_file() or _sha256_file(manifest_path) != digest):
+                raise ValueError("selected leaf manifest changed or missing")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            files = manifest.get("files") if isinstance(manifest, dict) else None
+            if not isinstance(files, dict) or sorted(files) != entry.get("files"):
+                raise ValueError("selected leaf inventory mismatch")
+            actual_files = []
+            for path in Path(entry["dir"]).rglob("*"):
+                if path.is_symlink() or getattr(os.path, "isjunction", lambda _p: False)(path):
+                    raise ValueError("completed leaf contains a non-regular or linked entry")
+                relative = path.relative_to(Path(entry["dir"])).as_posix()
+                require_confined_relative_path(relative, Path(entry["dir"]), "completed leaf")
+                if not path.is_file():
+                    raise ValueError("completed leaf contains a non-regular entry")
+                if path != manifest_path:
+                    actual_files.append(relative)
+            if sorted(actual_files) != sorted(files) or any(name not in files for name in LEAF_MANDATORY_FILES):
+                raise ValueError("completed leaf coverage mismatch")
+            for relative, expected in files.items():
+                require_confined_relative_path(relative, Path(entry["dir"]), "completed leaf")
+                _require_hex(expected, 64, "completed leaf file digest")
+                if _sha256_file(Path(entry["dir"]) / relative) != expected:
+                    raise ValueError("completed leaf file changed")
+            score = Fraction(record["primary"]["numerator"], record["primary"]["denominator"])
+            candidates.append((entry["dir"], entry["epoch"], score))
+        selected_dir = self.select_checkpoint_fn(candidates)
+        entry = next(item for item in self.checkpoints if item["dir"] == selected_dir)
+        return {"dir": entry["dir"], "manifest_sha256": entry["manifest_sha256"]}
 
 
 def actual_trainer_epoch(state: Any) -> float | None:
@@ -1051,8 +1409,102 @@ def actual_trainer_epoch(state: Any) -> float | None:
     return progress if math.isfinite(progress) and progress >= 0 else None
 
 
+def build_report(
+    *,
+    run: str,
+    base: str,
+    revision: str,
+    rows: int,
+    steps: int,
+    mask_coverage: float,
+    peak_reserved_gib: float | None,
+    loss: float | None,
+    wall_seconds: float,
+    winner: bool,
+    resolved_commit: str,
+    digest_verification: dict | None = None,
+    epochs: int | None = None,
+    checkpoints: list[dict[str, Any]] | None = None,
+    final_adapter: dict[str, Any] | None = None,
+    export_ready: bool | None = None,
+    output_dir: str | None = None,
+    trainer_epoch: float | None = None,
+    checkpoint_artifacts_ready: bool = False,
+    dev_cadence: dict[str, Any] | None = None,
+    dev_roster_sha256: str | None = None,
+    expected_packets_sha256: str | None = None,
+    selected_adapter: dict[str, Any] | None = None,
+    dev_selection_status: str | None = None,
+    operational_completion: bool | None = None,
+    qualified: bool = False,
+    state: str | None = None,
+    selected_primary: dict[str, int] | None = None,
+    completed_epoch_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    report = {
+        "run": run,
+        "base": base,
+        "base_revision": revision,
+        "base_resolved_commit": resolved_commit,
+        "rows": rows,
+        "steps": steps,
+        "mask_coverage": round(mask_coverage, 6),
+        "peak_reserved_vram_gib": None if peak_reserved_gib is None else round(peak_reserved_gib, 3),
+        "loss": loss,
+        "wall_seconds": round(wall_seconds, 1),
+        "gguf_sha256": None,
+        "winner_probe": winner,
+        "digest_verification": digest_verification,
+        "thinking": "disabled",
+    }
+    if epochs is not None:
+        report["requested_epochs"] = epochs
+        completed_ids = [entry["epoch"] for entry in checkpoints or []] if completed_epoch_ids is None else completed_epoch_ids
+        report["completed_epochs"] = len(completed_ids)
+        report["completed_epoch_ids"] = completed_ids
+        report["trainer_epoch"] = trainer_epoch
+        report["checkpoints"] = checkpoints or []
+        report["checkpoint_artifacts_ready"] = checkpoint_artifacts_ready
+        report["artifacts_complete"] = checkpoint_artifacts_ready
+        report["selected_adapter"] = selected_adapter
+        report["final_adapter"] = None
+        report["export_ready"] = False
+        report["dev_selection_status"] = dev_selection_status or "pending_bound_dev_selection"
+        report["production_protocol_status"] = "blocked_pending_dev_cadence_reconciliation"
+        report["output_dir"] = output_dir
+
+        if dev_cadence:
+            report["dev_cadence"] = dev_cadence
+        if dev_roster_sha256:
+            report["dev_roster_sha256"] = dev_roster_sha256
+        if expected_packets_sha256:
+            report["expected_packets_sha256"] = expected_packets_sha256
+        if operational_completion is not None:
+            report["operational_completion"] = operational_completion
+        report["qualified"] = False
+        report["selected_primary"] = selected_primary
+        if state:
+            report["state"] = state
+
+        mount_root = run_output_root()
+        report["adapter_mount"] = {
+            "container_root": str(mount_root),
+            "host_root": os.environ.get("ADAPTER_MODELS_HOST_DIR"),
+        }
+        report["output_mount_relative_dir"] = Path(output_dir).relative_to(mount_root).as_posix() if output_dir else None
+        report["checkpoints"] = [
+            {**entry, "mount_relative_dir": Path(entry["dir"]).relative_to(mount_root).as_posix()}
+            for entry in checkpoints or []
+        ]
+        report["last_epoch_adapter"] = report["checkpoints"][-1] if report["checkpoints"] else None
+    return report
+
+
+ADMITTED_TEMPLATE_SHA256 = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+
 def train(
     rows: list[dict[str, Any]],
+    dev_rows: list[dict[str, Any]],
     base: str,
     revision: str,
     steps: int | None,
@@ -1063,114 +1515,129 @@ def train(
     trusted_digest_root_path: Path | None = None,
     epochs: int | None = None,
 ) -> dict[str, Any]:
-    """QLoRA for ``steps`` (or ``epochs``) on ``base@revision``. Thinking stays off. The mask is checked before ``trainer.train``."""
-    digest_verification = digest_verification_before_load(
-        base, revision, expected_digests_path, trusted_digest_root_path,
-    )
+    """QLoRA on admitted rows, with synchronous bound dev gates in epoch mode."""
     started = time.time()
-    set_seed(SEED)
-    torch.cuda.reset_peak_memory_stats()
-    load_kwargs: dict[str, Any] = {}
-    if digest_verification is not None:
-        load_kwargs["local_files_only"] = True
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        base,
-        revision=revision,
-        max_seq_length=SEQ,
-        load_in_4bit=True,
-        use_exact_model_name=True,
-        **load_kwargs,
-    )
-    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
-    model = FastLanguageModel.get_peft_model(
-        model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
-        use_gradient_checkpointing="unsloth",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        random_state=SEED,
-    )
-
-    def tokenize(messages: list[dict[str, str]], add_generation_prompt: bool) -> list[int]:
-        return list(tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=add_generation_prompt, enable_thinking=False))
-
-    encoded = encode_rows(rows, tokenize)
-    lengths = token_lengths(encoded)
-    overlength = [length for length in lengths if length > SEQ]
-    if overlength:
-        fail(
-            f"{len(overlength)} training row(s) exceed SEQ={SEQ}; "
-            f"maximum length {max(overlength)}"
-        )
-    mask_coverage = sum(
-        require_response_only(example["labels"], example["labels"].count(IGNORED_LABEL))
-        for example in encoded
-    ) / len(encoded)
-
     run_dir = create_run_directory(report_path) if epochs is not None else None
     checkpoints: list[dict[str, Any]] = []
-    trainer_output = str(run_dir / "trainer") if epochs is not None else str(report_path.with_suffix("")) + "-trainer"
-    callbacks = [EpochLeafCallback(model, run_dir, checkpoints)] if epochs is not None else []
-    trainer = None
-    export_ready = False
-    peak = None
-    try:
-        trainer = SFTTrainer(
-            model=model,
-            processing_class=tokenizer,
-            train_dataset=Dataset.from_list(encoded),
-            data_collator=collate_features,
-            args=SFTConfig(**sft_arguments(trainer_output, steps, epochs=epochs)),
-            callbacks=callbacks,
+    digest_verification, callback, trainer, peak, result = None, None, None, None, None
+    resolved, mask_coverage = revision, 0.0
+
+    def retained_report(*, state: str, selected: Any = None, completed: bool = False) -> dict[str, Any]:
+        cadence = None if callback is None else {
+            "evaluations": callback.evaluations, "stop_reason": callback.stop_reason,
+            "best_epoch": callback.best_epoch,
+            "best_primary": None if callback.best_primary is None else {
+                "numerator": callback.best_primary.numerator, "denominator": callback.best_primary.denominator},
+            "sequence": callback.sequence,
+            "best_epoch_end_primary": None if callback.best_epoch_end_primary is None else {
+                "numerator": callback.best_epoch_end_primary.numerator, "denominator": callback.best_epoch_end_primary.denominator},
+        }
+        report = build_report(
+            run=report_path.stem, base=base, revision=revision, rows=len(rows), steps=steps,
+            mask_coverage=mask_coverage, peak_reserved_gib=peak,
+            loss=None if state == "failed" or result is None else round(result.training_loss, 4),
+            wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
+            digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
+            final_adapter=None, export_ready=False, output_dir=str(run_dir) if run_dir is not None else None,
+            trainer_epoch=actual_trainer_epoch(getattr(trainer, "state", None)),
+            checkpoint_artifacts_ready=completed, dev_cadence=cadence,
+            dev_roster_sha256=None if callback is None else callback.dev_roster_sha256,
+            expected_packets_sha256=None if callback is None else callback.expected_packets_sha256,
+            selected_adapter=selected, dev_selection_status="selected_on_frozen_dev" if selected else "not_selected",
+            operational_completion=completed, qualified=False, state=state,
+            selected_primary=None if selected is None else {
+                "numerator": callback.best_epoch_end_primary.numerator, "denominator": callback.best_epoch_end_primary.denominator},
+            completed_epoch_ids=None if callback is None else sorted(callback.epoch_ends_done),
         )
+        write_report(report_path, report)
+        return report
+
+    try:
+        if epochs is not None:
+            if type(epochs) is not int or not 1 <= epochs <= EPOCH_MODE_MAX:
+                raise ValueError("invalid requested epochs")
+            if not is_winner_pin(base, revision):
+                raise ValueError("epoch mode requires the explicit winner pin")
+            # Validate the cohort before any model or GPU operation. The approved
+            # digest verification below reads local files, never loads a model.
+            for row in rows:
+                _validate_dev_row(row, "train")
+            for row in dev_rows:
+                _validate_dev_row(row, "dev")
+        digest_verification = digest_verification_before_load(
+            base, revision, expected_digests_path, trusted_digest_root_path)
+        callbacks = []
+        if epochs is not None:
+            if not isinstance(digest_verification, dict):
+                raise ValueError("epoch mode needs authenticated digest verification")
+            context = prepare_dev_context(rows, dev_rows, {
+                "base_revision": revision,
+                "weights_manifest_sha256": digest_verification.get("upstream_digest_list_sha256"),
+                "template_sha256": ADMITTED_TEMPLATE_SHA256,
+            })
+            callback = DevEvaluationCallback(None, run_dir, checkpoints, context,
+                max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs)
+            callbacks.append(callback)
+        set_seed(SEED)
+        torch.cuda.reset_peak_memory_stats()
+        load_kwargs: dict[str, Any] = {}
+        if digest_verification is not None:
+            load_kwargs["local_files_only"] = True
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            base, revision=revision, max_seq_length=SEQ, load_in_4bit=True,
+            use_exact_model_name=True, **load_kwargs)
+        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+        if callback is not None and callback.identity["base_revision"] != resolved:
+            raise ValueError("loaded model differs from frozen dev identity")
+        model = FastLanguageModel.get_peft_model(
+            model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
+            use_gradient_checkpointing="unsloth",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            random_state=SEED)
+        if callback is not None:
+            callback.model = model
+
+        def tokenize(messages: list[dict[str, str]], add_generation_prompt: bool) -> list[int]:
+            return list(tokenizer.apply_chat_template(messages, tokenize=True,
+                add_generation_prompt=add_generation_prompt, enable_thinking=False))
+
+        encoded = encode_rows(rows, tokenize)
+        lengths = token_lengths(encoded)
+        overlength = [length for length in lengths if length > SEQ]
+        if overlength:
+            fail(f"{len(overlength)} training row(s) exceed SEQ={SEQ}; maximum length {max(overlength)}")
+        mask_coverage = sum(require_response_only(example["labels"], example["labels"].count(IGNORED_LABEL))
+                            for example in encoded) / len(encoded)
+        trainer_output = str(run_dir / "trainer") if run_dir is not None else str(report_path.with_suffix("")) + "-trainer"
+        trainer = SFTTrainer(model=model, processing_class=tokenizer, train_dataset=Dataset.from_list(encoded),
+            data_collator=collate_features, args=SFTConfig(**sft_arguments(trainer_output, steps, epochs=epochs)),
+            callbacks=callbacks)
         torch.cuda.reset_peak_memory_stats()
         result = trainer.train()
         peak = torch.cuda.max_memory_reserved() / 2**30
         if epochs is not None:
-            # Admit memory before creating any ready adapter handoff. A refusal
-            # follows the same retained-evidence path as a training exception.
             require_vram(peak, winner=winner)
-    except BaseException:
-        # Evidence (leaves, partial manifests) stays in run_dir; no success record.
-        if epochs is not None:
-            report = build_report(
-                run=report_path.stem, base=base, revision=revision, rows=len(rows), steps=steps,
-                mask_coverage=mask_coverage, peak_reserved_gib=(
-                    peak if peak is not None else torch.cuda.max_memory_reserved() / 2**30),
-                loss=None, wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
-                digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
-                final_adapter=None, export_ready=False, output_dir=str(run_dir),
-                trainer_epoch=actual_trainer_epoch(getattr(trainer, "state", None)),
-            )
-            write_report(report_path, report)
-        raise
-    if epochs is not None:
-        # Truthful completion: every requested epoch saved, hashed and retained.
-        progress = actual_trainer_epoch(getattr(trainer, "state", None))
-        export_ready = (progress == epochs
-                        and [entry["epoch"] for entry in checkpoints] == list(range(1, epochs + 1))) and all(
-            entry["manifest_sha256"] for entry in checkpoints
-        )
-        final = checkpoints[-1] if checkpoints else None
-        report = build_report(
-            run=report_path.stem, base=base, revision=revision, rows=len(rows), steps=steps,
-            mask_coverage=mask_coverage, peak_reserved_gib=peak, loss=round(result.training_loss, 4),
-            wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
-            digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
-            final_adapter={"dir": final["dir"], "manifest_sha256": final["manifest_sha256"]} if final and export_ready else None,
-            export_ready=export_ready, output_dir=str(run_dir),
-            trainer_epoch=progress,
-        )
-    else:
-        report = build_report(
-            run=report_path.stem, base=base, revision=revision, rows=len(rows), steps=steps,
-            mask_coverage=mask_coverage, peak_reserved_gib=peak, loss=round(result.training_loss, 4),
-            wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
-            digest_verification=digest_verification,
-        )
-    write_report(report_path, report)
-    if epochs is None:
+            # Refuse absent callback termination; do not synthesize completion
+            # from a Trainer result or from files alone.
+            selected = callback.completed_selection()
+            if selected is None:
+                retained_report(state="stopped", completed=False)
+                fail("no completed selectable epoch-end adapter")
+            progress = actual_trainer_epoch(getattr(trainer, "state", None))
+            if progress is None or not progress.is_integer() or int(progress) != len(callback.epoch_ends_done):
+                raise ValueError("terminal trainer progress differs from completed cadence")
+            return retained_report(state="stopped", selected=selected, completed=True)
+        report = retained_report(state="stopped")
         require_vram(peak, winner=winner)
-    return report
+        return report
+    except BaseException as exc:
+        if epochs is not None:
+            if callback is None:
+                _initial_failure_state(run_dir, "initialization_" + type(exc).__name__)
+            elif callback.state != "failed":
+                callback._mark_failed("training_" + type(exc).__name__)
+            retained_report(state="failed", completed=False)
+        raise
 
 
 def run_probe(
@@ -1258,7 +1725,8 @@ def run_probe(
             sequence_length=probe_seq_len,
             sequence_length_method=None,
             warmup_microsteps=PROBE_WARMUP_MICROSTEPS,
-            warmup_discarded_microsteps=PROBE_WARMUP_MICROSTEPS % PROBE_GRAD_ACCUM,
+            warmup_discarded_microsteps=0,
+            probe_executed=False,
             timed_microsteps=PROBE_TIMED_MICROSTEPS,
             gradient_accumulation=PROBE_GRAD_ACCUM,
             timed_optimizer_updates=None,
@@ -1331,8 +1799,8 @@ def run_probe(
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train a DIRECTOR QLoRA adapter (M2-T1).")
     parser.add_argument("--rows", type=Path, required=True)
-    parser.add_argument("--base", default=os.environ.get("ADAPTER_BASE", SMOKE_BASE))
-    parser.add_argument("--revision", default=os.environ.get("ADAPTER_REVISION", SMOKE_REVISION))
+    parser.add_argument("--base", default=None)
+    parser.add_argument("--revision", default=None)
     parser.add_argument("--steps", type=int, default=None,
                         help="Smoke/dry-run length in optimizer steps; exactly one of --steps or --epochs.")
     parser.add_argument("--epochs", type=int, default=None,
@@ -1347,6 +1815,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--trusted-digest-root", type=Path, default=None,
                         help="Approved root file; its SHA-256 is pinned in the trainer.")
     args = parser.parse_args(argv)
+    explicit_pin = args.base is not None and args.revision is not None
+    args.base = args.base if args.base is not None else os.environ.get("ADAPTER_BASE", SMOKE_BASE)
+    args.revision = args.revision if args.revision is not None else os.environ.get("ADAPTER_REVISION", SMOKE_REVISION)
+    if args.winner and not args.probe:
+        fail("--winner is only valid together with --probe")
     if len(args.revision) != 40 or any(char not in "0123456789abcdef" for char in args.revision):
         fail(f"revision {args.revision!r} is not a full 40-hex commit")
     if args.steps is not None and args.steps < 1:
@@ -1358,6 +1831,8 @@ def main(argv: list[str] | None = None) -> None:
             fail(f"--epochs must be {EPOCH_MODE_MIN} to {EPOCH_MODE_MAX}")
         if args.probe:
             fail("--epochs cannot be combined with --probe")
+        if not explicit_pin or not is_winner_pin(args.base, args.revision):
+            fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
     elif not args.probe and not args.check_only and args.steps is None:
         fail("a training run needs exactly one of --steps or --epochs")
     if args.probe_rows_total is not None and args.probe_rows_total < 1:
@@ -1375,7 +1850,21 @@ def main(argv: list[str] | None = None) -> None:
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
-    rows = load_training_rows(args.rows)
+    try:
+        rows = load_training_rows(args.rows)
+        dev_rows = load_dev_rows(args.rows) if args.epochs is not None else []
+    except BaseException as exc:
+        if args.epochs is not None:
+            run_dir = create_run_directory(args.report)
+            _initial_failure_state(run_dir, "input_" + type(exc).__name__)
+            report = build_report(run=args.report.stem, base=args.base, revision=args.revision,
+                rows=0, steps=args.steps, mask_coverage=0.0, peak_reserved_gib=None,
+                loss=None, wall_seconds=0.0, winner=args.winner, resolved_commit=args.revision,
+                epochs=args.epochs, checkpoints=[], output_dir=str(run_dir),
+                state="failed", operational_completion=False, qualified=False,
+                selected_adapter=None, dev_selection_status="not_selected")
+            write_report(args.report, report)
+        raise
     if args.check_only:
         for row in rows:
             messages_for(row)
@@ -1395,6 +1884,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         report = train(
             rows,
+            dev_rows,
             args.base,
             args.revision,
             args.steps,

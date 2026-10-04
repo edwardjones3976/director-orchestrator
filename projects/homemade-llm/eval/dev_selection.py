@@ -165,10 +165,12 @@ def evaluate_primary_score(
     total_fn = sum(field_fn.values())
     micro_fraction = _fraction_f1(total_tp, total_fp, total_fn)
 
-    per_field = {
-        field: float(_fraction_f1(field_tp[field], field_fp[field], field_fn[field]))
-        for field in TARGET_FIELDS
-    }
+    per_field = {}
+    per_field_exact = {}
+    for field in TARGET_FIELDS:
+        f = _fraction_f1(field_tp[field], field_fp[field], field_fn[field])
+        per_field[field] = float(f)
+        per_field_exact[field] = {"numerator": f.numerator, "denominator": f.denominator}
 
     # Without a fully bound manifest, completeness can never be certified,
     # regardless of whether any individual group looked complete.
@@ -182,6 +184,7 @@ def evaluate_primary_score(
         },
         "micro": float(micro_fraction),
         "per_field": per_field,
+        "per_field_exact": per_field_exact,
         "incomplete": incomplete,
         "incomplete_groups": incomplete_groups,
         "groups": len(frozen_roster),
