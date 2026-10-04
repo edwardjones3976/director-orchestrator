@@ -152,6 +152,9 @@ jobs:
       GIT_CONFIG_VALUE_0: "true"
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The canonical-document migration verifies original Git blob digests.
+          fetch-depth: 0
       - name: Parse PowerShell scripts
         if: runner.os == 'Windows' && (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
         shell: powershell

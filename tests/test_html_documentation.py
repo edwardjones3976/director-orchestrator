@@ -113,6 +113,13 @@ class HtmlDocumentationTests(unittest.TestCase):
         (self.root/'docs/guide.md').write_bytes(b'# Guide\r\n')
         self.assertEqual(guard._provenance_errors(self.root, self.manifest), [])
         original = json.loads(json.dumps(self.manifest))
+        git('commit', '--allow-empty', '-qm', 'Later candidate')
+        shallow = self.root/'shallow-checkout'
+        git('clone', '--quiet', '--depth=1', self.root.as_uri(), str(shallow))
+        self.assertIn('unavailable or not an ancestor', '\n'.join(guard._provenance_errors(shallow, self.manifest)))
+        subprocess.run(['git', 'fetch', '--quiet', '--unshallow'], cwd=shallow, check=True,
+                       capture_output=True, timeout=20)
+        self.assertEqual(guard._provenance_errors(shallow, self.manifest), [])
         self.manifest['documents'][1]['source_sha256'] = hashlib.sha256(b'# Guide\r\n').hexdigest()
         self.assertIn('digest mismatch', '\n'.join(guard._provenance_errors(self.root, self.manifest)))
         self.manifest = json.loads(json.dumps(original))
@@ -225,6 +232,8 @@ class HtmlDocumentationTests(unittest.TestCase):
         checks = [step for step in steps if step.get('run') == 'python scripts/check_html_documentation.py']
         self.assertEqual(len(checks), 1)
         self.assertNotIn('if', checks[0])
+        checkout = next(step for step in steps if step.get('uses', '').startswith('actions/checkout@'))
+        self.assertEqual(checkout['with']['fetch-depth'], 0, 'Migration provenance needs original Git history')
 
 
 if __name__ == '__main__':
