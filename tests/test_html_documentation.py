@@ -54,6 +54,36 @@ class HtmlDocumentationTests(unittest.TestCase):
     def test_real_current_library_passes(self):
         self.assertEqual(guard.check(ROOT), [])
 
+    def test_current_handoffs_do_not_restore_retired_attribution_paperwork(self):
+        from director_orchestrator.documentation import read_document
+        paths = ['docs/contribution-attribution-policy.html',
+                 'docs/templates/contribution-submission.html',
+                 'docs/templates/project-bootstrap/README.html',
+                 'docs/templates/project-bootstrap/project-state-report.html',
+                 'docs/templates/project-bootstrap/review-ready.html',
+                 'docs/templates/project-bootstrap/workstream-plan.html']
+        for path in paths:
+            with self.subTest(path=path):
+                text = ' '.join(read_document(ROOT/path).split())
+                self.assertIn('2026-10-01', text)
+                for obsolete in ('trailers on every commit', 'Every commit carries',
+                                 'PR sole author and shares:', 'Contributor shares:',
+                                 'Reviewed share_record_sha256:',
+                                 'recompute its sole author and shares'):
+                    self.assertNotIn(obsolete, text)
+        policy = read_document(ROOT/paths[0])
+        self.assertIn('No contributor may merge that pull request', policy)
+        self.assertIn('preserve that gate and report its concrete refusal', policy)
+
+    def test_checklist_and_template_placeholders_render_as_text(self):
+        from director_orchestrator.documentation import read_document
+        checklist = read_document(ROOT/'docs/team-staff-and-briefings.html')
+        self.assertNotIn('<label>', checklist)
+        self.assertNotIn('<input', checklist)
+        template = read_document(ROOT/'docs/templates/contribution-submission.html')
+        self.assertIn('<What changed or what was concluded.>', template)
+        self.assertNotIn('&lt;', template)
+
     def test_local_targets_anchors_and_public_links_pass(self):
         self.write('docs/guide.html', page('<a href="https://www.w3.org/TR/html/">HTML</a>'
                                          '<a href="../README.html#guide">Overview</a>'

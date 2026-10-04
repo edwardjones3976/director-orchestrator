@@ -1056,7 +1056,8 @@ def _html_table(caption: str, headers: list[str], rows: list[list[Any]]) -> str:
     return ('<div class="table-scroll"><table><caption>' + escape(caption) + '</caption><thead><tr>' +
             ''.join('<th scope="col">' + escape(header) + '</th>' for header in headers) +
             '</tr></thead><tbody>' + ''.join('<tr>' + ''.join(
-                '<td>' + _html_value(cell) + '</td>' for cell in row) + '</tr>' for row in rows) +
+                ('<th scope="row">' + _html_value(cell) + '</th>' if index == 0 else
+                 '<td>' + _html_value(cell) + '</td>') for index, cell in enumerate(row)) + '</tr>' for row in rows) +
             '</tbody></table></div>')
 
 
@@ -1068,18 +1069,15 @@ def _html_document(title: str, source: str, sections: list[tuple[str, str, str]]
                      for key, label, content in sections)
     return ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            f'<title>{escape(title)}</title><style>'
-            'body{font:1rem/1.6 system-ui,sans-serif;max-width:80rem;margin:auto;padding:1.5rem;color:#182536;background:#fff}'
-            'a{color:#124b9b}a:focus-visible{outline:3px solid #a65300}h1,h2{line-height:1.2}section{margin:2.5rem 0}'
-            'dt{font-weight:650;margin-top:.75rem}dd{margin-left:1.25rem}dd dl{border-left:2px solid #ccd6e0;padding-left:1rem}'
-            '.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd6e0;padding:.6rem;text-align:left;vertical-align:top}'
-            'th{background:#eef3f8}caption{text-align:left;font-weight:650;padding:.5rem 0}span{overflow-wrap:anywhere}'
-            '</style></head><body><a href="#main">Skip to content</a>\n' +
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'self\'; '
+            'script-src \'self\'; img-src \'self\' data:; base-uri \'none\'; form-action \'none\'">'
+            f'<title>{escape(title)}</title><link rel="stylesheet" href="../assets/documentation.css">'
+            '</head><body><a class="skip-link" href="#main">Skip to content</a>\n' +
             GENERATED_MARKER.format(source=source) + '\n' +
-            f'<header><h1>{escape(title)}</h1><p>Descriptive guidance; this document grants no authority.</p>'
+            f'<header class="site-header"><h1>{escape(title)}</h1><p>Descriptive guidance; this document grants no authority.</p>'
             '<a href="README.html">Provider roster</a></header>' +
-            f'<nav aria-label="On this page"><ul>{navigation}</ul></nav><main id="main">{body}</main>'
-            '<footer><p>Edit the canonical YAML and run scripts/render_provider_profiles.py --write. '
+            f'<nav class="toc" aria-label="On this page"><ul>{navigation}</ul></nav><main id="main">{body}</main>'
+            '<footer class="site-footer"><p>Edit the canonical YAML and run scripts/render_provider_profiles.py --write. '
             'Verify with --check. No contribution envelope is required.</p></footer></body></html>\n')
 
 

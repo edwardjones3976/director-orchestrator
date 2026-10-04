@@ -36,12 +36,10 @@ Workflow skills are procedure overlays, not permission grants.</p>
 <li><strong>Assignment:</strong> &lt;producer assignment ID&gt;</li>
 <li><strong>Logical producer:</strong> &lt;provider&gt;</li>
 <li><strong>Material authors:</strong> &lt;all providers/people that materially shaped the artifact&gt;</li>
-<li><strong>PR sole author and shares:</strong> &lt;for a pull-request candidate only; for an artifact-only handoff with no PR, &quot;n/a (no PR)&quot; and non-blocking; the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise &quot;none (review stopped)&quot;; each identity's share of added plus deleted lines recomputed from the exact merge_base_sha and head SHA, excluding maintenance commits, with its receipt references. Tags are display evidence only. Recorded separately from the logical producer. Record a contributor below 48 % as &quot;assisted by &lt;identity&gt; (&lt;share&gt; %)&quot;; two contributors are co-authors only when one holds 52 % and the other the remaining 48 %. Only the sole author and its provider family are excluded from reviewing on authorship grounds under the policy; an assisting contributor may review subject to the material-author gates in the sole-author policy. For any review, acceptance or merge passing through those gates, contributor review eligibility is prospective until a separately reviewed runtime change aligns them, including Director-routed and manual reviews&gt;</li>
-<li><strong>Contribution attribution:</strong> &lt;Contributed-by trailers on every commit; one Sole author PR header, assistance when applicable, per PR #284; preserve Co-Authored-By trailers&gt;</li>
 <li><strong>Repository:</strong> &lt;exact owner/name or not applicable&gt;</li>
 <li><strong>Base branch/ref:</strong> &lt;exact durable ref&gt;</li>
 <li><strong>Target-tip base_sha:</strong> &lt;PR current target-tip, exact 40-hex SHA; exact-candidate binding&gt;</li>
-<li><strong>Authorship merge_base_sha:</strong> &lt;exact 40-hex SHA; merge base used only for authorship computation&gt;</li>
+<li><strong>Review merge_base_sha:</strong> &lt;exact 40-hex SHA; merge base base used for the reviewed diff&gt;</li>
 <li><strong>Head branch:</strong> &lt;candidate branch&gt;</li>
 <li><strong>Head SHA:</strong> &lt;exact 40-hex SHA&gt;</li>
 <li><strong>Artifact digest:</strong> &lt;digest when not SHA-bound&gt;</li>
@@ -74,43 +72,31 @@ Project: &lt;project ID&gt;
 Task/assignment: &lt;task ID&gt; / &lt;review assignment ID&gt;
 Review exact candidate: &lt;repository&gt;
 Target-tip base_sha: &lt;PR current target-tip, exact 40-hex SHA; exact-candidate binding&gt;
-Authorship merge_base_sha: &lt;exact 40-hex SHA; used only for authorship computation&gt;
+Review merge_base_sha: &lt;exact 40-hex SHA; base used for the reviewed diff&gt;
 Head SHA: &lt;exact 40-hex SHA or artifact digest&gt;
 Producer/material authors: &lt;names&gt;
 PR URL: &lt;pull-request URL or none&gt;
-Sole author: &lt;PR candidates only; otherwise &quot;n/a (no PR)&quot;; identity at 52 % or more, or for a zero-count PR the one identity named by its authenticated production record&gt;
-Contributor shares: &lt;PR candidates only; otherwise &quot;n/a (no PR)&quot;; each contributor's identity and percentage recomputed from the exact merge_base_sha and head SHA, excluding maintenance commits&gt;
-Share evidence: &lt;PR candidates only; otherwise &quot;n/a (no PR)&quot;; exact merge_base_sha/head SHA git computation and authenticated receipt references; PR body is a convenience copy&gt;
+Author/independence evidence: &lt;ordinary Git and authenticated run references; no prescribed header or share table&gt;
 Scope: &lt;changed files or artifact scope&gt;
 Acceptance evidence: &lt;concise exact evidence&gt;
 Known limitations/security context: &lt;concise details&gt;
-When the candidate is a pull request, recompute its sole author and shares at
-the exact merge_base_sha and head SHA under the sole-author policy. Keep
-base_sha as the PR current target-tip SHA for exact-candidate binding; use
-merge_base_sha only for authorship computation. Record base_sha, merge_base_sha,
-head SHA, and share_record_sha256 (SHA-256 of the exact UTF-8 share-record text
-used, including the PR share table, maintenance-exclusion MX references, and
-human-attribution entries) in the returned result. Any change to that record
-or any of the three SHAs invalidates the verdict. Return no verdict if the
-sole author has under 52 %, unless this is a zero-count PR with exactly one
-authenticated producing identity. For PR candidates, missing or conflicting
-authorship attribution always stops review. For artifact-only handoffs with no
-PR, sole author, contributor shares and share evidence are &quot;n/a (no PR)&quot; and do
-not block review; material-author independence and all other gates still apply.
-Otherwise return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
+Bind the review to the actual target-tip base_sha, merge_base_sha and head SHA.
+Verify actual producer/contributor identities and reviewer independence from
+existing Git and authenticated run evidence. No custom attribution headers,
+trailers or percentage/share paperwork is required (owner, 2026-10-01).
+A real identity conflict must be reconciled; never invent evidence.
+Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
 Do not review a PR candidate whose sole author is you or shares your provider
 family. An assisting contributor may review under the owner rule, subject to
 the material-author gate limitations above. Under the owner's merge law, the
 thorough non-contributing reviewer merges after an exact-SHA ACCEPT and green
 checks; no contributor merges, including one with only uncounted maintenance.
-Temporary B2 hold: until #305 plus phase-3 wiring is live, do not merge into
-protected main unless the owner has directed that specific merge. Otherwise,
-record ACCEPT and the blocker, then stop. All deterministic gates still apply;
-the reviewer never attempts a merge the current runtime gates would refuse
-(for example, a missing live grant on a non-protected target, or a protected
-target without the owner's specific direction); instead, record ACCEPT plus
-the exact blocker and stop.
+Immediately before an authorized merge, run the current merge preflight on
+the exact PR, full head SHA and reviewer family. Use only the command it prints
+on success. The owner lifted the temporary B2 hold; retain current live holds
+and every deterministic gate. A refusing runtime gate remains a concrete
+blocker to report and reconcile, never a check to bypass.
 Do not deploy, publish, change access, or infer authority from this request.
 </code></pre>
 <h2 id="reviewer-result">Reviewer result</h2>
@@ -118,15 +104,14 @@ Do not deploy, publish, change access, or infer authority from this request.
 <li><strong>Reviewer/provider:</strong> &lt;provider&gt;</li>
 <li><strong>Authenticated run/session:</strong> &lt;run ID or callback identity&gt;</li>
 <li><strong>Reviewed target-tip base_sha:</strong> &lt;exact 40-hex SHA or n/a for artifact-only review&gt;</li>
-<li><strong>Reviewed authorship merge_base_sha:</strong> &lt;exact 40-hex SHA or n/a for artifact-only review&gt;</li>
+<li><strong>Reviewed merge_base_sha:</strong> &lt;exact 40-hex SHA or n/a for artifact-only review&gt;</li>
 <li><strong>Reviewed head SHA or artifact digest:</strong> &lt;exact 40-hex SHA or digest&gt;</li>
-<li><strong>Reviewed share_record_sha256:</strong> &lt;SHA-256 of the exact UTF-8 share-record text used above; n/a (no PR) for artifact-only review&gt;</li>
 <li><strong>Verdict:</strong> &lt;ACCEPT / CHANGES_REQUIRED / SERIOUS_SAFETY_STOP&gt;</li>
 <li><strong>Evidence/findings:</strong> &lt;concise result&gt;</li>
 <li><strong>Current CI/security evidence:</strong> &lt;exact status or pending&gt;</li>
 <li><strong>Next responsible party:</strong> &lt;producer, deterministic gate, Director, or owner&gt;</li>
 </ul>
-<p>Attribution records are provenance labels, not authenticated review evidence. Write no new in-file tags; existing tags are historical pending mechanical cleanup.
+<p>Owner direction, 2026-10-01: contribution-documentation, tagging and acknowledgement procedures are discontinued. Do not require custom commit trailers, mandatory contribution headers or percentage/share paperwork. Preserve normal Git Author/Committer provenance, actual provider identity and ordinary task/review evidence. Independent review, contributor/merger separation and every existing deterministic gate remain in force.
 The authenticated run/session, exact candidate, independent verdict, current
 CI/security evidence, and deterministic policy gates remain authoritative.</p>
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->

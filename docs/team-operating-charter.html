@@ -857,21 +857,8 @@ including work already in flight.</li>
 and the deterministic policy gates are unchanged (rule 4).</li>
 </ul>
 <h2 id="contribution-attribution">Contribution attribution</h2>
-<p>No contribution tags are written into file contents any more. Every commit
-carries <code>Contributed-by: &lt;Assistant or Tool&gt; | &lt;Complete Model or System&gt;</code>,
-one trailer per contributor; keep existing <code>Co-Authored-By</code> trailers.
-Every PR description carries exactly one header line:
-<code>Sole author: &lt;assistant&gt; (&lt;model&gt;)</code>, followed on that line by
-<code>; assistance: &lt;id&gt;[, &lt;id&gt;...]</code> when others assisted. Follow the 52% sole-author
-rule defined by <a href="https://github.com/edwardjones3976/director-orchestrator/pull/284">PR #284</a>;
-this policy does not redefine it.
-Existing in-file tags are historical; a later mechanical PR removes them.
-Attribution records acknowledge actual contributions only and never imply
-inherited authorship. They never authenticate provider identity, grant authority,
-or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.</p>
-<p>Cursor records the logical producer and material contributors with the exact
-candidate evidence, using the commit trailers and the PR's Sole author header line.</p>
-<p>See <a href="contribution-attribution-policy.html">the attribution policy</a>.</p>
+<p>Owner direction, 2026-10-01: contribution-documentation, tagging and acknowledgement procedures are discontinued. Do not require custom commit trailers, mandatory contribution headers or percentage/share paperwork. Preserve normal Git Author/Committer provenance, actual provider identity and ordinary task/review evidence. Independent review, contributor/merger separation and every existing deterministic gate remain in force.</p>
+<p>Custom <code>Contributed-by:</code> trailers, a mandatory <code>Sole author:</code> header and share-record tables are retired. Historical tags acknowledge actual contributions only and never authenticate provider identity. Cursor records the logical producer and material contributors with the exact candidate evidence, using ordinary Git and authenticated run records. See <a href="contribution-attribution-policy.html">the current attribution policy</a>.</p>
 <h2 id="review-to-merge-handoff">Review-to-merge handoff</h2>
 <p>Every requested draft PR or other reviewable implementation must reserve a
 rotating different-provider review assignment in the original bounded plan,

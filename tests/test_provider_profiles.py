@@ -969,11 +969,13 @@ class SemanticDocument(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.source = text
         self.text, self.tags, self.ids, self.links = [], [], [], []
+        self.elements = []
         self.feed(text)
 
     def handle_starttag(self, tag, attrs):
         self.tags.append(tag)
         attributes = dict(attrs)
+        self.elements.append((tag, attributes))
         if 'id' in attributes:
             self.ids.append(attributes['id'])
         if tag == 'a':
@@ -1005,6 +1007,36 @@ class RenderTests(unittest.TestCase):
                     self.assertIn(tag, parsed.tags)
                 self.assertEqual(len(parsed.ids), len(set(parsed.ids)))
                 self.assertTrue(all(link[1:] in parsed.ids for link in parsed.links if link.startswith('#')))
+                self.assertNotIn('style', parsed.tags)
+                self.assertFalse(any('style' in attrs for _, attrs in parsed.elements))
+                stylesheets = [attrs.get('href') for tag, attrs in parsed.elements
+                               if tag == 'link' and attrs.get('rel') == 'stylesheet']
+                self.assertEqual(stylesheets, ['../assets/documentation.css'])
+                self.assertTrue((path.parent / stylesheets[0]).is_file())
+                policies = [attrs['content'] for tag, attrs in parsed.elements
+                            if tag == 'meta' and attrs.get('http-equiv') == 'Content-Security-Policy']
+                self.assertEqual(policies, ["default-src 'none'; style-src 'self'; script-src 'self'; "
+                                            "img-src 'self' data:; base-uri 'none'; form-action 'none'"])
+
+    def test_generated_table_body_rows_have_scoped_row_headers(self):
+        parsed = SemanticDocument(pp.render_index_html(_profiles(), _catalog()))
+        in_body, first = False, False
+        row_headers = 0
+        for tag, attrs in parsed.elements:
+            if tag == 'thead':
+                in_body = False
+            elif tag == 'tbody':
+                in_body = True
+            elif tag == 'tr':
+                first = True
+            elif tag in ('td', 'th') and in_body:
+                if first:
+                    self.assertEqual((tag, attrs.get('scope')), ('th', 'row'))
+                    row_headers += 1
+                else:
+                    self.assertEqual(tag, 'td')
+                first = False
+        self.assertEqual(row_headers, len(_catalog()['routes']) + 2 * len(LANES))
 
     def test_html_preserves_every_profile_and_catalog_string_as_inert_text(self):
         profiles, catalog = _profiles(), _catalog()
