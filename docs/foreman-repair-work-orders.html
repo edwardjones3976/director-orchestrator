@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Foreman-controlled repair work orders · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="project-leadership.html">Leadership</a><a href="site-coordination.html">Coordination</a></nav></header>
+<main id="content">
+<p class="eyebrow">Owner-approved operating procedure · 4 October 2026</p>
+<h1>Foreman-controlled repair work orders</h1>
+<p class="lede">One responsible Foreman, one explicit procedure, and evidence reused where it still proves the requirement. This procedure covers Director-Orchestrator repairs, not ordinary assignments or other projects.</p>
+<nav aria-label="On this page"><a href="#authority">Authority</a> · <a href="#order">Work order</a> · <a href="#phases">Five phases</a> · <a href="#reuse">Evidence reuse</a> · <a href="#reporting">Reporting</a> · <a href="#recommendations">Recommendations</a> · <a href="#rollout">Rollout</a></nav>
+
+<section aria-labelledby="authority">
+<h2 id="authority">Authority and operating boundary</h2>
+<blockquote><p><strong>All Director-Orchestrator repairs are routed to the Foreman. Only the acting Foreman issues mandatory, direct repair instructions.</strong> Once issued, providers follow the prescribed solution, sequence and boundaries. They may recommend alternatives or skipped steps, but must receive a revised Foreman order before acting on those recommendations. Outside Foreman-directed repairs, administrators and providers retain judgment and problem-solving freedom within their assignments.</p></blockquote>
+<p>A repair corrects an observed defect or inconsistency in project code, documentation, CI, provider plumbing or operations. New features and ordinary delivery assignments continue under their existing outcome-based guidance. An investigation finding is evidence, not permission to implement a fix. If classification or instructions conflict, pause only the affected step and return the conflict to the Foreman.</p>
+<table><caption>Responsibilities within the existing chain of command</caption><thead><tr><th scope="col">Role</th><th scope="col">Repair responsibility</th></tr></thead><tbody>
+<tr><th scope="row">Owner</th><td>Approves macro plans and expressly reserved matters. Existing access, spending and other limits remain in force.</td></tr>
+<tr><th scope="row">Codex — overall Director and Foreman</th><td>Converts findings into bounded orders; selects the solution, sequence and evidence; approves amendments and justified omissions within existing authority; resolves competing repair instructions.</td></tr>
+<tr><th scope="row">Claude — completion lead and administrator #2</th><td>Sets Director-Orchestrator completion priorities and coordinates delivery. Supplies findings and existing evidence to the Foreman and preserves the accountable writer. This completion appointment remains in force while Codex is available.</td></tr>
+<tr><th scope="row">Cursor — administrator #3</th><td>Performs assigned administration, implementation or eligible review. Carries the Foreman responsibility when both Codex and Claude are unavailable under recorded succession.</td></tr>
+<tr><th scope="row">Assigned supervisor, writer and reviewer</th><td>One supervisor owns delivery, one writer owns the named surfaces, and an eligible independent reviewer evaluates the exact candidate. Record actual provider identities and contributions.</td></tr>
+</tbody></table>
+<p>Existing succession applies: Claude covers Codex's absence; Cursor covers both administrators' absence. Record the outgoing/incoming acting Foreman, reason, effective time, active orders and unresolved effects in the existing coordination record. There is only one acting Foreman; <strong>silence does not establish absence</strong>. A successor inherits the current orders and authority limits, not permission to replay operations. Returning leadership also requires an explicit handback.</p>
+<p>Homemade LLM and other projects retain their separate ownership. This procedure grants no new credentials, permissions, budget, deployment authority or policy exception. Preserve <a href="contribution-attribution-policy.html">actual contributor eligibility</a>, independent review, security, exact-candidate CI, <a href="human-out-of-the-loop-operation.html">existing approval and merge controls</a> and deterministic gates. No provider accepts its own authored work; no contributor merges their own contribution. A Foreman instruction cannot bypass a refusing permission or safety gate.</p>
+</section>
+
+<section aria-labelledby="order">
+<h2 id="order">Issue one complete, bounded order</h2>
+<p>Use the <a href="templates/html/repair-work-order.html">repair work-order template</a> and one maintained <a href="templates/html/repair-report.html">repair report</a>. Ordinary work keeps the <a href="templates/html/assignment.html">provider assignment template</a>. Templates are drafts, not execution authority. The Foreman fills every execution field and marks the order <strong>ISSUED</strong> before provider execution. No unresolved placeholder may remain for a command, path, limit, owner, contact, deadline or acceptance condition. A reasoned “not applicable” is valid; UNKNOWN is not an executable instruction.</p>
+<table><caption>Required order contents</caption><thead><tr><th scope="col">Component</th><th scope="col">Complete before issue</th></tr></thead><tbody>
+<tr><th scope="row">Identity and authority</th><td>Unique work-order ID and revision; originating issue/report; parent authorization; issuing Foreman; Claude completion-lead reference; investigation-only or repair scope.</td></tr>
+<tr><th scope="row">Assignment</th><td>One accountable supervisor, one writer and an eligible independent reviewer; established contact route; named isolated worktree/location; claims and handoffs.</td></tr>
+<tr><th scope="row">Problem</th><td>Observed failure, expected behavior, impact, verified evidence, root cause or hypothesis, contradictory evidence and remaining uncertainty.</td></tr>
+<tr><th scope="row">Boundaries</th><td>Exact head, base, tree or configuration digests; permitted files/resources; prohibited changes; dependencies; existing runner, test-lane and computer-control reservations.</td></tr>
+<tr><th scope="row">Procedure</th><td>Numbered steps, each with the exact action/command and working directory, expected observation, evidence to retain, and failure/stop branch. Name the real producers and consumers.</td></tr>
+<tr><th scope="row">Limits and timing</th><td>Existing spending, attempt, tool and elapsed-time limits with authorization reference; retry allowance; checkpoint and delivery deadline as dated Pacific and UTC timestamps. Use America/Los_Angeles and the applicable UTC offset, not a fixed PST assumption.</td></tr>
+<tr><th scope="row">Acceptance</th><td>Named regression, integration, security and independent-review requirements; exact completion stage sought; required publication/merge gates or explicitly out of scope.</td></tr>
+<tr><th scope="row">Recovery</th><td>Permitted recovery, conditions requiring a stop, cleanup owner, and operation IDs/effects/reservations that must not be repeated.</td></tr>
+</tbody></table>
+<p>An unknown cause receives an <strong>investigation-only</strong> order first. It authorizes named read-only checks and a report, not a speculative fix. If an isolated reproduction requires a write or mutation, that action needs an explicit investigation amendment before use. Once the cause is established, the Foreman issues a repair-stage revision with the selected implementation instructions. Do not conceal an authorization gap under “use best judgment.”</p>
+</section>
+
+<section aria-labelledby="phases">
+<h2 id="phases">Five execution phases</h2>
+<ol>
+<li><strong>Intake and evidence assessment.</strong> Read the existing report and receipts. Reconcile current source/configuration, active writer, review claim, task state and external operation IDs. Check the existing register and merged PRs. Do not reopen a merged repair because an old checklist remains unchecked. Return stale or contradictory facts to the Foreman before dependent work.</li>
+<li><strong>Investigation, when required.</strong> Inspect only the named logs, configurations and producer/consumer paths. Compare expected and observed behavior. Establish the prescribed minimal reproduction and distinguish a supported root cause from hypotheses. Preserve contradictions, negative results and uncertainty. Submit findings before requesting a repair-stage order.</li>
+<li><strong>Repair authorization and execution.</strong> Acknowledge the issued revision before the first mutation. Follow the Foreman's selected solution and numbered sequence; change only named surfaces. Unexpected source drift, side effects, required files or conditions pause the affected step. Recommend an amendment with evidence and wait for the revised order; disjoint authorized work may continue.</li>
+<li><strong>Validation and independent evaluation.</strong> Run the named regression and failure controls against the real producer-to-consumer path. Where prescribed, show failure before the fix in a separate controlled fixture or worktree, not by changing files under active QA. Reuse applicable evidence. Freeze the candidate for the one eligible reviewer and current CI/security/publication gates; changed candidates require the applicable current binding.</li>
+<li><strong>Closeout.</strong> Submit the HTML report before handoff or a completion claim. Record actual outcome, limitations, cleanup and remaining owner. Distinguish implemented, tested, reviewed, merged, deployed and live-verified. A merge is not deployment; an acknowledgment is not a provider result. Update the existing queue, not a replacement assignment.</li>
+</ol>
+</section>
+
+<section aria-labelledby="reuse">
+<h2 id="reuse">Evidence reuse and amendments</h2>
+<p>Providers may recommend an omitted or reused step by supplying its step ID, existing evidence location, source/configuration binding, coverage and why it remains applicable. The Foreman records approval or rejection, reason, revision and time before execution changes. Reused evidence must establish the same requirement; a persuasive narrative is insufficient.</p>
+<table><caption>Checklist states</caption><thead><tr><th scope="col">State</th><th scope="col">Meaning and required record</th></tr></thead><tbody>
+<tr><th scope="row">required</th><td>Pending step; retain the exact prescribed action and acceptance evidence.</td></tr>
+<tr><th scope="row">completed</th><td>Action finished with its actual outcome and receipt. A failed action can be completed without satisfying acceptance.</td></tr>
+<tr><th scope="row">reused</th><td>Foreman approved existing evidence for this requirement; cite binding, coverage and decision.</td></tr>
+<tr><th scope="row">skipped by Foreman</th><td>Foreman approved omission within existing authority; record the reason and residual risk. Never use this to waive a mandatory gate.</td></tr>
+<tr><th scope="row">blocked</th><td>Named obstacle, affected steps, current safe state and next responsible decision-maker.</td></tr>
+<tr><th scope="row">not applicable</th><td>Foreman-approved reason the requirement does not apply to this order.</td></tr>
+</tbody></table>
+<p>Changed inputs invalidate the affected evidence, not unrelated completed work. Record the actual delta and affected consumers. Existing exact-candidate review and CI requirements still apply; reusable diagnostics do not make an old-head verdict current. Historical failures, cancelled runs and prior order revisions remain evidence. Amend the current order, preserve the superseded revision and append the change/decision history; do not restart the whole process by default.</p>
+</section>
+
+<section aria-labelledby="reporting">
+<h2 id="reporting">One HTML report and existing receipts</h2>
+<p>Maintain one report per repair, linked from its existing issue/PR and register entry. Include findings and reproduction, root-cause assessment, executed instructions, approved deviations and omitted steps, actual files/configuration changes and exact identifiers, test commands and results (including skips and failures), risks, prevention recommendations, cleanup, follow-up owner, delivery, acknowledgment and final disposition. Escape untrusted log text before embedding it in HTML.</p>
+<table><caption>Reporting times</caption><thead><tr><th scope="col">Trigger</th><th scope="col">Required report</th></tr></thead><tbody>
+<tr><th scope="row">Before first mutation</th><td>Acknowledge ownership, received order revision, location, boundaries and limits through the named route.</td></tr>
+<tr><th scope="row">Safety, ambiguous effect, scope conflict or blocking mismatch</th><td>Report immediately, before further dependent action. Preserve the original operation ID and reservations. Reconcile before any retry; silence or timeout is not permission to replay.</td></tr>
+<tr><th scope="row">Investigation complete</th><td>Return findings before requesting or beginning a repair-stage order.</td></tr>
+<tr><th scope="row">Explicit checkpoint</th><td>Report current stage, result, blocker and next step. A checkpoint is not an automatic cancellation deadline; the order's actual timeout/cancellation rules govern.</td></tr>
+<tr><th scope="row">Handoff or completion</th><td>Submit the final HTML report and evidence before claiming completion.</td></tr>
+<tr><th scope="row">Daily continuity</th><td>Feed existing results into the 22:45 Pacific administrator input and 23:00 America/Los_Angeles pass-down. Do not launch models merely for status.</td></tr>
+</tbody></table>
+<p>Detailed evidence stays in the authorized issue/PR and linked HTML record. Private administrator matters use the existing restricted administrator channel; the pass-down channel remains daily-report-only. Send sanitized summaries through the authorized route, accurately identifying sender and author. Answer providers through their originating channel. Technical/development questions between providers require Firecrawl or Perplexity context first and a <strong>RESEARCH:</strong> query/source section; process and coordination questions do not.</p>
+<h3 id="tool-ledger">Tool and resource ledger</h3>
+<p>Reference the original receipts rather than duplicating logs. Record actual provider/model (served identity or UNKNOWN), tool/version, host/runner, purpose, operation ID, start/end time, result, evidence location, measured tokens/credits/time or UNKNOWN, spend and unresolved holds, configuration changes, tool failures, maintenance performed and cleanup status/owner. Record equipment or software used even when it failed. Secret references identify the approved store or variable name, never credential contents. A local estimate is not measured spend. This is a table in the existing report/register, not new telemetry machinery.</p>
+</section>
+
+<section aria-labelledby="recommendations">
+<h2 id="recommendations">Recommendations for the Foreman</h2>
+<p>The Foreman selects and turns these into exact instructions for the named candidate. They do not authorize providers to substitute a solution.</p>
+<table><caption>Issue class and prescribed approach to consider</caption><thead><tr><th scope="col">Issue class</th><th scope="col">Recommendation</th></tr></thead><tbody>
+<tr><th scope="row">Repeated defects in one area</th><td>Diagnose the shared producer/consumer contract and test that defect class before the next publication. A concrete unresolved P1 still blocks; an audit label does not exempt it.</td></tr>
+<tr><th scope="row">CI failure</th><td>Use logs to classify source, environment and infrastructure causes. Authorize a targeted rerun only with evidence of information gain or a temporary failure; preserve the failed run.</td></tr>
+<tr><th scope="row">Authentication or capacity failure</th><td>Check the specific route and current native session. A signed-out CLI or stale quota receipt does not prove an account-wide outage.</td></tr>
+<tr><th scope="row">Timeout or uncertain external action</th><td>Reconcile the original operation by ID before retrying. Preserve spending reservations and unknown outcomes; client timeout does not prove server cancellation.</td></tr>
+<tr><th scope="row">Shared-file or runner collision</th><td>Keep the current owner, sequence conflicting work and continue disjoint assignments. Only the Foreman or branch owner updates that branch from main or cancels its runs.</td></tr>
+<tr><th scope="row">Evidence mismatch</th><td>Withhold acceptance, identify the changed input and repair the affected chain. Never turn UNKNOWN into PASS.</td></tr>
+</tbody></table>
+</section>
+
+<section aria-labelledby="rollout">
+<h2 id="rollout">Integrate without duplicate work</h2>
+<ol>
+<li>Reconcile the current queue with Claude using the existing <a href="team-staff-and-briefings.html">staff workbook, repair register</a>, issues and <a href="site-coordination.html">PR claims</a>. Preserve user edits and append history. Record already completed repairs as completed; distinguish remaining acceptance/release work.</li>
+<li>Send this boundary through the established Claude, Cursor, Astra and affected-provider channels or their next relevant assignments. Record actual delivery and acknowledgment, or UNKNOWN. Do not wake every model just for acknowledgment.</li>
+<li>Issue an order only for verified remaining work with one writer, exact scope and resource limits. Use the first real repair as the workflow check; if none is ready, record the check as pending rather than invent a repair.</li>
+<li>Use existing documentation checks and scenario review below. Do not run a simulated campaign or repeat a full product suite to validate this operating procedure.</li>
+</ol>
+<table><caption>Workflow review checklist</caption><thead><tr><th scope="col">Case</th><th scope="col">Required behavior</th></tr></thead><tbody>
+<tr><th scope="row">Detailed existing report</th><td>Foreman binds and reuses sufficient evidence; repair can proceed without repeating investigation.</td></tr>
+<tr><th scope="row">Unknown cause</th><td>Investigation-only order; no implementation until a repair revision is issued.</td></tr>
+<tr><th scope="row">Alternative or skip</th><td>Recommendation waits for a recorded Foreman revision; the issued procedure stays effective meanwhile.</td></tr>
+<tr><th scope="row">Ordinary assignment</th><td>Outcome-based guidance and provider judgment remain intact.</td></tr>
+<tr><th scope="row">Changed source</th><td>Affected evidence is invalidated and candidate gates rebound; unrelated evidence is retained.</td></tr>
+<tr><th scope="row">Ambiguous paid request</th><td>Original effect is reconciled without replay or releasing an unresolved hold.</td></tr>
+<tr><th scope="row">Review and succession</th><td>No self-acceptance or contributor merge; exactly one recorded acting Foreman, with project appointments preserved.</td></tr>
+<tr><th scope="row">Report and register</th><td>Failures and stage distinctions remain; workbook edits and historical records are preserved.</td></tr>
+<tr><th scope="row">HTML</th><td>Semantic headings, language, title, table headers, keyboard links, local assets and valid offline links; no maintained Markdown twin.</td></tr>
+</tbody></table>
+</section>
+</main>
+<footer class="site-footer">Operating procedure only. No runtime schema, service, scheduler or production-policy change.</footer>
+</body>
+</html>

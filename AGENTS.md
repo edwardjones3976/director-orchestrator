@@ -40,6 +40,29 @@ These rules apply to every AI coding agent working in this repository.
 
 For draft-PR claims, the work board, check-before-edit, and foreman coordination, follow [Site coordination](docs/site-coordination.html).
 
+## Foreman-controlled repairs
+
+All Director-Orchestrator repairs are routed to the acting Foreman. Only that
+Foreman issues mandatory, direct repair instructions; providers follow the
+prescribed solution, sequence and boundaries. Recommend alternatives or skipped
+steps with evidence, but wait for a revised Foreman order before acting on them.
+An unknown cause requires an investigation-only order before repair authorization.
+Outside Foreman-directed repairs, administrators and providers retain judgment
+and problem-solving freedom within their assignments.
+
+Codex remains overall Director and Foreman; Claude remains completion lead and
+sets completion priorities; Cursor remains administrator #3. Record any acting
+Foreman takeover under existing succession; silence does not establish absence.
+The owner retains macro-plan and expressly reserved decisions. Foreman procedure
+and omission decisions stay within existing authority and preserve independent
+review, contributor eligibility, security, exact-candidate, CI, budget and merge
+controls. Homemade LLM and other projects retain their separate ownership.
+
+Read [Foreman-controlled repair work orders](docs/foreman-repair-work-orders.html).
+Use its dedicated HTML order and report templates, existing repair register and
+receipts. Do not reopen completed repairs or run a new campaign to validate the
+procedure. This is operating guidance, not a runtime-policy or permission change.
+
 ## INVESTIGATOR responsibility
 
 OpenAI/Director members also act as **INVESTIGATOR** under the
