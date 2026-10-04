@@ -215,10 +215,14 @@ function Assert-PathInsideHub([string]$Path, [string]$HubRoot, [string]$Context)
     if (-not $pathN.Equals($hubN, [StringComparison]::OrdinalIgnoreCase) -and -not $pathN.StartsWith($hubPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         Write-Error "${Context}: resolved path escapes hub folder ${hubN}: $pathN"
     }
+    # Prefix confinement is lexical. Refuse directory redirects before querying
+    # the leaf; the leaf itself may be a supported file link resolved below.
+    Assert-NoReparseExistingAncestors $hubN $Context
+    Assert-NoReparseExistingAncestors (Split-Path -Parent $pathN) $Context
 }
 
 # Resolves a snapshot-relative weight/metadata file to its final, readable, regular-file
-# path, following at most 4 reparse hops. Supports ordinary NTFS symlinks/junctions
+# path, following at most 4 reparse hops. Supports ordinary NTFS file symlinks
 # (non-empty .Target) and the WSL LX symlinks used by the Hugging Face cache on this
 # host (empty .Target, decoded via Resolve-LxReparseTarget). The snapshot's own entry
 # name must stay inside the repo's hub folder (HubRoot); every hop thereafter must stay
@@ -229,6 +233,8 @@ function Assert-PathInsideHub([string]$Path, [string]$HubRoot, [string]$Context)
 # repo's own `blobs` folder or the hub cache root's shared `blobs` folder (including
 # its two-hex subfolders) -- the two legitimate Hugging Face cache layouts.
 function Resolve-SnapshotFile([string]$Snapshot, [string]$Relative, [string]$HubRoot, [string]$HubCacheRoot) {
+    Assert-NoReparseExistingAncestors $Snapshot 'LX symlink gate'
+    Assert-NoReparseExistingAncestors $HubCacheRoot 'LX symlink gate'
     $full = Get-NormalPath (Join-Path $Snapshot $Relative)
     Assert-PathInsideHub $full $HubRoot 'LX symlink gate'
     if (-not (Test-Path -LiteralPath $full)) { Write-Error "missing weight file $full" }
@@ -255,7 +261,7 @@ function Resolve-SnapshotFile([string]$Snapshot, [string]$Relative, [string]$Hub
             Write-Error "LX symlink gate: more than 4 hops resolving $full"
         }
         $hops++
-        $target = $item.Target
+        $target = @($item.Target)
         $rel = $null
         if ($target -and $target.Count -gt 0 -and -not [string]::IsNullOrEmpty([string]$target[0])) {
             $rel = [string]$target[0]
@@ -578,6 +584,11 @@ function Get-TrustedListDigest([string]$RootPath, [string]$Repo, [string]$Revisi
 }
 
 function Assert-BaseShards([string]$Snapshot, [string]$HubRoot, [string]$HubCacheRoot) {
+    # Inspect the existing roots as directories before walking the snapshot or
+    # reading covered files. A directory link cannot be treated as a file hop.
+    Assert-NoReparseExistingAncestors $HubCacheRoot 'base shard gate'
+    Assert-NoReparseExistingAncestors $HubRoot 'base shard gate'
+    Assert-NoReparseExistingAncestors $Snapshot 'base shard gate'
     $trust = Get-TrustedListDigest $TrustedDigestManifest $BaseRepo $BaseRevision
 
     if (-not (Test-Path -LiteralPath $ExpectedShardsJson -PathType Leaf)) {
@@ -640,6 +651,7 @@ function Assert-BaseShards([string]$Snapshot, [string]$HubRoot, [string]$HubCach
     $presentRel = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     while ($stack.Count -gt 0) {
         $dir = $stack.Pop()
+        Assert-NoReparseExistingAncestors $dir 'base shard gate'
         foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force)) {
             if ($child.PSIsContainer) {
                 if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) {

@@ -1404,6 +1404,106 @@ try {
     $twoHopText = Out-Text $twoHopLines
     Assert ($twoHopCode -eq 0 -and $twoHopText -eq "PROBE_OK:$sharedBlobFile") 'resolve-snapshot-file: two-hop chain through a repo blobs link into the hub-level shared blobs store is accepted'
 
+    # Directory redirects are distinct from supported leaf file links. These
+    # subprocesses use entirely synthetic filesystem observations, including all
+    # ancestors; no junction or cache file is created or queried. Gate probes
+    # fail if trust metadata is read or coverage walking begins before refusal.
+    function Invoke-DirectoryRedirectProbe {
+        param([string]$Redirect = '', [switch]$Gate, [switch]$TwoHop, [switch]$Lx, [switch]$ArrayTarget)
+        $redirectEsc = $Redirect.Replace("'", "''")
+        $repoTarget = Join-Path $lxHub 'blobs\redirect\leaf.bin'
+        $finalTarget = if ($TwoHop) { Join-Path $lxHubCacheRoot 'blobs\ab\redirect\leaf.bin' } else { $repoTarget }
+        $repoTargetEsc = $repoTarget.Replace("'", "''")
+        $finalTargetEsc = $finalTarget.Replace("'", "''")
+        $gateLiteral = if ($Gate) { '$true' } else { '$false' }
+        $twoHopLiteral = if ($TwoHop) { '$true' } else { '$false' }
+        $lxLiteral = if ($Lx) { '$true' } else { '$false' }
+        $arrayTargetLiteral = if ($ArrayTarget) { '$true' } else { '$false' }
+        $cmd = @"
+`$ErrorActionPreference = 'Stop'
+$(Get-ExportGateHelperSource)
+`$script:LeafQueries = [System.Collections.Generic.List[string]]::new()
+`$script:Targets = @{ '$lxLinkEsc' = '$repoTargetEsc' }
+if ($twoHopLiteral) { `$script:Targets['$repoTargetEsc'] = '$finalTargetEsc' }
+function Test-Path { param([string]`$LiteralPath); return `$true }
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$LiteralPath -eq '$redirectEsc') {
+        return [pscustomobject]@{ PSIsContainer = `$true; Attributes = [IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint }
+    }
+    if (`$script:Targets.ContainsKey(`$LiteralPath)) {
+        `$script:LeafQueries.Add(`$LiteralPath)
+        `$target = if ($lxLiteral) { @() } elseif ($arrayTargetLiteral) { ,@(`$script:Targets[`$LiteralPath]) } else { `$script:Targets[`$LiteralPath] }
+        return [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = `$target }
+    }
+    if (`$LiteralPath -eq '$finalTargetEsc') {
+        `$script:LeafQueries.Add(`$LiteralPath)
+        return [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::Normal; Target = `$null }
+    }
+    return [pscustomobject]@{ PSIsContainer = `$true; Attributes = [IO.FileAttributes]::Directory }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (-not `$script:Targets.ContainsKey(`$Path)) { throw 'unexpected synthetic fsutil path' }
+    `$all = [byte[]]@(0,0,0,0) + [Text.Encoding]::UTF8.GetBytes(`$script:Targets[`$Path])
+    `$lines = [System.Collections.Generic.List[string]]::new()
+    `$lines.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$last = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$hex = ((`$all[`$i..`$last] | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$lines.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$lines.ToArray()
+}
+function Get-TrustedListDigest { throw 'UNEXPECTED_METADATA_READ' }
+function Get-ChildItem { throw 'UNEXPECTED_COVERAGE_WALK' }
+try {
+    if ($gateLiteral) {
+        `$null = Assert-BaseShards '$lxSnapEsc' '$lxHubEsc' '$lxHubCacheRootEsc'
+    } else {
+        `$resolved = Resolve-SnapshotFile '$lxSnapEsc' 'model-00001-of-00002.safetensors' '$lxHubEsc' '$lxHubCacheRootEsc'
+        Write-Output "PROBE_OK:`$resolved"
+    }
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    Write-Output ('LEAF_QUERIES:' + (`$script:LeafQueries -join '|'))
+    exit 1
+}
+"@
+        $prevEa = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $lines = @(Invoke-ShellScript $cmd)
+            $code = $LASTEXITCODE
+            if ($null -eq $code) { $code = -1 }
+            return [pscustomobject]@{ Code = $code; Text = (Out-Text $lines); FinalTarget = $finalTarget }
+        } finally { $ErrorActionPreference = $prevEa }
+    }
+
+    foreach ($rootCase in @(
+        @{ Name = 'snapshot root'; Path = $lxSnap },
+        @{ Name = 'snapshot ancestor'; Path = (Split-Path -Parent $lxSnap) },
+        @{ Name = 'repo hub root'; Path = $lxHub },
+        @{ Name = 'shared hub cache root'; Path = $lxHubCacheRoot }
+    )) {
+        $probe = Invoke-DirectoryRedirectProbe -Redirect $rootCase.Path -Gate
+        Assert ($probe.Code -ne 0 -and $probe.Text.Contains("reparse point at $($rootCase.Path)") -and $probe.Text -notmatch 'UNEXPECTED_|PROBE_OK' -and $probe.Text.EndsWith('LEAF_QUERIES:')) "assert-base-shards: redirected $($rootCase.Name) refused before metadata, walking or file reads"
+    }
+    $probe = Invoke-DirectoryRedirectProbe -Redirect $lxSnap
+    Assert ($probe.Code -ne 0 -and $probe.Text.Contains("reparse point at $lxSnap") -and $probe.Text.EndsWith('LEAF_QUERIES:')) 'resolve-snapshot-file: redirected initial snapshot refused before leaf query'
+
+    $repoRedirect = Join-Path $lxHub 'blobs\redirect'
+    $probe = Invoke-DirectoryRedirectProbe -Redirect $repoRedirect
+    Assert ($probe.Code -ne 0 -and $probe.Text.Contains("reparse point at $repoRedirect") -and $probe.Text.EndsWith("LEAF_QUERIES:$lxLink")) 'resolve-snapshot-file: ordinary file link into redirected repo blob ancestor refused before target leaf query'
+    $sharedRedirect = Join-Path $lxHubCacheRoot 'blobs\ab\redirect'
+    $probe = Invoke-DirectoryRedirectProbe -Redirect $sharedRedirect -TwoHop -Lx
+    $intermediate = Join-Path $lxHub 'blobs\redirect\leaf.bin'
+    Assert ($probe.Code -ne 0 -and $probe.Text.Contains("reparse point at $sharedRedirect") -and $probe.Text.EndsWith("LEAF_QUERIES:$lxLink|$intermediate")) 'resolve-snapshot-file: second LX hop into redirected shared blob ancestor refused before final leaf query'
+    $probe = Invoke-DirectoryRedirectProbe
+    Assert ($probe.Code -eq 0 -and $probe.Text -eq "PROBE_OK:$($probe.FinalTarget)") 'resolve-snapshot-file: ordinary leaf file link with scalar Target and regular directory ancestors accepted'
+    $probe = Invoke-DirectoryRedirectProbe -ArrayTarget
+    Assert ($probe.Code -eq 0 -and $probe.Text -eq "PROBE_OK:$($probe.FinalTarget)") 'resolve-snapshot-file: ordinary leaf file link with array Target and regular directory ancestors accepted'
+
     $outsideTarget = 'C:\probe-lx-outside\evil.bin'
     $outsideCmd = @"
 `$ErrorActionPreference = 'Stop'
