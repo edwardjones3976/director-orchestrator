@@ -1298,6 +1298,8 @@ class TaskStore:
             correlation = work["correlation"]["correlation_id"]
             if not record.get("plan") or correlation in record.get("consumed_packet_results", {}):
                 raise ValueError("packet recovery storage has no current unconsumed task")
+            if not work["idempotency_key"].startswith(f'{work["task_id"]}:{record["plan_generation"]}:'):
+                raise ValueError("packet recovery storage generation is stale")
             expected = (work["task_id"], record["plan_generation"], correlation, 0)
             existing = connection.execute(
                 "SELECT task_id, plan_generation, correlation_id, closed FROM runtime_result_payloads "

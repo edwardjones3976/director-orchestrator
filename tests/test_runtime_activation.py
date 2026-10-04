@@ -458,7 +458,7 @@ class RuntimeCheckpointConcurrencyTests(
         work = load_json_document(WORK_PACKET_EXAMPLE)
         work["task_id"] = "DIR-CONCURRENT-CHECKPOINT"
         work["assignment_id"] = f"DIR-CONCURRENT-CHECKPOINT-{index}"
-        work["idempotency_key"] = f"DIR-CONCURRENT-CHECKPOINT:{index}:run"
+        work["idempotency_key"] = f"DIR-CONCURRENT-CHECKPOINT:1:{index}:run"
         work["correlation"] = {
             **work["correlation"],
             "correlation_id": f"corr-concurrent-{index}",

@@ -209,6 +209,9 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         for packet in (self.work, self.result):
             packet["task_id"] = "DIR-PACKET-ROUTING"
             packet["assignment_id"] = "DIR-PACKET-ROUTING-1"
+            # Match the production router's task:generation:assignment binding;
+            # _record seeds the first plan at generation 1.
+            packet["idempotency_key"] = "DIR-PACKET-ROUTING:1:1:" + "a" * 64
         self.ledger_path = self.root / "runtime-ledger.sqlite3"
 
     def _settings(self, **overrides) -> Settings:

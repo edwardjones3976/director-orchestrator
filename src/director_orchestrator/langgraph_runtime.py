@@ -431,21 +431,17 @@ class LangGraphPacketRuntime:
 
     def _migrate_result_payloads(self) -> None:
         """Move still-needed legacy content, erase reset/consumed copies before activation."""
-        # Drain the finite startup backlog in bounded transactions; each committed
-        # batch makes progress even if a later batch or checkpoint is interrupted.
-        with closing(sqlite3.connect(self._ledger_database)) as connection:
-            remaining = connection.execute(
-                "SELECT COUNT(*) FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL"
-            ).fetchone()[0]
-        while remaining > 0:
-            with self._transaction() as connection:
-                rows = connection.execute(
-                    "SELECT idempotency_key, task_id, work_packet_json, result_packet_json, "
-                    "work_packet_digest, result_packet_digest, assignment_id, provider, authority_snapshot_digest "
-                    "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1000"
-                ).fetchall()
-                if not rows:
-                    break
+        # One activation gets one bounded batch. A remaining backlog refuses
+        # activation after committing progress; the next activation resumes it.
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT idempotency_key, task_id, work_packet_json, result_packet_json, "
+                "work_packet_digest, result_packet_digest, assignment_id, provider, authority_snapshot_digest "
+                "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1000"
+            ).fetchall()
+            if rows:
+                connection.execute(
+                    "UPDATE runtime_result_cleanup_state SET pending_generation=pending_generation+1 WHERE singleton=1")
                 for key, task_id, work_json, encoded, work_digest, result_digest, assignment_id, provider, authority in rows:
                     record = self._result_store.get(task_id)
                     if (record is not None and record.plan is not None
@@ -468,13 +464,29 @@ class LangGraphPacketRuntime:
                             self._result_store.save_runtime_result(result, encoded)
                     connection.execute(
                         "UPDATE runtime_dispatch_ledger SET result_packet_json=NULL WHERE idempotency_key=?", (key,))
-            remaining -= len(rows)
-        # Legacy writers may have left copies in WAL frames. Refuse activation
-        # until those frames can be truncated; never claim logical deletion is physical cleanup.
+        # A crash or busy reader can leave cleanup pending after the last row was
+        # cleared. Persist that obligation with the clearing transaction; never
+        # checkpoint unrelated WAL traffic on a clean activation.
         with closing(sqlite3.connect(self._ledger_database, timeout=0.2)) as connection:
-            busy, _, _ = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            if busy:
-                raise RuntimeContractError("runtime result privacy cleanup is pending")
+            pending, completed = connection.execute(
+                "SELECT pending_generation, completed_generation FROM runtime_result_cleanup_state WHERE singleton=1"
+            ).fetchone()
+            if pending > completed:
+                busy, _, _ = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if busy:
+                    raise RuntimeContractError("runtime result privacy cleanup is pending")
+                with connection:
+                    connection.execute(
+                        "UPDATE runtime_result_cleanup_state SET completed_generation=MAX(completed_generation, ?) WHERE singleton=1",
+                        (pending,))
+            remaining = connection.execute(
+                "SELECT 1 FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1"
+            ).fetchone()
+            pending, completed = connection.execute(
+                "SELECT pending_generation, completed_generation FROM runtime_result_cleanup_state WHERE singleton=1"
+            ).fetchone()
+            if remaining is not None or pending > completed:
+                raise RuntimeContractError("runtime result migration is pending; bounded activation may be resumed")
 
     def readiness(self) -> RuntimeReadiness:
         """Return honest readiness without claiming provider availability."""
@@ -536,6 +548,12 @@ class LangGraphPacketRuntime:
                     parallel_effect_key TEXT,
                     closed_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS runtime_result_cleanup_state (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    pending_generation INTEGER NOT NULL,
+                    completed_generation INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO runtime_result_cleanup_state VALUES (1, 0, 0);
                 """
             )
             columns = {

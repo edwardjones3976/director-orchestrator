@@ -92,7 +92,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
         for consumed in (False, True):
             with self.subTest(consumed=consumed), tempfile.TemporaryDirectory() as root:
                 _, store, record, _ = fixtures.ProviderSpendSettlementTests()._world(root)
-                work = {'task_id': record.task_id, 'idempotency_key': 'packet-key',
+                work = {'task_id': record.task_id, 'idempotency_key': f'{record.task_id}:{record.plan_generation}:packet-key',
                         'correlation': {'correlation_id': 'correlation'}}
                 store.reserve_runtime_result(work)
                 store.save_runtime_result(work, 'private-provider-marker')
@@ -103,7 +103,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     reset_for_owner_clarification(record)
                 store.save(record)
-                self.assertIsNone(store.read_runtime_result('packet-key'))
+                self.assertIsNone(store.read_runtime_result(work['idempotency_key']))
                 with self.assertRaises(ValueError):
                     store.save_runtime_result(work, 'late-private-provider-marker')
                 with self.assertRaises(ValueError):
@@ -116,7 +116,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
             _, store, record, _ = fixtures.ProviderSpendSettlementTests()._world(root)
             with closing(sqlite3.connect(store.path)) as connection:
                 connection.execute('PRAGMA journal_mode=WAL')
-            work = {'task_id': record.task_id, 'idempotency_key': 'pinned-key',
+            work = {'task_id': record.task_id, 'idempotency_key': f'{record.task_id}:{record.plan_generation}:pinned-key',
                     'correlation': {'correlation_id': 'pinned-correlation'}}
             store.reserve_runtime_result(work)
             store.save_runtime_result(work, 'PINNED-PRIVATE-RESULT')
@@ -125,7 +125,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 reader.execute('SELECT payload_json FROM runtime_result_payloads').fetchall()
                 reset_for_owner_clarification(record)
                 store.save(record)
-                self.assertIsNone(store.read_runtime_result('pinned-key'))
+                self.assertIsNone(store.read_runtime_result(work['idempotency_key']))
                 self.assertTrue(store.privacy_cleanup_pending())
             self.assertFalse(store.privacy_cleanup_pending())
             self.assertNotIn(b'PINNED-PRIVATE-RESULT', Path(store.path).read_bytes())
@@ -136,7 +136,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_restart_recovers_split_commit_and_legacy_layouts(self):
         from director_orchestrator.langgraph_runtime import RuntimeExecutionMode, RuntimeExecutionStatus, RuntimeContractError
-        for scenario in ('split_commit', 'legacy_pending', 'legacy_without_work', 'large_backlog', 'lost_guard'):
+        for scenario in ('split_commit', 'legacy_pending', 'legacy_without_work', 'large_backlog', 'lost_guard', 'stale_legacy'):
             with self.subTest(scenario=scenario):
                 f = routing.PacketRuntimeRoutingTests()
                 f.setUp()
@@ -164,7 +164,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as db:
                         if scenario == 'split_commit':
                             db.execute("UPDATE runtime_dispatch_ledger SET status='DISPATCHING', result_packet_digest=NULL")
-                        elif scenario == 'legacy_pending':
+                        elif scenario in ('legacy_pending', 'stale_legacy'):
                             db.execute("UPDATE runtime_dispatch_ledger SET status='CLAIMED', result_packet_digest=NULL")
                         elif scenario == 'legacy_without_work':
                             db.execute('UPDATE runtime_dispatch_ledger SET work_packet_json=NULL, result_packet_json=?', (encoded,))
@@ -182,16 +182,40 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
                         else:
                             db.execute("UPDATE runtime_dispatch_ledger SET status='REJECTED'")
                         db.commit()
-                    if scenario in ('legacy_pending', 'legacy_without_work', 'lost_guard'):
+                    if scenario in ('legacy_pending', 'legacy_without_work', 'lost_guard', 'stale_legacy'):
                         with closing(sqlite3.connect(store.path)) as db:
                             db.execute('DELETE FROM runtime_result_payloads')
                             db.commit()
+                    if scenario == 'stale_legacy':
+                        current = store.get(record.task_id)
+                        plan = current.plan.model_copy(deep=True)
+                        reset_for_owner_clarification(current)
+                        store.save(current)
+                        current.plan_generation += 1
+                        current.plan = plan
+                        store.save(current)
                     activation.close()
+                    if scenario == 'large_backlog':
+                        from director_orchestrator.runtime_activation import RuntimeActivationError
+                        with self.assertRaises(RuntimeActivationError):
+                            unexpected = RuntimeActivation(settings, packet_task_router=router,
+                                packet_result_consumer=routing.RecordingResultConsumer())
+                            unexpected.close()
+                        with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as db:
+                            remaining = db.execute('SELECT COUNT(*) FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL').fetchone()[0]
+                        self.assertEqual(remaining, 1, 'one activation must process at most 1000 rows')
                     activation = RuntimeActivation(settings, packet_task_router=router,
                         packet_result_consumer=routing.RecordingResultConsumer())
                     runtime = activation.runtime
                     self.assertIsNotNone(runtime)
-                    if scenario == 'legacy_pending':
+                    if scenario == 'stale_legacy':
+                        runtime.open_reconciliation(f.work, provider='gemini', writer_token=router.token)
+                        with self.assertRaisesRegex(ValueError, 'generation'):
+                            runtime.reconcile_result(f.work, f.result, provider='gemini', writer_token=router.token)
+                        self.assertIsNone(store.read_runtime_result(key))
+                        with closing(sqlite3.connect(store.path)) as db:
+                            self.assertEqual(db.execute('SELECT COUNT(*) FROM runtime_result_payloads').fetchone()[0], 0)
+                    elif scenario == 'legacy_pending':
                         runtime.open_reconciliation(f.work, provider='gemini', writer_token=router.token)
                         outcome = runtime.reconcile_result(f.work, f.result, provider='gemini', writer_token=router.token)
                         self.assertEqual(outcome.status, RuntimeExecutionStatus.COMPLETED)
@@ -211,6 +235,53 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     activation.close()
                     f.directory.cleanup()
 
+    def test_clean_activation_does_not_checkpoint_unrelated_wal(self):
+        f = routing.PacketRuntimeRoutingTests()
+        f.setUp()
+        self.addCleanup(f.directory.cleanup)
+        router = routing.StubPacketTaskRouter(f.work, PacketBoundaryAdapter('gemini', routing.RecordingTransport(f.result)))
+        settings = f._settings(langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True, langgraph_runtime_task_writer_enabled=True)
+        activation = RuntimeActivation(settings, packet_task_router=router,
+            packet_result_consumer=routing.RecordingResultConsumer())
+        activation.close()
+        with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as reader:
+            reader.execute('PRAGMA journal_mode=WAL')
+            reader.execute('BEGIN')
+            reader.execute('SELECT * FROM runtime_dispatch_ledger').fetchall()
+            with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as writer:
+                writer.execute("INSERT INTO runtime_pre_submit_closures VALUES ('unrelated','effect','now')")
+                writer.commit()
+            activation = RuntimeActivation(settings, packet_task_router=router,
+                packet_result_consumer=routing.RecordingResultConsumer())
+            self.assertIsNotNone(activation.runtime)
+            activation.close()
+            # Once a real legacy payload is cleared, the durable obligation
+            # survives a busy checkpoint and a restart with zero payload rows.
+            with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as writer:
+                writer.execute("""INSERT INTO runtime_dispatch_ledger(
+                    idempotency_key, task_id, assignment_id, provider, execution_mode,
+                    work_packet_digest, authority_snapshot_digest, status, result_packet_json)
+                    VALUES ('retired','retired','1','gemini','live_safe',?,?,'COMPLETED',?)""",
+                    ('a'*64, 'b'*64, json.dumps(f.result)))
+                writer.commit()
+            from director_orchestrator.runtime_activation import RuntimeActivationError
+            for _ in range(2):
+                with self.assertRaises(RuntimeActivationError):
+                    RuntimeActivation(settings, packet_task_router=router,
+                        packet_result_consumer=routing.RecordingResultConsumer())
+                with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as observed:
+                    self.assertEqual(observed.execute('SELECT COUNT(*) FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL').fetchone()[0], 0)
+                    pending, completed = observed.execute('SELECT pending_generation, completed_generation FROM runtime_result_cleanup_state').fetchone()
+                    self.assertGreater(pending, completed)
+        activation = RuntimeActivation(settings, packet_task_router=router,
+            packet_result_consumer=routing.RecordingResultConsumer())
+        self.assertIsNotNone(activation.runtime)
+        activation.close()
+        with closing(sqlite3.connect(settings.langgraph_runtime_ledger_path)) as observed:
+            pending, completed = observed.execute('SELECT pending_generation, completed_generation FROM runtime_result_cleanup_state').fetchone()
+            self.assertEqual(pending, completed)
+
     def test_persistent_journal_is_scrubbed_and_lifecycle_index_is_used(self):
         from unittest.mock import patch
         connect = sqlite3.connect
@@ -220,7 +291,7 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
             return db
         with tempfile.TemporaryDirectory() as root, patch('sqlite3.connect', side_effect=persistent):
             _, store, record, _ = fixtures.ProviderSpendSettlementTests()._world(root)
-            work = {'task_id': record.task_id, 'idempotency_key': 'persistent-key',
+            work = {'task_id': record.task_id, 'idempotency_key': f'{record.task_id}:{record.plan_generation}:persistent-key',
                     'correlation': {'correlation_id': 'persistent-correlation'}}
             store.reserve_runtime_result(work)
             store.save_runtime_result(work, 'PERSIST-PRIVATE-RESULT')
