@@ -179,6 +179,10 @@ class BoundaryAdapterInRuntimeTests(unittest.TestCase):
         legacy = Path(store.path)
         for packet in (self.work, self.result):
             packet["task_id"] = record.task_id
+        self.work["idempotency_key"] = (
+            f'{record.task_id}:{record.plan_generation}:{self.work["idempotency_key"]}'
+        )
+        self.result["idempotency_key"] = self.work["idempotency_key"]
         self.connection = sqlite3.connect(
             root / "runtime.sqlite3", check_same_thread=False
         )
