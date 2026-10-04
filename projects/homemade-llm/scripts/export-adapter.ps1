@@ -33,15 +33,43 @@ $ErrorActionPreference = 'Stop'
 $script:PinnedTrustedDigestManifestSha256 = 'd1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'
 
 $MergePy = @'
-import os, sys
+import os, sys, json, hashlib
 os.environ["HF_HUB_OFFLINE"] = "1"
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
-snap = "/hf/hub/models--Qwen--Qwen3-14B/snapshots/" + os.environ["HL_BASE_REVISION"]
+snap = "/base-snapshot"
+def verify_base_snapshot():
+    raw = open("/base-integrity.json", "rb").read()
+    if hashlib.sha256(raw).hexdigest() != os.environ["HL_BASE_GATE_SHA256"]:
+        raise RuntimeError("base load gate: integrity envelope hash mismatch")
+    approved = json.loads(raw)
+    expected = {entry["path"]: entry for entry in approved["files"]}
+    present = set()
+    for directory, directories, files in os.walk(snap, followlinks=False):
+        if any(os.path.islink(os.path.join(directory, name)) for name in directories + files):
+            raise RuntimeError("base load gate: snapshot link refused")
+        present.update(os.path.relpath(os.path.join(directory, name), snap).replace(os.sep, "/") for name in files)
+    if present != set(expected) or len(expected) != approved["covered_files"]:
+        raise RuntimeError("base load gate: snapshot coverage mismatch")
+    for relative, entry in expected.items():
+        path = os.path.join(snap, relative)
+        if os.path.getsize(path) != entry["size"]:
+            raise RuntimeError("base load gate: size mismatch: " + relative)
+        def digest():
+            result = hashlib.sha256()
+            with open(path, "rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    result.update(block)
+            return result.hexdigest()
+        read1, read2 = digest(), digest()
+        if read1 != entry["sha256"] or read2 != entry["sha256"]:
+            raise RuntimeError("base load gate: two-read approved hash mismatch: " + relative)
+verify_base_snapshot()
 base = AutoModelForCausalLM.from_pretrained(snap, torch_dtype=torch.bfloat16, device_map={"": "cpu"}, local_files_only=True)
 model = PeftModel.from_pretrained(base, "/adapter", local_files_only=True).merge_and_unload()
 model.save_pretrained("/work/merged", safe_serialization=True)
+verify_base_snapshot()
 AutoTokenizer.from_pretrained(snap, local_files_only=True).save_pretrained("/work/merged")
 print("merged ok")
 '@
@@ -135,7 +163,7 @@ function Get-EStorageSnapshot {
     }
 }
 
-function Assert-StorageGuard([string]$Context, [long]$AdditionalBytesOnC = 0) {
+function Assert-StorageGuard([string]$Context, [long]$AdditionalBytesOnC = 0, [long]$AdditionalBytesOutsideHotOnC = 0) {
     $s = Get-StorageSnapshot
     if ($s.cFreeBytes -lt $MinCFreeGiB * 1GB) {
         Write-Error "storage guard ($Context): C: free $($s.cFreeGiB) GiB is below floor $MinCFreeGiB GiB; stopping with no further changes"
@@ -143,11 +171,11 @@ function Assert-StorageGuard([string]$Context, [long]$AdditionalBytesOnC = 0) {
     if ($s.llmBytes -gt $MaxLlmGiB * 1GB) {
         Write-Error "storage guard ($Context): $CHotRoot is $($s.llmGiB) GiB, above cap $MaxLlmGiB GiB; stopping with no further changes"
     }
-    if ($AdditionalBytesOnC -gt 0) {
-        $projFree = $s.cFreeBytes - $AdditionalBytesOnC
+    if ($AdditionalBytesOnC -gt 0 -or $AdditionalBytesOutsideHotOnC -gt 0) {
+        $projFree = $s.cFreeBytes - $AdditionalBytesOnC - $AdditionalBytesOutsideHotOnC
         $projLlm = $s.llmBytes + $AdditionalBytesOnC
         if ($projFree -lt $MinCFreeGiB * 1GB) {
-            Write-Error "storage guard ($Context): C: free would be $([math]::Round($projFree / 1GB, 4)) GiB after a $([math]::Round($AdditionalBytesOnC / 1GB, 4)) GiB copy, below floor $MinCFreeGiB GiB; stopping with no further changes"
+            Write-Error "storage guard ($Context): C: free would be $([math]::Round($projFree / 1GB, 4)) GiB after a $([math]::Round(([decimal]$AdditionalBytesOnC + $AdditionalBytesOutsideHotOnC) / 1GB, 4)) GiB copy, below floor $MinCFreeGiB GiB; stopping with no further changes"
         }
         if ($projLlm -gt $MaxLlmGiB * 1GB) {
             Write-Error "storage guard ($Context): $CHotRoot would be $([math]::Round($projLlm / 1GB, 4)) GiB after a $([math]::Round($AdditionalBytesOnC / 1GB, 4)) GiB copy, above cap $MaxLlmGiB GiB; stopping with no further changes"
@@ -156,10 +184,13 @@ function Assert-StorageGuard([string]$Context, [long]$AdditionalBytesOnC = 0) {
     $s
 }
 
-function Assert-EFree([string]$Context) {
+function Assert-EFree([string]$Context, [long]$AdditionalBytesOnE = 0) {
     $e = Get-EStorageSnapshot
     if ($e.eFreeBytes -lt $MinEFreeGiB * 1GB) {
         Write-Error "storage guard ($Context): E: free $($e.eFreeGiB) GiB is below floor $MinEFreeGiB GiB; stopping with no further changes"
+    }
+    if ($AdditionalBytesOnE -gt 0 -and ($e.eFreeBytes - $AdditionalBytesOnE) -lt $MinEFreeGiB * 1GB) {
+        Write-Error "storage guard ($Context): E: free would be below floor $MinEFreeGiB GiB after a $AdditionalBytesOnE byte snapshot copy; stopping with no further changes"
     }
     $e
 }
@@ -569,7 +600,7 @@ function Get-TrustedListDigest([string]$RootPath, [string]$Repo, [string]$Revisi
     if ($null -eq $rootDoc.models) {
         Write-Error "trust root gate: root manifest has no models array"
     }
-    $matched = @($rootDoc.models | Where-Object { [string]$_.hf_repo -eq $Repo -and [string]$_.hf_revision -eq $Revision })
+    $matched = @($rootDoc.models | Where-Object { [string]$_.hf_repo -ceq $Repo -and [string]$_.hf_revision -ceq $Revision })
     if ($matched.Count -ne 1) {
         Write-Error "trust root gate: expected exactly one model entry for $Repo@$Revision, found $($matched.Count)"
     }
@@ -601,10 +632,11 @@ function Assert-BaseShards([string]$Snapshot, [string]$HubRoot, [string]$HubCach
     }
     $doc = [Text.Encoding]::UTF8.GetString($listBytes) | ConvertFrom-Json
     $key = "$BaseRepo@$BaseRevision"
-    $prop = $doc.PSObject.Properties[$key]
-    if ($null -eq $prop) {
+    $matches = @($doc.PSObject.Properties | Where-Object { $_.Name -ceq $key })
+    if ($matches.Count -ne 1) {
         Write-Error "base shard gate: missing key $key in $ExpectedShardsJson"
     }
+    $prop = $matches[0]
     $files = @($prop.Value.files)
     if ($files.Count -lt 1) {
         Write-Error "base shard gate: no files listed for $key"
@@ -745,6 +777,101 @@ function Assert-BaseShards([string]$Snapshot, [string]$HubRoot, [string]$HubCach
     }
 }
 
+function Copy-BaseSnapshotFile([string]$Source, [string]$Destination) {
+    # Create new, independent bytes. Never use a hardlink or a cache symlink.
+    $sourceStream = [IO.File]::Open($Source, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $destinationStream = [IO.File]::Open($Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $sourceStream.CopyTo($destinationStream) } finally { $destinationStream.Dispose() }
+    } finally { $sourceStream.Dispose() }
+}
+
+function Get-BaseIntegrityBytes($Approval) {
+    $integrity = [ordered]@{
+        root_sha256 = $Approval.root_sha256; list_sha256 = $Approval.list_sha256
+        covered_files = $Approval.covered_files
+        files = @($Approval.files | ForEach-Object { [ordered]@{ path = $_.path; size = $_.size; sha256 = $_.sha256_read1 } })
+    }
+    [Text.Encoding]::UTF8.GetBytes(($integrity | ConvertTo-Json -Depth 8) + "`n")
+}
+
+function New-VerifiedBaseSnapshot([string]$Snapshot, [string]$HubRoot, [string]$HubCacheRoot, $BaseShards, [string]$RunStaging, [string]$OwnershipToken) {
+    Assert-NoReparseOnPath (Get-NormalPath $StagingRoot) $RunStaging 'base snapshot copy gate'
+    Assert-PhysicalStagingContainment $RunStaging 'base snapshot copy gate'
+    Assert-StagingMarkerOwned $RunStaging $OwnershipToken 'base snapshot copy gate'
+    # Re-authenticate exact approved list bytes before copying/checking weights.
+    # The expected digests come from that list, never from an arbitrary new copy.
+    $trust = Get-TrustedListDigest $TrustedDigestManifest $BaseRepo $BaseRevision
+    $listBytes = [IO.File]::ReadAllBytes($ExpectedShardsJson)
+    $listSha = Get-Sha256Bytes $listBytes
+    if ($listSha -ne $trust.ListDigest -or $listSha -ne $BaseShards.list_sha256 -or $trust.RootSha256 -ne $BaseShards.root_sha256) { Write-Error 'base snapshot copy gate: authenticated root/list binding changed' }
+    $approvedDoc = [Text.Encoding]::UTF8.GetString($listBytes) | ConvertFrom-Json
+    $approvedMatches = @($approvedDoc.PSObject.Properties | Where-Object { $_.Name -ceq "$BaseRepo@$BaseRevision" })
+    if ($approvedMatches.Count -ne 1) { Write-Error 'base snapshot copy gate: exact approved model key missing' }
+    $approvedEntries = @($approvedMatches[0].Value.files | ForEach-Object {
+        [pscustomobject]@{ path = [string]$_.path; size = [long]$_.size; sha256_read1 = ([string]$_.sha256).ToLowerInvariant() }
+    })
+    if ($approvedEntries.Count -ne $BaseShards.covered_files) { Write-Error 'base snapshot copy gate: approved count changed' }
+    $destination = Get-NormalPath (Join-Path $RunStaging 'base-snapshot')
+    if (Test-Path -LiteralPath $destination) { Write-Error "base snapshot copy gate: destination already exists: $destination" }
+    New-Item -ItemType Directory -Path $destination | Out-Null
+    $leases = [System.Collections.Generic.List[object]]::new()
+    $copied = [System.Collections.Generic.List[object]]::new()
+    try {
+        foreach ($entry in $approvedEntries) {
+            $relative = [string]$entry.path
+            Assert-NormalizedRelativePath $relative 'base snapshot copy gate'
+            $source = Resolve-SnapshotFile $Snapshot ($relative -replace '/', '\') $HubRoot $HubCacheRoot
+            $target = Get-NormalPath (Join-Path $destination ($relative -replace '/', '\'))
+            if (-not (Test-PathIsUnder $target $destination) -or $target -eq $destination) { Write-Error 'base snapshot copy gate: destination escapes snapshot' }
+            $parent = Split-Path -Parent $target
+            Assert-NoReparseExistingAncestors $parent 'base snapshot copy gate'
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            Assert-NoReparseOnPath $destination $parent 'base snapshot copy gate'
+            Copy-BaseSnapshotFile $source $target
+            Assert-NoReparseOnPath $destination $target 'base snapshot copy gate'
+            # Keep read leases until Docker and publication finish. These prevent
+            # normal Windows file writes/deletes while allowing Docker reads;
+            # a privileged host owner is still outside this integrity boundary.
+            $lease = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            $leases.Add($lease)
+            $copy1 = Get-FileSha256 $target
+            $copy2 = Get-FileSha256 $target
+            if ($lease.Length -ne $entry.size -or $copy1 -ne $entry.sha256_read1 -or $copy2 -ne $entry.sha256_read1) {
+                Write-Error "base snapshot copy gate: $relative copied bytes mismatch expected=$($entry.sha256_read1) copy1=$copy1 copy2=$copy2"
+            }
+            $copied.Add([pscustomobject]@{ path = $relative; size = $lease.Length; sha256_read1 = $copy1; sha256_read2 = $copy2 })
+        }
+        # Full coverage includes config, tokenizer and the authenticated index.
+        $actual = [System.Collections.Generic.List[string]]::new()
+        $directories = [System.Collections.Generic.Stack[string]]::new()
+        $directories.Push($destination)
+        while ($directories.Count -gt 0) {
+            $directory = $directories.Pop()
+            Assert-NoReparseOnPath $destination $directory 'base snapshot copy gate'
+            foreach ($child in @(Get-ChildItem -LiteralPath $directory -Force)) {
+                if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Error "base snapshot copy gate: reparse point at $($child.FullName)" }
+                if ($child.PSIsContainer) { $directories.Push($child.FullName) } else { $actual.Add((Get-RelativePath $destination $child.FullName)) }
+            }
+        }
+        $expected = @($copied | ForEach-Object { $_.path })
+        if (@(Compare-Object $expected $actual -CaseSensitive).Count -ne 0) { Write-Error 'base snapshot copy gate: copied coverage mismatch' }
+        $integrityPath = Join-Path $RunStaging 'base-integrity.json'
+        Assert-NoReparseExistingAncestors $RunStaging 'base snapshot copy gate'
+        $integrityBytes = Get-BaseIntegrityBytes ([pscustomobject]@{ root_sha256 = $trust.RootSha256; list_sha256 = $listSha; covered_files = $approvedEntries.Count; files = $approvedEntries })
+        $integrityStream = [IO.File]::Open($integrityPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $integrityStream.Write($integrityBytes, 0, $integrityBytes.Length) } finally { $integrityStream.Dispose() }
+        Assert-NoReparseOnPath $RunStaging $integrityPath 'base snapshot copy gate'
+        $leases.Add([IO.File]::Open($integrityPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read))
+        $integritySha = Get-Sha256Bytes $integrityBytes
+        if ((Get-FileSha256 $integrityPath) -ne $integritySha -or (Get-FileSha256 $integrityPath) -ne $integritySha) { Write-Error 'base snapshot copy gate: integrity envelope changed' }
+        [pscustomobject]@{ path = $destination; container_path = '/base-snapshot'; covered_files = $copied.Count; files = $copied; integrity_path = $integrityPath; integrity_sha256 = $integritySha; leases = $leases }
+    } catch {
+        foreach ($lease in $leases) { $lease.Dispose() }
+        throw
+    }
+}
+
 function New-StepClock {
     $script:StepStartUtc = @{}
     [ordered]@{}
@@ -804,6 +931,7 @@ function Write-ExportReport {
             covered_files = $BaseShards.covered_files
         }
         base_shards           = @($BaseShards.files)
+        base_consumed         = $BaseShards.consumed
         chat_template_sha256  = $ChatTemplateSha256
         output                = [ordered]@{
             path         = $OutputPath
@@ -912,7 +1040,7 @@ function Publish-Gguf([string]$Source, [string]$Dest) {
     }
 }
 
-function Invoke-MergeDocker([string]$HfHost, [string]$AdapterHost, [string]$WorkHost) {
+function Invoke-MergeDocker([string]$BaseSnapshotHost, [string]$IntegrityHost, [string]$IntegritySha256, [string]$AdapterHost, [string]$WorkHost) {
     $bash = @(
         'set -euo pipefail',
         "cat > /work/merge.py << 'PY'",
@@ -923,8 +1051,9 @@ function Invoke-MergeDocker([string]$HfHost, [string]$AdapterHost, [string]$Work
     $dockerArgs = @(
         'run', '--rm', '--network', 'none',
         '-e', 'HF_HUB_OFFLINE=1',
-        '-e', "HL_BASE_REVISION=$BaseRevision",
-        '-v', "${HfHost}:/hf:ro",
+        '-e', "HL_BASE_GATE_SHA256=$IntegritySha256",
+        '-v', "${BaseSnapshotHost}:/base-snapshot:ro",
+        '-v', "${IntegrityHost}:/base-integrity.json:ro",
         '-v', "${AdapterHost}:/adapter:ro",
         '-v', "${WorkHost}:/work",
         '--entrypoint', 'bash',
@@ -934,7 +1063,7 @@ function Invoke-MergeDocker([string]$HfHost, [string]$AdapterHost, [string]$Work
     Invoke-DockerStep $dockerArgs $DockerTimeoutSec 'merge'
 }
 
-function Invoke-ConvertDocker([string]$HfHost, [string]$WorkHost, [string]$Bf16Name) {
+function Invoke-ConvertDocker([string]$WorkHost, [string]$Bf16Name) {
     $bash = @(
         'set -euo pipefail',
         "python /opt/unsloth/llama.cpp/convert_hf_to_gguf.py /work/merged --outfile /work/$Bf16Name --outtype bf16"
@@ -942,7 +1071,6 @@ function Invoke-ConvertDocker([string]$HfHost, [string]$WorkHost, [string]$Bf16N
     $dockerArgs = @(
         'run', '--rm', '--network', 'none',
         '-e', 'HF_HUB_OFFLINE=1',
-        '-v', "${HfHost}:/hf:ro",
         '-v', "${WorkHost}:/work",
         '--entrypoint', 'bash',
         $Image,
@@ -1002,6 +1130,9 @@ if ($RunId -and $RunId -cnotmatch '^[a-z0-9][a-z0-9-]{0,80}$') {
 if ($RunId -and $Checkpoint.Count -gt 1) {
     Write-Error "parameter RunId: cannot be used with more than one checkpoint"
 }
+if ($BaseRepo -cne 'Qwen/Qwen3-14B') {
+    Write-Error "parameter BaseRepo: only the approved Qwen/Qwen3-14B export is supported, got '$BaseRepo'"
+}
 
 $utcStamp = Get-UtcStamp
 $snapshot = Get-SnapshotPath $BaseRepo $BaseRevision
@@ -1050,6 +1181,7 @@ foreach ($plan in $plans) {
     $reportPath = $plan.Report
     $keepStaging = $null
     $ownershipToken = $null
+    $frozenBase = $null
     $steps = New-StepClock
     $bf16Name = "$Name-bf16.gguf"
     $quantName = "$Name-Q4_K_M.gguf"
@@ -1076,6 +1208,18 @@ foreach ($plan in $plans) {
         Start-Step $steps 'base_shards'
         $baseShards = Assert-BaseShards $snapshot $hubRoot $hubCacheRoot
         End-Step $steps 'base_shards'
+        $baseCopyBytes = [long]0
+        foreach ($entry in $baseShards.files) {
+            if ([long]$entry.size -gt ([long]::MaxValue - $baseCopyBytes)) { Write-Error 'base snapshot copy gate: total byte count exceeds Int64' }
+            $baseCopyBytes += [long]$entry.size
+        }
+        $envelopeBytes = Get-BaseIntegrityBytes $baseShards
+        if ($envelopeBytes.Length -gt ([long]::MaxValue - $baseCopyBytes)) { Write-Error 'base snapshot copy gate: total byte count exceeds Int64' }
+        $baseCopyBytes += $envelopeBytes.Length
+        Assert-EFree 'base snapshot copy' $baseCopyBytes | Out-Null
+        if (([IO.Path]::GetPathRoot((Get-NormalPath $StagingRoot))).StartsWith('C:', [StringComparison]::OrdinalIgnoreCase)) {
+            Assert-StorageGuard 'base snapshot copy' 0 $baseCopyBytes | Out-Null
+        }
 
         Start-Step $steps 'staging'
         Assert-NoReparseExistingAncestors (Get-NormalPath $CHotRoot) 'export staging'
@@ -1111,18 +1255,25 @@ foreach ($plan in $plans) {
         Assert-NoReparseOnPath (Get-NormalPath $StagingRoot) $runStaging 'export staging'
         End-Step $steps 'staging'
 
-        $hfHost = Get-NormalPath (Join-Path $CHotRoot 'hf')
-        if (-not (Test-Path -LiteralPath $hfHost)) {
-            Write-Error "merge: missing hf dir $hfHost"
-        }
-        $workHost = Get-NormalPath ((Resolve-Path -LiteralPath $runStaging).Path)
+        Start-Step $steps 'base_copy'
+        $frozenBase = New-VerifiedBaseSnapshot $snapshot $hubRoot $hubCacheRoot $baseShards $runStaging $ownershipToken
+        $baseShards | Add-Member -NotePropertyName consumed -NotePropertyValue ([ordered]@{
+            host_path = $frozenBase.path; container_path = $frozenBase.container_path
+            covered_files = $frozenBase.covered_files; files = @($frozenBase.files)
+            root_sha256 = $baseShards.root_sha256; list_sha256 = $baseShards.list_sha256
+            integrity_sha256 = $frozenBase.integrity_sha256
+        })
+        $workHost = Get-NormalPath (Join-Path $runStaging 'work')
+        New-Item -ItemType Directory -Path $workHost | Out-Null
+        Assert-NoReparseOnPath $runStaging $workHost 'export staging'
+        End-Step $steps 'base_copy'
 
         Start-Step $steps 'merge'
-        Invoke-MergeDocker $hfHost $adapterHost $workHost | Out-Null
+        Invoke-MergeDocker $frozenBase.path $frozenBase.integrity_path $frozenBase.integrity_sha256 $adapterHost $workHost | Out-Null
         End-Step $steps 'merge'
 
         Start-Step $steps 'convert'
-        Invoke-ConvertDocker $hfHost $workHost $bf16Name | Out-Null
+        Invoke-ConvertDocker $workHost $bf16Name | Out-Null
         $bf16Host = Join-Path $workHost $bf16Name
         if (-not (Test-Path -LiteralPath $bf16Host -PathType Leaf)) {
             Write-Error "convert: expected bf16 GGUF missing: $bf16Host"
@@ -1167,6 +1318,8 @@ foreach ($plan in $plans) {
             -Steps $steps
         End-Step $steps 'report'
 
+        foreach ($lease in $frozenBase.leases) { $lease.Dispose() }
+        $frozenBase = $null
         Remove-StagedTree $runStaging $ownershipToken
         $keepStaging = $null
     } catch {
@@ -1174,5 +1327,7 @@ foreach ($plan in $plans) {
             Write-Output "staging kept for inspection: $keepStaging"
         }
         throw
+    } finally {
+        if ($null -ne $frozenBase) { foreach ($lease in $frozenBase.leases) { $lease.Dispose() } }
     }
 }

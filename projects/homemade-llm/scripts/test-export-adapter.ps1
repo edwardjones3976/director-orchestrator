@@ -101,6 +101,9 @@ $savedFakeTemplate = $env:HL_FAKE_TEMPLATE_SHA
 $savedJunction = $env:HL_SHIM_JUNCTION
 $savedJunctionTarget = $env:HL_SHIM_JUNCTION_TARGET
 $savedCreateDest = $env:HL_SHIM_CREATE_DEST
+$savedBaseExpected = $env:HL_SHIM_BASE_EXPECTED
+$savedMutateBase = $env:HL_SHIM_MUTATE_BASE
+$savedMutateCopy = $env:HL_SHIM_MUTATE_COPY
 
 try {
     $uniq = [guid]::NewGuid().ToString('n')
@@ -294,6 +297,10 @@ try {
 $ErrorActionPreference = 'Stop'
 $DockerArgs = @($args)
 $workHost = $null
+$baseHost = $null
+$integrityHost = $null
+$integritySha = $null
+$cacheMount = $false
 $hasNetworkNone = $false
 $gpusOrToken = $false
 for ($i = 0; $i -lt $DockerArgs.Count; $i++) {
@@ -307,7 +314,11 @@ for ($i = 0; $i -lt $DockerArgs.Count; $i++) {
     if ($a -eq '-v' -and ($i + 1) -lt $DockerArgs.Count) {
         $vol = [string]$DockerArgs[$i + 1]
         if ($vol -match '^(.*):/work$') { $workHost = $Matches[1] }
+        if ($vol -match '^(.*):/base-snapshot:ro$') { $baseHost = $Matches[1] }
+        if ($vol -match '^(.*):/base-integrity.json:ro$') { $integrityHost = $Matches[1] }
+        if ($vol -match ':/hf(:|$)') { $cacheMount = $true }
     }
+    if ($a -eq '-e' -and ($i + 1) -lt $DockerArgs.Count -and [string]$DockerArgs[$i + 1] -match '^HL_BASE_GATE_SHA256=([0-9a-f]{64})$') { $integritySha = $Matches[1] }
 }
 $lc = $null
 for ($j = 0; $j -lt $DockerArgs.Count; $j++) {
@@ -343,6 +354,45 @@ if ($env:HL_SHIM_FAIL -eq $step) {
     exit 2
 }
 if ($step -eq 'merge') {
+    if ($cacheMount -or -not $baseHost -or -not $decoded.Contains('snap = "/base-snapshot"')) { throw 'merge must consume only the bound frozen snapshot' }
+    if (-not $integrityHost -or (Get-FileHash -LiteralPath $integrityHost -Algorithm SHA256).Hash.ToLower() -cne $integritySha) { throw 'merge integrity envelope mount/hash is unbound' }
+    $integrity = Get-Content -LiteralPath $integrityHost -Raw | ConvertFrom-Json
+    $baseN = [IO.Path]::GetFullPath($baseHost).TrimEnd('\')
+    $workN = [IO.Path]::GetFullPath($workHost).TrimEnd('\')
+    if ($baseN.StartsWith($workN + '\', [StringComparison]::OrdinalIgnoreCase) -or $workN.StartsWith($baseN + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'writable work mount overlaps base snapshot' }
+    if ($env:HL_SHIM_MUTATE_BASE) {
+        $bytes = [IO.File]::ReadAllBytes($env:HL_SHIM_MUTATE_BASE)
+        $bytes[0] = $bytes[0] -bxor 0xff
+        [IO.File]::WriteAllBytes($env:HL_SHIM_MUTATE_BASE, $bytes)
+    }
+    if ($env:HL_SHIM_MUTATE_COPY) {
+        $path = Join-Path $baseHost $env:HL_SHIM_MUTATE_COPY
+        $bytes = [IO.File]::ReadAllBytes($path)
+        $bytes[0] = $bytes[0] -bxor 0xff
+        try {
+            [IO.File]::WriteAllBytes($path, $bytes)
+        } catch {
+            $cause = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
+            if (($cause.HResult -band 0xffff) -eq 32) {
+                [IO.File]::AppendAllText($env:HL_SHIM_LOG, "copy_write_refused=sharing_violation`n")
+            }
+            throw
+        }
+        throw 'UNEXPECTED_COPY_WRITE_SUCCEEDED'
+    }
+    $approved = Get-Content -LiteralPath $env:HL_SHIM_BASE_EXPECTED -Raw | ConvertFrom-Json
+    $entries = @(@($approved.PSObject.Properties)[0].Value.files)
+    if ($integrity.covered_files -ne $entries.Count -or @($integrity.files).Count -ne $entries.Count) { throw 'integrity envelope coverage mismatch' }
+    $present = @(Get-ChildItem -LiteralPath $baseHost -Recurse -File -Force)
+    if ($present.Count -ne $entries.Count) { throw 'frozen snapshot coverage mismatch at consumption' }
+    foreach ($entry in $entries) {
+        $file = Join-Path $baseHost ($entry.path -replace '/', '\')
+        $boundEntry = @($integrity.files | Where-Object { $_.path -ceq $entry.path })
+        $read1 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
+        $read2 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLower()
+        if ($boundEntry.Count -ne 1 -or $boundEntry[0].sha256 -cne $entry.sha256 -or (Get-Item -LiteralPath $file).Length -ne $entry.size -or $read1 -ne $entry.sha256 -or $read2 -ne $entry.sha256) { throw 'bad frozen bytes at consumption' }
+    }
+    [IO.File]::AppendAllText($env:HL_SHIM_LOG, "base_consumed_verified=True cache_mount=False writable_overlap=False`n")
     $merged = Join-Path $workHost 'merged'
     New-Item -ItemType Directory -Path $merged -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $merged 'model.safetensors'), 'merged-weights')
@@ -387,6 +437,7 @@ throw "unknown docker step"
     $env:HL_SHIM_LOG = $shimLogPath
     $env:HL_FAKE_TEMPLATE_SHA = $templateSha
     $env:HL_SHIM_JUNCTION_TARGET = $jTarget
+    $env:HL_SHIM_BASE_EXPECTED = $expectedPath
 
     function Get-ExportStagingHelperSource {
         $exportScript = Join-Path $PSScriptRoot 'export-adapter.ps1'
@@ -458,6 +509,8 @@ try {
             [string]$StagingRoot = '',
             [string]$CHotRootArg = '',
             [string]$RunId = '',
+            [string]$BaseRepoArg = 'Qwen/Qwen3-14B',
+            [string]$BaseRevisionArg = '',
             [long]$ProbeCFreeBytes = -1,
             [long]$ProbeEFreeBytes = -1,
             [long]$ProbeLlmBytes = -1
@@ -473,7 +526,9 @@ try {
         [void]$a.Add(($Checkpoint -join ','))
         [void]$a.Add('-Name'); [void]$a.Add($Name)
         if ($RunId) { [void]$a.Add('-RunId'); [void]$a.Add($RunId) }
-        [void]$a.Add('-BaseRevision'); [void]$a.Add($rev)
+        if (-not $BaseRevisionArg) { $BaseRevisionArg = $rev }
+        [void]$a.Add('-BaseRepo'); [void]$a.Add($BaseRepoArg)
+        [void]$a.Add('-BaseRevision'); [void]$a.Add($BaseRevisionArg)
         [void]$a.Add('-CHotRoot'); [void]$a.Add($CHotRootArg)
         [void]$a.Add('-StagingRoot'); [void]$a.Add($StagingRoot)
         [void]$a.Add('-TrustedDigestManifest'); [void]$a.Add($rootPath)
@@ -573,6 +628,8 @@ try {
         $env:HL_SHIM_FAIL = ''
         $env:HL_SHIM_JUNCTION = ''
         $env:HL_SHIM_CREATE_DEST = ''
+        $env:HL_SHIM_MUTATE_BASE = ''
+        $env:HL_SHIM_MUTATE_COPY = ''
         $env:HL_FAKE_TEMPLATE_SHA = $templateSha
     }
 
@@ -622,6 +679,11 @@ try {
     $r = Invoke-Export @('-Name', 'tstexp', '-CHotRoot', $cRoot, '-StagingRoot', $eRoot, '-ProbeCFreeBytes', "$cFreeOk", '-ProbeEFreeBytes', "$eFreeOk", '-ProbeLlmBytes', "$llmOk")
     $text = Out-Text $r.Lines
     Assert ($r.Code -ne 0 -and $text -match 'Checkpoint') 'param: no checkpoint refused'
+    foreach ($unsupported in @('Other/Approved-Model', 'qwen/Qwen3-14B')) {
+        $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -BaseRepoArg $unsupported)
+        $text = Out-Text $r.Lines
+        Assert ($r.Code -ne 0 -and $text -match 'parameter BaseRepo' -and (Get-ShimLogLines).Count -eq 0) "param: unsupported or differently cased repository $unsupported refused before cache access"
+    }
 
     # --- 3. Happy path, one checkpoint ---
     Clear-Artifacts
@@ -666,7 +728,7 @@ try {
     }
     Assert $reportOk 'happy: report fields (name, base revision, adapter hashes, full-coverage read digests, chat-template digest, output size/digests, free-space)'
     Assert $trustOk 'happy: base_trust root/list SHA-256 and covered_files=5 recorded (authenticated matching fixture accepted, two reads)'
-    $stepNames = @('pre-check', 'adapter_hash', 'base_shards', 'staging', 'merge', 'convert', 'delete_merged', 'quantise', 'chat_template', 'publish')
+    $stepNames = @('pre-check', 'adapter_hash', 'base_shards', 'staging', 'base_copy', 'merge', 'convert', 'delete_merged', 'quantise', 'chat_template', 'publish')
     $timingOk = $false
     if ($null -ne $j -and $null -ne $j.steps) {
         $timingOk = $true
@@ -686,12 +748,13 @@ try {
     if (Test-Path -LiteralPath $eRoot) { $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force) }
     Assert ($stagingKids.Count -eq 0) 'happy: run staging folder is gone'
     $log = Get-ShimLogLines
-    Assert ($log.Count -eq 4) 'happy: exactly four docker runs'
+    Assert (@($log | Where-Object { $_ -match '^step=' }).Count -eq 4) 'happy: exactly four docker runs'
     $steps = @($log | ForEach-Object { if ($_ -match 'step=(\S+)') { $Matches[1] } })
     Assert (($steps -join ',') -eq 'merge,convert,quantise,template') 'happy: docker step order merge, convert, quantise, template'
     $netOk = $true
     $tokOk = $true
     foreach ($ln in $log) {
+        if ($ln -notmatch '^step=') { continue }
         if ($ln -notmatch 'network_none=True') { $netOk = $false }
         if ($ln -notmatch 'gpus_or_token=False') { $tokOk = $false }
     }
@@ -700,6 +763,85 @@ try {
     $qline = @($log | Where-Object { $_ -match 'step=quantise' })
     Assert ($qline.Count -eq 1 -and $qline[0] -match 'merged_exists=False') 'happy: quantise records merged already absent'
     Assert ((Get-GuardFingerprint) -eq $fpBeforeHappy) 'happy: sentinel, adapter files, and base shards unchanged'
+    Assert ($log -contains 'base_consumed_verified=True cache_mount=False writable_overlap=False') 'frozen base: exact verified snapshot consumed with no cache mount or writable work overlap'
+    $consumed = $j.base_consumed
+    Assert ($consumed.container_path -ceq '/base-snapshot' -and $consumed.covered_files -eq 5 -and @($consumed.files).Count -eq 5 -and $consumed.root_sha256 -eq $baselineRootSha -and $consumed.list_sha256 -eq $j.base_trust.list_sha256) 'frozen base: report binds consumed full snapshot to authenticated root and list'
+
+    Clear-Artifacts
+    $env:HL_SHIM_MUTATE_BASE = $shard1Path
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    Assert ($r.Code -eq 0 -and (Get-Sha256File $shard1Path) -ne $shard1Sha -and (Get-ShimLogLines) -contains 'base_consumed_verified=True cache_mount=False writable_overlap=False') 'frozen base: original cache mutation after verification cannot change Docker consumed copy'
+    [IO.File]::WriteAllBytes($shard1Path, $shard1Bytes)
+
+    Clear-Artifacts
+    $env:HL_SHIM_MUTATE_COPY = 'tokenizer.json'
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $kept = Get-KeptStaging $r.Lines
+    $copyUnchanged = $kept -and (Get-Sha256File (Join-Path $kept 'base-snapshot\tokenizer.json')) -eq (Get-Sha256File $tokenizerPath)
+    Assert ($r.Code -ne 0 -and (Get-ShimLogLines) -contains 'copy_write_refused=sharing_violation' -and $copyUnchanged -and -not (Test-Path -LiteralPath $outCkpt1)) 'frozen base: Windows read lease refuses copied input rewrite during consumption'
+
+    # Faults are injected only in throwaway copies, after the real gate or the
+    # real independent byte copy. The committed script has no mutation hook.
+    function New-FaultExportScript([switch]$AfterGate, [switch]$ListAfterGate) {
+        $path = New-PatchedExportScript $baselineRootSha
+        $source = [IO.File]::ReadAllText($path)
+        if ($AfterGate) {
+            $source = $source.Replace('function Assert-BaseShards(', 'function Assert-BaseShardsOriginal(')
+            $faultPath = if ($ListAfterGate) { $expectedPath } else { $shard1Path }
+            $faultPathEsc = $faultPath.Replace("'", "''")
+            $wrapper = @"
+function Assert-BaseShards([string]`$Snapshot, [string]`$HubRoot, [string]`$HubCacheRoot) {
+    `$result = Assert-BaseShardsOriginal `$Snapshot `$HubRoot `$HubCacheRoot
+    `$bytes = [IO.File]::ReadAllBytes('$faultPathEsc')
+    `$bytes[0] = `$bytes[0] -bxor 0xff
+    [IO.File]::WriteAllBytes('$faultPathEsc', `$bytes)
+    return `$result
+}
+"@
+        } else {
+            $source = $source.Replace('function Copy-BaseSnapshotFile(', 'function Copy-BaseSnapshotFileOriginal(')
+            $wrapper = @'
+function Copy-BaseSnapshotFile([string]$Source, [string]$Destination) {
+    Copy-BaseSnapshotFileOriginal $Source $Destination
+    $bytes = [IO.File]::ReadAllBytes($Destination)
+    $bytes[0] = $bytes[0] -bxor 0xff
+    [IO.File]::WriteAllBytes($Destination, $bytes)
+}
+'@
+        }
+        $entry = 'if ($Checkpoint.Count -gt 2) {'
+        $source = $source.Replace($entry, $wrapper + "`n" + $entry)
+        [IO.File]::WriteAllBytes($path, [Text.Encoding]::UTF8.GetBytes($source))
+        return $path
+    }
+    foreach ($afterGate in @($true, $false)) {
+        Clear-Artifacts
+        $faultScript = New-FaultExportScript -AfterGate:$afterGate
+        $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $faultScript
+        $text = Out-Text $r.Lines
+        $where = if ($afterGate) { 'original mutated after original gate' } else { 'independent copied bytes corrupted' }
+        Assert ($r.Code -ne 0 -and $text -match 'base snapshot copy gate:.*copied bytes mismatch' -and (Get-ShimLogLines).Count -eq 0 -and -not (Test-Path -LiteralPath $outCkpt1)) "frozen base: $where refused before Docker consumption"
+        [IO.File]::WriteAllBytes($shard1Path, $shard1Bytes)
+    }
+    Clear-Artifacts
+    $faultScript = New-FaultExportScript -AfterGate -ListAfterGate
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $faultScript
+    $text = Out-Text $r.Lines
+    $kept = Get-KeptStaging $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'authenticated root/list binding changed' -and (Get-ShimLogLines).Count -eq 0 -and $kept -and -not (Test-Path -LiteralPath (Join-Path $kept 'base-snapshot'))) 'frozen base: exact approved list re-authenticated after original gate before any copied weight bytes'
+    Restore-TrustFixtureList
+
+    $copyBytes = [long]0
+    foreach ($entry in (Get-CanonicalFileEntries)) { $copyBytes += [long]$entry['size'] }
+    Assert ($copyBytes -gt 0) 'frozen base: copy-space fixture totals actual approved dictionary sizes'
+    foreach ($drive in @('C', 'E')) {
+        Clear-Artifacts
+        $spaceArgs = if ($drive -eq 'C') { New-ExportArgs -Checkpoint @($adapter1) -Execute -ProbeCFreeBytes (150GB + $copyBytes - 1) } else { New-ExportArgs -Checkpoint @($adapter1) -Execute -ProbeEFreeBytes (100GB + $copyBytes - 1) }
+        $r = Invoke-Export $spaceArgs
+        $text = Out-Text $r.Lines
+        Assert ($r.Code -ne 0 -and $text -match 'storage guard \(base snapshot copy\)' -and (Get-ShimLogLines).Count -eq 0 -and @(Get-ChildItem -LiteralPath $eRoot -Force).Count -eq 0) "frozen base: projected $drive free space includes full snapshot before staging or Docker"
+    }
 
     # --- 4. Two checkpoints ---
     Clear-Artifacts
@@ -1038,6 +1180,32 @@ try {
     $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
     $text = Out-Text $r.Lines
     Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: empty models array refused (zero matching entries)'
+    Restore-TrustFixtureList
+
+    foreach ($caseField in @('repo', 'revision')) {
+        Clear-Artifacts
+        $repoCase = if ($caseField -eq 'repo') { 'qwen/Qwen3-14B' } else { 'Qwen/Qwen3-14B' }
+        $revisionCase = if ($caseField -eq 'revision') { $rev.ToUpperInvariant() } else { $rev }
+        Write-FixtureRoot -Models @([ordered]@{ hf_repo = $repoCase; hf_revision = $revisionCase; upstream_weight_digests_sha256 = (Get-Sha256File $expectedPath) })
+        $scenarioScript = New-PatchedExportScript (Get-Sha256File $rootPath)
+        $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+        $text = Out-Text $r.Lines
+        Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) "trust: root $caseField must match authenticated case exactly"
+        Restore-TrustFixtureList
+    }
+    Clear-Artifacts
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -BaseRevisionArg $rev.ToUpperInvariant())
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: caller revision case change refused against exact root entry'
+    Clear-Artifacts
+    $scenarioScript = Set-TrustFixtureList {
+        $caseList = [ordered]@{}
+        $caseList["qwen/Qwen3-14B@$rev"] = [ordered]@{ files = @(Get-CanonicalFileEntries) }
+        [IO.File]::WriteAllText($expectedPath, ($caseList | ConvertTo-Json -Depth 8))
+    }
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'base shard gate: missing key' -and (Get-ShimLogLines).Count -eq 0) 'trust: authenticated list key must match repository and revision case exactly'
     Restore-TrustFixtureList
 
     # Unlisted extra snapshot file: an on-disk file not named in the (authentic,
@@ -1697,6 +1865,30 @@ try {
     }
     $gateAcceptedText = Out-Text $gateAcceptedLines
     Assert ($gateAcceptedCode -eq 0 -and $gateAcceptedText -eq 'PROBE_OK:5') 'assert-base-shards: index reached via resolved LX-link path (not the snapshot path) is accepted and parsed from the resolved bytes'
+    $copyRun = Join-Path $eRoot 'lx-copy-probe'
+    $copyRunEsc = $copyRun.Replace("'", "''")
+    $copyStagingEsc = $eRoot.Replace("'", "''")
+    $copyHotEsc = $cRoot.Replace("'", "''")
+    $copyBody = @"
+    `$CHotRoot = '$copyHotEsc'
+    `$StagingRoot = '$copyStagingEsc'
+    New-Item -ItemType Directory -Path '$copyRunEsc' | Out-Null
+    [IO.File]::WriteAllText((Join-Path '$copyRunEsc' '.hl-export-staging'), '{"ownershipToken":"lx-copy-owner"}')
+    `$copy = New-VerifiedBaseSnapshot '$snapDirEsc' '$gateHubRootEsc' '$gateHubCacheRootEsc' `$r '$copyRunEsc' 'lx-copy-owner'
+    try {
+        if (`$copy.covered_files -ne 5 -or (Get-FileSha256 (Join-Path `$copy.path 'model.safetensors.index.json')) -ne (Get-FileSha256 '$indexPathEsc')) { throw 'LX copied index mismatch' }
+        Write-Output 'PROBE_COPY_OK:5'
+    } finally { foreach (`$lease in `$copy.leases) { `$lease.Dispose() } }
+    Remove-StagedTree '$copyRunEsc' 'lx-copy-owner'
+"@
+    $copyCmd = $gateAcceptedCmd.Replace('    Write-Output "PROBE_OK:$($r.covered_files)"', $copyBody)
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $copyLines = @(Invoke-ShellScript $copyCmd)
+        $copyCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prevEa }
+    Assert ($copyCode -eq 0 -and (Out-Text $copyLines) -eq 'PROBE_COPY_OK:5') 'frozen base: full approved snapshot including LX-resolved index copied as independent verified regular files'
     Remove-Item -LiteralPath $gateIndexBlobPath -Force -ErrorAction SilentlyContinue
 
     # The real TOCTOU gap this change closes (verified bytes differ from parsed
@@ -1964,6 +2156,85 @@ try {
     # throwaway patched copy used only to make the pinned trust-root constant
     # match this run's synthetic fixtures (see New-PatchedExportScript).
     $st = Get-Content -LiteralPath $realScript -Raw -Encoding utf8
+    # Execute only the actual standard-library load verifier extracted from
+    # MergePy. No Torch/Transformers imports, model load or Docker execution.
+    $verifierStart = $st.IndexOf('def verify_base_snapshot():')
+    $verifierEnd = $st.IndexOf("`nverify_base_snapshot()", $verifierStart)
+    if ($verifierStart -lt 0 -or $verifierEnd -le $verifierStart) { throw 'base load verifier extract failed' }
+    $verifier = $st.Substring($verifierStart, $verifierEnd - $verifierStart)
+    $loadRoot = Join-Path $root 'load-guard'
+    New-Item -ItemType Directory -Path $loadRoot | Out-Null
+    $loadFiles = @(Get-CanonicalFileEntries)
+    foreach ($entry in $loadFiles) { Copy-Item -LiteralPath (Join-Path $snapDir $entry.path) -Destination (Join-Path $loadRoot $entry.path) }
+    $loadIntegrity = Join-Path $root 'load-integrity.json'
+    $loadDoc = [ordered]@{ root_sha256 = $baselineRootSha; list_sha256 = (Get-Sha256File $expectedPath); covered_files = $loadFiles.Count; files = $loadFiles }
+    [IO.File]::WriteAllBytes($loadIntegrity, [Text.Encoding]::UTF8.GetBytes(($loadDoc | ConvertTo-Json -Depth 8)))
+    $pythonPrelude = @'
+import os, json, hashlib, builtins, sys
+snap, integrity_path, expected_sha = sys.argv[1:]
+os.environ["HL_BASE_GATE_SHA256"] = expected_sha
+real_open = builtins.open
+reads = {}
+def counted_open(path, mode="r", *args, **kwargs):
+    if path == "/base-integrity.json":
+        path = integrity_path
+    elif mode == "rb" and str(path).startswith(snap + os.sep):
+        reads[path] = reads.get(path, 0) + 1
+    return real_open(path, mode, *args, **kwargs)
+builtins.open = counted_open
+'@
+    $pythonCases = @'
+verify_base_snapshot()
+assert len(reads) == 5 and set(reads.values()) == {2}, reads
+verify_base_snapshot()
+assert len(reads) == 5 and set(reads.values()) == {4}, reads
+print("ALL_FILES_TWO_READS_BEFORE_EACH_LOAD")
+changed_path = os.path.join(snap, "tokenizer.json")
+with real_open(changed_path, "rb") as stream:
+    original = stream.read()
+changed = bytearray(original)
+changed[0] ^= 0xff
+with real_open(changed_path, "wb") as stream:
+    stream.write(changed)
+try:
+    verify_base_snapshot()
+except RuntimeError as error:
+    assert "two-read approved hash mismatch" in str(error), error
+    print("MUTATED_COPY_REFUSED_BEFORE_NEXT_LOAD")
+else:
+    raise AssertionError("mutated copied file accepted")
+with real_open(changed_path, "wb") as stream:
+    stream.write(original)
+with real_open(integrity_path, "ab") as stream:
+    stream.write(b" ")
+try:
+    verify_base_snapshot()
+except RuntimeError as error:
+    assert "integrity envelope hash mismatch" in str(error), error
+    print("MUTATED_ENVELOPE_REFUSED")
+else:
+    raise AssertionError("mutated envelope accepted")
+'@
+    $pythonProbe = Join-Path $root 'load-verifier-probe.py'
+    [IO.File]::WriteAllBytes($pythonProbe, [Text.Encoding]::UTF8.GetBytes($pythonPrelude + "`n" + $verifier + "`n" + $pythonCases + "`n"))
+    $pythonExe = if ($env:HL_TEST_PYTHON_EXE) { $env:HL_TEST_PYTHON_EXE } else { (Get-Command python -ErrorAction Stop).Source }
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $loadLines = @(& $pythonExe $pythonProbe $loadRoot $loadIntegrity (Get-Sha256File $loadIntegrity) 2>&1 | ForEach-Object { "$_" })
+        $loadCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prevEa }
+    Assert ($loadCode -eq 0 -and $loadLines -contains 'ALL_FILES_TWO_READS_BEFORE_EACH_LOAD') 'base load: actual Python verifier reads every approved entry twice before each load'
+    Assert ($loadCode -eq 0 -and $loadLines -contains 'MUTATED_COPY_REFUSED_BEFORE_NEXT_LOAD') 'base load: changed staged file refused by actual verifier before next load'
+    Assert ($loadCode -eq 0 -and $loadLines -contains 'MUTATED_ENVELOPE_REFUSED') 'base load: changed expected-digest envelope refused before weight reads'
+    $pinTokens = $null
+    $pinErrors = $null
+    $realAst = [Management.Automation.Language.Parser]::ParseInput($st, [ref]$pinTokens, [ref]$pinErrors)
+    $pinAssignments = @($realAst.FindAll({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$script:PinnedTrustedDigestManifestSha256' }, $true))
+    Assert ($pinAssignments.Count -eq 1 -and $pinAssignments[0].Right.Extent.Text -ceq "'d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'") 'static: committed approved v2 root SHA-256 pin equals literal authority'
+    Assert ($st.Contains("'reports\m2-trusted-digest-manifest-v2.json'") -and $st.Contains("'reports\m2-expected-qwen3-14b-v2.json'")) 'static: committed default root and list paths remain approved v2'
+    Assert ($st.Contains('snap = "/base-snapshot"') -and $st -notmatch ':/hf:ro') 'static: model loader consumes exact frozen snapshot mount and never mounts mutable HF cache'
+    Assert ($st -match 'verify_base_snapshot\(\)\r?\nbase = AutoModel' -and $st -match 'verify_base_snapshot\(\)\r?\nAutoTokenizer') 'static: full two-read gate immediately precedes both model and tokenizer loads'
     Assert ($st -notmatch '--gpus') 'static: no --gpus'
     Assert ($st -notmatch 'HF_TOKEN') 'static: no HF_TOKEN'
     Assert (-not $st.Contains('Global\homemade-llm-gpu')) 'static: no Global\homemade-llm-gpu'
@@ -2014,6 +2285,9 @@ try {
     if ($null -eq $savedJunction) { Remove-Item Env:HL_SHIM_JUNCTION -ErrorAction SilentlyContinue } else { $env:HL_SHIM_JUNCTION = $savedJunction }
     if ($null -eq $savedJunctionTarget) { Remove-Item Env:HL_SHIM_JUNCTION_TARGET -ErrorAction SilentlyContinue } else { $env:HL_SHIM_JUNCTION_TARGET = $savedJunctionTarget }
     if ($null -eq $savedCreateDest) { Remove-Item Env:HL_SHIM_CREATE_DEST -ErrorAction SilentlyContinue } else { $env:HL_SHIM_CREATE_DEST = $savedCreateDest }
+    if ($null -eq $savedBaseExpected) { Remove-Item Env:HL_SHIM_BASE_EXPECTED -ErrorAction SilentlyContinue } else { $env:HL_SHIM_BASE_EXPECTED = $savedBaseExpected }
+    if ($null -eq $savedMutateBase) { Remove-Item Env:HL_SHIM_MUTATE_BASE -ErrorAction SilentlyContinue } else { $env:HL_SHIM_MUTATE_BASE = $savedMutateBase }
+    if ($null -eq $savedMutateCopy) { Remove-Item Env:HL_SHIM_MUTATE_COPY -ErrorAction SilentlyContinue } else { $env:HL_SHIM_MUTATE_COPY = $savedMutateCopy }
 }
 
 if ($fail.Count -gt 0) {
