@@ -48,6 +48,7 @@ import time
 import hmac
 import math
 import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -1288,6 +1289,16 @@ class TaskStore:
         ):
             self._mark_privacy_cleanup_pending(connection)
 
+    @staticmethod
+    def _packet_plan_generation(work: dict) -> int | None:
+        """Return the generation encoded in a production idempotency key, if any."""
+        task_id = str(work["task_id"])
+        key = str(work["idempotency_key"])
+        match = re.fullmatch(re.escape(task_id) + r":(\d+):\d+:[0-9a-fA-F]{64}", key)
+        if match is None:
+            return None
+        return int(match.group(1))
+
     def reserve_runtime_result(self, work: dict) -> None:
         """Bind recovery storage before I/O; a reset deletes this authority too."""
         with self._connect() as connection:
@@ -1298,7 +1309,11 @@ class TaskStore:
             correlation = work["correlation"]["correlation_id"]
             if not record.get("plan") or correlation in record.get("consumed_packet_results", {}):
                 raise ValueError("packet recovery storage has no current unconsumed task")
-            if not work["idempotency_key"].startswith(f'{work["task_id"]}:{record["plan_generation"]}:'):
+            claimed_generation = self._packet_plan_generation(work)
+            # Unrecognized key shapes cannot opt out of current-generation
+            # binding. Short fixture/legacy suffixes still need the exact prefix.
+            if (claimed_generation is not None and claimed_generation != record["plan_generation"]
+                    or not work["idempotency_key"].startswith(f'{work["task_id"]}:{record["plan_generation"]}:')):
                 raise ValueError("packet recovery storage generation is stale")
             expected = (work["task_id"], record["plan_generation"], correlation, 0)
             existing = connection.execute(

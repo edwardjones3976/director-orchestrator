@@ -102,12 +102,21 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 store.reserve_runtime_result(stale)
             self.assertIsNone(store.read_runtime_result(stale['idempotency_key']))
+            for key in ('unbound-key', f'{record.task_id}:run',
+                        f'{record.task_id}:{previous}:run'):
+                with self.subTest(unrecognized_key=key):
+                    malformed = dict(stale, idempotency_key=key)
+                    self.assertIsNone(store._packet_plan_generation(malformed))
+                    with self.assertRaises(ValueError):
+                        store.reserve_runtime_result(malformed)
+                    self.assertIsNone(store.read_runtime_result(key))
             current = {
                 'task_id': record.task_id,
                 'idempotency_key': f'{record.task_id}:{record.plan_generation}:1:' + 'cd' * 32,
                 'correlation': {'correlation_id': 'current-correlation'},
             }
             store.reserve_runtime_result(current)
+            self.assertEqual(record.plan_generation, store._packet_plan_generation(current))
             self.assertIsNone(store.read_runtime_result(current['idempotency_key']))
 
     def test_reset_and_consumption_keep_tombstones_against_late_payload_writes(self):
