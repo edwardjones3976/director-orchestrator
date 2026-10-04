@@ -872,7 +872,7 @@ indexed <code>target_revision</code>, not only the diff head, to be the candidat
 exactly. 03 and 09 treat an edited or subtyped owner post in a drill thread
 like an altered bot reply (UNKNOWN), and 04 requires the read-back status
 text to equal the text the execution's Slack response says it posted.</li>
-<li>13, 14: the workload journal from <code>--ledger</code>.</li>
+<li>13, 14: the workload journal from <code>--ledger</code>, read only when it is exactly the absolute path the owner's descriptor pins as <code>workload_journal</code>: the same file, with no link or reparse point in any component and exactly one hard link, and graded from a private snapshot of the held file (#287 item 35). Any other journal leaves both UNKNOWN and is not opened, so a separately bootstrapped journal cannot award them.</li>
 <li>15 (daily accounting): <code>/health</code> <code>usage_monitor.daily_accounting</code>, only when
 the monitor is enabled with its paid gate open (<code>gate_state</code> <code>open</code>) and no
 configured provider is unsupported, missing or stale. A provider with spend
@@ -1613,7 +1613,7 @@ measurement; nothing served changes afterwards.</p>
 <p>Operating rule: the pinned evaluator revision (added by the author of this
 change). The evaluator must never be code the candidate controls. The owner's
 release descriptor (the check-11 shape, <code>director-cli-release-descriptor/v1</code>)
-carries <code>evaluator_sha</code>, <code>ci_workflow_sha256</code>, <code>security_base_sha</code>, <code>reviewed_release</code> and the
+carries <code>evaluator_sha</code>, <code>ci_workflow_sha256</code>, <code>security_base_sha</code>, <code>reviewed_release</code>, <code>workload_journal</code> and the
 CLI releases. The scorecard grades only from the tree of <code>evaluator_sha</code>
 that the owner-installed launcher extracted, where <code>evaluator_sha</code> is a commit
 on <code>github/main</code> and an ancestor of (or equal to) the candidate
