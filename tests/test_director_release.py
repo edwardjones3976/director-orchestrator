@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -198,6 +199,8 @@ class ReleasePreparationTests(unittest.TestCase):
                 "Labels": {"org.director.candidate.commit": self.candidate, "org.director.candidate.tree": self.tree},
                 "Entrypoint": None}}])
         if argv[:2] == ["docker", "compose"]:
+            if argv[-1] == release.LOCAL_DATABASE_PROBE:
+                return release.encoded(self.sibling_activation)
             self.assertEqual(argv[-3:], ["config", "--format", "json"])
             self.assertIn(str(self.root / "compose.yml"), argv)
             graph = self.sibling_compose if argv[3] == "fixture-sibling" else self.compose
@@ -226,6 +229,8 @@ class ReleasePreparationTests(unittest.TestCase):
             return release.encoded({"database_identity": observed["database_identity"],
                 "database_instance_id": observed["database_instance_id"],
                 "occupied_slots": self.reply_changes.get("slots", [])})
+        if argv[-1] == release.VALIDATION_PROBE:
+            return release.encoded({"occupied_slots": self.reply_changes.get("slots", [])})
         if Path(argv[-1]).name == "live-dispatch-preflight.py":
             # Exercise the actual validator contract, including disabled-switch
             # failures. External process I/O is the mocked boundary, not its verdict.
@@ -762,9 +767,20 @@ class ReleasePreparationTests(unittest.TestCase):
         self.sibling_compose.update(name="fixture-sibling", networks={"default": {"name": "fixture-sibling_default"}})
         self.sibling_compose["services"]["orchestrator"]["environment"].update(
             ALLOW_PAID_RUNS="false", LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false",
-            LANGGRAPH_PARALLEL_KILL_SWITCH="true")
+            LANGGRAPH_PARALLEL_KILL_SWITCH="true",
+            LANGGRAPH_PRIMARY_POSTGRES_DSN="postgresql://director_primary:fixture-only@langgraph-primary-db:5432/director_primary?sslmode=disable",
+            LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES="true")
         self.sibling_compose["services"]["orchestrator"]["ports"] = [{"host_ip": "127.0.0.1", "published": "18080", "target": 8080}]
-        self.sibling_compose["volumes"] = {"data": {"name": "fixture-sibling_data"}}
+        self.sibling_compose["volumes"] = {"data": {"name": "fixture-sibling_data"},
+                                           "primary": {"name": "fixture-sibling_primary"}}
+        self.sibling_compose["services"]["langgraph-primary-db"] = {
+            "image": "postgres:17-alpine@sha256:" + "1" * 64, "pull_policy": "never",
+            "environment": {"POSTGRES_USER": "director_primary", "POSTGRES_DB": "director_primary",
+                            "POSTGRES_PASSWORD": "fixture-only"},
+            "volumes": [{"type": "volume", "source": "primary", "target": "/var/lib/postgresql/data"}],
+            "healthcheck": {"test": ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"]}}
+        self.sibling_compose["services"]["orchestrator"].update(
+            depends_on={"langgraph-primary-db": {"condition": "service_healthy"}})
         manifest = copy.deepcopy(self.manifest)
         manifest["activation"].update(compose_project="fixture-sibling", database_identity="postgres:sha256:" + "d" * 64,
                                        database_instance_id="22222222-2222-4222-8222-222222222222")
@@ -807,9 +823,11 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertFalse(report["executed"])
         self.assertLess(report["timeout_seconds"], 1500)
         actions = [row["action"] for row in report["steps"]]
-        self.assertEqual(actions, ["Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
+        self.assertEqual(actions, ["StartDatabase", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
                                    "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"])
         for step in report["steps"]:
+            if step["action"] == "StartDatabase":
+                continue
             argv = step["control_argv"]
             self.assertEqual(argv[argv.index("-ComposeProject") + 1], "fixture-sibling")
             self.assertEqual(argv[argv.index("-EnvironmentFile") + 1], sibling["runtime_env"]["path"])
@@ -835,7 +853,7 @@ class ReleasePreparationTests(unittest.TestCase):
             observed_calls = []
             def read(argv, **kwargs):
                 observed_calls.append((argv, kwargs))
-                if argv[0] == "git":
+                if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[-1] == release.VALIDATION_PROBE:
                     return self.platform(argv, **kwargs)
                 if argv[1] == "info":
                     return payload["daemon_id"].encode()
@@ -856,7 +874,7 @@ class ReleasePreparationTests(unittest.TestCase):
             for change in ("daemon", "image", "rollback"):
                 with self.subTest(change=change):
                     def drift(argv, **kwargs):
-                        if argv[0] == "git":
+                        if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
                             return b"different-daemon" if change == "daemon" else payload["daemon_id"].encode()
@@ -933,6 +951,8 @@ class ReleasePreparationTests(unittest.TestCase):
                         if argv[0] == "git":
                             return REAL_COMMAND(argv, cwd=kwargs["cwd"], env=kwargs["env"],
                                                 deadline=time.monotonic() + 30)
+                        if argv[:2] == ["docker", "compose"] or argv[-1] == release.VALIDATION_PROBE:
+                            return self.platform(argv, **kwargs)
                         if argv[1] == "info":
                             if defect == "dirty_after_probe":
                                 control.write_text("# changed during Docker observations\n")
@@ -957,12 +977,20 @@ class ReleasePreparationTests(unittest.TestCase):
         self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
         for step in plan["steps"]:
+            if step["action"] == "StartDatabase":
+                continue
             payload = json.loads(base64.b64decode(step["argv"][-1]))
             health = int(step["control_argv"][step["control_argv"].index("-TimeoutSeconds") + 1])
             quiescence = {"Rollback": 65, "ActivateOffline": 75}.get(step["action"], 0)
             self.assertGreater(payload["control_timeout_seconds"], health + quiescence)
             self.assertLessEqual(payload["control_timeout_seconds"], 260)
             if quiescence:
+                runtime_path = Path(payload["runtime_pin"]["path"])
+                runtime = release.dotenv(runtime_path.read_bytes())
+                runtime.update(release.RUNTIME_CHANGES["StageRuntime"])
+                if step["action"] == "Rollback":
+                    runtime.update(release.RUNTIME_CHANGES["ActivateOffline"])
+                runtime_path.write_bytes("".join(f"{key}={value}\n" for key, value in runtime.items()).encode())
                 def read(argv, **kwargs):
                     return self.platform(argv, **kwargs)
                 with patch.object(sys, "argv", ["launcher", step["argv"][-1]]), \
@@ -1179,7 +1207,7 @@ class ReleasePreparationTests(unittest.TestCase):
         requests = [json.loads(args["input_bytes"]) for argv, args in self.calls if argv[-1] == release.DATABASE_PROBE]
         self.assertEqual([item["generation"] for item in requests], [self.generation])
 
-    def test_rehearsal_compares_both_observed_database_bindings(self):
+    def test_rehearsal_refuses_same_database_claim_before_deferred_start(self):
         sibling = self.sibling()
         manifest = json.loads(Path(sibling["generation_manifest"]["path"]).read_bytes())
         for key in ("database_identity", "database_instance_id"):
@@ -1190,7 +1218,7 @@ class ReleasePreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "sibling_database_not_isolated"):
             release.Release(self.descriptor).rehearsal()
         requests = [json.loads(args["input_bytes"]) for argv, args in self.calls if argv[-1] == release.DATABASE_PROBE]
-        self.assertEqual([item["generation"] for item in requests], [self.generation, sibling["generation_manifest"]["sha256"]])
+        self.assertEqual([item["generation"] for item in requests], [self.generation])
 
     def test_sibling_also_requires_an_explicit_owner_pin(self):
         self.sibling()
@@ -1262,6 +1290,8 @@ class ReleasePreparationTests(unittest.TestCase):
         harness = self.root / "control-parameters-only.ps1"
         harness.write_text(parameters + '\n$PSBoundParameters | ConvertTo-Json -Compress\n', encoding="utf-8")
         for step in plan["steps"]:
+            if step["action"] == "StartDatabase":
+                continue
             arguments = step["control_argv"][step["control_argv"].index("-File") + 2:]
             result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness), *arguments],
                                     cwd=self.root, capture_output=True, timeout=30)
@@ -1307,8 +1337,289 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertNotIn("bootstrap=True", release.DATABASE_PROBE)
         self.assertNotIn("initialize", release.DATABASE_PROBE)
 
+    def launch_fixture(self, step, *, observe=None, effect=None):
+        """Run the emitted launcher; only native command boundaries are faked."""
+        payload = json.loads(base64.b64decode(step["argv"][-1]))
+        def read(argv, **kwargs):
+            if observe:
+                reply = observe(argv, **kwargs)
+                if reply is not None:
+                    return reply
+            return self.platform(argv, **kwargs)
+        with patch.object(sys, "argv", ["launcher", step["argv"][-1]]), \
+                patch.object(subprocess, "check_output", side_effect=read), \
+                patch.object(subprocess, "run", side_effect=effect) as child:
+            try:
+                exec(compile(step["argv"][-2], "emitted-launcher", "exec"), {})
+            finally:
+                self.launched = child.call_args_list
+        return payload
+
+    def test_rehearsal_rechecks_every_pinned_input_before_every_action(self):
+        sibling = self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        paths = {self.descriptor, self.owner_descriptor, self.installed,
+                 Path(self.spec["rehearsal"]["descriptor"]["path"]),
+                 Path(self.spec["rehearsal"]["acceptance_artifact"]["path"])}
+        for spec in (self.spec, sibling):
+            paths.update(Path(spec[key]["path"]) for key in
+                         ("runtime_env", "bridge_env", "generation_manifest", "validation_manifest", "bridge_ca"))
+            paths.update(Path(pin["path"]) for pin in spec["compose_files"])
+        for step in plan["steps"][:5]:  # All steps before intentional runtime edits.
+            for path in paths:
+                with self.subTest(action=step["action"], path=path.name):
+                    raw = path.read_bytes()
+                    path.write_bytes(raw + b"\n")
+                    try:
+                        with self.assertRaises(SystemExit):
+                            self.launch_fixture(step)
+                        self.assertEqual(self.launched, [])
+                    finally:
+                        path.write_bytes(raw)
+        step = plan["steps"][0]
+        changed = Path(sibling["bridge_env"]["path"])
+        raw = changed.read_bytes()
+        def during_observation(argv, **kwargs):
+            if argv[:2] == ["docker", "info"]:
+                changed.write_bytes(raw + b"\n")
+            return None
+        with self.assertRaises(SystemExit):
+            self.launch_fixture(step, observe=during_observation)
+        self.assertEqual(self.launched, [])
+
+    def test_rehearsal_rejects_readonly_engine_socket_and_named_pipe_mounts(self):
+        self.sibling()
+        mounts = [{"type": "bind", "source": "/var/run/docker.sock", "target": "/run/engine", "read_only": True},
+                  {"type": "bind", "source": "/var/run", "target": "/run/host", "read_only": True},
+                  {"type": "npipe", "source": "//./pipe/docker_engine", "target": "//./pipe/docker_engine", "read_only": True}]
+        for mount in mounts:
+            with self.subTest(mount=mount):
+                graph = copy.deepcopy(self.sibling_compose)
+                graph["services"]["slackbot"]["volumes"] = [mount]
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_engine_socket_refused"):
+                    release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_rehearsal_rejects_unreviewed_healthcheck_commands(self):
+        self.sibling()
+        for name in self.sibling_compose["services"]:
+            with self.subTest(service=name):
+                graph = copy.deepcopy(self.sibling_compose)
+                graph["services"][name]["healthcheck"] = {"test": ["CMD-SHELL", "unreviewed-provider-command"]}
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_healthcheck_unsupported"):
+                    release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_rehearsal_requires_singleton_services(self):
+        self.sibling()
+        for name in self.sibling_compose["services"]:
+            for change in ({"scale": 0}, {"scale": 2}, {"deploy": {"replicas": 2}},
+                           {"deploy": {"mode": "global"}}, {"scale": True}):
+                with self.subTest(service=name, change=change):
+                    graph = copy.deepcopy(self.sibling_compose)
+                    graph["services"][name].update(change)
+                    with self.assertRaisesRegex(release.ReleaseError, "sibling_service_not_singleton"):
+                        release.isolated_sibling(self.compose, graph, 18080)
+        for service in self.sibling_compose["services"].values():
+            service.update(scale=1, deploy={"mode": "replicated", "replicas": 1})
+        release.isolated_sibling(self.compose, self.sibling_compose, 18080)
+
+    def test_rehearsal_inspects_running_and_stopped_final_container_resources(self):
+        sibling = self.sibling()
+        actual = self.root / "actual-final-data"
+        actual.mkdir()
+        self.sibling_compose["services"]["orchestrator"]["volumes"].append(
+            {"type": "bind", "source": str(actual / "nested"), "target": "/data"})
+        self.repin_graph(sibling, self.sibling_compose)
+        for running in (True, False):
+            with self.subTest(running=running):
+                def observe(argv, **kwargs):
+                    if argv[:2] == ["docker", "ps"] and "label=com.docker.compose.project=fixture-director" in argv:
+                        self.assertIn("-a", argv)
+                        return b"final-container"
+                    if argv[:2] == ["docker", "inspect"]:
+                        return release.encoded([{"Id": "final-container", "State": {"Running": running},
+                            "Config": {"Labels": {"com.docker.compose.project": "fixture-director"}},
+                            "Mounts": [{"Type": "bind", "Source": str(actual), "Destination": "/old-data"}],
+                            "NetworkSettings": {"Networks": {}}, "HostConfig": {"PortBindings": {}}}])
+                    return self.platform(argv, **kwargs)
+                with patch.object(release, "command", side_effect=observe), self.assertRaisesRegex(
+                        release.ReleaseError, "sibling_shared_write_mount"):
+                    release.Release(self.descriptor).rehearsal()
+
+    def test_rehearsal_refuses_windows_command_line_overflow(self):
+        self.sibling()
+        env = dict(release.child_environment(), PATH="C:/fixture/" + "x" * 26000)
+        with patch.object(release, "child_environment", return_value=env), self.assertRaisesRegex(
+                release.ReleaseError, "rehearsal_command_line_too_long"):
+            release.Release(self.descriptor).rehearsal()
+
+    def test_complete_rehearsal_requires_local_backup_database_and_route(self):
+        sibling = self.sibling()
+        graph = self.sibling_compose
+        original = copy.deepcopy(graph)
+        for defect in ("missing", "external", "wrong_user"):
+            with self.subTest(defect=defect):
+                graph.clear()
+                graph.update(copy.deepcopy(original))
+                if defect == "missing":
+                    del graph["services"]["langgraph-primary-db"]
+                    graph["services"]["orchestrator"].pop("depends_on")
+                elif defect == "external":
+                    graph["services"]["orchestrator"]["environment"]["LANGGRAPH_PRIMARY_POSTGRES_DSN"] = "postgresql://director_primary:fixture@external:5432/director_primary"
+                else:
+                    graph["services"]["langgraph-primary-db"]["environment"]["POSTGRES_USER"] = "other"
+                self.repin_graph(sibling, graph)
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_backup_database_"):
+                    release.Release(self.descriptor).rehearsal()
+
+    def test_inherited_image_healthcheck_cannot_hide_behind_timing_override(self):
+        sibling = self.sibling()
+        self.sibling_compose["services"]["slackbot"]["healthcheck"] = {"interval": "30s"}
+        self.repin_graph(sibling, self.sibling_compose)
+        tool = release.Release(self.spec["rehearsal"]["descriptor"]["path"])
+        def observe(argv, **kwargs):
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return release.encoded([{"Id": self.image, "Config": {
+                    "Healthcheck": {"Test": ["CMD-SHELL", "unreviewed-provider-command"]}}}])
+            return self.platform(argv, **kwargs)
+        with patch.object(release, "command", side_effect=observe), self.assertRaisesRegex(
+                release.ReleaseError, "sibling_healthcheck_unsupported"):
+            tool.rehearsal_images(self.sibling_compose)
+
+    def test_launcher_rechecks_final_resource_inventory_before_effects(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        def changed(argv, **kwargs):
+            if argv[:2] == ["docker", "ps"] and "label=com.docker.compose.project=fixture-director" in argv:
+                return b"new-final-container"
+            if argv[:2] == ["docker", "inspect"]:
+                return release.encoded([{"Id": "new-final-container", "Mounts": [],
+                    "Config": {"Labels": {"com.docker.compose.project": "fixture-director"}},
+                    "NetworkSettings": {"Networks": {}}, "HostConfig": {"PortBindings": {}}}])
+            return None
+        for step in plan["steps"][:7]:
+            with self.subTest(action=step["action"]), self.assertRaisesRegex(SystemExit, "final project resources changed"):
+                self.launch_fixture(step, observe=changed)
+            self.assertEqual(self.launched, [])
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required for actual profile transitions")
+    def test_launcher_accepts_only_actual_control_runtime_transitions(self):
+        sibling = self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        path = Path(sibling["runtime_env"]["path"])
+        source = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
+        # Execute only the real profile writer and its successful-action switch
+        # literals. No application, Docker or control-script body is executed.
+        writer = source[source.index("function Set-DotEnvValue"):source.index("function Invoke-Compose")]
+        switch_blocks = {}
+        for action, marker, count in (
+            ("StageRuntime", 'if ($Action -eq "StageRuntime")', 1),
+            ("ActivateOffline", 'if ($Action -in @("Activate", "ActivateOffline"))', 1),
+            ("Rollback", 'if ($Action -eq "Rollback")', 2)):
+            tail = source[source.index(marker):]
+            switch_blocks[action] = re.findall(r"Write-Switches @\{.*?\}", tail, re.S)[:count]
+        for step in plan["steps"]:
+            def effect(argv, **kwargs):
+                if step["action"] in switch_blocks:
+                    harness = self.root / "profile-writer-only.ps1"
+                    harness.write_text(writer + '\n$script:environmentPath=$args[0]; $script:values=@{}\n' +
+                                       "\n".join(switch_blocks[step["action"]]))
+                    # subprocess.run is mocked by launch_fixture; use Popen for
+                    # this explicit, harmless production-writer harness.
+                    process = subprocess.Popen(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness), str(path)],
+                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    _, error = process.communicate(timeout=20)
+                    self.assertEqual(process.returncode, 0, error)
+            self.launch_fixture(step, effect=effect)
+            self.assertEqual(len(self.launched), 1)
+            if step["action"] in ("StageRuntime", "ActivateOffline", "Rollback"):
+                following = plan["steps"][plan["steps"].index(step) + 1]
+                raw = path.read_bytes()
+                for key in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_POSTGRES_DSN", "DIRECTOR_RUNTIME_IMAGE"):
+                    values = release.dotenv(raw)
+                    values[key] = "unreviewed"
+                    path.write_bytes("".join(f"{name}={value}\n" for name, value in values.items()).encode())
+                    with self.subTest(after=step["action"], key=key), self.assertRaises(SystemExit):
+                        self.launch_fixture(following)
+                    self.assertEqual(self.launched, [])
+                    path.write_bytes(raw)
+
+    def test_local_database_start_is_planned_before_control_and_evidence_is_deferred(self):
+        sibling = self.sibling()
+        graph = self.sibling_compose
+        # Use the checked-in stock service shape; only pinning/fresh isolation is overlaid.
+        import yaml
+        stock = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+        graph["services"]["langgraph-primary-db"] = copy.deepcopy(stock["services"]["langgraph-primary-db"])
+        db = graph["services"]["langgraph-primary-db"]
+        db.update(pull_policy="never", environment={"POSTGRES_USER": "director_primary",
+            "POSTGRES_DB": "director_primary", "POSTGRES_PASSWORD": "fixture-only"},
+            volumes=[{"type": "volume", "source": "primary", "target": "/var/lib/postgresql/data"}])
+        graph["volumes"]["primary"] = {"name": "fixture-sibling_primary"}
+        graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {"condition": "service_healthy"}}
+        graph["services"]["orchestrator"]["environment"].update(
+            LANGGRAPH_PRIMARY_POSTGRES_DSN="postgresql://director_primary:fixture-only@langgraph-primary-db:5432/director_primary?sslmode=disable",
+            LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES="true")
+        self.repin_graph(sibling, graph)
+        plan = release.Release(self.descriptor).rehearsal()
+        self.assertEqual([row["action"] for row in plan["steps"][:2]], ["StartDatabase", "Preflight"])
+        self.assertFalse(plan["preparation_ready"])
+        self.assertIn({"check": "database", "status": "DEFERRED", "reason": "local_database_start_required"},
+                      plan["checks"])
+        probes = [kwargs for argv, kwargs in self.calls if argv[-1] == release.DATABASE_PROBE]
+        self.assertEqual(len(probes), 1, "only the already available final DB may be probed during planning")
+        start = plan["steps"][0]
+        self.assertEqual(start["control_argv"][-1], "langgraph-primary-db")
+        for option in ("--no-deps", "--no-build", "--wait", "--wait-timeout"):
+            self.assertIn(option, start["control_argv"])
+        payload = json.loads(base64.b64decode(start["argv"][-1]))
+        self.assertEqual(start["control_argv"][start["control_argv"].index("--wait-timeout") + 1], "120")
+        for defect in (None, "readiness", "identity", "occupied"):
+            events = []
+            def effect(argv, **kwargs):
+                events.append("start")
+                if defect == "readiness":
+                    raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            def observe(argv, **kwargs):
+                if argv[:2] == ["docker", "compose"]:
+                    events.append("identity")
+                    return release.encoded(dict(self.sibling_activation,
+                        database_instance_id="wrong" if defect == "identity" else self.sibling_activation["database_instance_id"]))
+                if argv[-1] == release.VALIDATION_PROBE:
+                    events.append("slots")
+                    return release.encoded({"occupied_slots": ["grok"] if defect == "occupied" else []})
+                return None
+            with self.subTest(defect=defect):
+                if defect:
+                    with self.assertRaises((SystemExit, subprocess.TimeoutExpired)):
+                        self.launch_fixture(start, observe=observe, effect=effect)
+                else:
+                    self.launch_fixture(start, observe=observe, effect=effect)
+                    self.assertEqual(events, ["start", "identity", "slots"])
+                self.assertEqual(len(self.launched), 1)
+                self.assertNotIn("-File", self.launched[0].args[0])
+                if defect == "readiness":
+                    self.assertEqual(events, ["start"])
+
 
 class ReleaseInputAndProcessTests(unittest.TestCase):
+    def test_cli_bootstrap_refuses_checkout_imports_without_isolation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "director-release.py"
+            script.write_bytes((ROOT / "scripts/director-release.py").read_bytes())
+            marker = root / "imported"
+            # Even __future__ is a filesystem import. The old CLI executes a
+            # shadow module for --help before any owner/source check protects it.
+            (root / "argparse.py").write_text("open(" + repr(str(marker)) + ", 'w').write('executed')\n")
+            (root / "__future__.py").write_text("open(" + repr(str(marker)) + ", 'w').write('future executed')\n")
+            normal = subprocess.run([sys.executable, "-B", str(script), "--help"], capture_output=True, timeout=20)
+            self.assertFalse(marker.exists(), "checkout import executed before the isolation gate")
+            self.assertNotEqual(normal.returncode, 0)
+            self.assertIn(b"-I", normal.stderr)
+            isolated = subprocess.run([sys.executable, "-I", "-B", str(script), "--help"], capture_output=True, timeout=20)
+            self.assertEqual(isolated.returncode, 0, isolated.stderr)
+            self.assertFalse(marker.exists())
+
     def test_json_duplicate_and_nonfinite_values_are_rejected(self):
         for raw in (b'{"a":1,"a":2}', b'{"a":NaN}', b'{"a":Infinity}'):
             with self.subTest(raw=raw), self.assertRaises(release.ReleaseError):

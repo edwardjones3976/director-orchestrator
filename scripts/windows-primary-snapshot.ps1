@@ -105,7 +105,7 @@ if (@($configNames | Where-Object { $_ -match '^filter\..*\.(clean|smudge|proces
 if (Test-Path -LiteralPath (Join-Path $targetPath ".gitmodules")) {
     throw "Snapshot submodules are unsupported."
 }
-$dirty = @(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath= -c core.untrackedCache=false status --porcelain=v2 --untracked-files=all)
+$dirty = @(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false status --porcelain=v2 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw "Snapshot target is not clean." }
 $head = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
 $tree = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)

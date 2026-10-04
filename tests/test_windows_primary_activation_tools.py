@@ -267,6 +267,19 @@ Write-Output 'tls-lifecycle-passed'
             self.assertIn(b"not clean", blocked.stderr)
             self.assertFalse(marker.exists())
 
+    def test_snapshot_hook_override_resolves_to_a_non_directory(self) -> None:
+        # Resolve the hook using real Git without installing/executing a root hook.
+        text = self.text("windows-primary-snapshot.ps1")
+        override = re.search(r"-c (core\.hooksPath=\S*)", text).group(1)
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["git", "init", "-q", directory], check=True, capture_output=True)
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+            env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            hook = subprocess.check_output(["git", "-C", directory, "-c", override,
+                "rev-parse", "--git-path", "hooks/post-index-change"], env=env).decode().strip()
+            self.assertIn("/dev/null/", hook.replace("\\", "/"))
+            self.assertFalse(Path(hook).parent.is_dir())
+
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_creation_binds_content_to_the_selected_remote(self) -> None:
         commit = "a" * 40

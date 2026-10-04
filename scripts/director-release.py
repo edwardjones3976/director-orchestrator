@@ -3,7 +3,12 @@
 No command here reserves a generation, dispatches a provider, starts a service,
 or manufactures acceptance. The existing control script owns execution and gates.
 """
-from __future__ import annotations
+# sys is built in. Refuse before importing anything that an unverified scripts/
+# directory, current directory or PYTHONPATH could shadow. The operator must use
+# interpreter isolation from process startup; re-exec after imports is too late.
+import sys
+if __name__ == "__main__" and not sys.flags.isolated:
+    raise SystemExit("Run director-release.py with Python -I -B (isolated startup required).")
 
 import argparse
 import base64
@@ -16,7 +21,6 @@ import re
 import signal
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 from types import ModuleType
@@ -239,14 +243,115 @@ print(json.dumps({'database_identity':binding[0],'database_instance_id':binding[
                   'occupied_slots':[row[0] for row in rows]}))
 """
 
+LOCAL_DATABASE_PROBE = """
+import json
+from director_orchestrator.config import Settings
+from director_orchestrator.langgraph_postgres import database_binding
+s=Settings()
+b=database_binding(s.langgraph_primary_postgres_dsn,schema=s.langgraph_primary_postgres_schema,
+                   allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres,bootstrap=False)
+print(json.dumps({'database_identity':b[0],'database_instance_id':b[1]}))
+"""
+
+VALIDATION_PROBE = """
+import json,sys
+from director_orchestrator.provider_validation import PostgresValidationStore,SCHEMA
+v=json.load(sys.stdin)
+with PostgresValidationStore(v['validation_dsn']).connect() as db:
+    db.execute('SET TRANSACTION READ ONLY')
+    db.execute("SET LOCAL statement_timeout = '5s'")
+    rows=db.execute(f'SELECT provider FROM {SCHEMA}.attempts WHERE generation=%s',(v['generation'],)).fetchall()
+print(json.dumps({'occupied_slots':[row[0] for row in rows]}))
+"""
+
+# Only these successful existing control actions intentionally edit the profile.
+# Every other value remains part of the per-step semantic digest after that edit.
+RUNTIME_CHANGES = {
+    "StageRuntime": {"DIRECTOR_ASGI_APP": "director_orchestrator.primary_staging:app", "ALLOW_PAID_RUNS": "false",
+        "LANGGRAPH_PRIMARY_ENABLED": "false", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false",
+        "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "false",
+        "LANGGRAPH_PARALLEL_KILL_SWITCH": "true"},
+    "ActivateOffline": {"DIRECTOR_ASGI_APP": "director_orchestrator.main:app", "ALLOW_PAID_RUNS": "false",
+        "LANGGRAPH_PRIMARY_ENABLED": "true", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "true",
+        "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "true",
+        "LANGGRAPH_PARALLEL_KILL_SWITCH": "true"},
+    "Rollback": {"DIRECTOR_ASGI_APP": "director_orchestrator.main:app", "ALLOW_PAID_RUNS": "false",
+        "LANGGRAPH_PRIMARY_ENABLED": "false", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false",
+        "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "false",
+        "LANGGRAPH_PARALLEL_KILL_SWITCH": "true"},
+}
+
+# One fixed helper is shared by planning and the emitted launcher so their
+# inventory digests have the same meaning. No container environment is retained.
+RESOURCE_INVENTORY = r"""
+def resource_inventory(read,project):
+    ids=sorted(read(['docker','ps','-a','--filter','label=com.docker.compose.project='+project,'--format','{{.ID}}']).decode().splitlines())
+    result={'containers':ids,'binds':[],'volumes':[],'networks':[],'ports':[]}
+    if not ids: return result
+    rows=json.loads(read(['docker','inspect',*ids]))
+    if len(rows)!=len(ids) or any(row.get('Config',{}).get('Labels',{}).get('com.docker.compose.project')!=project for row in rows):
+        raise ValueError('final resource inventory unavailable')
+    for row in rows:
+        for mount in row['Mounts']:
+            if mount['Type']=='bind': result['binds'].append(mount['Source'])
+            elif mount['Type']=='volume': result['volumes'].append(mount['Name'])
+        result['networks'].extend(row['NetworkSettings']['Networks'])
+        for bindings in (row['HostConfig'].get('PortBindings') or {}).values():
+            result['ports'].extend(item['HostPort'] for item in (bindings or []))
+    return {key:sorted(set(value)) for key,value in result.items()}
+"""
+exec(RESOURCE_INVENTORY)
+
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
 REHEARSAL_LAUNCH = r"""
-import base64,json,pathlib,re,subprocess,sys
+import base64,hashlib,json,pathlib,re,stat,subprocess,sys
 v=json.loads(base64.b64decode(sys.argv[1]))
 env=v['environment']
-def read(args):
-    return subprocess.check_output(args,env=env,cwd=v['cwd'],timeout=30)
+def read(args,**kwargs):
+    return subprocess.check_output(args,env=env,cwd=v['cwd'],timeout=30,**kwargs)
+def digest(raw): return hashlib.sha256(raw).hexdigest()
+def encoded(value): return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+def file_bytes(name):
+    path=pathlib.Path(name)
+    if not path.is_absolute(): raise SystemExit('input path changed')
+    for part in (path,*path.parents):
+        metadata=part.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or getattr(metadata,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0):
+            raise SystemExit('linked input refused')
+    with path.open('rb') as stream: raw=stream.read(4*1024*1024+1)
+    if len(raw)>4*1024*1024: raise SystemExit('input too large')
+    return raw
+def dotenv(raw):
+    result={}
+    for line in raw.decode('utf-8-sig').splitlines():
+        if not line.strip() or line.lstrip().startswith('#'): continue
+        name,sep,value=line.partition('=')
+        if not sep or not re.fullmatch(r'[A-Z][A-Z0-9_]*',name) or name in result or chr(0) in value:
+            raise SystemExit('invalid runtime profile')
+        result[name]=value
+    return result
+def input_check():
+    for pin in v['pins']:
+        if digest(file_bytes(pin['path']))!=pin['sha256']: raise SystemExit('pinned input changed')
+    pin=v['runtime_pin']
+    raw=file_bytes(pin['path'])
+    if 'sha256' in pin:
+        if digest(raw)!=pin['sha256']: raise SystemExit('initial runtime profile changed')
+    elif digest(encoded(dotenv(raw)))!=pin['values_sha256']:
+        raise SystemExit('runtime profile differs from expected control transition')
+def database_check():
+    db=v.get('local_database')
+    if not db: return
+    actual=json.loads(read([*db['compose'],'run','--rm','--no-deps','--pull','never','-T','--entrypoint','python',
+                           'orchestrator','-c',LOCAL_DATABASE_PROBE]))
+    if any(actual.get(key)!=db['expected'][key] or actual.get(key)==db['final'][key]
+           for key in ('database_identity','database_instance_id')):
+        raise SystemExit('sibling database identity not isolated')
+    profile=dotenv(file_bytes(db['bridge_path']))
+    slots=json.loads(read([sys.executable,'-B','-c',VALIDATION_PROBE],input=encoded({
+        'validation_dsn':profile['DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN'],'generation':db['generation']})))
+    if slots.get('occupied_slots')!=[]: raise SystemExit('validation slot already occupied')
 def source_check():
     names=read(['git','config','--null','--name-only','--list']).decode().split(chr(0))
     if any(re.match(r'filter\..*\.(clean|smudge|process)$',name,re.I) for name in names):
@@ -258,9 +363,12 @@ def source_check():
         raise SystemExit('source submodules unsupported')
     if read(['git','status','--porcelain=v2','--untracked-files=all']).strip():
         raise SystemExit('verified source no longer clean')
+input_check()
 source_check()
 if read(['docker','info','--format','{{.ID}}']).decode().strip()!=v['daemon_id']:
     raise SystemExit('verified Docker daemon changed')
+if digest(encoded(resource_inventory(read,v['final_project'])))!=v['final_resources_sha256']:
+    raise SystemExit('final project resources changed')
 for reference,expected in v['images'].items():
     actual=json.loads(read(['docker','image','inspect',reference]))
     if len(actual)!=1 or actual[0]['Id']!=expected:
@@ -279,9 +387,16 @@ if prior.exists():
     saved=json.loads(prior.read_text(encoding='utf-8-sig'))
     if any(saved.get(key)!=v['runtime_image'] for key in ('orchestrator_image_id','gateway_image_id')):
         raise SystemExit('rollback image outside verified rehearsal')
+if v['action']!='StartDatabase': database_check()
+input_check()
 source_check()
 subprocess.run(v['control_argv'],env=env,cwd=v['cwd'],check=True,timeout=v['control_timeout_seconds'])
+if v['action']=='StartDatabase':
+    input_check()
+    database_check()
 """
+REHEARSAL_LAUNCH = ("LOCAL_DATABASE_PROBE=" + repr(LOCAL_DATABASE_PROBE) + "\nVALIDATION_PROBE=" +
+                   repr(VALIDATION_PROBE) + "\n" + RESOURCE_INVENTORY + REHEARSAL_LAUNCH)
 
 
 class Release:
@@ -304,6 +419,10 @@ class Release:
         # No checkout locator runs. Candidate helpers are imported only after
         # the installed reader has bound this exact input and Git has verified it.
         self.source_check()
+        # -I intentionally ignores PYTHONPATH; only the now-authenticated source
+        # may be added for the existing candidate helper imports.
+        if str(self.source / "src") not in sys.path:
+            sys.path.insert(0, str(self.source / "src"))
         validator = Draft202012Validator(document(bounded_read(SCHEMA)))
         require(not list(validator.iter_errors(self.spec)), "invalid_release_descriptor")
         self.output = Path(self.spec["output_directory"])
@@ -550,10 +669,14 @@ class Release:
         require(pins.get(self.spec["release_id"]) == self.descriptor_digest, "preparation_not_owner_pinned")
         self.owner_descriptor_digest = digest
 
-    def doctor(self):
+    def doctor(self, *, defer_local_database=False):
         checks = []
         for name in ("owner", "source", "image", "selectors", "compose", "snapshot", "reviewers", "bridge", "database", "live_config"):
             try:
+                if name == "database" and defer_local_database and self.rendered and \
+                        "langgraph-primary-db" in document(self.rendered)["services"]:
+                    checks.append({"check": name, "status": "DEFERRED", "reason": "local_database_start_required"})
+                    continue
                 getattr(self, name + "_check")()
                 checks.append({"check": name, "status": "PASS"})
             except Exception as error:
@@ -659,13 +782,30 @@ class Release:
         self.image_check()
         self.compose_check()
         self.database_check()
-        report = sibling.doctor()
-        require(report["preparation_ready"], "sibling_doctor_refused")
+        report = sibling.doctor(defer_local_database=True)
+        require(all(item["status"] == "PASS" or item == {
+            "check": "database", "status": "DEFERRED", "reason": "local_database_start_required"}
+            for item in report["checks"]), "sibling_doctor_refused")
+        local_database = sibling.observed_database is None
         for key in ("database_identity", "database_instance_id"):
-            require(self.observed_database[key] != sibling.observed_database[key], "sibling_database_not_isolated")
+            expected = sibling.manifest["activation"] if local_database else sibling.observed_database
+            require(self.observed_database[key] != expected[key], "sibling_database_not_isolated")
         final_graph, sibling_graph = document(self.rendered), document(sibling.rendered)
+        # The existing Backup/RestoreDrill controls operate on this exact service;
+        # an external-only database has no supported complete rehearsal contract.
+        require("langgraph-primary-db" in sibling_graph["services"], "sibling_backup_database_required")
+        from urllib.parse import urlsplit
+        database_service = sibling_graph["services"]["langgraph-primary-db"].get("environment", {})
+        database_url = urlsplit(sibling_graph["services"]["orchestrator"].get("environment", {}).get(
+            "LANGGRAPH_PRIMARY_POSTGRES_DSN", ""))
+        require(database_service.get("POSTGRES_USER") == database_service.get("POSTGRES_DB") == "director_primary" and
+                database_url.scheme in ("postgres", "postgresql") and database_url.hostname == "langgraph-primary-db" and
+                (database_url.port or 5432) == 5432 and database_url.username == "director_primary" and
+                database_url.path == "/director_primary", "sibling_backup_database_route_unsupported")
+        final_resources = resource_inventory(self.run, self.spec["compose_project"])
         isolated_sibling(final_graph, sibling_graph, plan["host_port"],
-                         protected_paths=self.protected_paths() + sibling.protected_paths())
+                         protected_paths=self.protected_paths() + sibling.protected_paths(),
+                         final_resources=final_resources, docker_host=self.docker_environment["DOCKER_HOST"])
         require(self.daemon_id == sibling.daemon_id and self.docker_environment == sibling.docker_environment,
                 "sibling_docker_target_mismatch")
         images = sibling.rehearsal_images(sibling_graph)
@@ -679,29 +819,60 @@ class Release:
                 str(sibling.source / "scripts/windows-langgraph-primary-control.ps1")]
         common = ["-EnvironmentFile", sibling.spec["runtime_env"]["path"], "-ComposeProject",
                   sibling.spec["compose_project"], "-HostPort", str(plan["host_port"]), "-TimeoutSeconds", "120"]
+        compose = ["docker", "compose", "--project-name", sibling.spec["compose_project"],
+                   "--env-file", sibling.spec["runtime_env"]["path"]]
+        immutable_pins = self.input_pins() + sibling.input_pins(include_runtime=False)
+        require(all(Path(pin["path"]).resolve() != Path(sibling.spec["runtime_env"]["path"]).resolve()
+                    for pin in immutable_pins), "sibling_runtime_aliases_immutable_input")
+        pins = {pin["path"]: pin for pin in immutable_pins}
+        expected_runtime = dict(sibling.runtime)
+        runtime_changed = False
+        actions = (["StartDatabase"] if local_database else []) + [
+            "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
+            "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"]
         steps = []
-        for action in ("Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
-                       "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"):
+        for action in actions:
             arguments = [*base, "-Action", action, *common]
-            if action == "Accept":
+            if action == "StartDatabase":
+                arguments = [*compose, "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait",
+                             "--wait-timeout", "120", "langgraph-primary-db"]
+            elif action == "Accept":
                 arguments += ["-AcceptanceArtifactPath", plan["acceptance_artifact"]["path"]]
             elif action in ("Backup", "RestoreDrill"):
                 arguments += ["-BackupPath", str(backup)]
             payload = {"environment": environment, "cwd": str(sibling.source), "daemon_id": sibling.daemon_id,
-                       "candidate": sibling.spec["candidate"],
+                       "candidate": sibling.spec["candidate"], "action": action, "pins": list(pins.values()),
+                       "runtime_pin": ({"path": sibling.spec["runtime_env"]["path"],
+                                        "values_sha256": sha(encoded(expected_runtime))}
+                                       if runtime_changed else sibling.spec["runtime_env"]),
+                       "final_project": self.spec["compose_project"],
+                       "final_resources_sha256": sha(encoded(final_resources)),
                        # Activation can wait 75s for leases; rollback drains for
                        # 65s. Preserve their full 120s health wait plus overhead.
                        "control_timeout_seconds": 260 if action in ("ActivateOffline", "Rollback") else 140,
                        "images": images, "control_argv": arguments, "runtime_image": sibling.spec["image_id"],
-                       "prior_images": sibling.prior_images_path(), "first_step": action == "Preflight",
+                       "prior_images": sibling.prior_images_path(), "first_step": not steps,
                        "project": sibling.spec["compose_project"],
                        "fresh_networks": [item["name"] for item in sibling_graph["networks"].values()],
                        "fresh_volumes": [sibling_graph["volumes"][mount["source"]]["name"]
                            for name in ("n8n", "n8n-db")
                            for mount in sibling_graph["services"].get(name, {}).get("volumes", [])]}
-            steps.append({"action": action, "control_argv": arguments,
-                          "argv": [sibling.spec["executables"]["python"], "-I", "-c", REHEARSAL_LAUNCH,
-                                   base64.b64encode(encoded(payload)).decode("ascii")]})
+            if local_database:
+                payload["local_database"] = {"compose": compose, "bridge_path": sibling.spec["bridge_env"]["path"],
+                    "generation": sibling.spec["generation_manifest"]["sha256"], "final": self.observed_database,
+                    "expected": {key: sibling.manifest["activation"][key] for key in
+                                 ("database_identity", "database_instance_id")}}
+            argv = [sibling.spec["executables"]["python"], "-I", "-c", REHEARSAL_LAUNCH,
+                    base64.b64encode(encoded(payload)).decode("ascii")]
+            # CreateProcess counts the terminating NUL and UTF-16 code units,
+            # including quoting added by Python's actual Windows serializer.
+            for command_argv in (argv, arguments):
+                require(len(subprocess.list2cmdline(command_argv).encode("utf-16-le")) // 2 + 1 <= 32767,
+                        "rehearsal_command_line_too_long")
+            steps.append({"action": action, "control_argv": arguments, "argv": argv})
+            if action in RUNTIME_CHANGES:
+                expected_runtime.update(RUNTIME_CHANGES[action])
+                runtime_changed = True
         self.verify_inputs()
         sibling.verify_inputs()
         return {"schema_version": "director-release-rehearsal-plan/v1", "status": "PLANNED", "executed": False,
@@ -711,7 +882,8 @@ class Release:
                 "compose_project": sibling.spec["compose_project"], "candidate": self.spec["candidate"],
                 "image_id": self.spec["image_id"], "cwd": str(sibling.source), "timeout_seconds": 1499,
                 "environment_mode": "replace", "environment": environment,
-                "steps": steps, "release_ready": False, "provider_calls": 0,
+                "steps": steps, "checks": report["checks"], "preparation_ready": report["preparation_ready"],
+                "release_ready": False, "provider_calls": 0,
                 "dependencies": DEPENDENCIES, "on_uncertain_effect": "STOP_RECONCILE_WITHOUT_REPLAY"}
 
     def rehearsal_images(self, graph):
@@ -723,13 +895,20 @@ class Release:
         require(not networks.intersection(item["name"] for item in graph["networks"].values()),
                 "sibling_network_not_fresh")
         images = {}
-        for service in graph["services"].values():
+        for name, service in graph["services"].items():
             reference = service["image"]
             inspected = document(self.run(["docker", "image", "inspect", reference]))
             require(len(inspected) == 1 and re.fullmatch(r"sha256:[0-9a-f]{64}", inspected[0]["Id"]),
                     "rehearsal_image_not_cached")
             require(not reference.startswith("sha256:") or inspected[0]["Id"] == reference,
                     "rehearsal_cached_image_mismatch")
+            healthcheck = inspected[0].get("Config", {}).get("Healthcheck", {})
+            override = service.get("healthcheck", {})
+            if override.get("disable"):
+                healthcheck = {"test": ["NONE"]}
+            elif "test" in override:
+                healthcheck = override
+            reviewed_healthcheck(name, healthcheck)
             images[reference] = inspected[0]["Id"]
         # n8n must start without persisted workflows or credentials. The caller
         # may provision fresh isolated volumes; reused n8n state is unsupported.
@@ -739,6 +918,18 @@ class Release:
                 require(mount.get("type") == "volume" and mount["source"] in graph.get("volumes", {}) and
                         graph["volumes"][mount["source"]]["name"] not in existing, "sibling_n8n_state_not_fresh")
         return images
+
+    def input_pins(self, *, include_runtime=True):
+        pins = [{"path": str(self.path), "sha256": self.descriptor_digest},
+                {"path": str(self.owner_root / "launcher.py"), "sha256": self.owner_launcher_digest},
+                {"path": str(self.owner_root / "release-descriptor.json"), "sha256": self.owner_descriptor_digest}]
+        pins += [self.spec[key] for key in ("bridge_env", "generation_manifest", "validation_manifest", "bridge_ca")]
+        if include_runtime:
+            pins.append(self.spec["runtime_env"])
+        pins += self.spec["compose_files"]
+        if "rehearsal" in self.spec:
+            pins += [self.spec["rehearsal"][key] for key in ("descriptor", "acceptance_artifact")]
+        return pins
 
     def prior_images_path(self):
         return (self.spec["runtime_env"]["path"] + ".prior-images." +
@@ -785,7 +976,17 @@ def acceptance_inputs(runtime):
             "generation_acceptance_digest_invalid")
 
 
-def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
+def reviewed_healthcheck(name, healthcheck):
+    tests = {
+        "orchestrator": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"],
+        "langgraph-primary-db": ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"],
+        "n8n-db": ["CMD-SHELL", "pg_isready -U n8n -d n8n"],
+    }
+    test = (healthcheck or {}).get("test", (healthcheck or {}).get("Test"))
+    require(test in (None, [], ["NONE"]) or test == tests.get(name), "sibling_healthcheck_unsupported")
+
+
+def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host=""):
     """Check resolved Compose resources, not just a different project name."""
     project = sibling["name"]
     allowed_dependencies = {"orchestrator": {"langgraph-primary-db"}, "slackbot": {"orchestrator", "n8n"},
@@ -793,6 +994,11 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
     require({"orchestrator", "slackbot", "n8n"} <= set(sibling["services"]) <= set(allowed_dependencies),
             "sibling_service_graph_unsupported")
     for name, service in sibling["services"].items():
+        deploy = service.get("deploy", {})
+        require(all(type(value) is int and value == 1 for value in
+                    (service.get("scale", 1), deploy.get("replicas", 1))) and
+                deploy.get("mode", "replicated") == "replicated", "sibling_service_not_singleton")
+        reviewed_healthcheck(name, service.get("healthcheck", {}))
         require(set(service.get("depends_on", {})) <= allowed_dependencies[name] and
                 set(service.get("depends_on", {})) <= set(sibling["services"]) and
                 not any(service.get(key) for key in ("links", "external_links", "extends", "post_start", "pre_stop")),
@@ -820,8 +1026,9 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
         if name in sibling["services"]:
             require(set(sibling["services"][name].get("environment", {})) <=
                     {"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"}, "sibling_database_configuration_unsupported")
+    final_resources = final_resources or {}
     for kind in ("networks", "volumes"):
-        final_names = {item.get("name") for item in final.get(kind, {}).values()}
+        final_names = {item.get("name") for item in final.get(kind, {}).values()} | set(final_resources.get(kind, []))
         for item in sibling.get(kind, {}).values():
             require(not item.get("external") and not item.get("driver_opts") and not item.get("driver") and
                     isinstance(item.get("name"), str) and
@@ -829,8 +1036,13 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
                     "sibling_shared_" + kind)
     require(bool(sibling.get("networks")), "sibling_network_missing")
     final_ports = {str(port.get("published")) for service in final["services"].values() for port in service.get("ports", [])}
+    final_ports.update(final_resources.get("ports", []))
     final_binds = [mount["source"] for service in final["services"].values()
                    for mount in service.get("volumes", []) if mount.get("type") == "bind"]
+    final_binds += final_resources.get("binds", [])
+    engine_sockets = ["/var/run/docker.sock", "/run/docker.sock"]
+    if docker_host.startswith("unix://"):
+        engine_sockets.append(docker_host[len("unix://"):])
     # Compose overrides and env_file expansion can replace profile identities.
     # Compare the values the resolved services will actually receive.
     for key in ("SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID"):
@@ -863,6 +1075,13 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
             require(binding not in sibling_ports, "sibling_port_collision")
             sibling_ports.add(binding)
         for mount in service.get("volumes", []):
+            source = str(mount.get("source", ""))
+            pipe = source.replace("\\", "/").lower().startswith("//./pipe/")
+            require(mount.get("type") != "npipe" and not pipe, "sibling_engine_socket_refused")
+            if mount.get("type") == "bind":
+                require(not any(paths_overlap(source, socket) for socket in engine_sockets) and
+                        not (Path(source).exists() and stat.S_ISSOCK(Path(source).stat().st_mode)),
+                        "sibling_engine_socket_refused")
             if mount.get("type") == "bind" and not mount.get("read_only"):
                 unlinked(Path(mount["source"]))
                 require(all(not paths_overlap(mount["source"], source) for source in [*final_binds, *protected_paths]),

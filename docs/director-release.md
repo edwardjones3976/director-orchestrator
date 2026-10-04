@@ -56,6 +56,13 @@ output, DSNs, environment values, or HTTP bodies.
 
 ## One owner descriptor
 
+Start the runner with Python `-I -B`. It refuses ordinary interpreter startup
+before importing filesystem modules: an unverified checkout cannot supply a
+shadow `argparse`, `ctypes`, `uuid`, or other imported dependency. Isolation
+excludes the script/current directories, user site and `PYTHON*` overrides from
+Python's startup search path. After owner authentication and the exact clean
+source check, the runner adds only that checkout's `src` for candidate helpers.
+
 The runner uses A2's same OS account anchor (Windows Known Folder API or POSIX
 effective-UID account record) without executing a checkout locator. It locates the
 OS account's
@@ -115,11 +122,10 @@ This code performs none of those installation or authorization actions.
 From the candidate checkout, with the repository virtual environment:
 
 ```powershell
-$env:PYTHONPATH = 'src'
-python -B scripts/director-release.py doctor --descriptor C:\protected\r1-descriptor.json
-python -B scripts/director-release.py prepare --descriptor C:\protected\r1-descriptor.json
-python -B scripts/director-release.py resume --descriptor C:\protected\r1-descriptor.json
-python -B scripts/director-release.py rehearsal --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py doctor --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py prepare --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py resume --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py rehearsal --descriptor C:\protected\r1-descriptor.json
 ```
 
 These are templates for the reviewed owner setup and require the A2 installation
@@ -233,23 +239,43 @@ and explicitly unpaid switches. It cannot contain another rehearsal descriptor.
 Its image, database identity and generation must already have been provisioned
 through the existing approved controls; this interface does not bootstrap them.
 
-`rehearsal` verifies both final and sibling database bindings through the existing
-read-only probe, then compares the observed identities and instance UUIDs. Stale
-manifest claims cannot substitute for either observation. It compares the
-resolved graphs and refuses shared/external volumes or networks, driver options,
-host namespaces or Docker API socket delegation, reused effective Slack tokens/channels (including Compose
-overrides), non-loopback ports and final-project or sibling-internal port collisions. Writable sibling
+`rehearsal` verifies the available final database through the existing read-only
+probe. The complete backup/restore rehearsal requires the stock
+`langgraph-primary-db` service and the orchestrator's corresponding container-local
+DSN, database and user; an external-only database has no supported backup contract.
+The sibling's previously provisioned identity is **DEFERRED**, with
+`preparation_ready: false`, until its planned database-only start succeeds.
+`StartDatabase` uses the pinned Compose inputs and cached image, no build/pull or
+dependency startup, and a 120-second readiness bound. Immediately afterward,
+before any existing control action, a read-only probe in the candidate image
+checks the actual database identity/instance against the sibling manifest and
+the observed final identity. A host read-only query also requires unused
+validation slots. These checks repeat before subsequent controls. They never
+bootstrap an identity or validation schema. A failed start or proof stops the
+plan for reconciliation; planning itself starts nothing and reports no DB PASS.
+
+The runner compares the resolved graphs **and all actual final-project containers**,
+including stopped containers, using Docker inspection. Their bind sources, volume
+names, attached networks and configured published ports participate in isolation.
+The launcher rechecks this inventory's digest before each action; a replaced
+container or changed resource requires a new plan. It refuses shared/external
+volumes or networks, driver options, host namespaces or Docker API socket
+delegation, reused effective Slack tokens/channels (including Compose overrides),
+non-loopback ports and final-project or sibling-internal port collisions. Writable sibling
 binds cannot overlap either release's checkout, snapshot, output, authority root,
 descriptor, pinned inputs or selected process-environment file, or any final
-Compose bind. Effective sibling Compose paid/live switches must remain false
+Compose or observed container bind. Docker socket binds, parent
+directory binds exposing the selected/default engine socket, and named-pipe
+mounts are refused even when marked read-only; read-only filesystem access does
+not make the Docker API read-only. Effective sibling Compose paid/live switches must remain false
 and its kill switch true even if an override replaces profile values. The backup
 path must be new and directly inside the sibling output directory. Each output
 directory must also be disjoint from the other release's protected paths,
 including its snapshot. The health mapping must use TCP (omitted protocol means
 TCP); a UDP mapping is insufficient.
 
-The supported service graph is orchestrator, slackbot, n8n and their optional
-`langgraph-primary-db` / `n8n-db` dependencies. Slackbot may depend on both
+The supported complete rehearsal graph is orchestrator, slackbot, n8n,
+`langgraph-primary-db`, and optional `n8n-db`. Slackbot may depend on both
 orchestrator and n8n. Extra services, alternate gateway commands, auxiliary
 startup commands, external gateway routes and unsupported n8n/Postgres settings
 are refused. Both application services require explicit unpaid/live/kill
@@ -257,7 +283,12 @@ switches; the separate ChatGPT bridge must be disabled. All startable images
 must be immutable, already cached and explicitly `pull_policy: never`. Builds
 are forbidden on auxiliary services; the existing control uses `--no-build` for
 the application starts. Auxiliary n8n/Postgres images must use the sanctioned
-image repositories without command/entrypoint overrides.
+image repositories without command/entrypoint overrides. Every service must be
+a singleton: both `scale` and `deploy.replicas`, when present, must be integer 1;
+global replication is unsupported. Health commands are limited to the checked-in
+orchestrator HTTP check and stock Postgres readiness checks, or disabled/absent
+checks. Image-inherited health commands are checked too, including when Compose
+overrides only their timing. Arbitrary healthcheck commands are refused.
 
 The sibling project must have no existing containers, named networks or prior-image record.
 n8n state must be fresh: only new, project-scoped named volumes or ephemeral
@@ -274,8 +305,9 @@ selector checks but cannot emit this offline plan. The sibling profile must also
 set `DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` before the plan is produced.
 
 The result contains executable launcher `argv` arrays and separate inspection-only
-`control_argv` arrays for the existing control script, in gate order:
-`Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `StageRuntime`,
+`control_argv` arrays for the database-only Compose start and existing control
+script, in gate order:
+`StartDatabase`, `Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `StageRuntime`,
 `PrepareOfflineHandoff`, `ActivateOffline`, `Health`, `Rollback`, `Health`.
 The restore proof precedes activation as the existing acceptance chain requires.
 The separately pinned acceptance artifact is passed to `Accept`; the runner
@@ -286,11 +318,22 @@ the control child's environment with the emitted allowlist. The result declares
 unsets a variable. This binds `cwd`, the local `DOCKER_HOST`, `COMPOSE_FILE`,
 `COMPOSE_PATH_SEPARATOR`, `DIRECTOR_HOST_PORT` and unpaid switches. Ambient
 `DOCKER_CONTEXT`, TLS/certificate/config selectors and provider keys cannot reach
-the control child. Before each step the launcher rechecks the pinned source commit,
+the control child. Before each action the launcher rechecks exact bytes for both
+descriptors, the owner descriptor and installed launcher, both sets of immutable
+profile/Compose/manifest/CA inputs, and the acceptance artifact. The sibling
+runtime profile retains its original byte pin until `StageRuntime` changes it.
+Thereafter each step requires the full expected environment-map digest, with
+only the existing successful `StageRuntime`, `ActivateOffline` and `Rollback`
+switch edits included. Formatting changes from the writer are allowed; an edited
+DSN, credential, image, switch or other value is not. Pins are checked again
+immediately before invoking each action. Inputs are not silently re-pinned.
+
+Before each step the launcher also rechecks the pinned source commit,
 tree and cleanliness, both before probes and immediately before launching the control
 script. It refuses executable Git filters and submodule checkouts. The separate
 snapshot verifier also refuses its own local executable filters and submodules,
-and disables fsmonitor for its cleanliness check. These checks retain the trusted
+and disables fsmonitor and hooks using an explicit `/dev/null` hook path for its
+cleanliness check. These checks retain the trusted
 operator model; they are not an atomic defense against concurrent filesystem replacement.
 The launcher also rechecks daemon identity and every cached image ID; before the
 first step it rechecks fresh project networks and project/n8n
@@ -299,7 +342,12 @@ so rollback cannot select an uninspected older image. Execute `argv` in order;
 running `control_argv` directly discards these protections and is unsupported.
 Activation and rollback each have a 260-second child timeout, allowing their
 75-second lease wait or 65-second drain plus the full 120-second health wait
-and command overhead. Other child actions retain a 140-second bound.
+and command overhead. Other child actions retain a 140-second bound; the database
+proofs each have a separate 30-second read-only subprocess bound. Plans whose
+serialized launcher or control argument list exceeds Windows' 32,767 UTF-16-unit
+limit (including quoting and the terminating NUL) are refused before emission.
+Shorten the protected paths or inherited command search path and generate a new
+plan; the runner does not create an unpinned fallback launcher file.
 
 Claude's assigned W6 operator executes this plan only within the separately authorized
 setup/rehearsal slot, preserving the existing control gates and durable command
@@ -364,6 +412,11 @@ first demonstrates marker execution, then proves the source gate suppresses it.
 The emitted launcher's real child records its environment under hostile ambient
 Docker selectors; Docker observations alone are mocked in that test. Negative
 fixtures cover auxiliary services/images, fresh state, TCP mapping, snapshot
-authority and acceptance mode. No provider, production database or
+authority and acceptance mode. Additional regressions run the actual profile
+writer in temporary files, reproduce checkout import shadowing and root hook
+resolution, check every input category at the launcher boundary, and cover
+planned stock DB startup, deferred proofs, health commands, singleton counts,
+actual stopped-container resources and the Windows command-line limit.
+No provider, production database or
 live rehearsal is started by the suite. Exact-head full-suite, CI, security and
 independent review evidence remain required.
