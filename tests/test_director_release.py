@@ -647,6 +647,12 @@ class ReleasePreparationTests(unittest.TestCase):
         # exact non-symlink executable and explicitly pin the existing dependency
         # location in this fixture; do not swap interpreters or bypass unlinked().
         tool.runtime["PYTHONPATH"] = os.pathsep.join((str(ROOT / "src"), sysconfig.get_paths()["purelib"]))
+        # Relocated Linux tool-cache Python also needs its matching libpython;
+        # child_environment deliberately excludes the parent's loader override.
+        # Bind the existing library through the same protected fixture profile.
+        library = Path(sys.base_prefix) / "lib" / str(sysconfig.get_config_var("LDLIBRARY"))
+        if sys.platform == "linux" and library.is_file():
+            tool.runtime["LD_LIBRARY_PATH"] = str(library.parent.resolve(strict=True))
         self.spec["runtime_env"] = self.pin_env("runtime.env", tool.runtime)
         self.save()
         tool = release.Release(self.descriptor)
@@ -662,6 +668,7 @@ class ReleasePreparationTests(unittest.TestCase):
         before_runtime = dict(tool.runtime)
         before_profile = Path(self.spec["runtime_env"]["path"]).read_bytes()
         env = release.child_environment()
+        self.assertNotIn("LD_LIBRARY_PATH", env)
         env.update(tool.runtime)
         expected_argv = [self.spec["executables"]["python"], "-B", str(real_script)]
         unpaid = subprocess.run(expected_argv, env=env, cwd=self.source,
@@ -674,6 +681,7 @@ class ReleasePreparationTests(unittest.TestCase):
             self.assertEqual(argv, expected_argv)
             self.assertEqual(kwargs["cwd"], self.source)
             self.assertEqual(kwargs["env"]["PYTHONPATH"], tool.runtime["PYTHONPATH"])
+            self.assertEqual(kwargs["env"].get("LD_LIBRARY_PATH"), tool.runtime.get("LD_LIBRARY_PATH"))
             result = subprocess.run(argv, env=kwargs["env"], cwd=kwargs["cwd"],
                                     capture_output=True, timeout=20)
             if result.returncode:

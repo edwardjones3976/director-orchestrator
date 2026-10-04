@@ -1475,7 +1475,7 @@ class HostProviderBridgeTests(unittest.TestCase):
 
     def test_server_composes_validation_only_from_enabled_profile(self) -> None:
         from director_orchestrator import host_provider_bridge_server as server_module
-        from director_orchestrator.provider_validation import ValidationBridgeService
+        from director_orchestrator.provider_validation import SCHEMA, PostgresValidationStore, ValidationBridgeService
 
         with tempfile.TemporaryDirectory() as directory:
             environment = {
@@ -1494,21 +1494,38 @@ class HostProviderBridgeTests(unittest.TestCase):
                         DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY="c" * 40,
                         DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN="o" * 40,
                         DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON='{"claude":[]}',
+                        DIRECTOR_PROVIDER_VALIDATION_CANDIDATE="a" * 40,
+                        DIRECTOR_PROVIDER_VALIDATION_TREE="b" * 40,
+                        LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256="c" * 64,
                     )
                 server = SimpleNamespace(serve_forever=MagicMock())
                 with patch.dict(os.environ, profile, clear=True), \
                      patch.object(server_module, "ThreadingHTTPServer", return_value=server), \
                      patch.object(server_module, "BridgeClaimStore"), \
-                     patch("director_orchestrator.provider_validation.PostgresValidationStore") as store:
+                     patch("director_orchestrator.provider_validation.PostgresValidationStore", wraps=PostgresValidationStore) as store, \
+                     patch.object(PostgresValidationStore, "connect", side_effect=AssertionError("startup opened validation database")) as connect, \
+                     patch.object(ValidationBridgeService, "run", side_effect=AssertionError("startup dispatched validation")) as dispatch, \
+                     patch("subprocess.Popen", side_effect=AssertionError("startup spawned a provider")) as spawn:
                     server_module.main()
+                    connect.assert_not_called()
+                    dispatch.assert_not_called()
+                    spawn.assert_not_called()
                 server.serve_forever.assert_called_once_with(poll_interval=0.5)
                 self.assertEqual(hasattr(server, "validation_service"), enabled)
                 if enabled:
                     self.assertIsInstance(server.validation_service, ValidationBridgeService)
                     self.assertIs(server.validation_service.production, server.executor)
                     store.assert_called_once_with("unused-validation")
+                    self.assertEqual(server.configured_selection, {
+                        "schema_version": "director-bridge-configured-selection/v1",
+                        "candidate_commit": "a" * 40, "candidate_tree": "b" * 40,
+                        "generation_sha256": "c" * 64,
+                        "workspace_sha256": _digest(canonical_json_bytes({"workspace": str(Path(directory).resolve())})),
+                        "validation_store_configuration_sha256": _digest(canonical_json_bytes({"dsn": "unused-validation", "schema": SCHEMA})),
+                    })
                 else:
                     store.assert_not_called()
+                    self.assertFalse(hasattr(server, "configured_selection"))
 
     def test_executor_refuses_direct_provider_lanes(self) -> None:
         for provider in ("microsoft-365-copilot",):
