@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 TARGET_FIELDS = ("acceptance_checks", "constraints", "evidence_requirements", "non_goals")
 DEV_SEED = 1234
-SOURCE_LABELS = ("base", "three_shot", "checkpoint")
+SOURCE_LABELS = ("base", "checkpoint")
 OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {f: {"type": "array", "items": {"type": "string"}} for f in TARGET_FIELDS},
@@ -24,15 +24,27 @@ OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-try:
-    from prompt_template import render_messages
-except ImportError:  # resolved from this file: ../train holds the shared renderer
-    def render_messages(item: Dict[str, Any], target: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
-        train_dir = Path(__file__).resolve().parent.parent / "train"
-        if str(train_dir) not in sys.path:
-            sys.path.insert(0, str(train_dir))
-        from prompt_template import render_messages as _render
-        return _render(item, target)
+class UnsupportedRuntime(RuntimeError):
+    """Raised for run-level refusal condition (e.g. invalid device, missing dependency)."""
+
+TRAIN_PROMPT_TEMPLATE = Path(__file__).resolve().parent.parent / "train" / "prompt_template.py"
+
+def _load_prompt_template() -> Any:
+    if "prompt_template" in sys.modules:
+        mod = sys.modules["prompt_template"]
+        if getattr(mod, "__file__", None) != str(TRAIN_PROMPT_TEMPLATE):
+            raise UnsupportedRuntime("prompt_template module loaded from unexpected location")
+        return mod
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("prompt_template", str(TRAIN_PROMPT_TEMPLATE))
+    if spec is None or spec.loader is None:
+        raise UnsupportedRuntime("Could not load prompt_template module")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["prompt_template"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+render_messages = _load_prompt_template().render_messages
 
 
 class UnsupportedShape(ValueError):
@@ -77,8 +89,8 @@ def _reject_constant(name: str) -> Any:
     raise ValueError(f"non-finite constant in model output: {name}")
 
 
-_HEX40 = re.compile(r"^[0-9a-f]{40}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_HEX40 = re.compile(r"[0-9a-f]{40}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -96,8 +108,6 @@ def _validate_identity(identity: Any, source_label: str) -> Dict[str, str]:
     fields = {"base_revision": _HEX40, "weights_manifest_sha256": _HEX64, "template_sha256": _HEX64}
     if source_label == "checkpoint":
         fields["adapter_sha256"] = _HEX64
-    if source_label == "three_shot":
-        fields["fewshot_sha256"] = _HEX64
     unknown = set(identity) - set(fields)
     if unknown:
         raise ValueError(f"identity has unknown keys for {source_label!r}: {sorted(unknown)}")
@@ -106,7 +116,7 @@ def _validate_identity(identity: Any, source_label: str) -> Dict[str, str]:
         raise ValueError(f"identity is missing required keys for {source_label!r}: {sorted(missing)}")
     for key, pattern in fields.items():
         value = identity[key]
-        if not isinstance(value, str) or not pattern.match(value):
+        if not isinstance(value, str) or not pattern.fullmatch(value):
             raise ValueError(f"identity[{key!r}] must match {pattern.pattern}")
     return dict(identity)
 
@@ -146,6 +156,8 @@ class DevPredictor:
                  constraint_factory: Optional[Callable[[Any, Dict[str, Any]], Any]] = None) -> None:
         if not isinstance(max_new_tokens, int) or isinstance(max_new_tokens, bool) or max_new_tokens <= 0:
             raise ValueError("max_new_tokens must be a positive int (bool excluded)")
+        if source_label == "three_shot":
+            raise ValueError("three-shot generation is not available until the trainer slice wires approved hash-bound exemplars")
         if not isinstance(source_label, str) or source_label not in SOURCE_LABELS:
             raise ValueError(f"source_label must be one of {SOURCE_LABELS}")
         self.identity = _validate_identity(identity, source_label)
@@ -176,10 +188,24 @@ class DevPredictor:
 
     def _device(self) -> Any:
         """Overridable hook: the device generate() inputs are moved to."""
-        return None
+        device = getattr(self.model, "device", None)
+        if device is None:
+            emb = getattr(self.model, "get_input_embeddings", lambda: None)()
+            weight = getattr(emb, "weight", None)
+            device = getattr(weight, "device", None)
+        if device is None:
+            raise UnsupportedRuntime("Cannot determine model device")
+        if str(device) == "meta" or getattr(device, "type", None) == "meta":
+            raise UnsupportedRuntime("Model is on meta device")
+        return device
 
     def _move_to_device(self, value: Any) -> Any:
-        return value.to(self._device()) if hasattr(value, "to") else value
+        device = self._device()
+        if hasattr(value, "to"):
+            return value.to(device)
+        if hasattr(value, "items"):
+            return {k: v.to(device) if hasattr(v, "to") else v for k, v in value.items()}
+        return value
 
     def _prepare_inputs(self, encoded: Any) -> Tuple[Dict[str, Any], int]:
         """Normalize a tokenizer encoding to generate() kwargs plus prompt length."""
@@ -216,10 +242,18 @@ class DevPredictor:
         new_ids = seq_row[prompt_len:]
         return self.tokenizer.decode(new_ids, skip_special_tokens=True)
 
+    def _preflight(self) -> None:
+        try:
+            import transformers
+        except ImportError as e:
+            raise UnsupportedRuntime(f"Missing dependency: {e.name}")
+        self._device()
+
     def predict(self, dev_rows: Any, frozen_roster: Any, expected_packets: Any) -> Dict[str, Any]:
         err = self._validate(dev_rows, frozen_roster, expected_packets)
         if err:
             raise ValueError(err)
+        self._preflight()
         # Built once before the loop so a default-factory ImportError
         # propagates (fail closed) instead of becoming a per-row failure.
         self._get_constraint_fn()
@@ -227,13 +261,7 @@ class DevPredictor:
         predictions: Dict[str, Dict[str, List[str]]] = {}
         invalid: List[str] = []
         for row in rows:
-            try:
-                parsed = parse_output(self._generate_text(row))
-            except UnsupportedShape:
-                # A shape defect is a run refusal, never N schema-invalid rows.
-                raise
-            except Exception:
-                parsed = None
+            parsed = parse_output(self._generate_text(row))
             if parsed is None:
                 invalid.append(row["row_id"])
             else:
