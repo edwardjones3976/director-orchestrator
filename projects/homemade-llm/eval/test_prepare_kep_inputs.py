@@ -374,6 +374,17 @@ class PrepareKepInputsTests(unittest.TestCase):
         _, rows, _ = self.load()
         tool.validate_record(rows[0], text)
 
+    def test_beta_before_alpha_is_refused_not_cited_as_alpha_context(self):
+        text = source().replace("### Alpha", "### Beta\nUnrelated earlier duties.\n### Alpha")
+        with self.assertRaisesRegex(tool.Refusal, "ALPHA_PRECEDING_SIBLING"):
+            tool.source_sections(text)
+        fixture = Fixture(self.root, [dict(number=19, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaisesRegex(tool.Refusal, "NO_USABLE_INPUTS") as refusal:
+            tool.prepare(**fixture.args(dry_run=True))
+        self.assertEqual(refusal.exception.summary["usable_inputs"], 0)
+        self.assertEqual(refusal.exception.summary["refused_by_reason"], {"ALPHA_PRECEDING_SIBLING": 1})
+        self.assertFalse((self.root / "out").exists())
+
     def test_closing_hashes_require_whitespace_and_title_is_exact(self):
         for suffix, qualifies in (("#", False), ("###", False), (" ###", True), ("\t##\t", True)):
             with self.subTest(suffix=suffix):
@@ -676,6 +687,73 @@ class PrepareKepInputsTests(unittest.TestCase):
         with patch.object(tool.os, "read", side_effect=AssertionError("must not read foreign target")), self.assertRaisesRegex(tool.Refusal, "ARTIFACT_REPARSE"):
             tool.pinned_file(junction / "artifact", tool.digest(raw))
         self.assertEqual((foreign / "artifact").read_bytes(), raw)
+
+    def test_windows_lexical_aliases_refused_before_artifact_or_output_access(self):
+        fixture = Fixture(self.root)
+        for component in ("heldout", "HELDOUT", "heldout.", "heldout ", "HELDOU~1", "benign~2"):
+            with self.subTest(component=component):
+                alias = self.root / component
+                with patch.object(tool, "_read_artifact", side_effect=AssertionError("artifact access")), self.assertRaisesRegex(tool.Refusal, "PROTECTED_PATH"):
+                    tool.pinned_file(alias / "artifact", tool.digest(b"synthetic"))
+                with patch.object(tool, "pinned_file", side_effect=AssertionError("input access")), self.assertRaisesRegex(tool.Refusal, "PROTECTED_OUTPUT_PATH"):
+                    tool.prepare(**fixture.args(out=alias / "out", dry_run=True))
+                with patch.object(tool._WindowsDirectories, "open", side_effect=AssertionError("directory access")), self.assertRaisesRegex(tool.Refusal, "PROTECTED_OUTPUT_PATH"):
+                    with tool._Publication(alias / "out"):
+                        self.fail("protected publication allowed")
+                self.assertFalse(alias.exists())
+
+    def test_native_acquired_normalized_heldout_name_is_refused(self):
+        # Only this temporary synthetic heldout directory is touched, never real custody.
+        protected = self.root / "heldout"
+        protected.mkdir()
+        windows = tool._WindowsDirectories()
+        handle = windows.create(str(protected), 0x80000000, 3, None, 3, 0x02200000, None)
+        self.assertNotEqual(handle, windows.ctypes.c_void_p(-1).value)
+        try:
+            with self.assertRaisesRegex(tool.Refusal, "PROTECTED_PATH"):
+                windows.guard_handle_path(handle)
+        finally:
+            windows.close(handle)
+        self.assertEqual(list(protected.iterdir()), [])
+
+    def test_native_resolved_alias_refused_before_read_or_publication(self):
+        artifact = self.root / "safe-artifact"
+        artifact.write_bytes(b"synthetic")
+        fixture = Fixture(self.root)
+        def protected_name(_handle, buffer, _size, flags):
+            self.assertEqual(flags, 0)
+            buffer.value = str(self.root / "heldout" / "artifact")
+            return len(buffer.value)
+        original_init = tool._WindowsDirectories.__init__
+        def init(windows):
+            original_init(windows)
+            windows.final_name = protected_name
+        with patch.object(tool._WindowsDirectories, "__init__", init), patch.object(tool.os, "read", side_effect=AssertionError("content access")):
+            with self.assertRaisesRegex(tool.Refusal, "PROTECTED_PATH"):
+                tool.pinned_file(artifact, tool.digest(b"synthetic"))
+        with patch.object(tool._WindowsDirectories, "__init__", init), patch.object(tool._WindowsDirectories, "create_directory", side_effect=AssertionError("publication access")):
+            with self.assertRaisesRegex(tool.Refusal, "PROTECTED_PATH"):
+                with tool._Publication(self.root / "out"):
+                    self.fail("protected acquired object allowed")
+        self.assertFalse((self.root / "out").exists())
+        self.assertEqual(artifact.read_bytes(), b"synthetic")
+
+    def test_native_final_name_resizes_and_failure_closes_without_fallback(self):
+        windows = tool._WindowsDirectories()
+        original = windows.final_name
+        sizes = []
+        def resized(handle, buffer, size, flags):
+            sizes.append(size)
+            self.assertEqual(flags, 0)
+            return size + 1 if len(sizes) == 1 else original(handle, buffer, size, flags)
+        with patch.object(windows, "final_name", side_effect=resized):
+            handle = windows.open(self.root)
+            windows.close(handle)
+        self.assertEqual(sizes, [1024, 1026])
+        with patch.object(windows, "final_name", return_value=0), patch.object(windows, "close", wraps=windows.close) as close:
+            with self.assertRaises(OSError):
+                windows.open(self.root)
+            close.assert_called_once()
 
     def test_artifact_reads_hold_ancestors_and_deny_leaf_writers(self):
         parent = self.root / "artifact-parent"

@@ -93,10 +93,16 @@ def next_clock(clock, after):
     return value
 
 
+def guard_path(path, reason="PROTECTED_PATH"):
+    """Refuse protected components and ambiguous Win32/8.3 spellings before access."""
+    for part in Path(path).parts:
+        if part.endswith((".", " ")) or re.search(r"~[0-9]", part) or part.casefold() == "heldout":
+            raise Refusal(reason)
+
+
 def pinned_file(path, pin, limit=MAX_ARTIFACT):
     path = Path(path).absolute()
-    if "heldout" in {part.casefold() for part in path.parts}:
-        raise Refusal("PROTECTED_PATH")
+    guard_path(path)
     if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{64}", pin) is None:
         raise Refusal("INVALID_PIN")
     try:
@@ -189,6 +195,10 @@ def source_sections(text):
         if key_name == "alpha":
             parent = next((head for head in reversed(headings[:index]) if head[0] < level), None)
             if parent and heading_name(parent[1]) == "graduation criteria":
+                # A single original span cannot include the parent role without also
+                # including an earlier sibling. Refuse instead of citing Beta as Alpha.
+                if any(head[2] > parent[2] for head in headings[:index]):
+                    raise Refusal("ALPHA_PRECEDING_SIBLING")
                 key = "Alpha Graduation Criteria"
         if key:
             if key in sections:
@@ -247,6 +257,9 @@ class _WindowsDirectories:
         self.info = kernel.GetFileInformationByHandleEx
         self.info.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
         self.info.restype = wintypes.BOOL
+        self.final_name = kernel.GetFinalPathNameByHandleW
+        self.final_name.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+        self.final_name.restype = wintypes.DWORD
         self.close = kernel.CloseHandle
         self.close.argtypes, self.close.restype = [wintypes.HANDLE], wintypes.BOOL
         self.disposition = kernel.SetFileInformationByHandle
@@ -263,10 +276,35 @@ class _WindowsDirectories:
         self.Handle = wintypes.HANDLE
 
     def open(self, path, *, sharing=3, access=0x80000000, creation=3, flags=0x02200000):
+        guard_path(path)
         handle = self.create(str(path), access, sharing, None, creation, flags, None)
         if handle == self.ctypes.c_void_p(-1).value:
             raise self.ctypes.WinError(self.ctypes.get_last_error())
-        return handle
+        try:
+            self.guard_handle_path(handle)
+            return handle
+        except BaseException:
+            self.close(handle)
+            raise
+
+    def guard_handle_path(self, handle):
+        """Check the normalized name of THIS acquired object, before content access.
+
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS (flags 0) expands short names.
+        Microsoft documents a too-small result as the required size including NUL.
+        No pathname resolution or reopened object is used as a weaker fallback.
+        """
+        size = 1024
+        while size <= 32768:
+            buffer = self.ctypes.create_unicode_buffer(size)
+            count = self.final_name(handle, buffer, size, 0)
+            if count == 0:
+                raise self.ctypes.WinError(self.ctypes.get_last_error())
+            if count < size:
+                guard_path(buffer.value)
+                return
+            size = count + 1
+        raise Refusal("PROTECTED_PATH")
 
     def identity(self, handle):
         file_id, attributes = self.FileId(), self.Attributes()
@@ -288,6 +326,7 @@ class _WindowsDirectories:
         """Open one child of an acquired object; never follow its reparse point."""
         if not name or name in (".", "..") or any(char in name for char in "/\\:\0"):
             raise Refusal("PROTECTED_PATH")
+        guard_path(name)
         buffer = self.ctypes.create_unicode_buffer(name)
         length = len(name.encode("utf-16-le"))
         if length + 2 > 65535:
@@ -310,6 +349,7 @@ class _WindowsDirectories:
                 raise self.ctypes.WinError(self.ctypes.get_last_error())
             if info.attributes & 0x400 or bool(info.attributes & 0x10) != directory:
                 raise Refusal("ARTIFACT_REPARSE")
+            self.guard_handle_path(handle.value)
             return handle.value
         except BaseException:
             self.close(handle.value)
@@ -325,6 +365,7 @@ class _WindowsDirectories:
         """FILE_CREATE returns the birth handle; never mkdir then authenticate a pathname."""
         if not parent or not name or name in (".", "..") or any(char in name for char in "\\/:\0"):
             raise Refusal("PROTECTED_OUTPUT_PATH")
+        guard_path(name, "PROTECTED_OUTPUT_PATH")
         buffer = self.ctypes.create_unicode_buffer(name)
         length = len(name.encode("utf-16-le"))
         if length + 2 > 65535:
@@ -345,7 +386,12 @@ class _WindowsDirectories:
             if handle.value:
                 self.close(handle.value)
             raise Refusal("OUTPUT_BIRTH_NOT_CREATED")
-        return handle.value
+        try:
+            self.guard_handle_path(handle.value)
+            return handle.value
+        except BaseException:
+            self.close(handle.value)
+            raise
 
 
 def _read_artifact(path, limit):
@@ -420,6 +466,7 @@ class _Publication:
         try:
             if self.windows is None:
                 raise Refusal("OUTPUT_PLATFORM_UNQUALIFIED")
+            guard_path(self.out, "PROTECTED_OUTPUT_PATH")
             chain = list(reversed(self.out.parent.parents)) + [self.out.parent]
             snapshots = {}
             for path in chain:
@@ -559,7 +606,8 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
     """_pins injects only synthetic fixture identities; the CLI uses frozen PINS."""
     pins = PINS if _pins is None else _pins
     out = Path(out).absolute()
-    if "heldout" in {part.casefold() for part in out.parts} or any(parent.is_symlink() or parent.is_junction() for parent in (out, *out.parents)):
+    guard_path(out, "PROTECTED_OUTPUT_PATH")
+    if any(parent.is_symlink() or parent.is_junction() for parent in (out, *out.parents)):
         raise Refusal("PROTECTED_OUTPUT_PATH")
     if not dry_run and (out.exists() or out.is_symlink()):
         raise Refusal("OUTPUT_EXISTS")
