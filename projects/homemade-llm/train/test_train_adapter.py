@@ -8,7 +8,10 @@
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
+import io
 import shutil
 import subprocess
 import sys
@@ -147,18 +150,14 @@ class TrainAdapterTests(unittest.TestCase):
             for rel in (
                 "eval/build_inputs.py",
                 "eval/test_build_inputs.py",
+                "eval/validate_rows.py",
+                "eval/test_validate_rows.py",
                 "train/prompt_template.py",
                 "schemas/director-data-v1-row.schema.json",
             ):
                 dest = hl / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(repo / "projects" / "homemade-llm" / rel, dest)
-            for name in ("validate_rows.py", "test_validate_rows.py"):
-                blob = subprocess.check_output(
-                    ["git", "show", f"origin/pr-349:projects/homemade-llm/eval/{name}"],
-                    cwd=repo,
-                )
-                (hl / "eval" / name).write_bytes(blob)
             out = root / "validated"
             script = root / "run_validator.py"
             script.write_text(
@@ -173,17 +172,26 @@ class TrainAdapterTests(unittest.TestCase):
                 "dev = fixture.make_row(set_a, set_b, source_group='seed-002', split='dev',\n"
                 "    input={'objective': 'Add a retry budget to the n8n intake webhook.'},\n"
                 "    target={'non_goals': ['no change to the Slack copy']})\n"
-                "(root / 'rows.jsonl').write_text(''.join(json.dumps(item) + '\\n' for item in (train, dev)), encoding='utf-8')\n"
+                "(root / 'rows.jsonl').write_bytes(''.join(json.dumps(item) + '\\n' for item in (train, dev)).encode('utf-8'))\n"
                 "code = validate_rows.validate(['--rows', str(root / 'rows.jsonl'), '--set-a', str(set_a),\n"
                 "    '--set-b', str(set_b), '--out', str(root / 'validated')])\n"
                 "raise SystemExit(code)\n",
                 encoding="utf-8",
+                newline="\n",
             )
             completed = subprocess.run([sys.executable, str(script), str(root)], cwd=repo, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
+            accepted = [json.loads(line) for line in (out / "accepted.jsonl").read_text(encoding="utf-8").splitlines()]
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["n_accepted"], 2)
+            self.assertEqual(report["n_rejected"], 0)
+            self.assertEqual(report["n_quarantined"], 0)
+            self.assertEqual(report["rows_per_split"], {"train": 1, "dev": 1})
+            self.assertEqual({item["source_group"] for item in accepted}, {"seed-001", "seed-002"})
             loaded = train_adapter.load_training_rows(out / "accepted.jsonl")
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["split"], "train")
+            self.assertEqual(loaded[0]["row_id"], next(item["row_id"] for item in accepted if item["split"] == "train"))
             self.assertNotIn("id", loaded[0]["input"])
             messages = train_adapter.messages_for(loaded[0])
             self.assertIn("Webhook secret rotation", messages[1]["content"])
@@ -195,6 +203,12 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIs(args["remove_unused_columns"], False)
         self.assertEqual(args["dataset_kwargs"], {"skip_prepare_dataset": True})
         self.assertIs(args["packing"], False)
+
+    def test_sft_arguments_matches_probe_gradient_accumulation(self):
+        args = train_adapter.sft_arguments("out", 20)
+        self.assertEqual(args["gradient_accumulation_steps"], train_adapter.PROBE_GRAD_ACCUM)
+        self.assertEqual(train_adapter.PROBE_GRAD_ACCUM, 8)
+        self.assertEqual(train_adapter.TRAIN_GRAD_ACCUM, 8)
 
     def test_pinned_revision_must_match_the_loaded_commit(self):
         pin = "a" * 40
@@ -249,6 +263,1052 @@ class TrainAdapterTests(unittest.TestCase):
         self.assertIn(train_adapter.WINNER_REVISION, text)
         self.assertIn(train_adapter.WINNER_BASE, text)
         self.assertIn("Global\\homemade-llm-gpu", text)
+        self.assertIn("--probe", text)
+        self.assertNotIn("-Probe requires -Winner", text)
+        self.assertIn("--expected-digests", text)
+        self.assertIn("ExpectedDigests", text)
+        self.assertIn("m2-expected-qwen3-14b-v2.json", text)
+        self.assertIn("HF_HUB_OFFLINE", text)
+
+    def test_wrapper_serialized_docker_arguments_keep_offline_flags_before_image(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate Docker argument construction")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        # Evaluate only the argument-building block, never the wrapper or its setup.
+        start = source.index("    $dockerArgs = ")
+        end = source.index("    function Get-AdapterState", start)
+        construction = source[start:end]
+        for digests in ("", "dummy-digests.json"):
+            with self.subTest(expected_digests=bool(digests)):
+                command = """
+$ErrorActionPreference = 'Stop'
+$mounts = @('-v', 'dummy:/workspace/hf')
+$name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
+$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
+$Rows = 'accepted.jsonl'; $runId = 'dummy-run'
+$Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
+$PSBoundParameters = @{ ProbeRowsTotal = 96 }
+""" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+                completed = subprocess.run(
+                    [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                args = json.loads(completed.stdout)
+                image = args.index("dummy-image")
+                self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
+                self.assertEqual(args[image + 1], "/code/train_adapter.py")
+                options, trainer = args[:image], args[image + 2:]
+                self.assertNotIn("-e", trainer)
+                for flag in ("HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1"):
+                    if digests:
+                        self.assertEqual(args.count(flag), 1)
+                        self.assertEqual(options[options.index(flag) - 1], "-e")
+                    else:
+                        self.assertNotIn(flag, args)
+                if digests:
+                    index = trainer.index("--expected-digests")
+                    self.assertEqual(trainer[index + 1], "/workspace/expected-digests.json")
+                    self.assertNotIn("--expected-digests", options)
+                    index = trainer.index("--trusted-digest-root")
+                    self.assertEqual(trainer[index + 1], "/workspace/trusted-digest-root.json")
+                    self.assertNotIn("--trusted-digest-root", options)
+                else:
+                    self.assertNotIn("--expected-digests", args)
+                    self.assertNotIn("--trusted-digest-root", args)
+                self.assertIn("--winner", trainer)
+                self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
+
+    def test_length_statistics_on_a_known_list(self):
+        lengths = [10, 20, 30, 40, 50]
+        stats = train_adapter.length_statistics(lengths)
+        self.assertEqual(stats["max"], 50)
+        self.assertAlmostEqual(stats["p50"], train_adapter.percentile(lengths, 50.0))
+        self.assertAlmostEqual(stats["p95"], train_adapter.percentile(lengths, 95.0))
+
+    def test_probe_timed_window_bookkeeping(self):
+        self.assertEqual(
+            train_adapter.timed_window_optimizer_updates(
+                train_adapter.PROBE_TIMED_MICROSTEPS,
+                train_adapter.PROBE_GRAD_ACCUM,
+            ),
+            5,
+        )
+        self.assertEqual(train_adapter.PROBE_WARMUP_MICROSTEPS, 10)
+        self.assertEqual(train_adapter.PROBE_TIMED_MICROSTEPS, 40)
+
+    def test_probe_extrapolation_and_contingency(self):
+        self.assertAlmostEqual(train_adapter.extrapolate_wall_seconds(96, 2.0), 576.0)
+        self.assertAlmostEqual(train_adapter.wall_seconds_with_contingency(100.0), 120.0)
+
+    def test_probe_pass_booleans_at_boundaries(self):
+        self.assertTrue(train_adapter.probe_memory_pass(10.999))
+        self.assertFalse(train_adapter.probe_memory_pass(11.0))
+        self.assertTrue(train_adapter.probe_time_pass(35999.9))
+        self.assertFalse(train_adapter.probe_time_pass(36000.0))
+
+    def test_help_lists_probe_flags(self):
+        buffer = io.StringIO()
+        with mock.patch.object(sys, "stdout", buffer):
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        help_text = buffer.getvalue()
+        self.assertIn("--probe", help_text)
+        self.assertIn("--probe-rows-total", help_text)
+        self.assertIn("--probe-seq-len", help_text)
+        self.assertIn("--expected-digests", help_text)
+
+    def _digest_entry(self, root: Path, name: str, data: bytes) -> dict:
+        path = root / name
+        path.write_bytes(data)
+        return {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+    def _trusted_chain(self, root: Path) -> tuple[Path, Path, str]:
+        # Synthetic metadata and weights only. Tests patch the fixed code pin,
+        # never add a runtime argument that can approve an arbitrary root.
+        snapshot = root / "snapshot"
+        snapshot.mkdir(exist_ok=True)
+        entry = self._digest_entry(snapshot, "model.safetensors", b"synthetic weights")
+        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        listing = root / "upstream.json"
+        listing.write_bytes(json.dumps({key: {"files": [entry]}}).encode())
+        trusted = root / "approved-root.json"
+        trusted.write_bytes(json.dumps({"models": [{
+            "hf_repo": train_adapter.WINNER_BASE,
+            "hf_revision": train_adapter.WINNER_REVISION,
+            "upstream_weight_digests_sha256": hashlib.sha256(listing.read_bytes()).hexdigest(),
+        }]}).encode())
+        return trusted, listing, hashlib.sha256(trusted.read_bytes()).hexdigest()
+
+    def test_authenticated_chain_matches_before_local_weight_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshot") as snapshot:
+                result = train_adapter.digest_verification_before_load(
+                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                )
+            snapshot.assert_called_once_with(train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
+            self.assertEqual(result["reads"], 2)
+            self.assertEqual(result["trusted_root_sha256"], pin)
+            self.assertEqual(result["upstream_digest_list_sha256"], hashlib.sha256(listing.read_bytes()).hexdigest())
+
+    def test_changed_root_refused_before_parse_or_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            trusted.write_bytes(b"not even JSON")
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                with self.assertRaisesRegex(SystemExit, "root does not match"):
+                    train_adapter.digest_verification_before_load(
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                    )
+            snapshot.assert_not_called()
+
+    def test_self_consistent_changed_weights_and_list_cannot_reapprove_themselves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            entry = self._digest_entry(root / "snapshot", "model.safetensors", b"changed weights")
+            listing.write_bytes(json.dumps({
+                f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}": {"files": [entry]},
+            }).encode())
+            # The old weight-only check would accept this changed, self-consistent pair.
+            train_adapter.verify_expected_digests(root / "snapshot", [entry])
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                with self.assertRaisesRegex(SystemExit, "list does not match"):
+                    train_adapter.digest_verification_before_load(
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                    )
+            snapshot.assert_not_called()
+
+    def test_changed_list_is_authenticated_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trusted, listing, pin = self._trusted_chain(Path(tmp))
+            listing.write_bytes(b"not JSON")
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin):
+                with self.assertRaisesRegex(SystemExit, "list does not match"):
+                    train_adapter.load_authenticated_digests(
+                        trusted, listing, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION,
+                    )
+
+    def test_approved_root_refuses_wrong_model_revision_and_unapproved_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trusted, listing, pin = self._trusted_chain(Path(tmp))
+            for base, revision in (
+                (train_adapter.WINNER_BASE, "0" * 40),
+                ("org/another-model", train_adapter.WINNER_REVISION),
+                (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
+            ):
+                with self.subTest(base=base, revision=revision), \
+                     mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                     mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                    with self.assertRaisesRegex(SystemExit, "no unique approved entry"):
+                        train_adapter.digest_verification_before_load(base, revision, listing, trusted)
+                    snapshot.assert_not_called()
+
+    def test_direct_cli_cannot_bypass_root_by_omitting_winner_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            accepted = write_accepted(root, [row()])
+            _, listing, _ = self._trusted_chain(root)
+            for base, revision in (
+                (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
+            ):
+                for mode in ([], ["--probe"]):
+                    with self.subTest(base=base, mode=mode), \
+                         mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                         mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                        with self.assertRaisesRegex(SystemExit, "trusted-digest-root is required"):
+                            train_adapter.main([
+                                "--rows", str(accepted), "--report", str(root / "report-out.json"),
+                                "--base", base, "--revision", revision, "--expected-digests", str(listing),
+                                *mode,
+                            ])
+                        snapshot.assert_not_called()
+                        model.from_pretrained.assert_not_called()
+
+    def test_wrapper_authenticates_root_and_list_before_gpu_ownership(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate metadata preflight")
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        start = source.index("$TrustedDigestRoot = ''")
+        end = source.index("if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests))", start)
+        self.assertLess(end, source.index("$gpuLock ="))
+        block = source[start:end]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root)
+            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json", str(trusted))
+            block = block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
+            for mode in ("matching", "changed_list", "changed_root", "fallback"):
+                trusted, listing, _ = self._trusted_chain(root)
+                if mode == "changed_list":
+                    listing.write_bytes(b"changed")
+                if mode == "changed_root":
+                    trusted.write_bytes(b"changed")
+                base = train_adapter.FALLBACK_BASE if mode == "fallback" else train_adapter.WINNER_BASE
+                revision = train_adapter.FALLBACK_REVISION if mode == "fallback" else train_adapter.WINNER_REVISION
+                preamble = (
+                    "$ErrorActionPreference = 'Stop'\n"
+                    f"$WinnerBase = '{train_adapter.WINNER_BASE}'; $FallbackBase = '{train_adapter.FALLBACK_BASE}'\n"
+                    f"$Base = '{base}'; $Revision = '{revision}'; $ExpectedDigests = '{listing}'\n"
+                )
+                result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", preamble + block],
+                                        capture_output=True, text=True, timeout=30)
+                with self.subTest(mode=mode):
+                    self.assertEqual(result.returncode == 0, mode == "matching", result.stderr)
+
+    def test_wrapper_root_mount_is_read_only_and_trainer_has_no_pin_override(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn('${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro', source)
+        self.assertLess(source.index('${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro'),
+                        source.index("'--entrypoint', 'python', $Image"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
+
+    def test_python_and_wrapper_use_the_same_owner_approved_v2_root_pin_and_default(self):
+        approved_pin = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+        self.assertEqual(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, approved_pin)
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn(f"$TrustedDigestRootSHA256 = '{train_adapter.TRUSTED_DIGEST_ROOT_SHA256}'", source)
+        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json'", source)
+        self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-14b-v2.json'", source)
+
+    def _complete_trusted_snapshot(self, root: Path) -> tuple[Path, Path, str]:
+        trusted, listing, _ = self._trusted_chain(root)
+        snapshot = root / "snapshot"
+        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        payload = json.loads(listing.read_bytes())
+        for name, data in (
+            ("config.json", b'{"model_type":"synthetic"}'),
+            ("tokenizer.json", b'{"synthetic_tokenizer":true}'),
+            ("model.safetensors.index.json", b'{"weight_map":{"layer":"model.safetensors"}}'),
+        ):
+            payload[key]["files"].append(self._digest_entry(snapshot, name, data))
+        listing.write_bytes(json.dumps(payload).encode())
+        approved = json.loads(trusted.read_bytes())
+        approved["models"][0]["upstream_weight_digests_sha256"] = hashlib.sha256(listing.read_bytes()).hexdigest()
+        trusted.write_bytes(json.dumps(approved).encode())
+        return trusted, listing, hashlib.sha256(trusted.read_bytes()).hexdigest()
+
+    def test_complete_snapshot_authenticates_metadata_and_reports_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._complete_trusted_snapshot(root)
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshot"):
+                result = train_adapter.digest_verification_before_load(
+                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                )
+            self.assertEqual(result["snapshot_coverage"], "all_regular_files")
+            self.assertEqual(result["snapshot_files"], 4)
+            self.assertEqual(result["files"], 4)
+            self.assertEqual(result["weight_files"], 1)
+            self.assertTrue(result["weight_map_checked"])
+
+    def test_corrupt_snapshot_loading_metadata_refused_before_index_parse_or_model_load(self):
+        for name in ("config.json", "tokenizer.json", "model.safetensors.index.json"):
+            for mode in ([], ["--probe"]):
+                with self.subTest(name=name, mode=mode), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    accepted = write_accepted(root, [row()])
+                    trusted, listing, pin = self._complete_trusted_snapshot(root)
+                    snapshot = root / "snapshot"
+                    path = snapshot / name
+                    path.write_bytes(b"!" * path.stat().st_size)
+                    self.assertEqual((snapshot / "model.safetensors").read_bytes(), b"synthetic weights")
+                    with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                         mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                         mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                         mock.patch.object(train_adapter, "_index_weight_map_shards") as parse_index:
+                        with self.assertRaisesRegex(SystemExit, "digest mismatch for " + name.replace(".", r"\.")):
+                            train_adapter.main([
+                                "--rows", str(accepted), "--report", str(root / "metrics.json"),
+                                "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                                "--expected-digests", str(listing), "--trusted-digest-root", str(trusted), *mode,
+                            ])
+                        parse_index.assert_not_called()
+                        model.from_pretrained.assert_not_called()
+
+    def test_unlisted_snapshot_input_requires_existing_approved_digest_before_model_load(self):
+        for name in ("config.json", "tokenizer.json", "model.safetensors.index.json", "future-format.data"):
+            for mode in ([], ["--probe"]):
+                with self.subTest(name=name, mode=mode), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    accepted = write_accepted(root, [row()])
+                    trusted, listing, pin = self._trusted_chain(root)
+                    snapshot = root / "snapshot"
+                    (snapshot / name).write_bytes(b"unapproved synthetic metadata")
+                    with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                         mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                         mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                         mock.patch.object(train_adapter, "_index_weight_map_shards") as parse_index:
+                        with self.assertRaisesRegex(SystemExit, "snapshot input lacks an approved digest"):
+                            train_adapter.main([
+                                "--rows", str(accepted), "--report", str(root / "metrics.json"),
+                                "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                                "--expected-digests", str(listing), "--trusted-digest-root", str(trusted), *mode,
+                            ])
+                        parse_index.assert_not_called()
+                        model.from_pretrained.assert_not_called()
+                    self.assertEqual((snapshot / "model.safetensors").read_bytes(), b"synthetic weights")
+
+    def test_index_parsed_only_after_all_snapshot_files_pass_both_digest_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._complete_trusted_snapshot(root)
+            snapshot = root / "snapshot"
+            seen = []
+            real_hash = train_adapter._sha256_file
+            real_parse = train_adapter._index_weight_map_shards
+
+            def record_hash(path):
+                seen.append(path.name)
+                return real_hash(path)
+
+            def parse_after_hashes(path):
+                self.assertEqual(len(seen), 8)
+                for name in ("model.safetensors", "config.json", "tokenizer.json", "model.safetensors.index.json"):
+                    self.assertEqual(seen.count(name), 2)
+                return real_parse(path)
+
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                 mock.patch.object(train_adapter, "_sha256_file", side_effect=record_hash), \
+                 mock.patch.object(train_adapter, "_index_weight_map_shards", side_effect=parse_after_hashes) as parse:
+                train_adapter.digest_verification_before_load(
+                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
+                )
+            parse.assert_called_once_with(snapshot)
+
+    def test_digest_paths_cannot_escape_complete_snapshot_coverage(self):
+        for name in ("../escape.bin", "/absolute.bin", "C:/escape.bin", "folder\\escape.bin"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(SystemExit, "confined relative snapshot files"):
+                    train_adapter.verify_expected_digests(
+                        Path(tmp), [{"path": name, "sha256": "a" * 64, "size": 1}],
+                    )
+
+    def test_verify_expected_digests_passes_with_two_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entries = [
+                self._digest_entry(root, "a.bin", b"alpha"),
+                self._digest_entry(root, "b.bin", b"beta"),
+            ]
+            result = train_adapter.verify_expected_digests(root, entries, reads=2)
+            self.assertEqual(
+                result,
+                {
+                    "files": 2,
+                    "reads": 2,
+                    "bytes": len(b"alpha") + len(b"beta"),
+                    "weight_files": 2,
+                    "weight_map_checked": False,
+                    "snapshot_files": 2,
+                    "snapshot_coverage": "all_regular_files",
+                },
+            )
+
+    def test_verify_expected_digests_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(SystemExit):
+                train_adapter.verify_expected_digests(root, [{"path": "nope.bin", "sha256": "a" * 64, "size": 1}])
+
+    def test_verify_expected_digests_size_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "x.bin").write_bytes(b"xy")
+            with self.assertRaises(SystemExit):
+                train_adapter.verify_expected_digests(
+                    root, [{"path": "x.bin", "sha256": hashlib.sha256(b"xy").hexdigest(), "size": 99}],
+                )
+
+    def test_verify_expected_digests_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "x.bin").write_bytes(b"xy")
+            with self.assertRaises(SystemExit):
+                train_adapter.verify_expected_digests(
+                    root, [{"path": "x.bin", "sha256": "b" * 64, "size": 2}],
+                )
+
+    def test_verify_expected_digests_index_shard_missing_from_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shard_a = "model-00001-of-00002.safetensors"
+            shard_b = "model-00002-of-00002.safetensors"
+            (root / shard_a).write_bytes(b"only-a")
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps({"weight_map": {"layer.0": shard_a, "layer.1": shard_b}}),
+                encoding="utf-8",
+            )
+            entry = self._digest_entry(root, shard_a, b"only-a")
+            index = root / "model.safetensors.index.json"
+            index_entry = {"path": index.name, "sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+                           "size": index.stat().st_size}
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry, index_entry])
+            self.assertIn(shard_b, str(raised.exception))
+
+    def test_verify_expected_digests_uncovered_weight_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "extra.safetensors").write_bytes(b"shard")
+            entry = self._digest_entry(root, "listed.bin", b"listed")
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry])
+            self.assertIn("weight file not covered", str(raised.exception))
+
+    def test_verify_expected_digests_duplicate_manifest_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self._digest_entry(root, "w.bin", b"w")
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry, dict(entry)])
+            self.assertIn("duplicate path", str(raised.exception))
+
+    def test_verify_expected_digests_requires_manifest_weight_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text("{}", encoding="utf-8")
+            entry = {
+                "path": "config.json",
+                "sha256": hashlib.sha256(b"{}").hexdigest(),
+                "size": 2,
+            }
+            with self.assertRaises(SystemExit) as raised:
+                train_adapter.verify_expected_digests(root, [entry])
+            self.assertIn("no weight file", str(raised.exception))
+
+    def test_verify_expected_digests_second_read_differs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = b"stable"
+            entry = self._digest_entry(root, "stable.bin", data)
+            calls = 0
+            real = train_adapter._sha256_file
+
+            def flaky(path: Path) -> str:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    return "c" * 64
+                return real(path)
+
+            with mock.patch.object(train_adapter, "_sha256_file", side_effect=flaky):
+                with self.assertRaises(SystemExit) as raised:
+                    train_adapter.verify_expected_digests(root, [entry], reads=2)
+                self.assertIn("read 2", str(raised.exception))
+
+    def test_load_expected_digests_returns_matching_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            files = [{"path": "config.json", "sha256": "a" * 64, "size": 3}]
+            path.write_text(json.dumps({key: {"files": files}}), encoding="utf-8")
+            loaded = train_adapter.load_expected_digests(path, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
+            self.assertEqual(loaded, files)
+
+    def test_load_expected_digests_absent_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "digests.json"
+            path.write_text("{}", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                train_adapter.load_expected_digests(path, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION)
+
+    def test_main_probe_smoke_pin_calls_run_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            with mock.patch.object(train_adapter, "run_probe", return_value={"mode": "d_m1_f_probe"}) as mocked:
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.SMOKE_BASE,
+                    "--revision", train_adapter.SMOKE_REVISION,
+                ])
+            mocked.assert_called_once()
+
+    def test_main_probe_arbitrary_base_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            with self.assertRaises(SystemExit):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", "org/other-model",
+                    "--revision", "a" * 40,
+                ])
+
+    def test_main_winner_without_expected_digests_refuses_before_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock()
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with self.assertRaises(SystemExit):
+                    train_adapter.main([
+                        "--rows", str(path),
+                        "--report", str(Path(tmp, "out.json")),
+                        "--winner",
+                        "--base", train_adapter.WINNER_BASE,
+                        "--revision", train_adapter.WINNER_REVISION,
+                    ])
+            fake_flm.from_pretrained.assert_not_called()
+
+    def test_probe_pins_accepted_by_guard(self):
+        self.assertTrue(train_adapter.is_allowed_probe_pin(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
+        self.assertTrue(train_adapter.is_allowed_probe_pin(
+            train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION))
+        self.assertTrue(train_adapter.is_allowed_probe_pin(
+            train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION))
+        self.assertFalse(train_adapter.is_allowed_probe_pin("org/other-model", "a" * 40))
+
+    def test_length_gate_pass_boundary(self):
+        self.assertTrue(train_adapter.length_gate_pass(2048.0))
+        self.assertFalse(train_adapter.length_gate_pass(2048.001))
+
+    def test_fallback_pin_without_expected_digests_refused_before_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock()
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with self.assertRaises(SystemExit):
+                    train_adapter.main([
+                        "--rows", str(path),
+                        "--report", str(Path(tmp, "probe.json")),
+                        "--probe",
+                        "--base", train_adapter.FALLBACK_BASE,
+                        "--revision", train_adapter.FALLBACK_REVISION,
+                    ])
+            fake_flm.from_pretrained.assert_not_called()
+
+    def test_main_probe_fallback_pin_calls_run_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.FALLBACK_BASE}@{train_adapter.FALLBACK_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            with mock.patch.object(train_adapter, "run_probe", return_value={"pin": "fallback"}) as mocked:
+                with mock.patch.object(train_adapter, "load_expected_digests", return_value=[]):
+                    with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                        train_adapter.main([
+                            "--rows", str(path),
+                            "--report", str(Path(tmp, "probe.json")),
+                            "--probe",
+                            "--base", train_adapter.FALLBACK_BASE,
+                            "--revision", train_adapter.FALLBACK_REVISION,
+                            "--expected-digests", str(digest_path),
+                        ])
+            mocked.assert_called_once()
+
+    def test_probe_length_gate_failure_skips_microsteps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            fake_tokenizer = mock.MagicMock()
+            fake_tokenizer.pad_token_id = 0
+            fake_tokenizer.apply_chat_template = mock.MagicMock(return_value=[1, 2, 3])
+            fake_model = mock.MagicMock()
+            fake_model.config._commit_hash = train_adapter.WINNER_REVISION
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+            fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+            bad_stats = {"p50": 100.0, "p95": 2048.001, "max": 3000}
+            encoded = [{
+                "input_ids": [1, 2, 3],
+                "attention_mask": [1, 1, 1],
+                "labels": [-100, -100, 3],
+            }]
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                    with mock.patch.object(train_adapter, "encode_rows", return_value=encoded):
+                        with mock.patch.object(train_adapter, "length_statistics", return_value=bad_stats):
+                            with mock.patch.object(train_adapter, "run_probe_microsteps") as micro_mock:
+                                with self.assertRaises(SystemExit) as raised:
+                                    train_adapter.main([
+                                        "--rows", str(rows_path),
+                                        "--report", str(report_path),
+                                        "--probe",
+                                        "--base", train_adapter.WINNER_BASE,
+                                        "--revision", train_adapter.WINNER_REVISION,
+                                        "--expected-digests", str(digest_path),
+                                    ])
+            self.assertIn("length gate failed", str(raised.exception))
+            micro_mock.assert_not_called()
+            self.assertTrue(report_path.is_file())
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertFalse(payload["length_gate_pass"])
+            self.assertIsNone(payload["memory_pass"])
+            self.assertIsNone(payload["seconds_per_microstep"])
+            self.assertIsNone(payload["peak_reserved_vram_gib"])
+
+    def test_probe_mode_and_authoritative_matrix(self):
+        def report_for(base: str, revision: str, seq_len: int) -> dict:
+            pin = train_adapter.probe_pin_name(base, revision)
+            authoritative = train_adapter.probe_is_authoritative(base, revision, seq_len, 1, 1)
+            mode = "d_m1_f_probe" if authoritative else "diagnostic_probe"
+            kwargs = self._minimal_probe_report_kwargs()
+            kwargs.update({
+                "pin": pin,
+                "mode": mode,
+                "base": base,
+                "revision": revision,
+                "sequence_length": seq_len,
+                "authoritative": authoritative,
+            })
+            return train_adapter.build_probe_report(**kwargs)
+
+        winner_2048 = report_for(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 2048)
+        self.assertEqual(winner_2048["mode"], "d_m1_f_probe")
+        self.assertTrue(winner_2048["authoritative"])
+        self.assertEqual(winner_2048["pin"], "winner")
+
+        winner_1024 = report_for(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 1024)
+        self.assertEqual(winner_1024["mode"], "diagnostic_probe")
+        self.assertFalse(winner_1024["authoritative"])
+
+        smoke_2048 = report_for(
+            train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, 2048)
+        self.assertEqual(smoke_2048["mode"], "diagnostic_probe")
+        self.assertFalse(smoke_2048["authoritative"])
+        self.assertEqual(smoke_2048["pin"], "smoke")
+
+        fallback_2048 = report_for(
+            train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION, 2048)
+        self.assertEqual(fallback_2048["mode"], "d_m1_f_probe")
+        self.assertTrue(fallback_2048["authoritative"])
+        self.assertEqual(fallback_2048["pin"], "fallback")
+
+    def test_main_probe_seq_len_above_seq_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            with self.assertRaises(SystemExit):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.SMOKE_BASE,
+                    "--revision", train_adapter.SMOKE_REVISION,
+                    "--probe-seq-len", "4096",
+                ])
+
+    def test_wrapper_fallback_switch_and_probe_timeout(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("-Fallback", text)
+        self.assertIn("mutually exclusive", text)
+        self.assertIn("-Fallback is only valid together with -Probe", text)
+        self.assertIn("m1-expected-qwen3-8b.json", text)
+        self.assertIn("ContainsKey('TimeoutMinutes')", text)
+        self.assertIn("$TimeoutMinutes = 150", text)
+
+    def _minimal_probe_report_kwargs(self) -> dict:
+        return {
+            "run": "probe",
+            "pin": "smoke",
+            "mode": "diagnostic_probe",
+            "base": train_adapter.SMOKE_BASE,
+            "revision": train_adapter.SMOKE_REVISION,
+            "rows": 1,
+            "mask_coverage": 0.5,
+            "resolved_commit": train_adapter.SMOKE_REVISION,
+            "length_stats": {"p50": 1.0, "p95": 2.0, "max": 3},
+            "length_gate_passed": True,
+            "sequence_length": 2048,
+            "sequence_length_method": "attended_prompt_repeat",
+            "warmup_microsteps": 1,
+            "timed_microsteps": 1,
+            "gradient_accumulation": 1,
+            "timed_optimizer_updates": 1,
+            "seconds_per_microstep": 1.0,
+            "peak_reserved_gib": 1.0,
+            "rows_total": 96,
+            "wall_seconds_three_epochs": 1.0,
+            "wall_seconds_three_epochs_contingency": 1.2,
+            "memory_pass": True,
+            "time_pass": True,
+            "authoritative": False,
+            "overlength_rows": 0,
+            "max_tokens": 3,
+        }
+
+    def test_train_refuses_overlength_row_before_trainer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "out.json"
+            fake_tokenizer = mock.MagicMock()
+            fake_tokenizer.apply_chat_template = mock.MagicMock(return_value=list(range(10)))
+            fake_model = mock.MagicMock()
+            fake_model.config._commit_hash = train_adapter.SMOKE_REVISION
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+            fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+            long_encoded = [{
+                "input_ids": list(range(train_adapter.SEQ + 5)),
+                "attention_mask": [1] * (train_adapter.SEQ + 5),
+                "labels": [-100] * train_adapter.SEQ + list(range(5)),
+            }]
+            cuda = mock.MagicMock()
+            cuda.reset_peak_memory_stats = mock.MagicMock()
+            with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
+                with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                    with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                        with mock.patch.object(train_adapter, "encode_rows", return_value=long_encoded):
+                            with mock.patch.object(train_adapter, "SFTTrainer") as trainer_mock:
+                                with self.assertRaises(SystemExit) as raised:
+                                    train_adapter.train(
+                                        [row()],
+                                        train_adapter.SMOKE_BASE,
+                                        train_adapter.SMOKE_REVISION,
+                                        20,
+                                        report_path,
+                                        winner=False,
+                                    )
+            self.assertIn("exceed SEQ", str(raised.exception))
+            trainer_mock.assert_not_called()
+
+    def test_from_pretrained_uses_local_files_only_when_digests_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "out.json"
+            digest_path = Path(tmp) / "digests.json"
+            digest_info = {"files": 1, "reads": 2, "bytes": 1, "weight_files": 1, "weight_map_checked": False}
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
+            cuda = mock.MagicMock()
+            cuda.reset_peak_memory_stats = mock.MagicMock()
+            with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
+                with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                    with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=digest_info):
+                        with self.assertRaises(SystemExit):
+                            train_adapter.train(
+                                [row()],
+                                train_adapter.WINNER_BASE,
+                                train_adapter.WINNER_REVISION,
+                                20,
+                                report_path,
+                                winner=True,
+                                expected_digests_path=digest_path,
+                            )
+            _, kwargs = fake_flm.from_pretrained.call_args
+            self.assertTrue(kwargs.get("local_files_only"))
+
+    def test_probe_overlength_row_is_diagnostic_on_winner_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            seq = train_adapter.SEQ
+            at_limit = {
+                "input_ids": list(range(seq)),
+                "attention_mask": [1] * seq,
+                "labels": [-100] * (seq - 2) + [4, 5],
+            }
+            over = {
+                "input_ids": list(range(seq + 1)),
+                "attention_mask": [1] * (seq + 1),
+                "labels": [-100] * (seq - 1) + [4, 5],
+            }
+            encoded = [at_limit] * 99 + [over]
+            fake_tokenizer = mock.MagicMock()
+            fake_model = mock.MagicMock()
+            fake_model.config._commit_hash = train_adapter.WINNER_REVISION
+            fake_model.parameters = mock.MagicMock(return_value=iter([mock.MagicMock(device="cpu")]))
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+            fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+            exercise = [at_limit]
+            with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
+                with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
+                    with mock.patch.object(train_adapter, "encode_rows", return_value=encoded):
+                        with mock.patch.object(
+                            train_adapter, "prepare_probe_examples", return_value=(exercise, "attended_prompt_repeat"),
+                        ):
+                            with mock.patch.object(train_adapter, "run_probe_microsteps", return_value=(1.0, 9.0)):
+                                train_adapter.run_probe(
+                                    [row() for _ in range(100)],
+                                    train_adapter.WINNER_BASE,
+                                    train_adapter.WINNER_REVISION,
+                                    report_path,
+                                    probe_rows_total=100,
+                                    probe_seq_len=seq,
+                                    expected_digests_path=digest_path,
+                                )
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["mode"], "diagnostic_probe")
+            self.assertFalse(payload["authoritative"])
+            self.assertEqual(payload["overlength_rows"], 1)
+            self.assertEqual(payload["max_tokens"], seq + 1)
+
+    def test_probe_exercise_rows_use_attended_prompt_repeat(self):
+        seq_len = 12
+        example = {
+            "input_ids": [10, 11, 12, 20, 21],
+            "attention_mask": [1, 1, 1, 1, 1],
+            "labels": [-100, -100, -100, 20, 21],
+        }
+        original_response_labels = example["labels"][-2:]
+        exercise = train_adapter.extend_probe_example_to_seq_len(example, seq_len)
+        self.assertEqual(len(exercise["input_ids"]), seq_len)
+        self.assertEqual(exercise["attention_mask"], [1] * seq_len)
+        self.assertEqual(exercise["labels"][-2:], original_response_labels)
+        self.assertEqual(exercise["input_ids"][-2:], [20, 21])
+        fill_labels = exercise["labels"][3:-2]
+        self.assertTrue(fill_labels)
+        self.assertTrue(all(label == train_adapter.IGNORED_LABEL for label in fill_labels))
+        train_adapter.require_response_only(exercise["labels"], 3)
+
+    def test_probe_authoritative_fails_memory_gate_after_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            self._run_probe_with_gate_outcome(
+                rows_path, report_path, memory_pass=False, time_pass=True, authoritative=True,
+                expect_exit=True, message="memory gate",
+            )
+
+    def test_probe_authoritative_fails_time_gate_after_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            self._run_probe_with_gate_outcome(
+                rows_path, report_path, memory_pass=True, time_pass=False, authoritative=True,
+                expect_exit=True, message="time gate",
+            )
+
+    def test_probe_diagnostic_failed_gate_exits_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows_path = write_accepted(Path(tmp), [row()])
+            report_path = Path(tmp) / "probe.json"
+            self._run_probe_with_gate_outcome(
+                rows_path, report_path, memory_pass=False, time_pass=False, authoritative=False,
+                expect_exit=False,
+            )
+
+    def test_probe_is_authoritative_only_when_projection_matches_loaded_rows(self):
+        self.assertTrue(train_adapter.probe_is_authoritative(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 2048, 96, 96,
+        ))
+        self.assertFalse(train_adapter.probe_is_authoritative(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 2048, 1, 96,
+        ))
+        self.assertFalse(train_adapter.probe_is_authoritative(
+            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 1024, 1, 1,
+        ))
+
+    def test_main_probe_default_rows_total_is_authoritative_on_winner_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            captured: dict = {}
+
+            def fake_run_probe(rows, base, revision, report_path, **kwargs):
+                loaded = len(rows)
+                projection = kwargs["probe_rows_total"]
+                if projection is None:
+                    projection = loaded
+                captured["projection"] = projection
+                captured["authoritative"] = train_adapter.probe_is_authoritative(
+                    base, revision, kwargs["probe_seq_len"], loaded, projection,
+                )
+                return {"authoritative": captured["authoritative"], "mode": "d_m1_f_probe"}
+
+            with mock.patch.object(train_adapter, "run_probe", side_effect=fake_run_probe):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.WINNER_BASE,
+                    "--revision", train_adapter.WINNER_REVISION,
+                    "--expected-digests", str(digest_path),
+                ])
+            self.assertEqual(captured["projection"], 1)
+            self.assertTrue(captured["authoritative"])
+
+    def test_main_probe_explicit_rows_total_mismatch_is_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_accepted(Path(tmp), [row()])
+            digest_path = Path(tmp) / "digests.json"
+            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+            digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+            captured: dict = {}
+
+            def fake_run_probe(rows, base, revision, report_path, **kwargs):
+                loaded = len(rows)
+                projection = kwargs["probe_rows_total"] or loaded
+                captured["authoritative"] = train_adapter.probe_is_authoritative(
+                    base, revision, kwargs["probe_seq_len"], loaded, projection,
+                )
+                return {"authoritative": captured["authoritative"], "mode": "diagnostic_probe"}
+
+            with mock.patch.object(train_adapter, "run_probe", side_effect=fake_run_probe):
+                train_adapter.main([
+                    "--rows", str(path),
+                    "--report", str(Path(tmp, "probe.json")),
+                    "--probe",
+                    "--base", train_adapter.WINNER_BASE,
+                    "--revision", train_adapter.WINNER_REVISION,
+                    "--expected-digests", str(digest_path),
+                    "--probe-rows-total", "96",
+                ])
+            self.assertFalse(captured["authoritative"])
+
+    def test_wrapper_passes_probe_rows_total_only_when_bound(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        text = script.read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"\$ProbeRowsTotal\s*=\s*96")
+        self.assertIn("ContainsKey('ProbeRowsTotal')", text)
+        self.assertIn("'--probe-rows-total', \"$ProbeRowsTotal\"", text)
+
+    def _run_probe_with_gate_outcome(
+        self,
+        rows_path: Path,
+        report_path: Path,
+        *,
+        memory_pass: bool,
+        time_pass: bool,
+        authoritative: bool,
+        expect_exit: bool,
+        message: str = "",
+    ) -> None:
+        digest_path = rows_path.parent / "digests.json"
+        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        digest_path.write_text(json.dumps({key: {"files": []}}), encoding="utf-8")
+        fake_tokenizer = mock.MagicMock()
+        fake_tokenizer.apply_chat_template = mock.MagicMock(return_value=[1, 2, 3, 4, 5])
+        base = train_adapter.WINNER_BASE if authoritative else train_adapter.SMOKE_BASE
+        revision = train_adapter.WINNER_REVISION if authoritative else train_adapter.SMOKE_REVISION
+        fake_model = mock.MagicMock()
+        fake_model.config._commit_hash = revision
+        fake_model.parameters = mock.MagicMock(return_value=iter([mock.MagicMock(device="cpu")]))
+        fake_flm = mock.MagicMock()
+        fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
+        fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
+        encoded = [{
+            "input_ids": [1, 2, 3, 4, 5],
+            "attention_mask": [1, 1, 1, 1, 1],
+            "labels": [-100, -100, -100, 4, 5],
+        }]
+        exercise = [{
+            "input_ids": list(range(train_adapter.SEQ)),
+            "attention_mask": [1] * train_adapter.SEQ,
+            "labels": [-100] * (train_adapter.SEQ - 2) + [4, 5],
+        }]
+        peak = 10.0 if memory_pass else 12.0
+        seconds = 1.0 if time_pass else 12_000.0
+        argv = [
+            "--rows", str(rows_path),
+            "--report", str(report_path),
+            "--probe",
+            "--base", base,
+            "--revision", revision,
+        ]
+        if authoritative:
+            argv.extend(["--expected-digests", str(digest_path)])
+        patches = [
+            mock.patch.object(train_adapter, "FastLanguageModel", fake_flm),
+            mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None),
+            mock.patch.object(train_adapter, "encode_rows", return_value=encoded),
+            mock.patch.object(train_adapter, "prepare_probe_examples", return_value=(exercise, "attended_prompt_repeat")),
+            mock.patch.object(train_adapter, "run_probe_microsteps", return_value=(seconds, peak)),
+        ]
+        if expect_exit:
+            with contextlib.ExitStack() as stack:
+                for item in patches:
+                    stack.enter_context(item)
+                with self.assertRaises(SystemExit) as raised:
+                    train_adapter.main(argv)
+                if message:
+                    self.assertIn(message, str(raised.exception))
+            self.assertTrue(report_path.is_file())
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["memory_pass"], memory_pass)
+            self.assertEqual(payload["time_pass"], time_pass)
+            self.assertEqual(payload["authoritative"], authoritative)
+        else:
+            with contextlib.ExitStack() as stack:
+                for item in patches:
+                    stack.enter_context(item)
+                train_adapter.main(argv)
+            self.assertTrue(report_path.is_file())
+
+    def test_probe_report_authoritative_for_winner_and_smoke_pins(self):
+        kwargs = self._minimal_probe_report_kwargs()
+        kwargs.update({"pin": "winner", "mode": "d_m1_f_probe", "authoritative": True})
+        winner = train_adapter.build_probe_report(**kwargs)
+        smoke_kwargs = self._minimal_probe_report_kwargs()
+        smoke_kwargs.update({"pin": "smoke", "mode": "diagnostic_probe", "authoritative": False})
+        smoke = train_adapter.build_probe_report(**smoke_kwargs)
+        self.assertTrue(winner["authoritative"])
+        self.assertFalse(smoke["authoritative"])
+        self.assertTrue(winner["memory_pass"])
+        self.assertTrue(smoke["time_pass"])
 
 
 if __name__ == "__main__":
