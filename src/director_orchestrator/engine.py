@@ -122,6 +122,7 @@ from .approvals import (
     record_oracle_recovery,
     record_provider_effect_observation,
     record_task_effect_observation,
+    retire_terminal_revision_authority,
     reset_for_owner_clarification,
     reserve_provider_effect,
     reserve_task_effect,
@@ -2887,7 +2888,12 @@ class OrchestrationEngine:
                 pass
 
     async def _run_locked(self, task_id: str) -> None:
-        record = self.store.get(task_id)
+        try:
+            record = self.store.get(task_id)
+        except (sqlite3.Error, OSError):
+            # No readable task means no authority to dispatch or overwrite its
+            # durable state. A later resume retries the same recovery entry.
+            return
         if record is None:
             return
         try:
@@ -3403,9 +3409,11 @@ class OrchestrationEngine:
                 "owner_approval_recorded": assignment_is_approved(record, assignment),
             },
             "contribution_attribution": (
-                "Wrap free-form human-visible output in matching UTC contribution BEGIN/END "
-                "tags. Do not put tags inside JSON, callbacks, review artifacts, exact queries, "
-                "or other structured payloads; the Director tags their human-visible relay."
+                "Keep actual provider identity accurate using normal Git Author/Committer "
+                "provenance and existing authenticated task/run records. Do not add contribution "
+                "tags, custom trailers, prescribed author headers or percentage/share paperwork. "
+                "Preserve historical records, structured-payload contracts and every existing "
+                "approval, exact-candidate, independent-review and contributor/merger-separation gate."
             ),
             "dependency_outcomes": [
                 bounded(outcome)
@@ -5757,10 +5765,11 @@ class OrchestrationEngine:
                 record.message = "Owner not-created resolution retained; spend reconciliation must finish before dispatch."
                 self._save_spend_hold(record)
                 return False
+            authority = record.revision_authority_by_effect.get(intent.effect_key)
             if not already_closed:
                 record_provider_effect_observation(record, assignment, effect_key=intent.effect_key,
                                                    phase=intent.phase, outcome="failed_pre_submit")
-            authority = record.revision_authority_by_effect.pop(intent.effect_key, None)
+            record.revision_authority_by_effect.pop(intent.effect_key, None)
             if intent.phase == "revision" and authority is not None:
                 basis, prompt = authority
                 if basis in record.retry_basis_digests:
@@ -5778,6 +5787,14 @@ class OrchestrationEngine:
         return True
 
     def _settle_unsubmitted_spend(self, record: TaskRecord, assignment: Assignment, key: str) -> bool:
+        try:
+            return self._settle_unsubmitted_spend_once(record, assignment, key)
+        except (sqlite3.Error, OSError):
+            # Closure is already durable. Read/hold-cleanup failures must not
+            # turn accounting recovery into a terminal provider failure.
+            return False
+
+    def _settle_unsubmitted_spend_once(self, record: TaskRecord, assignment: Assignment, key: str) -> bool:
         current = self.store.get(record.task_id)
         if current is None or current.plan_generation != record.plan_generation:
             return False
@@ -5984,6 +6001,15 @@ class OrchestrationEngine:
 
     def _retry_spend_settlements(self, record: TaskRecord) -> bool:
         """Repair durable side records without repeating provider I/O."""
+        try:
+            return self._retry_spend_settlements_once(record)
+        except (sqlite3.Error, OSError):
+            # A hold cannot be required while that same store is unavailable.
+            # Retain the last durable state and reservation; stop this resume
+            # before provider work and rediscover it on the next invocation.
+            return False
+
+    def _retry_spend_settlements_once(self, record: TaskRecord) -> bool:
         # The zero-charge write and the hold write can both fail. Discover
         # those retries from the already durable closure and outstanding spend,
         # rather than requiring a second successfully persisted error marker.
@@ -6382,6 +6408,12 @@ class OrchestrationEngine:
                     "The pending assignment approval changed before provider dispatch"
                 )
             if phase == "revision" and self._workload_policy_applies(current):
+                retire_terminal_revision_authority(current)
+                if any(len(items) >= 20 for items in (
+                    current.revision_authority_by_effect, current.retry_basis_digests,
+                    current.revision_prompt_digests,
+                )):
+                    raise StaleApproval("Provider revision authority capacity reached")
                 if (
                     current.status != TaskStatus.REVIEWING
                     or current.cancellation_requested_at is not None

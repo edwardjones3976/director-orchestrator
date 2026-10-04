@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Delegation matrix — 2026-09-13 delivery (rev 2) · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#1-lane-eligibility-depends-on-the-selected-allocation-profile">1. Lane eligibility depends on the selected allocation profile</a></li><li class="top"><a href="#2-integer-quotas-r7">2. Integer quotas (R7)</a></li><li class="top"><a href="#3-assignment-matrix--disjoint-writers">3. Assignment matrix — disjoint writers</a></li><li class="top"><a href="#4-launch-packets">4. Launch packets</a></li><li class="sub"><a href="#a-03--openai--codex--evidence-chain-fixes">A-03 — OpenAI / Codex — evidence-chain fixes</a></li><li class="sub"><a href="#a-04--cursor--switch-coupling-fixes">A-04 — Cursor — switch-coupling fixes</a></li><li class="sub"><a href="#a-05--openai--codex--control-script-and-staging">A-05 — OpenAI / Codex — control script and staging</a></li><li class="sub"><a href="#a-06--claude-code--n8n-v2">A-06 — Claude Code — n8n v2</a></li><li class="sub"><a href="#a-11--grok--adversarial-negative-path-analysis">A-11 — Grok — adversarial negative-path analysis</a></li><li class="sub"><a href="#a-12--grok--cross-check">A-12 — Grok — cross-check</a></li><li class="sub"><a href="#a-13--antigravity--closed-dispatch">A-13 — Antigravity — closed dispatch</a></li><li class="sub"><a href="#a-14--antigravity--invited-debate-seat">A-14 — Antigravity — invited debate seat</a></li><li class="sub"><a href="#a-15--perplexity--bounded-public-research">A-15 — Perplexity — bounded public research</a></li><li class="sub"><a href="#a-16--firecrawl--bounded-public-research">A-16 — Firecrawl — bounded public research</a></li><li class="sub"><a href="#a-17--github-copilot-lite--hygiene-observation">A-17 — GitHub Copilot Lite — hygiene observation</a></li><li class="top"><a href="#5-enabling-every-lane-fully--what-each-one-still-needs">5. Enabling every lane fully — what each one still needs</a></li><li class="top"><a href="#6-owner-decisions-this-raises">6. Owner decisions this raises</a></li><li class="top"><a href="#7-what-this-matrix-does-not-claim">7. What this matrix does not claim</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | BEGIN]] -->
+<h1 id="delegation-matrix--2026-09-13-delivery-rev-2">Delegation matrix — 2026-09-13 delivery (rev 2)</h1>
+<blockquote>
+<p><strong>Superseding note, 2026-09-21.</strong> The owner retired the rolling-twenty
+target-plus-five hard ceiling referenced below (§§1–2) as outdated. The
+historical hard-ceiling numbers below are preserved for reference only; they
+no longer block or refuse admission. Zero-target lane refusal, soft-band
+preference, capability, evidence, and approval gates described below remain
+unchanged and current. This note supersedes only the hard-ceiling enforcement
+claims below; it does not alter this document's original dated text.</p>
+</blockquote>
+<blockquote>
+<p><strong>Correction, 2026-09-09 (WO-COMBINED-1).</strong> Eligibility depends on the
+selected allocation profile. A zero target refuses the lane in that profile
+for accepted productive work, including accepted non-code research. It does
+not prohibit that lane under every profile, and it does not bar implementation
+only. <code>is_accepted_productive_kind</code> classifies Perplexity and Firecrawl research
+as productive, and admission applies the allocation check to that classification.
+<code>engineering</code> gives both lanes zero and refuses their research assignments;
+<code>public_research</code> gives Perplexity 25% and Firecrawl 15% and admits the same
+requests when the other admission conditions pass. This correction changes no
+allocation profile, dispatch authorization, credential, or live route.</p>
+</blockquote>
+<p><strong>Issued by:</strong> Claude, acting Director-Orchestrator · 2026-09-08
+<strong>Authority:</strong> <code>docs/team-operating-charter.html</code>, <code>docs/provider-allocation-profiles.html</code>,
+<code>docs/provider-profiles/</code>, <code>src/director_orchestrator/allocation_profiles.py</code>,
+<code>workload_policy.py</code>, <code>AGENTS.md</code>. Where this document and any of those
+disagree, they win. This document grants no authority and attests no route.</p>
+<p>Read with <a href="director-decision-rules.html"><code>docs/director-decision-rules.html</code></a> and
+<a href="activation-plan-2026-09-13.html"><code>docs/activation-plan-2026-09-13.html</code></a>.</p>
+<hr />
+<h2 id="1-lane-eligibility-depends-on-the-selected-allocation-profile">1. Lane eligibility depends on the selected allocation profile</h2>
+<p>Read from <code>docs/provider-profiles/*.yaml</code>, <code>routes.yaml</code>, and
+<code>allocation_profiles.py</code> on the candidate. The default is the <strong>engineering</strong>
+allocation profile (<code>DEFAULT_ALLOCATION_PROFILE = &quot;engineering&quot;</code>), whose targets
+are <code>openai 40, claude 25, cursor 15, grok 10, antigravity 10, perplexity 0, firecrawl 0, github-copilot 0</code> over a rolling window of
+twenty admitted assignments, soft tolerance ±3 points, hard ceiling target +5.
+<strong>Zero target refuses the lane in that profile, including for accepted non-code
+research; a profile with a non-zero target can admit the same lane.</strong></p>
+<p>Verified against this branch's unchanged source: <a href="../src/director_orchestrator/workload_policy.py#L512-L529"><code>is_accepted_productive_kind</code>
+at workload_policy.py:512–529</a>
+includes Perplexity and Firecrawl research. The <a href="../src/director_orchestrator/workload_policy.py#L993-L1002"><code>evaluate_assignment</code> admission
+call site at workload_policy.py:993–1002</a>
+uses that classification before calling <code>direct_assignment_capacity_violation</code>;
+the <a href="../src/director_orchestrator/workload_policy.py#L617-L618">zero-target refusal at lines 617–618</a>
+returns <code>allocation_profile_lane_ineligible</code>. The <a href="../src/director_orchestrator/allocation_profiles.py#L17-L18">targets at
+allocation_profiles.py:17–18</a>
+are zero for both lanes in <code>engineering</code>, and 25%/15% respectively in
+<code>public_research</code>. Non-zero targets satisfy this allocation condition only;
+remaining capacity, capability, evidence and approval gates still apply.</p>
+<table>
+<thead>
+<tr>
+<th>Lane</th>
+<th>Class</th>
+<th>Assignable now</th>
+<th>Governing constraint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>OpenAI / Codex</strong></td>
+<td>full-spectrum primary</td>
+<td><strong>Yes</strong> — analysis, implementation, independent review</td>
+<td>The profile records no repository execution lane for orchestrator-dispatched OpenAI production; the legacy registry has no OpenAI adapter. Repository work therefore lands through owner-launched Codex sessions, which is the surface that produced PRs #115–#120. Cannot accept or merge a candidate it materially authored</td>
+</tr>
+<tr>
+<td><strong>Claude</strong></td>
+<td>director control plane</td>
+<td><strong>Yes</strong> — implementation via a Claude Code session; independent review of candidates it did not produce</td>
+<td>Cowork is not a synchronous adapter; the programmable bridge is a Claude Code Routine. Director coordination creates <strong>no production credit</strong>, so this session's work consumes none of Claude's quota</td>
+</tr>
+<tr>
+<td><strong>Cursor</strong></td>
+<td>full-spectrum primary</td>
+<td><strong>Yes</strong> — implementation, research, QA, independent exact-SHA review</td>
+<td>Every run needs an allowlisted project, repository and durable starting ref. Auto-generated <code>cursor/...</code> branches are not durable starting points</td>
+</tr>
+<tr>
+<td><strong>Grok</strong></td>
+<td>full-spectrum primary</td>
+<td><strong>Analysis now; implementation and verdicts once the CLI contact is bound</strong></td>
+<td>The in-process Responses API contact is synchronous, tool-free and <strong>analysis only</strong>; API output is never promoted into repository or review authority. Repository work and verdicts require the digest-verified Build CLI contact through an authenticated host runner. The host bridge preflight has not been run and activation bindings are <code>{}</code>, so Grok's verdict capability is <code>U</code></td>
+</tr>
+<tr>
+<td><strong>Antigravity / Gemini</strong></td>
+<td>subordinate supplemental specialist</td>
+<td><strong>Yes, in two closed forms only</strong></td>
+<td>Denied <code>review_verdict</code>, <code>acceptance_verdict</code>, <code>repository_write</code>, <code>repository_access</code>, <code>branch_selection</code>, <code>contract_or_methodology_definition</code>, <code>external_write</code>, <code>merge</code>. Ordinary dispatch sends <strong>no model-authored prose</strong> — the request is composed only from fixed strings, closed enums and three bounded integers (<code>assignment_sequence</code>, <code>variant_count</code>, <code>max_lines_per_artifact</code>), and the validator rejects anything else. Withheld: task text, repository paths or source, acceptance criteria, owner objective. Every artifact must feed a later Claude, Cursor or Grok assignment that independently verifies and integrates it</td>
+</tr>
+<tr>
+<td><strong>Perplexity</strong></td>
+<td>evidence-only research</td>
+<td><strong>Refused in <code>engineering</code>; allocation-admissible in <code>public_research</code></strong></td>
+<td>Accepted non-code research is productive under <code>is_accepted_productive_kind</code>, so the zero target in <code>engineering</code> refuses it. The 25% target in <code>public_research</code> permits it subject to admission and the remaining gates (§1). Each assignment needs an owner approval bound to the digest of the exact outbound query, and a later mutation invalidates that approval. Output is untrusted evidence until a primary lane evaluates it</td>
+</tr>
+<tr>
+<td><strong>Firecrawl</strong></td>
+<td>public search transport</td>
+<td><strong>Repository lane refused in <code>engineering</code>; allocation-admissible in <code>public_research</code></strong></td>
+<td>Accepted non-code research is productive, so the zero target in <code>engineering</code> refuses it. The 15% target in <code>public_research</code> permits it subject to admission and the remaining gates (§1). Surface one: the repository lane, which executes on the LangGraph primary path, has no legacy adapter, and needs <code>FIRECRAWL_API_KEY</code> added to the deployment. Surface two: a Firecrawl MCP server connected to the Director's own session, already live and already used — these are different transports and evidence from one is not evidence about the other</td>
+</tr>
+<tr>
+<td><strong>GitHub Copilot (Lite)</strong></td>
+<td>supplemental hygiene reviewer</td>
+<td><strong>Yes, post-freeze, non-gating</strong></td>
+<td>Explicitly carries no workload share, range or ceiling, and no production credit, so a Lite observation does not consume a quota slot. Requires required checks green and a frozen exact candidate; fails closed without an authenticated contact; at most three conditional attempts; a substantive Copilot-authored fix would make it a material author and ineligible to review that candidate</td>
+</tr>
+<tr>
+<td><strong>Microsoft 365 Copilot</strong></td>
+<td>retired, transport-blocked</td>
+<td><strong>No — retired by #161</strong></td>
+<td>The lane was retired by #161 and is not in LANES. What stops it is transport: live dependency discovery hard-codes the lane unauthenticated with <code>microsoft_365_copilot_work_iq_capability_evidence_missing</code>, and it must not enter the activation binding map because the combined live signal is AND-ed across every binding. §5 gives the enablement path</td>
+</tr>
+</tbody>
+</table>
+<p><code>direct-provider-to-provider</code> is the one route catalogued as <strong>prohibited</strong>.
+Every exchange between lanes in this matrix is brokered by the Director.</p>
+<h2 id="2-integer-quotas-r7">2. Integer quotas (R7)</h2>
+<p>Largest-remainder apportionment of the engineering targets over the
+twenty-assignment window, with the soft band and hard ceiling as integer bounds:</p>
+<p><strong>The allocation check covers accepted productive work.</strong> Implementation is
+productive, and <code>is_accepted_productive_kind</code> also includes accepted Perplexity
+and Firecrawl research. Admission projects those research assignments into the
+same capacity check (§1). Ordinary analysis, review, validation and Director
+coordination do not acquire production credit merely by consuming effort.</p>
+<table>
+<thead>
+<tr>
+<th>Lane</th>
+<th style="text-align:right">Target</th>
+<th style="text-align:right">Quota of 20</th>
+<th style="text-align:right">Ceiling</th>
+<th style="text-align:right">Implementation this delivery</th>
+<th>Non-quota work</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI</td>
+<td style="text-align:right">40%</td>
+<td style="text-align:right"><strong>8</strong></td>
+<td style="text-align:right">9</td>
+<td style="text-align:right">2 — A-03, A-05</td>
+<td>A-01 audit</td>
+</tr>
+<tr>
+<td>Claude</td>
+<td style="text-align:right">25%</td>
+<td style="text-align:right"><strong>5</strong></td>
+<td style="text-align:right">6</td>
+<td style="text-align:right">1 — A-06</td>
+<td>Director coordination (no credit)</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td style="text-align:right">15%</td>
+<td style="text-align:right"><strong>3</strong></td>
+<td style="text-align:right">4</td>
+<td style="text-align:right">1 — A-04</td>
+<td>A-02 triage, four reviews</td>
+</tr>
+<tr>
+<td>Grok</td>
+<td style="text-align:right">10%</td>
+<td style="text-align:right"><strong>2</strong></td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">0 — <strong>quota untouched</strong></td>
+<td>A-11, A-12 analyses</td>
+</tr>
+<tr>
+<td>Antigravity</td>
+<td style="text-align:right">10%</td>
+<td style="text-align:right"><strong>2</strong></td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">1 — A-13</td>
+<td>A-14 debate seat</td>
+</tr>
+<tr>
+<td>Perplexity</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">0 impl.</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">0</td>
+<td><strong>A-15 research held in <code>engineering</code></strong> — requires a non-zero target</td>
+</tr>
+<tr>
+<td>Firecrawl</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">0 impl.</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">0</td>
+<td><strong>A-16 research held in <code>engineering</code></strong> — requires a non-zero target</td>
+</tr>
+<tr>
+<td>GitHub Copilot</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">0 impl.</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">0</td>
+<td><strong>A-17 hygiene review</strong> — no production credit by charter</td>
+</tr>
+<tr>
+<td></td>
+<td style="text-align:right"></td>
+<td style="text-align:right"><strong>20</strong></td>
+<td style="text-align:right"></td>
+<td style="text-align:right"><strong>5 of 20 consumed</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Two corrections follow from this. Grok is <strong>not</strong> at cap — its analyses cost no
+quota, so it can take an implementation assignment as soon as its digest-verified
+CLI contact is bound. A-15 and A-16 cannot be admitted as repository-lane
+research under <code>engineering</code>; they require a profile with non-zero targets.
+These engineering quotas do not describe a <code>public_research</code> allocation window.</p>
+<p><code>workload_policy.py</code> is the authority at admission over the true rolling window,
+which includes history this document does not hold. If it refuses an assignment,
+the Director re-routes rather than appealing.</p>
+<h2 id="3-assignment-matrix--disjoint-writers">3. Assignment matrix — disjoint writers</h2>
+<p>One active writer per file. No lane reviews a candidate it materially authored.
+No two assignments share a file.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Work</th>
+<th>Lane</th>
+<th>Kind</th>
+<th>Files owned</th>
+<th>Independent reviewer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A-01</strong></td>
+<td>WO-02 evidence blocker audit</td>
+<td>OpenAI</td>
+<td>analysis</td>
+<td>none</td>
+<td>Cursor</td>
+</tr>
+<tr>
+<td><strong>A-02</strong></td>
+<td>WO-03 open pull request triage</td>
+<td>Cursor</td>
+<td>analysis</td>
+<td>none</td>
+<td>Grok (A-12)</td>
+</tr>
+<tr>
+<td><strong>A-03</strong></td>
+<td>Fix partition <strong>A</strong> — evidence chain</td>
+<td>OpenAI</td>
+<td>implementation</td>
+<td><code>provider_activation.py</code>, <code>primary_provider_activation.py</code>, <code>provider_validation.py</code>, <code>tests/test_provider_activation.py</code>, <code>tests/test_provider_validation.py</code></td>
+<td>Cursor</td>
+</tr>
+<tr>
+<td><strong>A-04</strong></td>
+<td>Fix partition <strong>B</strong> — switch coupling</td>
+<td>Cursor</td>
+<td>implementation</td>
+<td><code>config.py</code>, <code>primary_default.py</code>, <code>tests/test_langgraph_configuration.py</code>, <code>tests/test_primary_default.py</code></td>
+<td>OpenAI</td>
+</tr>
+<tr>
+<td><strong>A-05</strong></td>
+<td>Fix partition <strong>C</strong> — control script and staging</td>
+<td>OpenAI</td>
+<td>implementation</td>
+<td><code>scripts/windows-langgraph-primary-control.ps1</code>, <code>primary_staging.py</code>, <code>tests/test_primary_staging_controls.py</code></td>
+<td>Claude Code</td>
+</tr>
+<tr>
+<td><strong>A-06</strong></td>
+<td>WO-06 n8n v2 — partition <strong>D</strong></td>
+<td>Claude Code</td>
+<td>implementation</td>
+<td><code>n8n/workflows/director-intake.json</code>, <code>n8n/workflows/director-status.json</code>, <code>docs/n8n-operations.html</code></td>
+<td>Cursor</td>
+</tr>
+<tr>
+<td><strong>A-11</strong></td>
+<td>Adversarial negative-path analysis of the activation switch coupling</td>
+<td>Grok</td>
+<td>analysis</td>
+<td>none</td>
+<td>Director reconciles</td>
+</tr>
+<tr>
+<td><strong>A-12</strong></td>
+<td>Cross-check A-01 against A-02 for contradictions</td>
+<td>Grok</td>
+<td>analysis</td>
+<td>none</td>
+<td>Director reconciles</td>
+</tr>
+<tr>
+<td><strong>A-13</strong></td>
+<td>Closed-vocabulary fixture artifact — <code>RETRY_BACKOFF_VARIANTS</code>, <code>variant_count = 3</code>, <code>max_lines_per_artifact</code> bounded</td>
+<td>Antigravity</td>
+<td>closed dispatch</td>
+<td>none — artifact is returned, never written to the repository</td>
+<td>Cursor verifies and integrates or discards</td>
+</tr>
+<tr>
+<td><strong>A-14</strong></td>
+<td>Invited debate seat, one position on the profile-topology question</td>
+<td>Antigravity</td>
+<td>debate</td>
+<td>none</td>
+<td>Director synthesises; the seat carries no vote weight and no verdict</td>
+</tr>
+<tr>
+<td><strong>A-15</strong></td>
+<td>Bounded public research: current n8n webhook authentication, response-code control, and HTTP Request generic auth types, for A-06</td>
+<td>Perplexity</td>
+<td>research</td>
+<td>none</td>
+<td>Cursor evaluates before it influences A-06</td>
+</tr>
+<tr>
+<td><strong>A-16</strong></td>
+<td>Bounded public research: LangGraph Postgres checkpointer operational guidance — schema/namespace isolation, restart recovery, backup practice — for WO-08 and the user guide</td>
+<td>Firecrawl</td>
+<td>research</td>
+<td>none</td>
+<td>Claude Code evaluates; Director reconciles</td>
+</tr>
+<tr>
+<td><strong>A-17</strong></td>
+<td>Lite hygiene observation on the frozen candidate, after required checks are green</td>
+<td>GitHub Copilot</td>
+<td>review</td>
+<td>none</td>
+<td>Findings independently validated; no production credit; ≤3 attempts</td>
+</tr>
+</tbody>
+</table>
+<p>Partitions <strong>A</strong>, <strong>B</strong>, <strong>C</strong> and <strong>D</strong> are disjoint by construction. Partition
+<strong>E</strong> (<code>docs/close-out-report-2026-09-13.html</code>, <code>docs/director-user-guide.html</code>) and
+partition <strong>F</strong> (this document, the plan, the decision rules) are Director-owned
+and reviewed by Cursor; the Director does not accept its own documents.</p>
+<p><strong>Review independence check.</strong> A-03 produced by OpenAI, reviewed by Cursor.
+A-04 produced by Cursor, reviewed by OpenAI. A-05 produced by OpenAI, reviewed
+by Claude Code — not by Cursor, which is already reviewing A-03, and not by the
+Director session, which is not the producer but is also not the Claude Code
+session that would review. A-06 produced by Claude Code, reviewed by Cursor.
+No lane reviews its own material authorship. Antigravity never reviews.</p>
+<p><strong>A note on A-05's reviewer.</strong> If the Claude Code session that implements A-06
+is the same session that reviews A-05, that is still independent — different
+candidates, different authorship. If a single Claude session ends up authoring
+both A-05 and A-06, A-05's review moves to Grok, and Grok's verdict then
+requires the digest-verified CLI contact rather than the API contact.</p>
+<h2 id="4-launch-packets">4. Launch packets</h2>
+<p>Each packet is the complete task boundary for its lane. All of them require the
+lane to read <code>AGENTS.md</code>, <code>docs/project-leadership.html</code> and
+<code>docs/director-decision-rules.html</code> first, to carry contribution tags, to run
+<code>PYTHONPATH=src python scripts/check_contribution_tags.py --base &lt;base&gt; --head &lt;head&gt;</code>
+before handoff, and to stop in <code>OWNER_DECISION_REQUIRED</code> rather than expanding
+scope. None of them may merge, deploy, publish, delete a protected ref, or
+change a credential.</p>
+<h3 id="a-03--openai--codex--evidence-chain-fixes">A-03 — OpenAI / Codex — evidence-chain fixes</h3>
+<blockquote>
+<p>Own only these files: <code>src/director_orchestrator/provider_activation.py</code>,
+<code>primary_provider_activation.py</code>, <code>provider_validation.py</code>, and their tests.
+Another lane owns <code>config.py</code> and <code>primary_default.py</code> concurrently — do not
+edit them; if a fix requires a change there, stop and report the dependency
+rather than crossing the partition.</p>
+<p>Implement the minimal bounded fixes your A-01 audit identified as open in the
+evidence chain, one pull request per blocker, tests added for each. Report the
+exact commands run and their results. Remove or relax no deterministic gate.
+Under R6, record for each change the files and digests it depends on.
+Cursor reviews at the exact head; you do not merge your own pull request.</p>
+</blockquote>
+<h3 id="a-04--cursor--switch-coupling-fixes">A-04 — Cursor — switch-coupling fixes</h3>
+<blockquote>
+<p>Own only <code>src/director_orchestrator/config.py</code>, <code>primary_default.py</code> and their
+tests. OpenAI owns the evidence-chain modules concurrently — do not edit them.</p>
+<p>Start from the durable candidate ref, not an auto-generated <code>cursor/...</code>
+branch. Implement the minimal bounded fixes for the offline-simulation and
+live-dispatch coupling questions A-01 raised, with tests. Postgres-backed
+suites run through <code>scripts/windows-postgres-test-lane.ps1</code> or are reported as
+a named coverage gap. A draft pull request is permitted. OpenAI reviews at the
+exact head.</p>
+</blockquote>
+<h3 id="a-05--openai--codex--control-script-and-staging">A-05 — OpenAI / Codex — control script and staging</h3>
+<blockquote>
+<p>Own only <code>scripts/windows-langgraph-primary-control.ps1</code>,
+<code>src/director_orchestrator/primary_staging.py</code> and
+<code>tests/test_primary_staging_controls.py</code>.</p>
+<p>Bring the deployed control-script behaviour into line with what PR #115
+corrected, and confirm from the source whether <code>Activate</code> tolerates
+<code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true</code> at start and a
+pre-existing <code>intake_owner = langgraph</code> row. Changing behaviour requires a
+test that fails before and passes after. A Claude Code session reviews.</p>
+</blockquote>
+<h3 id="a-06--claude-code--n8n-v2">A-06 — Claude Code — n8n v2</h3>
+<blockquote>
+<p>Own only <code>n8n/workflows/director-intake.json</code>,
+<code>n8n/workflows/director-status.json</code> and <code>docs/n8n-operations.html</code>. Touch no
+Python source; three other lanes hold those partitions.</p>
+<p>Harden intake: bearer secret through an n8n credential and never inline, the
+Slack receipt fields required since PR #118 forwarded intact, a stable
+idempotency key from the Slack event ID, non-2xx mapped to an explicit webhook
+error response, no raw provider output echoed. Add the status workflow polling
+<code>/health</code> on both new profiles, diffing readiness booleans, posting to
+<code>SLACK_DIRECTOR_CHANNEL_ID</code> only on change and immediately on ambiguous
+effects, kill switch, or unreachable health. Validate both with
+<code>python -m json.tool</code>. Workflow JSON carries no inline contribution tag; it is
+attributed through the pull request. Cursor reviews.
+<em>(Correction 2026-09-12: The rule changed in #197; it speaks when the kill switch is engaged while parallel dispatch is enabled.)</em></p>
+</blockquote>
+<h3 id="a-11--grok--adversarial-negative-path-analysis">A-11 — Grok — adversarial negative-path analysis</h3>
+<blockquote>
+<p>Analysis only. This assignment issues no verdict, writes no repository file,
+and its output is not promoted into review authority. The in-process API
+contact is sufficient for it.</p>
+<p>Attack the activation switch coupling from the failure side. Given
+<code>config.py</code>'s mutual exclusion of offline simulation and live dispatch, the
+bidirectional coupling of <code>ALLOW_PAID_RUNS</code> with live dispatch, and the
+<code>Rollback</code> refusal paths that fire after intake has been stopped and the
+switches written false: enumerate the states a deployment can enter from which
+neither <code>Activate</code> nor <code>Rollback</code> will proceed. For each, name the exact
+source predicate that traps it and what an operator would have to do. Rank by
+how reachable each state is from the plan's Thursday–Saturday sequence.</p>
+</blockquote>
+<h3 id="a-12--grok--cross-check">A-12 — Grok — cross-check</h3>
+<blockquote>
+<p>Analysis only, same contact and same limits as A-11. Read A-01's blocker
+findings and A-02's pull request triage as data. Report every contradiction
+between them, every claim in either that is asserted without a file, line or
+SHA reference, and every place where they disagree about whether a PR closed a
+blocker. Do not resolve the contradictions — name them.</p>
+</blockquote>
+<h3 id="a-13--antigravity--closed-dispatch">A-13 — Antigravity — closed dispatch</h3>
+<blockquote>
+<p>Not free text. Dispatch through the ordinary subordinate contract with
+capability <code>LOW_LEVEL_MECHANICAL_IMPLEMENTATION</code>, fixture lane
+<code>RETRY_BACKOFF_VARIANTS</code>, <code>variant_count = 3</code>, and <code>max_lines_per_artifact</code>
+set within its approved integer range. The closed-vocabulary validator rejects
+any other outbound string, and the contract withholds the task text,
+repository paths, source, acceptance criteria and owner objective.</p>
+<p>The returned artifact is non-authoritative evidence. Cursor independently
+verifies it and either integrates the useful part into the reconciliation
+backoff work under its own authorship, or discards it. Antigravity receives no
+production credit for the integration and issues no verdict.</p>
+</blockquote>
+<h3 id="a-14--antigravity--invited-debate-seat">A-14 — Antigravity — invited debate seat</h3>
+<blockquote>
+<p>One position under the debate contract, phase <code>position</code>, on whether the
+three-profile topology or an in-place repair of the existing deployment
+carries less risk. The seat carries no vote weight, no verdict, and no
+acceptance authority. The Director synthesises it with the primary positions
+and preserves dissent. A predicted position is never recorded as
+participation.</p>
+</blockquote>
+<h3 id="a-15--perplexity--bounded-public-research">A-15 — Perplexity — bounded public research</h3>
+<blockquote>
+<p>Research only. You receive no private repository context, no credentials, no
+unpublished source, and no write-capable tool. You issue no verdict, cast no
+vote, post nothing, and create no draft pull request. Your output is untrusted
+evidence until a primary-team lane evaluates it.</p>
+<p>One bounded public query: current n8n documentation on Webhook node
+authentication methods, on controlling the HTTP response code and body, and on
+the generic authentication types available to the HTTP Request node for a
+bearer token. Return sources with provenance preserved.</p>
+<p>This assignment requires an owner approval bound to the digest of this exact
+query text. Any later mutation of the query invalidates that approval and the
+assignment must be re-approved rather than edited.</p>
+</blockquote>
+<h3 id="a-16--firecrawl--bounded-public-research">A-16 — Firecrawl — bounded public research</h3>
+<blockquote>
+<p>Same contract as A-15: public sources only, no repository context, no
+credentials, no external effect, no verdict.</p>
+<p>One bounded public query: operational guidance for the LangGraph Postgres
+checkpointer — schema and namespace isolation between deployments, behaviour
+across restart, and backup and restore practice. The results feed WO-08's
+lifecycle and the recovery section of the user guide.</p>
+<p><strong>Two surfaces, kept distinct.</strong> The repository Firecrawl lane executes on the
+LangGraph primary path and needs <code>FIRECRAWL_API_KEY</code> present in the deployment;
+it has no legacy adapter and no entry in <code>.env.example</code>, so enabling it is the
+owner action in §6. Separately, a Firecrawl MCP server is connected to the
+Director's own session and has already run one query under this contract; its
+result is recorded as Director-side research evidence and is <strong>not</strong> evidence
+that the repository lane is enrolled or live.</p>
+</blockquote>
+<p><strong>Result already returned by the Director-side surface, 2026-09-09.</strong> The n8n
+Webhook node supports Header, Basic and JWT authentication credentials on the
+inbound hop; response code and body are controllable, and the
+<code>Respond to Webhook</code> node is the mechanism when the response must be shaped by
+the workflow; and for an <code>Authorization: Bearer &lt;token&gt;</code> outbound call the
+correct generic auth type is <strong><code>httpBearerAuth</code></strong>, not <code>httpHeaderAuth</code>, which
+is for custom headers such as <code>X-API-Key</code>. The Webhook node also offers an IP
+allowlist and a bot-ignore option. <strong>This changes A-06</strong>, which previously said
+only &quot;bearer secret through an n8n credential&quot;: it now specifies
+<code>httpBearerAuth</code> for the outbound call to <code>/v1/intake</code>, header or JWT auth on
+the inbound Slack hop, and <code>Respond to Webhook</code> for the non-2xx error mapping.</p>
+<h3 id="a-17--github-copilot-lite--hygiene-observation">A-17 — GitHub Copilot Lite — hygiene observation</h3>
+<blockquote>
+<p>One requested hygiene observation on the frozen exact candidate, after every
+required check is green. Non-gating: it creates no production credit, holds no
+gate or authority, and never triggers on every push. Findings are validated
+independently before any of them blocks anything.</p>
+<p>At most three conditional attempts. Stop on success; a further attempt requires
+a genuine temporary failure, and a third requires materially new information or
+a substantially different transport. Without an authenticated contact the lane
+fails closed as unavailable, which records no verdict and counts as waste.
+A substantive Copilot-authored fix would make Copilot a material author and
+ineligible to review that candidate — so findings only, never patches.</p>
+</blockquote>
+<h2 id="5-enabling-every-lane-fully--what-each-one-still-needs">5. Enabling every lane fully — what each one still needs</h2>
+<p>The owner's direction is that every provider should be able to engage fully and
+reach its potential. Three lanes are below their potential today. In each case
+the constraint is a specific, nameable thing rather than a policy preference,
+and each has a path.</p>
+<table>
+<thead>
+<tr>
+<th>Lane</th>
+<th>Below potential because</th>
+<th>What unlocks it</th>
+<th>Who</th>
+<th>Could happen</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Grok</strong></td>
+<td>The in-process Responses API contact is tool-free and analysis-only; repository work and exact-SHA verdicts need the digest-verified Build CLI contact through an authenticated host runner</td>
+<td>Run <code>scripts/windows-host-provider-bridge.ps1 -Action Preflight</code>, then bind the Grok CLI lane in the host bridge command map and confirm the signed, digest-bound command map through the HMAC challenge</td>
+<td>Owner, on the Windows host</td>
+<td><strong>Wednesday</strong> — the preflight is already in WO-10 prep for Friday and can move earlier at no cost. Grok's implementation quota is untouched, so a bound contact converts directly into real work</td>
+</tr>
+<tr>
+<td><strong>Firecrawl</strong> (repository lane)</td>
+<td>No <code>FIRECRAWL_API_KEY</code> in <code>.env.example</code> or <code>provider-setup.md</code>; the name exists only in the primary transport auth map, and there is no legacy adapter, so the lane executes only on the primary path</td>
+<td>Add the credential to the deployment's secret store under the name the transport map expects, and exercise it once the candidate-live profile is up. Until then the Director-side MCP surface covers the research need</td>
+<td>Owner</td>
+<td><strong>After WO-08</strong>, on the candidate-live profile</td>
+</tr>
+<tr>
+<td><strong>Microsoft 365 Copilot</strong></td>
+<td>Discovery hard-codes the lane unauthenticated; the blocker is <code>work_iq_capability_evidence_missing</code>. <strong>It also gates Gate 8</strong>: the canary requires all nine surfaces <code>LIVE_OK</code></td>
+<td>A delegated work or school Entra identity with admin-consented <code>WorkIQAgent.Ask</code>, Work IQ enabled by the tenant administrator, and a token that verifies against the tenant's OIDC discovery document and cached JWKS with the exact issuer, audience and scope, inside its signed validity window. Only a successful authenticated response bound to its Microsoft request ID proves entitlement — environment booleans and configuration do not</td>
+<td>Owner plus a tenant administrator</td>
+<td><strong>Not this week.</strong> It is a tenant-administration task with an external dependency, and it must stay out of the activation binding map until it succeeds, because the combined live signal is AND-ed across bindings. Attempting it before Sunday would put the live gate at risk for no delivery benefit</td>
+</tr>
+<tr>
+<td><strong>Antigravity</strong></td>
+<td><em>Ordinary</em> dispatch admits no model-authored prose — closed enums and three bounded integers only. <strong>Correction, 2026-09-09:</strong> the authorized <strong>team mode</strong> is not a contract rewrite; it is already implemented behind <code>LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED</code> (<code>config.py:750</code>, default false), with <code>team_ddl</code> composed into <code>_control_plane_ddl</code>, a <code>director_primary_team_guard</code> trigger, <code>TeamGrant</code> writable paths, a <code>PinnedSshTeamWorker</code>, and a qualification canary in <code>provider_validation_team.py</code></td>
+<td>Enable the switch on the candidate profile; <code>Migrate</code> creates the team schema; authenticate the pinned SSH engineering worker (absent worker evidence the lane fails closed); run the qualification canary; issue a <code>TeamGrant</code> with bounded writable paths</td>
+<td>Owner, then the Director issues the grant</td>
+<td><strong>Thursday, if a reachable SSH worker host exists</strong> — that is the one open question (D-14). Everything else is on the candidate already</td>
+</tr>
+</tbody>
+</table>
+<p>Nothing in this table is a judgement about a provider's ability. Each row is a
+missing credential, an unbound transport, or a contract that has not yet been
+changed.</p>
+<h2 id="6-owner-decisions-this-raises">6. Owner decisions this raises</h2>
+<p><strong>D-07 — allocation profile prerequisite for A-15 and A-16.</strong> The prior
+withdrawal rested on the incorrect claim that <code>engineering</code> never barred research.
+It refuses these lanes' accepted research because their targets are zero.
+<code>public_research</code> gives both lanes non-zero targets and permits the same requests
+through allocation admission when the other conditions pass. A-15 and A-16
+remain conditional on an authorized profile with non-zero targets and all their
+other gates. This document does not select or activate a different profile.</p>
+<p><strong>D-08 — Grok's contact class.</strong> Grok's two assignments are analysis, which the
+API contact serves. If the Director later needs Grok as an exact-SHA reviewer —
+which happens if a single Claude session authors both A-05 and A-06 — the
+digest-verified Build CLI contact and an authenticated host runner are required
+first. Confirm whether the owner wants the host bridge preflight run for that
+contingency, or whether the fallback should instead be to re-partition the work.</p>
+<p><strong>D-09 — Copilot Lite contact.</strong> Assigned as A-17, post-freeze and non-gating.
+Confirm whether an authenticated contact exists; without one the lane fails
+closed, records no verdict, and the attempt counts as waste.</p>
+<p><strong>D-10 — Perplexity query approval.</strong> A-15 needs an owner approval bound to the
+digest of its exact query text before dispatch. The query is written out in §4;
+approve it as written or amend it, but an amendment after approval invalidates
+the approval and needs a fresh one.</p>
+<p><strong>D-11 — Grok CLI contact, Wednesday.</strong> Running the host-bridge preflight
+Wednesday instead of Friday costs nothing, and converts Grok from an
+analysis-only lane into one that can hold implementation and exact-SHA review
+work whose quota is entirely unused. Recommended.</p>
+<h2 id="7-what-this-matrix-does-not-claim">7. What this matrix does not claim</h2>
+<p>Lane membership and an allocation share do not attest that a provider route is
+enrolled, authenticated or live. No packet here has been dispatched: the
+Director holds no provider transport in this session, and dispatching one would
+be an external action requiring the owner. Every assignment above is a prepared
+work order awaiting owner launch. The profile sheets grant no authority, and a
+documented route is not an authorized one.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

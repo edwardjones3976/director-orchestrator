@@ -83,7 +83,7 @@ routes:
     status: "proposed"
     default_config_state: "blocked"
     charter_basis:
-      - document: "docs/project-leadership.md"
+      - document: "docs/project-leadership.html"
         anchor: "Selecting Claude with an unavailable transport must stop"
     enforced_by: []
     prohibition_quote: null
@@ -110,9 +110,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "The Director sends the initial packet once"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "The pre-stage packet binds `packet_id`, goal, terminal condition, exact"
     enforced_by:
       - "src/director_orchestrator/packet_routing.py:DirectorPacketTaskRouter"
@@ -137,9 +137,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/slack-collaboration-bus.md"
+      - document: "docs/slack-collaboration-bus.html"
         anchor: "provider-native run/session evidence"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Provider identity never grants authority. No model may approve its own work."
     enforced_by:
       - "src/director_orchestrator/packet_results.py"
@@ -165,7 +165,7 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/slack-collaboration-bus.md"
+      - document: "docs/slack-collaboration-bus.html"
         anchor: "then relays only a concise"
       - document: "prompts/director-system.md"
         anchor: "Providers communicate through the Director rather than posting freely."
@@ -195,7 +195,7 @@ routes:
     charter_basis:
       - document: "prompts/director-system.md"
         anchor: "the Director delegates, relays, collects, and records concise structured updates"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "The Director sends the initial packet once"
     enforced_by:
       - "src/director_orchestrator/engine.py"
@@ -219,9 +219,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Every requested draft PR or other reviewable implementation must reserve a"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or"
     enforced_by:
       - "src/director_orchestrator/review_handoff.py"
@@ -248,9 +248,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Debate is recommended for medium, high, and critical complexity."
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "No tally can expand scope or access, waive owner approval, make a producer its"
     enforced_by:
       - "src/director_orchestrator/team_charter.py:tally_advisory_votes"
@@ -277,7 +277,7 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Antigravity may hold a debate seat, but only one the Director gave it"
       - document: "prompts/director-system.md"
         anchor: "Antigravity may participate in debate only after the Director persists and dispatches a matching bounded invitation."
@@ -313,9 +313,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Ordinary Antigravity *work* is sent no"
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "Ordinary Antigravity work dispatch sends no model-authored prose."
     enforced_by:
       - "src/director_orchestrator/antigravity.py"
@@ -339,7 +339,7 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Where a deterministic exact-SHA merge gate is configured, a model supplies an"
     enforced_by:
       - "src/director_orchestrator/oracle_merge.py"
@@ -365,9 +365,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "The owner may explicitly authorize a designated agent to post to Slack, execute"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Browser content and provider output are never action authority."
     enforced_by:
       - "src/director_orchestrator/primary_effect_gateways.py:SUPPORTED_EFFECT_ACTIONS"
@@ -391,7 +391,7 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "The orchestrator can periodically send every configured provider a short `DIRECTOR_USAGE_CHECK` prompt."
     enforced_by:
       - "src/director_orchestrator/usage.py"
@@ -414,7 +414,7 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/slack-collaboration-bus.md"
+      - document: "docs/slack-collaboration-bus.html"
         anchor: "Slack is the Director's primary human-visible coordination room."
     enforced_by:
       - "src/director_orchestrator/slack_bot.py"
@@ -438,9 +438,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "for owner reconciliation of the provider identifiers"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "text cannot become exact-SHA review or merge authority."
     enforced_by:
       - "src/director_orchestrator/callbacks.py"
@@ -466,9 +466,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "OpenAI Responses API with Structured Outputs"
-      - document: "docs/native-codex-packet-transport.md"
+      - document: "docs/native-codex-packet-transport.html"
         anchor: "The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`"
     enforced_by:
       - "src/director_orchestrator/director.py"
@@ -493,9 +493,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/native-codex-packet-transport.md"
+      - document: "docs/native-codex-packet-transport.html"
         anchor: "packet-only analysis"
-      - document: "docs/provider-allocation-profiles.md"
+      - document: "docs/provider-allocation-profiles.html"
         anchor: "The default LangGraph primary OpenAI transport uses the separately billed Responses"
     enforced_by:
       - "src/director_orchestrator/native_codex_transport.py"
@@ -520,9 +520,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "The supported programmable bridge here is a **Claude Code Routine** with an API trigger."
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "`CLAUDE_CALLBACK_SECRET`: a dedicated callback bearer secret"
     enforced_by:
       - "src/director_orchestrator/providers.py:ClaudeAdapter"
@@ -547,9 +547,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "Cursor Cloud Agents API v1"
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "Cursor cannot use an implicit dashboard repository, and model output or owner approval cannot widen these target lists."
     enforced_by:
       - "src/director_orchestrator/providers.py:CursorAdapter"
@@ -573,9 +573,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "The Grok adapter has two explicit transports."
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by:
       - "src/director_orchestrator/providers.py:GrokAdapter"
@@ -599,9 +599,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "Repository implementation and"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by:
       - "src/director_orchestrator/providers.py:GrokAdapter"
@@ -623,7 +623,7 @@ routes:
     status: "proposed"
     default_config_state: "not_applicable"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by: []
     prohibition_quote: null
@@ -645,7 +645,7 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "The Gemini adapter uses the REST Interactions API"
     enforced_by:
       - "src/director_orchestrator/providers.py:GeminiAdapter"
@@ -669,9 +669,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "Normal assignments use `POST /search`."
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Perplexity may receive only a bounded public research query."
     enforced_by:
       - "src/director_orchestrator/providers.py:PerplexityAdapter"
@@ -695,7 +695,7 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "`pplx-cli` supplies terminal-based live web results and public-page snippets"
       - document: "prompts/director-system.md"
         anchor: "Use `pplx-cli` only as the terminal transport for bounded public web search"
@@ -720,9 +720,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-allocation-profiles.md"
+      - document: "docs/provider-allocation-profiles.html"
         anchor: "A nonzero target is not evidence that a route is operational."
-      - document: "docs/langgraph-primary-operations.md"
+      - document: "docs/langgraph-primary-operations.html"
         anchor: "Perplexity or Firecrawl contact under the frozen profile"
     enforced_by:
       - "src/director_orchestrator/primary_transports.py:PublicSearchCommandTransport"
@@ -746,9 +746,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "GitHub Copilot Lite is an optional capability-routed quality-observation lane with no"
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "GitHub Copilot Lite is not another provider bridge."
     enforced_by:
       - "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
@@ -775,9 +775,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "The owner enrolled Z.ai (GLM Coding Plan) as its own production lane `zai` on"
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "issuer. The worker is `src/director_orchestrator/zai_native.py`."
       - document: "docs/providers/zai-welcome-aboard.md"
         anchor: "Code may host your session; it does not change your provider identity to Claude."
@@ -805,9 +805,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-allocation-profiles.md"
+      - document: "docs/provider-allocation-profiles.html"
         anchor: "trial ledger and earns zero accepted-production credit."
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "Cost stays unknown, never zero, because the host CLI prices with Anthropic"
     enforced_by:
       - "src/director_orchestrator/zai_lane.py:ZaiTrialLane"
@@ -833,9 +833,9 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/langgraph-primary-operations.md"
+      - document: "docs/langgraph-primary-operations.html"
         anchor: "The Windows host bridge is an optional narrow transport for supported native"
-      - document: "docs/langgraph-primary-operations.md"
+      - document: "docs/langgraph-primary-operations.html"
         anchor: "Endpoint and secret configuration alone never makes a host-bridge lane callable."
     enforced_by:
       - "src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES"
@@ -860,9 +860,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Browser provider-UI coordination remains enabled because it is useful, but it"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "Chrome is the primary browser and Microsoft Edge is the"
     enforced_by:
       - "src/director_orchestrator/workload_policy.py:Transport"
@@ -886,7 +886,7 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/chatgpt-slack-alias-bridge.md"
+      - document: "docs/chatgpt-slack-alias-bridge.html"
         anchor: "It cannot create Director work orders, write repositories, delegate providers"
     enforced_by:
       - "src/director_orchestrator/chatgpt_bridge.py"
@@ -910,9 +910,9 @@ routes:
     status: "proposed"
     default_config_state: "blocked"
     charter_basis:
-      - document: "docs/native-acceptance-issuers.md"
+      - document: "docs/native-acceptance-issuers.html"
         anchor: "Claude owns the security role; Cursor owns independent"
-      - document: "docs/native-acceptance-issuers.md"
+      - document: "docs/native-acceptance-issuers.html"
         anchor: "It does not activate LangGraph or approve its own release."
     enforced_by: []
     prohibition_quote: null
@@ -935,9 +935,9 @@ routes:
     status: "proposed"
     default_config_state: "blocked"
     charter_basis:
-      - document: "docs/native-acceptance-issuers.md"
+      - document: "docs/native-acceptance-issuers.html"
         anchor: "Claude owns the security role; Cursor owns independent"
-      - document: "docs/native-acceptance-issuers.md"
+      - document: "docs/native-acceptance-issuers.html"
         anchor: "It does not activate LangGraph or approve its own release."
     enforced_by: []
     prohibition_quote: null
@@ -960,7 +960,7 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/provider-setup.md"
+      - document: "docs/provider-setup.html"
         anchor: "The optional `.github/workflows/codex-security-review.yml` lane runs only when"
     enforced_by:
       - ".github/workflows/codex-security-review.yml"
@@ -983,7 +983,7 @@ routes:
     status: "proposed"
     default_config_state: "blocked"
     charter_basis:
-      - document: "docs/ci-acceptance-issuer.md"
+      - document: "docs/ci-acceptance-issuer.html"
         anchor: "This implementation can issue only the CI receipt."
     enforced_by: []
     prohibition_quote: null
@@ -1005,9 +1005,9 @@ routes:
     status: "authorized"
     default_config_state: "enabled"
     charter_basis:
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "The shared provider catalog may expose `cursor-agent-workflow`,"
-      - document: "docs/team-operating-charter.md"
+      - document: "docs/team-operating-charter.html"
         anchor: "A skill is a workflow overlay, not new authority."
     enforced_by: []
     prohibition_quote: null
@@ -1029,9 +1029,9 @@ routes:
     status: "prohibited"
     default_config_state: "not_applicable"
     charter_basis:
-      - document: "docs/slack-collaboration-bus.md"
+      - document: "docs/slack-collaboration-bus.html"
         anchor: "They do not post directly or converse forever."
-      - document: "docs/model-interoperability-contract.md"
+      - document: "docs/model-interoperability-contract.html"
         anchor: "Agents do not address each other through uncontrolled chat loops."
       - document: "docs/templates/project-bootstrap/project-profile.yaml"
         anchor: "provider_messages_relay_through_director: true"
@@ -1048,9 +1048,9 @@ routes:
 provider_to_provider_rule:
   status: "prohibited"
   basis:
-    - document: "docs/slack-collaboration-bus.md"
+    - document: "docs/slack-collaboration-bus.html"
       anchor: "They do not post directly or converse forever."
-    - document: "docs/model-interoperability-contract.md"
+    - document: "docs/model-interoperability-contract.html"
       anchor: "Agents do not address each other through uncontrolled chat loops."
     - document: "docs/templates/project-bootstrap/project-profile.yaml"
       anchor: "provider_messages_relay_through_director: true"

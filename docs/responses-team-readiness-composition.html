@@ -1,0 +1,1130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Responses and team readiness composition · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#readiness">Readiness</a></li><li class="top"><a href="#the-selection">The selection</a></li><li class="top"><a href="#authority-at-the-real-generation-boundary">Authority at the real generation boundary</a></li><li class="top"><a href="#the-team-lane">The team lane</a></li><li class="top"><a href="#the-ordinary-command-boundary">The ordinary command boundary</a></li><li class="top"><a href="#cancellation">Cancellation</a></li><li class="top"><a href="#the-deadline">The deadline</a></li><li class="top"><a href="#completion">Completion</a></li><li class="top"><a href="#late-accounting">Late accounting</a></li><li class="top"><a href="#evidence">Evidence</a></li><li class="top"><a href="#acceptance-map">Acceptance map</a></li><li class="top"><a href="#limitations">Limitations</a></li><li class="top"><a href="#history">History</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | BEGIN]] -->
+<!-- [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | BEGIN]] -->
+<h1 id="responses-and-team-readiness-composition">Responses and team readiness composition</h1>
+<p><code>DefaultPrimaryActivation</code>'s constructor-created <code>preflight_parallel_assignment</code>
+callback is the readiness gate <code>PostgresParallelDispatch.reserve_ready</code> calls,
+under its own locked transaction, for every reservation-eligible assignment in
+a wave before that wave's ACTIVE rows exist. It predicts eligibility only: it
+performs no HTTP, provider launch, spend/usage insert, workload admission or
+STARTED event. A hold records <code>paid_setup_required</code> and leaves the assignment
+<code>PENDING</code>.</p>
+<h2 id="readiness">Readiness</h2>
+<p><code>check_budget_setup</code>/<code>check_team_setup</code> (<code>primary_paid_preflight.py</code>) validate
+the signed budget or grant - signature, UTC day, ceilings - on the caller's own
+connection. For Responses with an enrolled meter, the real
+<code>OpenAIResponsesPacketTransport.preflight</code> additionally runs
+<code>EnrolledResponseMeter.preflight_binding</code>: signature, validity interval and
+exact enrollment/context binding, with no HTTP, no input-token counting and no
+database reservation. <code>prepare()</code> keeps that reservation check for actual
+dispatch. Neither branch probes <code>query_factory</code>, <code>worker_factory</code>,
+<code>TeamAuthority.authorize</code> or <code>admissions</code>. Readiness canonicalizes the packet
+with <code>packet_contracts.canonical_json_bytes</code> (RFC 8785) - the same bytes real
+dispatch sends and a signed enrollment's <code>work_packet_digest</code> was computed
+against.</p>
+<h2 id="the-selection">The selection</h2>
+<p>Readiness records one <code>ReadinessSelection</code> per assignment: provider, exact
+packet digest, roster, signed authority digest, writer fencing generation,
+enrolled document digest, authority day, and one absolute deadline shared by
+every attempt of that roster. It is re-proved at four points, in this order:
+before admission opens a transaction, <strong>after</strong> admission's own locks and
+before its COMMIT (<code>revalidate_selection</code>), immediately before provider I/O,
+and inside the transport that resolves the meter. A changed packet, a writer
+takeover, a replaced enrollment registry, or an authority that no longer
+resolves to the checked one is a different selection and fails closed as a
+<code>WorkloadAdmissionHold</code> - which <code>execute_ready</code> maps to
+<code>OWNER_DECISION_REQUIRED</code> - with nothing admitted. A selection this process no
+longer holds (a restart between reservation and dispatch) also fails closed,
+<strong>before either database call</strong>: the lookup's absence raises immediately, so a
+known refusal never reads the writer or persists a packet artifact on the way
+out - and never runs those calls with the <code>None</code> deadline that absence implies.
+It is never re-derived.</p>
+<p>Two of those points matter because waits happen between them. The ledger
+repeats the authority comparison inside the authoritative locked admission via
+<code>expected_authority_digest</code>, so a valid admission object for some other
+authority is refused before any monetary, workload or STARTED row is written.
+<code>revalidate_selection</code> runs after the admission transaction has finished
+waiting on its locks and before the STARTED insert. It is handed that
+transaction's own connection, so it re-runs the <strong>authority selection itself</strong> -
+<code>select_budget_authority</code>/<code>select_team_authority</code>, the same uniqueness,
+signature, revocation, grant/packet binding and UTC-day rules readiness applied</p>
+<ul>
+<li>without acquiring a second pooled connection while those locks are held. The
+read-only spend ceilings are deliberately not repeated there: this attempt's
+own reservation is already inserted, and counting it twice would refuse a
+correctly funded attempt. The writer lease is re-proved at the same point, and
+the enrollment document is compared again. A competing authority registered
+while admission waits therefore rolls the monetary, workload and STARTED writes
+back together.</li>
+</ul>
+<p>The writer generation is bound to the writer admission <strong>actually resolves</strong>,
+not the one dispatch read when it began. The live coordinator resolves - and
+renews or, after an expired lease, reacquires - the task writer at the moment
+it enters admission, and a reacquired lease carries a new fencing generation.
+An independent real-PostgreSQL probe expired the lease after the real
+authority lookup and before that resolution: readiness had selected generation
+1, dispatch had captured generation 1, so the comparison between those two
+passed while admission committed under generation 2, leaving a STARTED
+attempt, a spend row, a workload row and a constructed HTTP client behind.
+The coordinator now receives the generation the selection was checked under
+(<code>expected_writer_generation</code>) and refuses a resolved writer of any other
+generation (<code>readiness_writer_changed_before_admission</code>) before the admission
+transaction is entered, so nothing is written and no provider client is
+constructed. The reacquired lease itself stands: a new generation is a
+different selection, not a renewal.</p>
+<p><code>OpenAIResponsesPacketTransport.send</code> then compares the enrollment it actually
+resolved against the carried <code>enrollment_digest</code>, so a registry substituted
+after the caller's own comparison - or a meter lost entirely - cannot reach the
+provider.</p>
+<h2 id="authority-at-the-real-generation-boundary">Authority at the real generation boundary</h2>
+<p>The Responses transport counts input tokens before it generates anything. That
+count is itself a provider request: it is bounded by the same carried deadline
+as the rest of the attempt (<code>remaining_seconds()</code> is re-evaluated for it and
+the whole call runs under <code>asyncio.timeout</code>), but within that bound the
+provider can make the caller wait, and every check above ran before that wait. <code>ProviderAdapterContext.authority_recheck</code></p>
+<ul>
+<li>created by the live coordinator, never by a transport - is therefore called
+immediately before the generation request and re-reads the durable rows: the
+wave's <code>kill_switch</code> (what <code>coordinator.cancel</code> engages), this task's
+<code>langgraph</code> writer lease, owner token and fencing generation, this assignment's
+ACTIVE reservation binding, and this attempt's own latest event. A cancellation,
+a writer takeover, an expired lease, a changed plan binding or an already
+reconciled attempt during the count stops the request. The refusal is a
+<code>WorkloadAdmissionHold</code>, so the roster propagates it as an owner decision
+instead of an ambiguous paid dispatch: no generation request is made, no
+automatic repeat follows, and the admitted rows, slot and any recorded usage
+are preserved. A transport with no such callback holds no authority of its own
+and invents none.</li>
+</ul>
+<p>A <code>WorkloadAdmissionHold</code> propagates out of <code>_execute_three_attempt_roster</code>
+instead of being classified. For a provider transport it arises before the
+real request: before <code>adapter.dispatch</code> is entered at all, or from
+<code>authority_recheck</code> inside the Responses path, after the input-token count and
+strictly before the generation request. An earlier revision of this document
+said it was never raised after a generation request; that was wrong for the
+native team lane, whose callbacks run the same recheck <em>after</em> native
+execution - at each local-command boundary and immediately before candidate
+integration - so a generated result may already exist when the hold is
+raised. The classification is unchanged because it is still correct: the
+attempt's durable STARTED row remains, admission refuses to redispatch a
+STARTED attempt until it is reconciled, and the hold is propagated as an owner
+decision with the admitted rows, slot and evidence left as they are. Nothing is
+replayed and nothing is recorded as an AMBIGUOUS paid outcome on a guess.</p>
+<h2 id="the-team-lane">The team lane</h2>
+<p><code>NativeTeamPacketTransport</code> now consumes the same two things the Responses
+lane does. <code>context.deadline</code> is the primary lane's remaining budget: it bounds
+every SQL acquisition, statement and transaction this transport opens (through
+<code>bounded_transaction</code>), refuses an already-spent bound before the worker is
+prepared, and is handed to a worker that declares <code>accepts_primary_deadline</code>
+so preparation and the remote exchange narrow their own grant timer instead of
+restarting a full one each. <code>context.authority_recheck</code> runs inside
+<code>before_execute</code> - after preparation has waited, immediately before the
+execution entitlement and any native run - at each local-command boundary,
+again immediately before the durable candidate is integrated, and once more
+<strong>inside the integrator's own transaction</strong>, on its connection, after it holds
+the writer row and before it writes any Git object. That last read is the one
+that matters against a same-owner cancellation: <code>engage_kill_switch</code> locks the
+same writer row before committing its switch, so a cancellation that completed
+before the integrator's lock is seen there and refused
+(<code>wave_cancelled_before_candidate</code>) with no candidate object, retention ref or
+row created, while one still waiting behind the lock is serialized after the
+candidate rather than racing it. The transport's read a moment earlier ran in
+a separate transaction and could not see that ordering. Work after the
+exchange spends this operation's one completion allowance rather than a fresh
+budget, and a failure there is refused conservatively: the capture the
+transport already stored and the STARTED attempt remain, and nothing is
+retried.</p>
+<p>A standalone caller carries neither value; every one of these checks is then a
+no-op, and a worker that declares no support keeps its previous call signature
+unchanged. When a primary bound <em>does</em> exist, a worker that cannot enforce it
+is refused before it is invoked, rather than being held to nothing while the
+wave believes it is bounded.</p>
+<p>The decisive recheck is after the blocking work, not before it: claiming the
+execution entitlement takes a pooled connection, a query and row locks, so the
+authority is re-read once that returns, with nothing between it and the worker
+being told to execute. The local-command boundary does the same.</p>
+<p>Across hosts the bound travels through a <strong>causal anchor handshake</strong>, never as
+this host's <code>time.monotonic()</code> instant, which means nothing on another
+machine; never as a remaining <em>duration</em> re-anchored on arrival, which an
+earlier revision used and which hands the transit back; and no longer as a UTC
+instant, which the previous revision used and which only bounds the remote side
+under a clock-agreement premise this protocol cannot establish - an independent
+probe showed a receiver clock fifteen seconds behind, masked by ten seconds of
+transit, passing the plausibility check and running five seconds past the
+director's bound. The remote server now speaks first: it takes an instant on
+its own monotonic clock, then sends an authenticated <code>anchor</code> frame carrying a
+token it generated, bound to the challenge. The director samples what is left
+of its fixed bound <strong>only after that frame has arrived</strong> and sends it in
+<code>prepare</code> together with the token. The server's instant precedes the
+director's sample in real time, so <code>anchor + remaining</code> can only be early -
+by at least the transit in each direction and any pause on either side - and
+never late; it is never <code>receipt + remaining</code>. No clock is compared with
+another, no skew constant exists, and no synchronization service or
+configuration was added. The <code>exchange</code> frame names the same anchor and
+carries <strong>no time value</strong>, so there is nothing to renew: the server keeps the
+bound it retained since preparation and refuses a frame naming a different
+mode or anchor, claiming standalone use after a bound was prepared, or
+carrying a bound after standalone preparation.</p>
+<p><strong>Legacy frames are refused, not downgraded.</strong> The <code>prepare</code> frame must carry
+exactly <code>binding</code>, <code>grant_digest</code>, <code>attempt_digest</code> and <code>primary_bound</code>; the
+<code>exchange</code> frame exactly <code>grant</code>, <code>work_packet</code>, <code>source</code> and <code>primary_bound</code>.
+An explicit <code>primary_bound: null</code> is deliberate standalone use and keeps the
+grant timer alone. An older client's frame - the revision that sent
+<code>lifetime_seconds</code>, the one that sent <code>primary_cutoff</code>, or one with no bound
+key at all - is refused before preparation instead of being treated as
+standalone, as is a bound naming an anchor this server did not issue (which
+is what a client that did not wait for the anchor would send), a non-finite,
+non-positive or already spent value, or one above the task grant's own
+<code>timeout_seconds</code> ceiling (2700 seconds, read from <code>TeamGrant</code> rather than
+restated) - which no director holding a valid grant can send, so it is
+refused as malformed rather than clamped. The server's own anchor, and the
+resulting instant, must be finite or the frame is refused too.</p>
+<p><strong>Support is acknowledged before private source.</strong> The <code>anchor</code> frame <em>is</em> the
+acknowledgment: a server that does not speak this protocol never sends it, so
+the director - which waits for it before sending even the public preparation -
+either refuses at the first frame of the wrong kind or shape, or is ended by
+its own local timer at the bound having sent nothing but the challenge. In
+either case no preparation and no source reaches such a server. The shipped
+SSH client always carries a bound: the primary lane's remaining budget when one
+exists, otherwise its own grant timer, so the remote worker is never bounded
+later than the local SSH kill.</p>
+<p>What this does <strong>not</strong> prove, stated rather than implied: killing the local SSH
+process bounds this side only; a server that never anchors is ended by that
+local timer only when the bound elapses, not sooner; <code>preexec_fn</code> runs between
+fork and exec and cannot be interrupted once <code>Popen</code> is entered; and cleanup
+spends its own five second process wait plus a further five second cgroup
+drain, which the transported bound does not cover. Remote cgroup teardown is
+not demonstrated here.</p>
+<p>Inside the worker, the remaining budget is spent as it is: a fractional
+remainder stays fractional, and a non-positive one is refused instead of
+being rounded up into a fresh second. Preparation carries the same anchored
+bound through qualification, the native state scan and the durable claim,
+re-checked between them and <strong>once more after the claim is durable</strong>:
+preparation that has run out writes no claim, and one that runs out while
+writing it - during <code>fsync</code> - acknowledges nothing. That consumed claim is
+deliberately retained rather than deleted as a rollback: removing it would
+make the same qualification receipt spendable again, whereas an unacknowledged
+preparation leaves the exchange with no preparation and a repeat on the same
+receipt refused by the existing claim. <code>serve</code> re-checks the bound again
+before sending <code>prepared</code>. The worker also retains the bound it was
+acknowledged under, bound to the same attempt and challenge, and the exchange
+can only narrow it - a caller carrying a later bound, or none, at exchange
+still runs under the prepared one. <code>run_unprivileged</code> is unchanged from the
+previous revision, which an independent probe confirmed: it takes the absolute
+bound rather than a duration, the prompt is serialized before it, the bound is
+checked after cgroup and file setup and again immediately before <code>Popen</code>, and
+the value <code>communicate</code> receives is what is left <em>at that moment</em> rather than
+the duration the caller computed earlier; a <code>Popen</code> that returns after the
+budget has elapsed gets no wait at all, and the group is still killed and
+drained. Candidate integration receives the same fixed completion bound
+through its Git and database work rather than starting a sixty-second timer of
+its own.</p>
+<h2 id="the-ordinary-command-boundary">The ordinary command boundary</h2>
+<p>The three ordinary command transports - <code>NativeCommandPacketTransport</code>
+(Claude stdin, Cursor argument, Grok prompt file, Antigravity closed
+directive, Copilot argument, as <code>discover_local_primary_command_transports</code>
+selects them), <code>PublicSearchCommandTransport</code> (both Perplexity and Firecrawl
+argv routes) and the explicit <code>BoundedJsonCommandTransport</code> - previously
+handed <code>subprocess.run</code> the full relative timeout regardless of the carried
+<code>context.deadline</code>. An independent synthetic probe at the C15 head reached the
+spawn with <code>timeout=30</code> for a carried bound already expired and for one with
+0.2 seconds left, on every one of those routes. They now share one boundary.
+<code>_command_cutoff</code> fixes one finite absolute cutoff at entry: the smaller of
+the context's own timeout and the transport's configured maximum, narrowed by
+the carried deadline when one exists; a carried bound that is not a finite
+number is refused, and one already spent refuses before anything is prepared.
+Prompt construction, the Grok prompt file, the stdin file and the spawn are
+all charged to that cutoff. Since 22:30 UTC the prepared input travels the
+way the artifact launcher already feeds its child: written to a binary
+<code>tempfile.TemporaryFile</code>, rewound, and handed to the launch as the child's
+stdin, so the child reads exactly those bytes through EOF and nothing is
+passed to <code>communicate(input=...)</code> a second time; empty bytes are still a
+file (an immediate EOF) while the argument, prompt-file and public-search
+argv routes keep <code>DEVNULL</code>, and the helper owns and closes that file on
+return, refusal and launch failure alike. <code>_run_bounded_command</code> then holds
+one finite absolute cutoff and checks its remainder three times: after
+preparation, immediately before the launch - preparation that consumed it
+launches nothing; after the launch, before any wait - a launch that consumed
+it is ended and reported ambiguous without entering a wait; and after the
+child returns, before its output is accepted - a return after the cutoff,
+real or synthetic, is refused rather than becoming a successful attempt. A
+cutoff or remainder that is not a finite number is refused, and no value is
+clamped into a longer or fresh window. The launch goes through the existing
+<code>launch_contained_process</code> (a kill-on-close Job Object on Windows, a new
+session on POSIX); the wait is given only the remainder at that moment; and
+on every exit <code>stop_contained_process</code> ends whatever the tree still holds,
+reaps the child within its own five-second grace period rather than the
+spent cutoff, releases the guard - the ownership token - and only then
+closes the remaining streams, attempting each step even when an earlier one
+failed. A cleanup that cannot be verified is a raised
+<code>ProcessContainmentError</code> carrying every failure and what was observed,
+never a result. That ordering is a source-level ownership decision; no
+stream-wait failure was reproduced and none is claimed. A cutoff reached
+after the launch is an ambiguous outcome: the command ran, so it is neither
+retried nor reported as unsubmitted, and the existing classification records
+the one admitted attempt AMBIGUOUS with its identity and slot retained. A
+refusal before the launch takes the same conservative classification - the
+existing rule for every non-transient dispatch exception, deliberately
+unchanged here. The evidence-recording allowance in <code>primary_default</code>
+(<code>completion_deadline(dispatch_deadline)</code>) is untouched: it persists an
+already-started attempt's outcome after execution time is spent and grants
+no execution or retry. Provider identity, plan-mode restrictions,
+environment filtering, the exact literal argv, output caps, prompt-file
+removal and result normalization are as they were.</p>
+<p>What this does <strong>not</strong> prove, stated rather than implied: on POSIX the
+process group is signalled, so a descendant that called <code>setsid()</code> itself has
+left that group and is not reached - no protection against that escape is
+claimed, and the root-only Linux lifetime test still needs its authorized
+lane. The signed Windows host bridge still carries no shared-deadline contract:
+readiness now refuses a carried <code>PlannedProviderAttempt.deadline</code> through
+<code>HostBridgePacketTransport.preflight</code> with
+<code>unsupported-host-bridge-deadline</code> before any host I/O, leaving the wave
+<code>PENDING</code> with <code>paid_setup_required</code>. <code>send</code> and legacy no-deadline callers
+are unchanged; cross-host cutoff enforcement was not added. The
+native Codex host still refuses unenforceable token caps, and no live
+provider was launched: the discovered routes are exercised with a synthetic
+launch, and the one real process is a local Python child.</p>
+<h2 id="cancellation">Cancellation</h2>
+<p><code>director_primary_parallel_batch.kill_switch</code> - the existing authority
+<code>engage_kill_switch</code> sets and <code>reserve_ready</code> already honours - is now read at
+both remaining authority points. Atomic admission re-reads it under the same
+row lock it takes, so a wave cancelled while an admission is in flight gets no
+attempt, spend or workload row (<code>parallel_wave_cancelled_before_admission</code>).
+Dispatch re-reads it immediately before I/O, so an attempt already admitted
+makes no provider call (<code>wave_cancelled_before_dispatch</code>) while keeping exactly
+the rows, slot and evidence it was admitted with. No new table, flag or
+approval path was added.</p>
+<h2 id="the-deadline">The deadline</h2>
+<p><code>execute_ready</code> reads the bound the dispatcher publishes (<code>readiness_deadline</code>)
+<em>before</em> <code>reserve_ready</code> acquires a connection or takes a lock, so pool
+acquisition, the writer row, the batch advisory lock and the per-assignment
+<code>FOR UPDATE</code> waits are inside it. <code>execute_parallel_ready</code> reads the same bound
+once and passes it to its own writer acquisition, so the coordinator's work
+ahead of <code>execute_ready</code> is inside the bound too. Per-assignment readiness then
+establishes the selection's own deadline, clamped by both the packet's timeout
+and the configured transport ceiling, and every later step spends that same
+value: <code>live_provider_admissions</code>, <code>PrimaryProviderBudgetRouting.admission</code>,
+<code>PrimaryTeamRouting.grant_for</code>/<code>adapter</code>, <code>PrimaryTaskCoordinator._task_writer</code>
+(through <code>current_</code>/<code>renew_</code>/<code>acquire_task_writer</code>),
+<code>record_work_packet_artifact</code>, the pre-I/O cancellation read, and
+<code>ProviderAdapterContext.deadline</code> itself. <code>send</code> narrows a carried deadline to
+<code>min(carried, this request's own window)</code>, never widens it. The shared helpers
+refuse an already-expired bound (<code>DeadlineExpired</code>) rather than converting it
+into a one-millisecond timeout.</p>
+<p><code>bind_transaction_deadline</code> (<code>langgraph_postgres.py</code>) sets <code>statement_timeout</code>,
+<code>lock_timeout</code> <strong>and</strong> PostgreSQL 17's <code>transaction_timeout</code>, all <code>LOCAL</code>.
+Per-statement timeouts alone do not bound a transaction: PostgreSQL applies
+<code>statement_timeout</code> separately to each statement and again to COMMIT, so work a
+deferred constraint trigger performs during COMMIT gets a fresh window.
+<code>transaction_timeout</code> bounds the whole transaction including that commit-time
+work. When it fires PostgreSQL aborts the transaction and terminates the
+session, and the pool discards that connection - the test log shows exactly
+that discard. Every unbounded caller is unchanged: the parameter is optional
+throughout.</p>
+<p>Binding happens <strong>inside an explicit transaction</strong>, never beside one. These
+pools are autocommit, so <code>SET LOCAL</code> issued outside a transaction block lasts
+only for the statement that sets it: an independent probe on 17.11 read both
+timeouts back as <code>0</code> immediately after binding, and a 0.35s sleep then
+completed against a 0.20s bound. A pool-acquisition timeout does not bound the
+SQL that follows either. <code>bounded_transaction</code> therefore acquires, opens one
+transaction and binds within it; the read paths that spend a deadline -
+<code>read_primary_task_projection</code>, <code>current_task_writer</code>, <code>aggregate</code>, the wave
+cancellation read and the generation-boundary authority read - all use it.</p>
+<p>Binding <strong>tightens only, and tightening is enforced</strong>. PostgreSQL 17's
+<code>assign_transaction_timeout</code> hook enables the timer only while it is inactive,
+so assigning a smaller value to a running transaction updates the setting and
+leaves the original, longer timer in force: an independent probe on 17.11 saw
+<code>SHOW</code> report 234ms while the transaction still committed a durable row at
+0.312s against a 0.25s bound. The binder therefore records the earliest
+absolute deadline in a transaction-local setting, takes the minimum of that and
+any later bound, and - when the effective bound actually becomes earlier -
+assigns zero to deactivate the timer before re-arming it with the tightened
+window. A later, larger bound is observed and discarded, so no caller can
+extend the earliest deadline in force, and a reused pooled connection starts
+its next transaction clean because the recorded value reverts with the
+transaction.</p>
+<p>Classification stays conservative. Only a bound already expired <em>before</em> any
+I/O raises the narrow pre-I/O hold. Anything the server timer aborts
+mid-transaction surfaces as an uncaught failure, which stays AMBIGUOUS, because
+a client cannot distinguish an aborted commit from an unacknowledged one.</p>
+<h2 id="completion">Completion</h2>
+<p>Execution ending does not make recording what already happened optional.
+<code>COMPLETION_ALLOWANCE_SECONDS</code> (<code>primary_parallel.py</code>) defines one bounded
+window for that recording, and <code>completion_deadline(deadline)</code> derives the
+single absolute cutoff from the operation's own deadline. Every call in one
+operation computes the identical instant, so no call can renew it, and it
+authorises no execution, retry or eligibility.</p>
+<p>Two things the checkpointer does are not the pool's to bound. <code>_cursor</code> takes
+the saver's own mutex <em>before</em> it asks for a connection, so that wait is
+bounded at the same object: the saver's <code>lock</code> is wrapped to refuse waiting
+past the published cutoff, and a caller refused there has taken no connection
+and written nothing. Once the connection is handed over it already carries one
+open transaction with <code>transaction_timeout</code> armed, so the cumulative blob and
+checkpoint statements, the pipeline synchronisation and the COMMIT share one
+absolute deadline instead of a series of independent per-statement allowances -
+and an aborted checkpoint leaves nothing durable to contradict the refusal.</p>
+<p>That cutoff reaches the foreground writes the wave actually performs:
+<code>record_attempt</code> through <code>PrimaryTaskCoordinator.record_provider_attempt</code> and
+its writer resolution, the successful roster's <code>record_result_packet_artifact</code>
+including its advisory-lock wait, <code>execute_ready</code>'s own <code>record_result</code> while
+<code>executor.map</code> is still waiting, and the coordinator's <code>aggregate</code>,
+<code>record_parallel_aggregate</code> and outcome projection write. The checkpointer
+acquires its own connections and mutex, so <code>record_parallel_aggregate</code>
+publishes the cutoff for its context and the saver and pool apply it to the
+snapshot read, the state update and the outcome read alike. No thread, queue
+or background writer is introduced: when the call returns, the bound is gone.</p>
+<p>On failure the reservation and any recorded usage are retained, the attempt
+stays STARTED for reconciliation, and unconfirmed persistence is reported as a
+failure rather than a completed wave. Nothing is refunded or replayed.</p>
+<h2 id="late-accounting">Late accounting</h2>
+<p><code>PrimaryProviderBudgetAuthority.record_usage</code> verifies the receipt HMAC, the
+admitted spend/authority/provider binding, project and response locks, and
+duplicate/identical/conflicting replay. It does not require the enrollment to
+be current; that refusal lived only in <code>EnrolledResponseMeter._verify</code>.</p>
+<p><code>settle</code> takes <code>sent_at</code>, the instant the request was actually sent. That
+instant is sampled inside <code>send</code> immediately before the generation request -
+after input-token counting, not before it - and <code>meter.verify_current()</code> is
+re-run at the same point, so counting that outlives the signed window stops the
+send instead of pricing it. The signed tariff must have covered that instant. A
+request legitimately admitted and sent does not stop having consumed real
+tokens because the window closed, or this attempt's execution budget ran out,
+while the provider was answering.</p>
+<p>A reply is &quot;complete&quot; the moment the provider has delivered it, which is
+earlier than the moment this transport can return it. HTTPX ends
+<code>aiter_bytes</code> by closing the response, and closing marks the response closed
+before its stream cleanup is awaited, so a cleanup that hangs or raises can
+strand a body that already arrived in full - and was already charged for. An
+independent real-<code>AsyncByteStream</code> probe proved exactly that: both a hanging
+<code>aclose</code> and one raising <code>ReadError</code> refused the attempt and left no usage
+row. The generation response's bytes and headers are therefore recorded as
+they are <em>received</em>, and if the failure happens before parsing, those bytes
+are parsed on the way out.</p>
+<p>Completeness is proved there, never assumed: an over-bound body is refused
+outright, a truncated or malformed one cannot parse as a single JSON object,
+and every existing check - terminal status, model, tier, account binding,
+token accounting, capture bounds - still applies afterwards. The same recovery
+covers the outer client's cleanup, which previously raised ambiguity even with
+a complete reply in hand. The operation is still refused (<code>... exhausted after a complete provider response</code> or <code>... cleanup failed after a complete provider response</code>), never retried, and never turned into output or funding.</p>
+<p>Settlement is therefore bounded by one absolute <code>accounting_deadline</code>, derived
+once from the operation's own deadline plus <code>ACCOUNTING_ALLOWANCE_SECONDS</code>, and
+it replaces the execution callback inside <code>_connection</code> rather than widening
+it: that callback raises the moment execution expires, which is exactly when
+the fact most needs recording. The same value on every call means replay cannot
+extend it, and it authorises no provider work and no eligibility - an expired
+execution still fails. Anything the provider actually completed is retained as
+soon as it is parsed, so a timeout while unwinding the async contexts after
+parsing accounts for the reply and <em>then</em> refuses the attempt. Without
+<code>sent_at</code> the previous current-validity gate applies unchanged, and <code>prepare</code> -
+the gate that authorises new execution - is untouched. Signature,
+provider-confirmed account association, model/tier/creation freshness, token
+accounting and every replay check are unchanged.</p>
+<h2 id="evidence">Evidence</h2>
+<p>All author-run, through the reviewed wrapper against a real disposable Docker
+PostgreSQL 17 lane, over the <em>selected</em> modules in scope - not repository-wide
+discovery. Paid execution stays false and every provider reply is synthetic
+(<code>httpx.MockTransport</code>, no network). The Director runs independent QA and
+arranges exact-head review; none of this is acceptance.</p>
+<p>Every figure below is a run that completed. An earlier revision's final
+<code>--group full --warnings</code> and <code>--group full</code> attempts were cut off by the
+author window and produced no result; those receipts stand as they are and
+nothing here is claimed from them. The 17:31 and 18:02 UTC revisions changed
+one production module, <code>antigravity_team_worker.py</code>, its test module, this
+document and (at 18:02 UTC only) the extraction names in the root-only
+<code>tests/test_team_process_lifetime.py</code>, which no selected group runs. The
+18:52 UTC revision changed <code>primary_coordinator.py</code>, <code>primary_default.py</code>,
+<code>langgraph_runtime.py</code>, <code>antigravity_team_transport.py</code> and
+<code>antigravity_team_artifacts.py</code>, which the admission, full, startup and
+readiness groups also import; only <code>--group composition</code> and <code>--group team</code>,
+which carry the two new regressions, were rerun for it. The figures for the
+other groups are therefore the earlier revisions' results on bytes that have
+since changed - reused as prior evidence with that limit stated, not claimed
+for this revision - until the Director's host QA covers the current bytes.
+The 21:25 UTC revision changed <code>primary_transports.py</code> and
+<code>process_isolation.py</code>, which the same broader groups import; only
+<code>--group transports</code> and <code>--group composition</code> were rerun for it, and the
+same limit applies to the others.</p>
+<ul>
+<li>
+<p><code>--group composition</code> (<code>tests/test_responses_team_readiness_composition.py</code>):
+<strong>52 tests, all passing</strong>, at the C17 author revision; the combined
+host-bridge revision adds one further case whose integration result is recorded separately. 47 stood at 16:56 UTC; 18:52 UTC
+added the writer-reacquisition regression, which reuses the independent
+witness unchanged - the real <code>_enrolled_wave</code>, the real coordinator and
+disposable PostgreSQL, the lease expired after the real
+<code>live_provider_admissions</code> lookup, and an <code>httpx.AsyncClient</code> constructor
+sentinel - and asserts the hold's reason code, a reacquired generation 2,
+zero attempt, spend and workload rows and zero client constructions. 21:25
+UTC added three constructor-driven bound checks through the real
+<code>DefaultPrimaryActivation</code> dispatcher, coordinator, admission and
+disposable PostgreSQL. Readiness fixes a six-second bound from a packet
+whose own timeout is six, so each attempt's relative timeout is two; the
+dispatch is then delayed by advancing only the transport module's clock
+four seconds, the case readiness's own refusal cannot cover. A real
+<code>NativeCommandPacketTransport</code> under the constructor-created adapter is
+handed the carried remainder - more than one second, under the two-second
+relative timeout a delay would otherwise restart - and its attempt
+settles SUCCEEDED; the same transport with the clock advanced past the
+bound launches nothing and leaves one AMBIGUOUS attempt with its identity
+retained; and the narrow Responses counterpart, where both the count and
+generation requests carry an HTTPX timeout of that remainder, under the
+relative timeout, and settle through the real meter, while the clock
+advanced past the bound sends nothing at all. 22:30 UTC added the
+constructor-level late result: the synthetic wait spends three more
+seconds on the transport's clock and then returns a valid native
+envelope; the shared helper refuses it, the unchanged attempt recorder
+marks the one admitted attempt AMBIGUOUS - never SUCCEEDED - with its
+identity retained, nothing is resent, and a second dispatch of the same
+reservation is refused before admission.</p>
+</li>
+<li>
+<p><code>--group admission</code> (<code>test_primary_parallel</code>, <code>test_antigravity_team</code>,
+<code>test_primary_coordinator</code>, <code>test_langgraph_postgres</code>): <strong>182 tests, all
+passing</strong>, at the 16:56 UTC revision on unchanged bytes, including every
+PostgreSQL deadline case below.</p>
+</li>
+<li>
+<p><code>--group full</code> (all ten selected modules, including
+<code>tests/test_langgraph_primary.py</code>): <strong>417 tests, all passing</strong>, at the 16:56
+UTC revision on unchanged bytes, in 273s with zero resource warnings and a
+verified lane teardown. The team lane is not in this selection; <code>--group team</code> covers it.</p>
+</li>
+<li>
+<p><code>--group startup</code>: 1 test, passing at an earlier revision on unchanged
+bytes.</p>
+</li>
+<li>
+<p><code>--group transports</code> (<code>test_primary_transports</code>, <code>test_process_isolation</code>,
+<code>test_openai_responses_validation</code>): <strong>70 tests, all passing</strong>, this
+revision, with zero resource warnings; 64 of them stood at 21:25 UTC. Its
+earlier 54-test result predates <code>test_process_isolation</code> joining the
+group. Added at 22:30 UTC: the recording launch now reads the file-backed
+stdin at launch exactly as a child would and records anything resent
+through <code>communicate</code>, which every command test asserts is nothing; two
+real local Python children read their stdin through EOF and report the
+digest and length of what they received - a native stdin prompt compared
+against the exact bytes a recording launch sees prepared for the same
+packet, and the generic JSON packet and an empty packet compared directly;
+across every discovered route a spawn that consumes the cutoff is ended
+and reported ambiguous without entering a wait, and a valid envelope
+returned after the cutoff is refused with the exited child's tree still
+ended; a NaN, infinite, boolean or absent cutoff launches nothing. In
+<code>test_process_isolation</code>, safe fakes assert the cleanup order - tree,
+child, guard release, then streams - after a normal exit, and that a
+termination failure still reaches the guard release and stream closure and
+is retained with every observation in the refusal. Two fixtures there had
+gone stale against the current transport at 15:13 UTC: a finite <code>monotonic</code>
+<code>side_effect</code> list that additional legitimate cutoff checks exhausted, and
+a meter fake predating <code>verify_current</code>/<code>clock</code>/<code>sent_at</code>. Both were
+corrected in the fixture - a clock driven by request stages, and the
+explicit current protocol with named parameters - with no production byte
+changed and no assertion weakened. At 21:25 UTC the command-boundary tests
+moved from patching <code>subprocess.run</code> to a recording stand-in for
+<code>launch_contained_process</code>, so each still asserts the exact argv, input,
+<code>shell=False</code> and the filtered child environment, and the real
+<code>stop_contained_process</code> now runs against the recorded process. Added:
+across every route discovery selects (Claude stdin, Cursor argument, Grok
+prompt file, Antigravity closed directive, Copilot argument, Perplexity
+and Firecrawl argv) plus the generic JSON command - a carried bound 0.2s
+away under a 30s relative timeout with the spawn costing 0.05s hands the
+child exactly 0.15s and ends the tree after a normal exit; the Grok prompt
+file costing 0.1s leaves 0.1s and costing 0.25s launches nothing and still
+removes the file; an expired, NaN or infinite carried bound launches
+nothing; a wait that expires is one ambiguous attempt with terminate, kill,
+bounded wait and guard release in that order. One real local Python child
+through the real runner spawns a detached descendant, outlives a
+half-second bound, is reported ambiguous within the grace period, and
+afterwards is reaped with its pipes and guard closed and its descendant's
+marker never written. <code>test_process_isolation</code> gains the same real
+descendant case against <code>stop_contained_process</code> directly and a synthetic
+child that will not stop, whose refusal carries the observations.</p>
+</li>
+<li>
+<p><code>--group compatibility</code> (the cancellation fixture and the skill suite-set
+check): <strong>2 tests, passing</strong>, at the 16:56 UTC revision on unchanged bytes.</p>
+</li>
+<li>
+<p><code>--group team</code> (<code>test_antigravity_team_worker</code>): <strong>37 tests, all passing</strong>,
+this revision: the 35 below plus, at 18:52 UTC, a positive control that
+runs the live coordinator's own <code>_require_current_dispatch_authority</code> at
+every boundary of the real transport - including inside the real
+integrator's transaction - against the real disposable PostgreSQL and the
+local fixture Git repository and records the candidate, and the
+cancellation case: the switch is engaged exactly as <code>engage_kill_switch</code>
+does (writer row held, switch set, committed) after the transport's own
+recheck has passed and before the integrator takes the writer row, and the
+integrator refuses with <code>wave_cancelled_before_candidate</code> - no candidate
+row, no <code>refs/director/team/</code> retention ref, repository head untouched,
+the STARTED attempt and the stored capture retained, and the integrator's
+result boundary never claimed. Reverse ordering - a cancellation waiting
+behind the integrator's writer lock - is the unchanged row-lock
+serialization and is not newly tested here. The 16:56 UTC revision's 28
+included nine tests that were
+removed at 17:31 UTC rather than kept: five exercised only the cutoff
+helpers or compared dictionaries the implementation also built (the one
+named for <code>serve</code> never called <code>FrameChannel</code>, <code>serve</code> or
+<code>PinnedSshTeamWorker</code>), one entered preparation already expired and never
+reached qualification, and three process tests lived inside the PostgreSQL
+fixture, two of them sleeping on the real clock. Fourteen replacements in a
+class that acquires no database took their place, joined at 18:02 UTC by
+the two ceiling and anchor cases below.</p>
+</li>
+</ul>
+<p>What those fourteen actually exercise: the real <code>PinnedSshTeamWorker</code> and the
+real <code>serve</code> talking over two OS pipes - real <code>FrameChannel</code> frames, real
+authentication, sequence, challenge and kind checks - with a thread in place
+of the SSH process, each side on its own monotonic clock with a distinct
+epoch, advanced only by the stated transit of every frame it reads. On that
+seam: an acknowledged success including both boundaries and the capture, with
+the server bounding preparation and exchange alike at <code>anchor + remaining</code>
+(5005 + 35 = 5040 on its clock, not 5010 + 35); a twenty-five second server
+pause between anchor and <code>prepare</code> that does not extend the bound; a director
+pause before its sample that shrinks what it sends; a bound spent in transit
+that never prepares; a server of any earlier revision, which waits to be
+spoken to first, receiving nothing but the challenge before the local timer
+ends it; and a server answering with the wrong kind or shape refused before
+preparation. On the real <code>serve</code> with prerecorded director frames: explicit
+<code>null</code> as deliberate standalone use through to the capture; fourteen legacy,
+unanchored, invalid and over-ceiling <code>prepare</code> shapes refused with only the
+anchor frame ever emitted; exactly the grant ceiling bound as it is and a
+thousandth of a second more refused rather than clamped, with <code>TeamGrant</code>
+itself shown to accept 2700 and reject 2701; an infinite or undefined server
+anchor refusing an otherwise admissible bound while still admitting
+standalone use; and six <code>exchange</code> shapes refused after <code>prepared</code> and before
+execution with the prepared bound unchanged. On the real <code>prepare_binding</code>
+with the real constructor: the budget consumed by qualification writes no
+claim; the budget consumed during <code>fsync</code> retains the claim, refuses
+readiness, refuses the exchange and refuses a second preparation on the same
+receipt; and a preparation inside the bound whose exchange is offered a later
+bound still hands <code>run_unprivileged</code> the prepared one. On the real
+<code>run_unprivileged</code> with a synthetic kernel, clock and <code>Popen</code>: exact and
+fractional waits after setup and launch, an absolute bound and a timeout
+narrowing each other, a <code>Popen</code> that consumes the budget getting no wait while
+the group is still killed and drained, and setup or an absent bound launching
+nothing. The eleven PostgreSQL-backed tests - the real transport, entitlement
+boundary, integrator and Git repository, cancellation, shared-budget,
+unsupported-worker and completion-bound cases - are unchanged.</p>
+<p>What they do <strong>not</strong> exercise: a real SSH process (a thread and two pipes
+stand in), host qualification (<code>qualify</code> is replaced), any native provider
+execution, the <code>preexec_fn</code> callback, the Linux worker's cgroup/uid
+containment, and remote cleanup after a bound expires. Those remain unproven
+here and are stated as limits rather than coverage.</p>
+<p>Two independent probes are preserved as <em>failed pre-repair</em> evidence, not as
+current verdicts: the supplied restart probe reached the writer sentinel and
+observed <code>artifact_rows_before=0, artifact_rows_after=1</code>, and the supplied
+three-case team probe saw the cancellation hook never invoked and an expired
+deadline reach the synthetic execution sentinel. Both were taken at the frozen
+head before these changes. The independent full host QA at that head (3123
+tests, 6 failures, 1 error, 2 platform skips) also stands as failed QA; two of
+its failures are the fixtures corrected here, and the remaining five - four
+native installer cases and Compose rendering exit 125 - are with the Director
+for harness diagnosis and are untouched by this work. The sealed security scan
+at that head reports two LOW findings and no HIGH/CRITICAL, with a canonical
+metadata discrepancy (completed outcome, partial coverage field, a deferred
+discovery entry) that its own review must reconcile; nothing here claims
+complete coverage, exploitation or deployment.</p>
+<p><code>tests/test_langgraph_postgres.py::TransactionDeadlineBindingTests</code> proves the
+timer by wall clock, durable rows and the reported SQLSTATE, never by <code>SHOW</code>
+alone: a bound tightened from 1.0s to 0.25s ends two cumulative sleeps with
+25P04 and commits nothing; a later 5.0s bound does not extend an earlier 0.25s
+one; a deferred constraint trigger sleeping 0.5s during COMMIT is cut off by a
+bound tightened to 0.3s, again 25P04; an already-expired bound is refused
+before and after an earlier one; the same connection runs a later transaction
+0.6s past the previous transaction's deadline and commits; and the real
+projection and writer readers, under an <code>ACCESS EXCLUSIVE</code> table lock, end at
+their own bound instead of silently losing it. Each witness names the cause it
+accepts - the transaction timer (25P04), <code>statement_timeout</code> (57014),
+<code>lock_timeout</code> (55P03), or the session termination <code>transaction_timeout</code>
+performs - rather than accepting any exception.</p>
+<p><code>CheckpointOperationDeadlineTests</code> exercises the installed saver itself: a
+second thread holds the saver's mutex while the cutoff expires, the caller is
+refused in time with nothing written and the holder releases and joins
+cleanly; and with <code>BEFORE INSERT</code> triggers delaying the blob and checkpoint
+writes - each well inside any per-statement allowance, their sum outside the
+cutoff - the operation aborts with the whole-transaction cutoff (25P04, or the
+session termination it performs during pipeline synchronisation; a
+per-statement 57014 is deliberately <em>not</em> accepted there) and neither
+checkpoint nor blob rows survive.</p>
+<p><code>tests/test_primary_default.py::DefaultPrimaryApplicationIntegrationTests</code>
+covers the foreground completion path through the real coordinator and the real
+graph: the contended row is locked from inside the dispatcher, so readiness and
+admission are already done. Result settlement (<code>record_result</code> while
+<code>executor.map</code> waits), the outcome projection write and the checkpointer's own
+storage each end inside the completion allowance instead of blocking, with the
+unsettled slot left ACTIVE, the settled ones intact, and no wave reported as
+completed when its checkpoint could not be confirmed.</p>
+<p>The composition module covers, with a real <code>PrimaryTaskCoordinator</code>, real
+<code>PostgresParallelDispatch</code> admission, real signed budgets/grants/enrollments
+and the real transport:</p>
+<ul>
+<li><strong>Deferred COMMIT</strong> - a BEFORE INSERT trigger and a DEFERRABLE INITIALLY
+DEFERRED constraint trigger each sleeping 0.3s against a 0.5s bound
+(previously committing at 0.656s) is refused with zero attempt, spend and
+workload rows.</li>
+<li><strong>Real lock witnesses</strong> - a second real connection holds the assignment row,
+the batch row or the writer row; readiness, admission and the coordinator's
+writer renewal each end inside their bound with nothing admitted.</li>
+<li><strong>Changed selection</strong> - dependency-enriched packet, writer takeover, added
+signed budget row, an authority other than the checked one at the locked
+admission, a dispatch with no live selection, an enrollment replaced <em>during</em>
+the admission lock wait (rolled back), an enrollment replaced after admission
+(no provider call), and a registry substituted at the transport itself.</li>
+<li><strong>Cancellation</strong> - engaged before admission (nothing admitted, no HTTP),
+engaged between admission and I/O (no HTTP, admitted rows and slot intact),
+and engaged <em>while the input-token count is in flight</em> (the generation
+request is never made).</li>
+<li><strong>Authority during the count</strong> - a legitimate writer takeover and a plain
+lease expiry during the count response each stop the generation request,
+leaving one STARTED attempt, its reservation and slot, and no metering.</li>
+<li><strong>Competing authority</strong> - a second valid signed budget registered while
+admission is blocked on the batch row rolls every write of that admission
+back.</li>
+<li><strong>Expiring writer lease</strong> - a lease set to run out during a genuine
+admission lock wait is refused at the final fence, against the real clock
+rather than this transaction's start time, with nothing admitted and no
+provider call.</li>
+<li><strong>Bounded completion</strong> - with the writer row held after the provider has
+answered, the attempt's outcome write ends inside the completion allowance;
+the attempt stays STARTED and the authenticated usage already recorded for it
+is retained.</li>
+<li><strong>Cleanup after a complete reply</strong> - all three cases record exactly one
+usage row of 150 tokens against the admitted attempt digest, make two
+provider requests, and still refuse. The two inner-stream cases (an <code>aclose</code>
+that hangs past the deadline and one that raises <code>ReadError</code>) additionally
+assert the spend row, the body-exhaustion and cleanup witnesses, and that
+both response and client are closed; the outer-client case asserts the
+closed client only. A body truncated before the same failure is metered not
+at all and stays ambiguous.</li>
+<li><strong>Late accounting</strong> - the real transport reaching the real meter for a
+complete reply whose unwinding timed out (usage recorded, attempt still
+refused); an enrollment expiring between counting and sending (generation
+request never made, nothing metered, reservation retained); an expired
+enrollment recording the usage it authorised while <code>prepare</code> and the
+unanchored gate still refuse; idempotent replay, refused conflicting replay,
+refused unconfirmed account association, refused forged signature, a spent
+accounting cutoff writing nothing, and project-lock contention bounding
+settlement with the reservation held.</li>
+<li><strong>Concurrency</strong> - two admitted attempts sharing one registry cannot exchange
+enrollment, credential or account facts, and one provider response cannot be
+claimed by two attempts; two waves admitting simultaneously against the same
+signed project day leave exactly one reservation, within the signed ceiling,
+and no STARTED attempt without monetary accounting.</li>
+<li><strong>End to end</strong> - real <code>reserve_ready</code>, admission, dispatch and settlement,
+with the predicted attempt identity equal to the admitted one.</li>
+</ul>
+<h2 id="acceptance-map">Acceptance map</h2>
+<table>
+<thead>
+<tr>
+<th>Work-order item</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Readiness validates both branches before admission</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Checked selection carried into atomic admission</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>One deadline spanning readiness, admission and I/O</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>A tightened PostgreSQL timer actually tightens; none extends it</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Bounds survive into the statements they were taken for</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>The saver's mutex and cumulative checkpoint work are bounded</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Writer lease proved against the real clock at the final fence</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Full authority re-selected after the admission waits</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Cancellation honoured at admission, pre-I/O and at generation</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Writer/plan binding re-read at the real generation boundary</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Enrollment pinned across every wait and at the transport</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Late authenticated usage recorded, eligibility unchanged</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Complete replies survive response/client cleanup failure</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>A lost selection is refused before any database call</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Team lane honours the primary recheck and shared budget</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Readiness generation bound to the writer admission resolves</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Candidate integration re-reads authority inside its writer-locked transaction</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Ordinary command routes spend the carried deadline, not the relative timeout</td>
+<td>Done, exercised - synthetic launch, one real local child</td>
+</tr>
+<tr>
+<td>Command child trees ended and verified after exit or expiry</td>
+<td>Done on Windows (Job); POSIX group signal, <code>setsid</code> escape not covered</td>
+</tr>
+<tr>
+<td>Host bridge shares the carried deadline</td>
+<td>Refused at readiness when a deadline is carried; no cross-host contract</td>
+</tr>
+<tr>
+<td>One anchored bound; transit and pauses spent, never returned or renewed</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Remote support acknowledged before any private source</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Legacy bound-bearing frames refused; explicit standalone kept deliberate</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Preparation, its durable claim and process setup inside the same bound</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Cross-host bound without a clock premise</td>
+<td>Done, exercised - causal anchor, no skew constant</td>
+</tr>
+<tr>
+<td>A worker that cannot enforce the bound is refused</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Recheck after the blocking authorization, before execution</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Completion bound carried into candidate integration</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Remote cgroup teardown after a spent lifetime</td>
+<td>Not proven - stated limit</td>
+</tr>
+<tr>
+<td>Foreground completion, outcome and checkpoint writes bounded</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Concurrency: no cross-request facts, no overspend</td>
+<td>Done, exercised</td>
+</tr>
+<tr>
+<td>Host full-repository QA and exact-head source/security review</td>
+<td>Not done - Director</td>
+</tr>
+</tbody>
+</table>
+<h2 id="limitations">Limitations</h2>
+<ul>
+<li>A selection is in-process only; a restart between reservation and dispatch
+fails closed rather than resuming. No migration or schema change was made.</li>
+<li>The enrollment registry loader is <strong>startup-only</strong>. Replacing the file on
+disk changes nothing in a running process; no live file-change detection is
+implemented or claimed. The substitution cases above replace the in-memory
+registry, which is what an in-process change actually looks like.</li>
+<li>An authorization refusal raised <em>after</em> input-token counting (the expiring
+enrollment case) is reported by the transport as an ambiguous provider
+outcome, because it is raised inside the same guarded block as real transport
+failures. No generation request is made and nothing is metered, so this is
+conservative rather than wrong, but the reason code is less precise than the
+pre-I/O holds.</li>
+<li><code>transaction_timeout</code> requires PostgreSQL 17; on an older server the helper
+applies statement and lock timeouts only, which do not bound commit-time
+work. The sanctioned lane, Compose and CI all pin 17.</li>
+<li>A checkpoint aborted by its own deadline is reported as a failure and
+reconciled by the owner, not retried here. When the transaction timer fires
+during pipeline synchronisation, PostgreSQL terminates the session, so the
+client sees a closed connection rather than SQLSTATE 25P04; that witness
+accepts exactly those two shapes and nothing else.</li>
+<li>Provider-outcome-unknown classification is still asserted through existing
+tests rather than a dedicated case in this module.</li>
+<li>Full CI, an independent non-author security and source review, and an
+exact-head reviewer verdict remain required. Nothing here is a source
+acceptance, merge or activation.</li>
+</ul>
+<h2 id="history">History</h2>
+<ul>
+<li><strong>2026-09-14 22:29 UTC</strong>: initial composition (team branch's unconditional
+hold replaced with <code>check_team_setup</code>).</li>
+<li><strong>2026-09-21 09:43-10:18 UTC</strong>: budget-day freshness, the transport
+<code>preflight</code>, first real-PostgreSQL composition tests, and an
+<code>entitlement_contracts</code>-vs-<code>packet_contracts</code> canonicalization fix a real
+signed-enrollment test found.</li>
+<li><strong>2026-09-21 10:45 UTC</strong>: one per-assignment deadline carried across retries,
+the real <code>PrimaryTaskCoordinator</code> in the decisive test, and a real
+lock-contention test. An earlier attempt-identity finding was retracted by
+review; the existing admission-time override already unifies that digest.</li>
+<li><strong>2026-09-21 11:19 UTC</strong>: an independent probe proved admission could still
+commit after its deadline; replaced per-statement refreshes with a
+transaction-level bound, moved the bound ahead of readiness acquisition and
+the authority/writer lookups, replaced the deadline map with a full immutable
+selection, and retained late authenticated usage through the existing receipt
+contract - a new table is not required, correcting an earlier claim here.</li>
+<li><strong>2026-09-21 12:05 UTC</strong>: review found four caller-path gaps
+the helper-level tests had missed. Closed them in the actual call path: the
+accounting allowance now reaches the transport's own <code>settle</code> with <code>sent_at</code>
+sampled at the generation request and completed replies retained through a
+timed-out unwinding; the bound now spans the coordinator's own writer work,
+the artifact write and the team adapter; cancellation is read inside atomic
+admission and again before I/O; the enrollment is re-proved after admission's
+locks and at the transport. A pre-I/O hold is no longer recorded as an
+ambiguous paid dispatch. Concurrency and overspend cases are now exercised,
+so the earlier &quot;not exercised&quot; limitation is removed.</li>
+<li><strong>2026-09-21 12:57 UTC</strong>: an independent PostgreSQL 17.11
+probe showed that assigning a smaller <code>transaction_timeout</code> does not tighten
+a running timer, so the binder now deactivates and re-arms it and records the
+earliest absolute deadline per transaction. Admission re-selects the full
+authority - budget and team - on its own connection after its lock waits, so
+the documented uniqueness gap is closed rather than described. The live
+coordinator's <code>authority_recheck</code> re-reads cancellation, the writer lease and
+the plan binding at the real generation boundary, after input-token counting.
+One nonrenewable completion allowance now reaches the attempt outcome, result
+artifact, slot settlement, aggregate, outcome projection and checkpoint
+writes; the checkpointer's own pool applies it for the duration of that call.</li>
+<li><strong>2026-09-21 14:07 UTC</strong>: an independent probe reproduced the
+helper's lifetime defect - <code>SET LOCAL</code> outside a transaction on an autocommit
+connection is gone before the next statement - so every bounded read path now
+binds inside one explicit transaction. The saver's own mutex wait and its
+cumulative blob/checkpoint/synchronisation/commit work are bounded at the
+seams that actually wait. The writer lease is proved against
+<code>clock_timestamp()</code> at the final admission fence, because <code>now()</code> is
+transaction-start time and a lock wait can outlast a lease. Timeout
+witnesses now identify the SQLSTATE or the session termination, and this
+document's outer contribution records and evidence claims are corrected.</li>
+<li><strong>2026-09-21 14:50 UTC</strong>: an independent real-HTTPX probe
+proved that a complete, already delivered generation reply was lost whenever
+the response's own cleanup hung or raised - the body was received, but
+parsing happened only after the stream context returned, so nothing was
+metered. The generation bytes and headers are now recorded as they arrive
+and parsed on the way out of a failed cleanup, with completeness proved by
+parsing and the byte bound rather than assumed; the same recovery covers an
+outer client cleanup error, which previously raised ambiguity with a valid
+reply in hand. Refusal, admission and account binding, byte bounds,
+deadlines and the no-retry rule are unchanged. The cumulative-checkpoint
+witness now demands the whole-transaction cutoff and asserts blob rollback,
+and <code>bounded_transaction</code>'s docstring no longer implies a cross-statement
+snapshot.</li>
+<li><strong>2026-09-21 15:13 UTC</strong>: the host ran
+<code>tests/test_primary_transports.py</code>, which sits outside the ten selected
+modules, and found two stale fixtures - not production defects. Both were
+corrected in place without weakening a single assertion, and this document's
+cleanup-case bullet was qualified to match what each of those three tests
+directly asserts.</li>
+<li><strong>2026-09-21 16:04 UTC</strong>: an independent restart probe showed
+a dispatch with no live selection still reading the writer and persisting one
+packet artifact before its intended refusal, so that refusal moved to the
+lookup itself, ahead of both database calls. The team lane, which had been
+given a primary recheck and absolute deadline it never consumed, now spends
+that budget across its SQL, preparation, execution authorization, worker
+waits and completion, and re-reads the primary authority immediately before
+native execution and before candidate integration. Two stale fixtures the
+host found - an unrestricted cancellation Mock and a missing skill suite
+entry - were corrected, and the pre-repair probe, host QA and security
+evidence is preserved as historical failure rather than restated as a pass.</li>
+<li><strong>2026-09-21 16:29 UTC</strong>: independent review found five
+remaining team control gaps, two of them probed failing. The SSH lane now
+forwards an authenticated remote <em>lifetime</em> through its frames and <code>serve</code>,
+re-anchored to the receiving host's clock, with the clock-domain assumption
+and the unproven remote-teardown limit stated rather than implied. A primary
+bound is no longer silently dropped for a worker that cannot enforce it, and
+the misleading &quot;standalone&quot; case that supplied a deadline and expected
+execution was replaced by one that carries none. The authority recheck moved
+to <em>after</em> the blocking execution and command authorizations. Candidate
+integration receives the fixed completion bound through its Git and database
+work instead of restarting sixty seconds, and the Linux worker no longer
+rounds a spent remainder up into a new second.</li>
+<li><strong>2026-09-21 16:56 UTC</strong>: an independent probe showed the
+previous revision's <em>duration</em> actually handing transit time back to the
+remote worker - 10 seconds sent plus 3 in flight became 10 again - so this
+document's &quot;lost on the safe side&quot; claim was wrong and is corrected here.
+One fixed authenticated UTC cutoff now travels from preparation through
+exchange, is converted once on the receiver's clock and only narrows; the
+accepted clock-skew premise is stated and enforced in both directions
+rather than assumed; and the remote server must acknowledge that exact
+cutoff before any private source is sent, because a local capability flag
+proves nothing about an older server. Preparation enforces the bound across
+qualification, the state scan and its durable claim, and <code>run_unprivileged</code>
+now takes the absolute bound, checks it after setup and before <code>Popen</code>, and
+recomputes what <code>communicate</code> waits for. The uninterruptible <code>preexec_fn</code>
+window and the two separate five-second cleanup waits are disclosed rather
+than covered.</li>
+<li><strong>2026-09-21 17:31 UTC</strong>: an independent seven-case probe
+against the real authenticated <code>serve</code> failed four of the previous
+revision's claims: a five-second skew constant presented as a measured
+premise could be masked by transit (a receiver fifteen seconds behind ran
+five seconds past the bound); both sides sampled their two clocks in an
+order a pause could exploit; <code>prepare_binding</code> could acknowledge a budget
+that ran out during <code>fsync</code>; and a <code>prepare</code> frame from the revision that
+sent <code>lifetime_seconds</code> was silently treated as standalone. The UTC cutoff
+and its skew constant are gone. The server now anchors on its own monotonic
+clock and speaks first, the director samples only after that anchor
+arrives, the bound is <code>anchor + remaining</code> and never receipt-time, and the
+exchange names the anchor without carrying any time value. Prepare and
+exchange frames have exact shapes; legacy and unanchored bounds are refused
+while an explicit <code>null</code> stays deliberate standalone use. Preparation
+re-checks the bound after the claim is durable and before <code>serve</code>
+acknowledges, retaining the consumed claim rather than deleting it, and the
+worker keeps the prepared bound so the exchange can only narrow it. The
+independently confirmed <code>run_unprivileged</code> accounting is unchanged. The
+tests that only mirrored the implementation or never reached the seam they
+were named for were removed; their replacements drive the real
+<code>PinnedSshTeamWorker</code> and <code>serve</code> over OS pipes with distinct clocks and
+need no database.</li>
+<li><strong>2026-09-21 18:02 UTC</strong>: two minimal corrections from the
+Director's review of the above. <code>anchored_primary_bound</code> accepted any finite
+positive remaining, including values no valid grant could produce, and did
+not validate its own anchor; it now refuses a remaining above <code>TeamGrant</code>'s
+<code>timeout_seconds</code> ceiling and a non-finite anchor or result as malformed
+input, clamping nothing, with the handshake and process accounting
+unchanged. <code>tests/test_team_process_lifetime.py</code>, the root-only Linux kernel
+regression, extracts <code>run_unprivileged</code> by AST and lacked the two helpers
+it has called since 16:56 UTC; only those two names were added, and that
+extraction is checked by the Director separately from any kernel run.</li>
+<li><strong>2026-09-21 18:52 UTC</strong>: two confirmed functional gaps and
+one inaccurate claim. An independent real-PostgreSQL probe expired the task
+writer's lease after the real authority lookup and before the coordinator
+resolved the writer for admission; the coordinator reacquired it under a
+new generation and admission committed against a selection checked under
+the old one, because the comparison used the writer dispatch had captured
+earlier. The coordinator now refuses a resolved writer whose generation is
+not the selection's, before the admission transaction. Two static reviews
+established that the candidate integrator, which locks the writer row,
+checked grant, proof and reservation but not the wave's current kill
+switch, assignment or latest attempt, so a same-owner cancellation
+completing after the transport's separate-transaction recheck could still
+gain a candidate; the integrator now runs the same durable recheck on its
+own connection after the lock and before any Git object is written. This
+document's claim that a hold is never raised after a generation request
+was wrong for the team lane and is corrected above, with the
+classification itself unchanged.</li>
+<li><strong>2026-09-21 22:36 UTC (this revision)</strong>: <code>HostBridgePacketTransport.preflight</code>
+refuses any carried execution deadline with <code>unsupported-host-bridge-deadline</code>
+before host I/O. The constructor-created readiness callback maps that refusal
+to <code>paid_setup_required</code> with no ACTIVE reservation, matching the existing
+whole-wave hold semantics. Custom mixed transport rosters that place the
+bridge after the first entry are out of scope for this first-entry hook.</li>
+<li><strong>2026-09-21 21:25 UTC</strong>: an independent synthetic probe
+at the accepted C15 head showed the three ordinary command transports
+reaching <code>subprocess.run</code> with the full relative timeout while the carried
+deadline was already spent or had 0.2 seconds left. They now share one
+boundary: a finite absolute cutoff fixed at entry from the permitted
+relative ceiling and the carried deadline, preparation and spawn charged
+to it, refusal before launch once it is spent, the wait given only the
+remainder, and the tree launched through the existing
+<code>launch_contained_process</code> and ended, reaped and closed through the new
+<code>stop_contained_process</code> under its own grace period, whose unverified
+cleanup is a refusal rather than a result. The route matrix, a real local
+descendant, and delayed/expired command and Responses cases through the
+real constructor-created dispatcher are exercised. The host bridge's
+missing shared-deadline contract, the POSIX <code>setsid</code> escape and the
+unrun root Linux lifetime test remain stated unknowns.</li>
+<li><strong>2026-09-21 22:30 UTC (this revision)</strong>: the ordinary command boundary
+completed as a functional correction of C16. The shared helper now feeds
+the child a rewound binary temporary file as stdin - the artifact
+launcher's own pattern - instead of a pipe plus <code>communicate(input=...)</code>,
+keeps empty bytes distinct from no input, and checks a finite positive
+remainder of its one absolute cutoff after preparation, after the launch
+and after the child returns, so a launch that consumes the cutoff never
+enters a wait and a late return is never a successful attempt. Cleanup
+now releases the guard before closing streams and attempts every step
+after a failure, retaining the failures; that is an ownership-ordering
+decision, and no stream-wait failure was reproduced or is claimed.
+Coverage adds ordinary small valid round trips through real local
+children, deterministic clock/launch/return cases across the discovered
+routes, fake cleanup-ordering cases and one constructor-level late
+result. The earlier security witnesses were neither retried nor
+recreated; the first remains inconclusive and the recovery unexecuted.</li>
+</ul>
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]] -->
+<!-- [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

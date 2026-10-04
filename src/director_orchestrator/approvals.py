@@ -651,6 +651,17 @@ def reserve_provider_effect(
     return effect_key
 
 
+def retire_terminal_revision_authority(record: TaskRecord) -> None:
+    """Retire only terminal recovery bindings; consumed retry digests stay spent."""
+    latest = {}
+    for item in record.task_effect_ledger:
+        if item.kind == "provider_observation" and item.phase == "revision":
+            latest[item.effect_key] = item.outcome
+    for key, outcome in latest.items():
+        if outcome in {"completed", "failed_pre_submit"}:
+            record.revision_authority_by_effect.pop(key, None)
+
+
 def record_provider_effect_observation(
     record: TaskRecord,
     assignment: Assignment,
@@ -680,6 +691,7 @@ def record_provider_effect_observation(
         attempt=intent.attempt,
         run_id=run_id,
     )
+    retire_terminal_revision_authority(record)
 
 
 def assignment_is_approved(record: TaskRecord, assignment: Assignment) -> bool:

@@ -22,20 +22,22 @@ from __future__ import annotations
 
 import re
 import unittest
+
+from director_orchestrator.documentation import read_document
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENT = ROOT / "docs" / "human-out-of-the-loop-operation.md"
+DOCUMENT = ROOT / "docs" / "human-out-of-the-loop-operation.html"
 
 
 class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
     def setUp(self) -> None:
         # read_text opens in text mode with newline=None, so a CRLF checkout
         # is already folded to LF before any assertion below sees it.
-        self.text = DOCUMENT.read_text(encoding="utf-8")
-        self.agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-        self.charter = (ROOT / "docs" / "team-operating-charter.md").read_text(encoding="utf-8")
+        self.text = read_document(DOCUMENT)
+        self.agents = read_document(ROOT / "AGENTS.md")
+        self.charter = read_document(ROOT / "docs" / "team-operating-charter.html")
 
     def section(self, heading: str) -> str:
         return self.text.split(f"\n## {heading}", 1)[1].split("\n## ", 1)[0]
@@ -271,7 +273,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
     def test_agents_rules_keep_stopping_as_the_default(self) -> None:
         rule_ten = next(line for line in self.agents.splitlines() if line.startswith("10. "))
         self.assertIn("Stopping is the default and stays the default", rule_ten)
-        self.assertIn("docs/human-out-of-the-loop-operation.md", rule_ten)
+        self.assertIn("docs/human-out-of-the-loop-operation.html", rule_ten)
         self.assertIn("never removes a deterministic gate", rule_ten)
         # Rule 3's no-self-merge bar must survive verbatim.
         rule_three = next(line for line in self.agents.splitlines() if line.startswith("3. "))
@@ -355,7 +357,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         )
 
     def test_charter_points_at_the_framework_without_weakening_its_gates(self) -> None:
-        self.assertIn("docs/human-out-of-the-loop-operation.md", self.charter)
+        self.assertIn("docs/human-out-of-the-loop-operation.html", self.charter)
         # The sentence the framework hangs from must survive unchanged.
         self.assertIn(
             "never substitutes for applicable deterministic\napproval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.",
@@ -389,7 +391,7 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
     pinned here so a later section cannot weaken them untested again.
     """
 
-    FILES = ("AGENTS.md", "docs/team-operating-charter.md")
+    FILES = ("AGENTS.md", "docs/team-operating-charter.html")
 
     def _section(self, name: str) -> str:
         """The section body, whitespace-collapsed and stripped of emphasis.
@@ -400,7 +402,7 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
         already cost a round on a different document. Normalise, then match.
         """
 
-        text = (ROOT / name).read_text(encoding="utf-8")
+        text = read_document(ROOT / name)
         marker = "Approver carries the merge"
         self.assertIn(marker, text, name)
         body = text.split(marker, 1)[1]

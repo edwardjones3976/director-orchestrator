@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Findings — Gate 8, the two holds, and schedule feasibility · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#finding-1--gate-8-is-false-not-unknown">Finding 1 — Gate 8 is false, not unknown</a></li><li class="sub"><a href="#why-this-cannot-be-resolved-before-sunday">Why this cannot be resolved before Sunday</a></li><li class="sub"><a href="#what-this-means-for-saturday">What this means for Saturday</a></li><li class="top"><a href="#finding-2--the-schedule-is-lag-consistent-but-capacity-infeasible">Finding 2 — the schedule is lag-consistent but capacity-infeasible</a></li><li class="top"><a href="#finding-3--the-two-holds-closed">Finding 3 — the two holds, closed</a></li><li class="sub"><a href="#antigravity-the-team-mode-is-already-built-and-i-was-wrong-about-it">Antigravity: the team mode is already built, and I was wrong about it</a></li><li class="sub"><a href="#microsoft-365-copilot-reachable-only-through-a-tenant-administrator">Microsoft 365 Copilot: reachable only through a tenant administrator</a></li><li class="top"><a href="#owner-decisions">Owner decisions</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:30 UTC | BEGIN]] -->
+<h1 id="findings--gate-8-the-two-holds-and-schedule-feasibility">Findings — Gate 8, the two holds, and schedule feasibility</h1>
+<p><strong>Issued by:</strong> Claude, acting Director-Orchestrator · 2026-09-09
+<strong>Owner action required.</strong> Finding 1 changes what this delivery can contain.</p>
+<p>Three determinations, produced by executing WO-15 (R1 cheap-gate sweep) and
+WO-14 (R4/R5 feasibility) early rather than on Wednesday and at the Saturday
+go/no-go, and by closing the two lanes held open in the delegation matrix.</p>
+<hr />
+<h2 id="finding-1--gate-8-is-false-not-unknown">Finding 1 — Gate 8 is <strong>false</strong>, not unknown</h2>
+<p><strong>Determined:</strong> the Native Long Table canary evidence bundle does not exist.
+The canary is <strong>registered, not run.</strong></p>
+<p>Evidence, read directly from the canary worktree
+<code>&lt;worktree&gt;</code>:</p>
+<p><code>director/native-program/langgraph-canary.yaml</code> (schema
+<code>long-table-langgraph-canary/v1</code>) declares the program with execution closed:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>director_runtime.mode</code></td>
+<td><code>disabled</code></td>
+</tr>
+<tr>
+<td><code>director_runtime.enabled</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>director_runtime.new_intake_owner</code></td>
+<td><code>legacy</code></td>
+</tr>
+<tr>
+<td><code>director_runtime.legacy_new_intake_disabled</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>director_runtime.writer_lease_requested</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>provider_surfaces.dispatch_enabled</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>provider_surfaces.paid_execution_enabled</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td>every <code>effects.*</code></td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>terminal_condition.registration_only</code></td>
+<td><strong><code>true</code></strong></td>
+</tr>
+<tr>
+<td><code>terminal_condition.may_claim_primary_runtime_active</code></td>
+<td><code>false</code></td>
+</tr>
+</tbody>
+</table>
+<p>The file's own terminal condition is registration only. <code>director/evidence/</code>
+contains four documents dated 2026-08-25 — browser candidate acceptance, browser
+reference validation, rules safety hardening, WebXR room shell — all of which
+predate the canary program (2026-08-31) and none of which is a canary run. A
+search of both trees for canary evidence returns the program file and its
+README and nothing else.</p>
+<p>Against what <code>docs/langgraph-primary-operations.html</code> requires of the bundle — a
+full all-provider graph run with deterministic IDs through Postgres
+checkpointing in the production namespace, a frozen exact head at completion,
+targeted and full tests, trusted CI, security review, different-provider
+exact-head acceptance, restart/Docker/network recovery drills, zero duplicate
+provider/Slack/GitHub effects, and rollback evidence with preserved ledgers —
+<strong>none is present.</strong></p>
+<p><strong>Gate 8 = <code>F</code>.</strong> Under R2, one false gate makes the conjunction false:</p>
+<pre><code>Done      = AND over gates 1..9              F   (gate 8 false)
+Permitted = Done AND NOT (OR over no-go)     F   (not a pass, and not an unknown)
+</code></pre>
+<h3 id="why-this-cannot-be-resolved-before-sunday">Why this cannot be resolved before Sunday</h3>
+<p>The canary's own <code>provider_surfaces.required</code> list names <strong>all nine lanes</strong> —
+openai, claude, cursor, grok, antigravity, perplexity, firecrawl,
+github-copilot, microsoft-365-copilot — with both
+<code>application_live_evidence_required</code> and
+<code>runtime_adapter_live_evidence_required</code> set to <code>true</code>. Completing the canary
+therefore requires <code>LIVE_OK</code> on every one of those surfaces, including
+Microsoft 365 Copilot, whose transport is hard-coded unauthenticated pending a
+tenant administrator (Finding 3). The dependency chain is:</p>
+<pre><code>Gate 8  →  canary run  →  nine lanes LIVE_OK  →  M365 Copilot Work IQ  →  tenant admin consent
+</code></pre>
+<p>The last link is an external dependency with no path that closes this week. The
+canary is also bound to a different product repository
+(<code>edwardjones3976/long-table-bid-whist</code>) at baseline <code>4d26680f</code> / tree
+<code>1e0db56f</code>, and its recorded Director implementation commit is <code>811700cf</code> —
+PR #82's head, far behind current <code>main</code>.</p>
+<h3 id="what-this-means-for-saturday">What this means for Saturday</h3>
+<p><code>Activate</code> on the candidate-live profile is <strong>not permitted</strong> under the
+activation gates as written. Three courses exist, and the choice is the owner's.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>What ships by Sunday</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A — floor deliverable (recommended)</strong></td>
+<td>Accepted candidate on the frozen SHA; Stage A simulated evidence on profile S; n8n intake hardening and status workflow; close-out report and user guide. Gate 8 recorded <code>F</code> with this evidence and the dependency chain named</td>
+<td>The live <code>Activate</code> and the paid canary do not happen. Attended time drops from 12.1 h to about 6.1 h and both window overruns in Finding 2 disappear</td>
+</tr>
+<tr>
+<td><strong>B — activate with Gate 8 recorded unmet</strong></td>
+<td>Everything in A plus the live phase</td>
+<td>Requires an explicit owner decision, recorded verbatim in the report, to activate against a false activation gate. It also still needs the Finding 2 capacity fix. The Director will execute it if directed and will not represent it as a passed gate</td>
+</tr>
+<tr>
+<td><strong>C — complete the canary</strong></td>
+<td>Gate 8 satisfied properly</td>
+<td>Not achievable this week: it needs nine lanes at <code>LIVE_OK</code> behind a tenant-administration dependency</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Director's recommendation: A.</strong> The delivery still contains a real accepted
+candidate, a real simulated activation with the authority row genuinely moving,
+working n8n integration, and an honest report. Option B is available and is a
+legitimate owner call; it is not one the Director will make.</p>
+<p><strong>This is what R1 was adopted for.</strong> Under the previous plan this determination
+would have arrived at the Saturday noon go/no-go with eighteen hours left. It
+arrived instead with about a hundred, because determining the gate is cheap even
+though satisfying it is not.</p>
+<h2 id="finding-2--the-schedule-is-lag-consistent-but-capacity-infeasible">Finding 2 — the schedule is lag-consistent but capacity-infeasible</h2>
+<p>WO-14, run early. <strong>R4 passes, R5 fails.</strong></p>
+<p>The maximum-lag constraint holds comfortably:
+<code>t(Activate) − t(finish ValidateProviders) = 2.00 h ≤ 24 h</code>, and the constraint
+graph contains no negative cycle. <code>ValidateProviders</code> must finish inside
+<code>[Fri 13:00, Sat 13:00]</code>; the planned Saturday 09:00–11:00 sits well within it.</p>
+<p>The capacity constraint does not hold. Aggregate looks fine — 22.50 h of owner
+windows against 12.08 h of attended work, slack +10.42 h — but capacity is one
+and the slack is in the wrong windows:</p>
+<table>
+<thead>
+<tr>
+<th>Window</th>
+<th style="text-align:right">Available</th>
+<th style="text-align:right">Assigned</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Wed 09:00–17:00</td>
+<td style="text-align:right">8.00 h</td>
+<td style="text-align:right">0.58 h</td>
+<td>7.42 h unused</td>
+</tr>
+<tr>
+<td><strong>Thu 19:00–21:30</strong></td>
+<td style="text-align:right">2.50 h</td>
+<td style="text-align:right">4.00 h</td>
+<td><strong>over by 1.50 h</strong></td>
+</tr>
+<tr>
+<td><strong>Fri 18:00–20:00</strong></td>
+<td style="text-align:right">2.00 h</td>
+<td style="text-align:right">2.50 h</td>
+<td><strong>over by 0.50 h</strong></td>
+</tr>
+<tr>
+<td>Sat 09:00–17:00</td>
+<td style="text-align:right">8.00 h</td>
+<td style="text-align:right">4.50 h</td>
+<td>3.50 h unused</td>
+</tr>
+<tr>
+<td>Sun 05:00–07:00</td>
+<td style="text-align:right">2.00 h</td>
+<td style="text-align:right">0.50 h</td>
+<td>1.50 h unused</td>
+</tr>
+</tbody>
+</table>
+<p>Thursday cannot hold both profiles' acceptance lifecycles (2.50 h for L plus
+1.50 h for S), and Friday cannot hold WO-10 prep plus the Stage A pass.</p>
+<p><strong>Fix, and it is free:</strong> move profile S's acceptance lifecycle to Wednesday,
+which has 7.42 h unused. That clears Thursday to 2.50 h against 2.50 h and
+frees Friday to 2.00 h against 1.50 h. Under option A the overruns vanish
+anyway, but the Wednesday move is worth making regardless because it front-loads
+the work into the largest window.</p>
+<h2 id="finding-3--the-two-holds-closed">Finding 3 — the two holds, closed</h2>
+<h3 id="antigravity-the-team-mode-is-already-built-and-i-was-wrong-about-it">Antigravity: the team mode is already built, and I was wrong about it</h3>
+<p>I said reaching Antigravity's authorized team mode &quot;is a code and charter change
+to <code>antigravity.py</code>'s contract.&quot; That was wrong — the third correction I owe on
+this matrix, and the most consequential in the provider's favour.</p>
+<p>The team mode is implemented and sits behind one configuration switch,
+<code>LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED</code> (<code>config.py:750</code>, default false).
+Behind it: <code>antigravity_team.py</code>, <code>_artifacts.py</code>, <code>_routing.py</code>, <code>_transport.py</code>
+and <code>_worker.py</code>; <code>team_ddl(schema)</code> composed into <code>_control_plane_ddl</code>, so the
+schema is created by the ordinary <code>Migrate</code>; a <code>director_primary_team_guard</code>
+trigger enforced at the database; a <code>TeamGrant</code> carrying explicit
+<code>writable_paths</code>; a <code>PinnedSshTeamWorker</code>; the format pair
+<code>(&quot;antigravity-team-engineering-v1&quot;, &quot;qualified-native-worker-v1&quot;)</code> with its
+schema already in <code>docs/schemas/</code>; and a dedicated qualification canary in
+<code>provider_validation_team.py</code> described as &quot;a dedicated synthetic canary through
+the actual pinned SSH engineering worker.&quot;</p>
+<p>So Antigravity's path to real engineering work with writable paths is
+<strong>configuration, migration and worker authentication</strong>, not a contract rewrite:</p>
+<ol>
+<li>Set <code>LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED=true</code> on the candidate profile.</li>
+<li><code>Migrate</code> creates the team schema and guard trigger as part of the control plane.</li>
+<li>Authenticate the pinned SSH engineering worker — <code>antigravity_team_transport</code>
+states that absent authenticated worker evidence the lane fails closed.</li>
+<li>Run the qualification canary in <code>provider_validation_team.py</code>.</li>
+<li>Issue a <code>TeamGrant</code> with explicit writable paths bounded to a partition.</li>
+</ol>
+<p><strong>Open question for the owner:</strong> does a reachable SSH worker host exist for step
+3? That is the one thing the repository cannot tell me, and it decides whether
+this is a Thursday task or a post-Sunday one. Everything else is on the
+candidate already.</p>
+<h3 id="microsoft-365-copilot-reachable-only-through-a-tenant-administrator">Microsoft 365 Copilot: reachable only through a tenant administrator</h3>
+<p>The lane was retired by #161 and is not in LANES. The
+blocker is transport, and it is specific: Work IQ requires a <strong>delegated work or
+school Entra identity</strong> with admin-consented <code>WorkIQAgent.Ask</code>; personal and
+application permissions are unsupported, and the tenant administrator must
+enable Work IQ. Only a successful authenticated response bound to its Microsoft
+request ID, body digest, conversation ID and signed token subject proves tenant
+enablement and licence entitlement. Environment booleans, configuration and a
+consumer-app installation are not evidence.</p>
+<p><strong>The determination the owner must make is binary:</strong> is there an M365 business or
+enterprise tenant with an administrator who can grant that consent? If not, the
+lane is not reachable at all, and the canary requirement in Finding 1 that
+depends on it is unreachable with it. Either way the lane must stay out of the
+activation binding map until a verified response exists, because the combined
+live signal is AND-ed across every configured binding.</p>
+<h2 id="owner-decisions">Owner decisions</h2>
+<p><strong>D-12 — delivery scope.</strong> Option A, B or C from Finding 1. Recommendation: A.
+This is the decision that shapes everything from Thursday onward.</p>
+<p><strong>D-13 — Wednesday capacity move.</strong> Move profile S's acceptance lifecycle into
+Wednesday's unused 7.42 h. Free, and worth doing under either A or B.</p>
+<p><strong>D-14 — Antigravity SSH worker.</strong> Does a reachable, authenticable pinned SSH
+worker host exist? If yes, Antigravity team mode is a Thursday task and the lane
+gets real writable-path engineering work.</p>
+<p><strong>D-15 — Microsoft 365 tenant.</strong> Is there a work or school tenant with an
+administrator who can consent to <code>WorkIQAgent.Ask</code>? A yes makes the lane a
+post-Sunday enablement; a no closes it permanently and, with it, the canary path
+in Finding 1.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

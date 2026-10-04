@@ -17,6 +17,7 @@
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Render the read-only twenty-check Director scorecard."""
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -27,21 +28,75 @@ from pathlib import Path
 # checkout's copy of this file is never trusted to check itself (review 4112412081). The check below is a second
 # line against a direct run, standard library only, before any repository module is imported.
 ROOT = Path(__file__).resolve().parents[1]
-# The owner-installed release descriptor (primary_scorecard_evidence.RELEASE_DESCRIPTOR), read here with json alone.
-RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
+# The owner-installed release descriptor, read here with json alone. Its location is this process's own
+# OS-resolved account home (never HOME/USERPROFILE, and never DIRECTOR_SCORECARD_OWNER_HOME merely because a
+# descriptor digest is also present -- #287 item 34): a caller-controlled environment must not relocate the owner
+# trust root. Its exact bytes must hash to the digest the launcher pinned (#287 item 33). A run the launcher did
+# not start has no descriptor.
+OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"
+DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
 TREE_ENV, REPO_ENV = "DIRECTOR_SCORECARD_TREE", "DIRECTOR_SCORECARD_REPO"  # set by the launcher
 SHA_ENV = "DIRECTOR_SCORECARD_EVALUATOR_SHA"  # the exact pin the launcher extracted the tree from
 ROTATED = "the release descriptor no longer pins the evaluator revision the launcher extracted"
 
 
-def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+def account_home() -> Path:
+    """The account's profile directory from the operating system, never HOME or USERPROFILE (#287 item 34): the
+    identical lookup scripts/scorecard-launcher.py's account_home() performs. Standalone (no import of that file,
+    or of any repository module) so this still runs before any repository module is imported."""
+    if os.name == "nt":
+        import ctypes
+        import uuid
+        folder = (ctypes.c_byte * 16).from_buffer_copy(
+            uuid.UUID("5E6C858F-0E22-4760-9AFE-EA3317B67173").bytes_le)  # FOLDERID_Profile
+        path = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(path)) != 0:
+            raise OSError("the account profile folder could not be resolved")
+        try:
+            return Path(path.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path)
+    import pwd
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:  # an effective UID with no passwd/NSS entry (arbitrary-UID containers)
+        raise OSError("the account has no passwd entry") from error
+    if not home or not os.path.isabs(home):
+        raise OSError("the account home is not an absolute path")
+    return Path(home)
+
+
+def release_descriptor() -> Path | None:
+    """The OS-resolved owner root's descriptor (#287 item 34): a caller-controlled DIRECTOR_SCORECARD_OWNER_HOME is
+    never the source of this path, merely because a descriptor digest is also present. DESCRIPTOR_ENV still gates
+    this to launcher-started runs; a forwarded owner-home claim that disagrees with the OS-resolved account is
+    treated the same as a run the launcher never started."""
+    if not os.environ.get(DESCRIPTOR_ENV):
+        return None
+    try:
+        home = account_home()
+    except OSError:
+        return None
+    forwarded = os.environ.get(OWNER_HOME_ENV)
+    if forwarded is not None and Path(forwarded).resolve() != home.resolve():
+        return None
+    return home / ".director-scorecard" / "release-descriptor.json"
+
+
+def pinned_evaluator(descriptor: Path | None = None) -> str | None:
     """The descriptor's evaluator_sha (40 lowercase hex), or None: absent, a link, oversized, malformed, another
-    version or no pin."""
+    version, no pin, or bytes other than the ones the launcher pinned."""
+    descriptor = descriptor or release_descriptor()
+    if descriptor is None:
+        return None
     try:
         if descriptor.is_symlink() or not descriptor.is_file() or descriptor.stat().st_size > 1_048_576:
             return None
-        value = json.loads(descriptor.read_bytes())
+        raw = descriptor.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != os.environ.get(DESCRIPTOR_ENV):
+            return None
+        value = json.loads(raw)
     except (OSError, ValueError):
         return None
     pin = value.get("evaluator_sha") if isinstance(value, dict) and value.get("version") == DESCRIPTOR_VERSION else None
@@ -76,7 +131,7 @@ def _reject_git_metadata(repo: Path) -> None:
     raise ValueError("grafts metadata is not permitted")
 
 
-def launch_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+def launch_refusal(root: Path = ROOT, descriptor: Path | None = None) -> str | None:
     """None when this file runs from the launcher's archived evaluator tree and the pin is on github/main."""
     pinned = pinned_evaluator(descriptor)
     if pinned is None:
@@ -146,8 +201,9 @@ def main() -> int:
     refusal = launch_refusal()
     if refusal is not None:
         parser.error("scorecard not run from the pinned evaluator checkout: " + refusal)
-    from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
+    from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, score,
                                                            untrusted_checkout, _launcher)
+    from director_orchestrator.scorecard_html import render_html
     try:
         launcher = _launcher()
         attestation = launcher.run_attestation(ROOT)
@@ -171,16 +227,18 @@ def main() -> int:
             report = refuse_untrusted(report, refused)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         json_path = args.output_dir / "completion-scorecard.json"
-        md_path = args.output_dir / "completion-scorecard.md"
+        html_path = args.output_dir / "completion-scorecard.html"
         json_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        md_path.write_text(render_markdown(report, _pending_launch=True), encoding="utf-8")
+        # This first display is UNATTESTED while its receipt is pending. The
+        # installed launcher replaces it only after sealing this exact JSON.
+        html_path.write_text(render_html(report), encoding="utf-8")
         if report["attested"] is True:
             Path(os.environ["DIRECTOR_SCORECARD_RESULT"]).write_text(json.dumps(report), encoding="utf-8")
         else:
             print(launcher.UNATTESTED)
         print(json.dumps({"score": f"{report['passed']}/20" if report["attested"] else "UNATTESTED",
                           "attested": report["attested"], "json": str(json_path.resolve()),
-                          "markdown": str(md_path.resolve()), "activation_authorized": False}))
+                          "html": str(html_path.resolve()), "activation_authorized": False}))
     except (OSError, ValueError) as error:
         parser.error(str(error))
     return 0

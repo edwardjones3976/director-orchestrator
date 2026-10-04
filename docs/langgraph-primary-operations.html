@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>LangGraph-primary operations authority · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#current-truth">Current truth</a></li><li class="top"><a href="#target-topology">Target topology</a></li><li class="top"><a href="#deterministic-policy-remains-authority">Deterministic policy remains authority</a></li><li class="top"><a href="#persistence-postgres-thread-ids-namespaces">Persistence: Postgres, thread IDs, namespaces</a></li><li class="top"><a href="#external-effects-intent-ledger-idempotency-reconciliation">External effects: intent ledger, idempotency, reconciliation</a></li><li class="top"><a href="#single-writer-lease-and-fencing">Single-writer lease and fencing</a></li><li class="top"><a href="#interrupts-approvals-and-idempotent-side-effects">Interrupts, approvals, and idempotent side effects</a></li><li class="top"><a href="#provider-roles">Provider roles</a></li><li class="top"><a href="#native-long-table-canary-evidence">Native Long Table canary evidence</a></li><li class="top"><a href="#activation">Activation</a></li><li class="top"><a href="#rollback">Rollback</a></li><li class="top"><a href="#explicit-no-go-conditions">Explicit no-go conditions</a></li><li class="top"><a href="#relationship-to-runtime-switches">Relationship to runtime switches</a></li><li class="top"><a href="#source-architecture-and-review-boundaries">Source architecture and review boundaries</a></li><li class="top"><a href="#active-documentation-guard">Active documentation guard</a></li><li class="top"><a href="#work-ownership">Work ownership</a></li><li class="top"><a href="#windows-docker-activation-tooling">Windows Docker activation tooling</a></li><li class="top"><a href="#default-parallel-assignment-lifecycle">Default parallel assignment lifecycle</a></li><li class="top"><a href="#authenticated-recovery-and-completion-ingress">Authenticated recovery and completion ingress</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:31 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer | 2026-08-31 | 09:55 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer | 2026-08-31 | 09:50 UTC | BEGIN]] -->
+<h1 id="langgraph-primary-operations-authority">LangGraph-primary operations authority</h1>
+<p><strong>Status:</strong> merged source architecture; deployment and paid activation require fresh,
+release-bound evidence. This page is not a live health report.
+<strong>Owner:</strong> Aesop / Ed
+<strong>Orchestration authority:</strong> deterministic policy and code (<code>policy.py</code>), never model output
+<strong>Repository:</strong> <code>edwardjones3976/director-orchestrator</code></p>
+<p>Source reconciliation baseline: <code>2f21b793cc7b10586948e1b3f3c2c6fc0eab16ec</code>.
+The canonical operations procedures below apply to a selected release. Record that
+release's exact source, image and generation in its acceptance package; the
+source baseline above is not Long Table canary authority or a deployment receipt.</p>
+<p>Archived pre-primary sources (historical, non-authoritative):</p>
+<ul>
+<li><a href="archive/langgraph-pre-primary/langgraph-transition-plan-pre-primary.md">langgraph-transition-plan-pre-primary.md</a></li>
+<li><a href="archive/langgraph-pre-primary/langgraph-shadow-operations-pre-primary.md">langgraph-shadow-operations-pre-primary.md</a></li>
+</ul>
+<h2 id="current-truth">Current truth</h2>
+<p>Read current deployment ownership from authenticated health and its authoritative
+writer ledger at the selected generation. Neither a merged PR nor a configured
+switch establishes ownership, provider qualification or paid execution. Offline
+LangGraph intake ownership can coexist with paid dispatch disabled; distinguish
+those observations explicitly in the acceptance package.</p>
+<p>Exactly one engine owns each task's mutations and external effects. Ownership
+transfer requires the cutover gates below; rollback must preserve the ledger and
+reconcile external effects rather than blindly replay them. Gate 0 accepted a
+prerequisite, not a deployment. Packet schemas, the
+<a href="model-interoperability-contract.html">interoperability contract</a>, and the
+<a href="director-completion-gates.html">completion gates</a> remain binding as subordinate
+current contracts under this operations authority.</p>
+<h2 id="target-topology">Target topology</h2>
+<p>LangGraph becomes the primary coordinator for the full task lifecycle:</p>
+<ol>
+<li><strong>Intake and deduplication</strong> — authenticated Slack/API events with stable
+idempotency keys.</li>
+<li><strong>Authority binding</strong> — project/profile, allowlisted repository, immutable
+starting commit and authority-snapshot digest.</li>
+<li><strong>Plan and decomposition</strong> — configured runtime Director planning; validated assignment DAG.</li>
+<li><strong>Deterministic gates</strong> — policy preflight, workload limits, budget reservation,
+hop/revision/timeout counters; model output may add gates, never remove them.</li>
+<li><strong>Authenticated interrupts</strong> — owner approval and provider callbacks bound to
+task, assignment, generation, scope, candidate digest/SHA, actor, and expiry.</li>
+<li><strong>Dependency scheduling</strong> — only dependency-ready assignments enter dispatch.</li>
+<li><strong>Provider subgraphs</strong> — v1 packet boundary adapters; provider-native payloads
+stay inside envelopes.</li>
+<li><strong>Evidence aggregation</strong> — normalized manifests, usage, interaction evidence.</li>
+<li><strong>Bounded debate</strong> — Gemini/Antigravity simulation and behavioral validation
+lanes where policy permits; not free-form routing.</li>
+<li><strong>Synthesis and acceptance</strong> — configured runtime Director integrates peer
+evidence; cannot accept its own exact candidate.</li>
+<li><strong>Revisions</strong> — bounded revision loop with deterministic escalation.</li>
+<li><strong>Exact-candidate review</strong> — independent exact-head acceptance under the
+applicable review contract before merge authority.</li>
+<li><strong>CI, security, and completion gates</strong> — trusted CI, security review, and
+allowlisted completion workers. Exact-head evidence alone grants no merge or
+deployment authority; a deterministic effect executor may perform an explicitly
+owner-authorized scoped merge or deployment only after all current gates,
+ledger, idempotency, and writer-fence checks pass.</li>
+<li><strong>Deterministic effects</strong> — GitHub/Slack writes through policy effect keys.</li>
+<li><strong>Reconciliation</strong> — ambiguous provider or side-effect outcomes enter explicit
+reconciliation; never blind retry.</li>
+<li><strong>Terminal reporting</strong> — durable task record and owner-visible summary.</li>
+</ol>
+<p>Failure routes are explicit: retry (when idempotent), quarantine, owner decision,
+cancellation, or terminal failure. No model chat controls routing.</p>
+<h2 id="deterministic-policy-remains-authority">Deterministic policy remains authority</h2>
+<p><code>src/director_orchestrator/policy.py</code> and deterministic code own approval,
+repository, branch, cost, timeout, hop, revision, exact-SHA, CI, security, budget,
+safety, and owner gates. Model output is untrusted data.</p>
+<ul>
+<li>Models cannot widen permissions, bypass exact-SHA review, skip CI or security
+gates, reset budgets after restart, revive cancelled work, or approve their own
+implementation.</li>
+<li>Checkpoint rollback restores workflow state; it does not undo commits, provider
+runs, Slack messages, or GitHub writes.</li>
+<li>Provider identity never grants authority; all providers consume the same
+validated work contract.</li>
+</ul>
+<h2 id="persistence-postgres-thread-ids-namespaces">Persistence: Postgres, thread IDs, namespaces</h2>
+<p><strong>Production</strong> requires a dedicated PostgreSQL LangGraph checkpointer, separate from
+legacy task tables and effect ledgers.</p>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Checkpointer</td>
+<td>Dedicated Postgres store; not shared with unrelated services</td>
+</tr>
+<tr>
+<td>Thread ID</td>
+<td>Stable, task-derived; survives restarts and redeployments</td>
+</tr>
+<tr>
+<td>Namespace</td>
+<td>Versioned deployment/graph namespace; distinct from shadow and legacy</td>
+</tr>
+<tr>
+<td>Schema migrations</td>
+<td>Planned, tested, and reversible; recorded in activation evidence</td>
+</tr>
+<tr>
+<td>Backup/restore</td>
+<td>Mandatory before cutover; restore drill included in rollback evidence</td>
+</tr>
+<tr>
+<td>Secret exclusion</td>
+<td>No secrets, tokens, or raw credentials in checkpoints or traces</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Local test only:</strong> SQLite file checkpoints and in-memory checkpointers. They do
+not satisfy production activation gates and must not be cited as cutover evidence.</p>
+<p>Pre-primary shadow and packet-runtime SQLite paths remain historical local-dev
+artifacts until Postgres cutover evidence replaces them.</p>
+<p>Graph checkpoint stores and effect ledgers are <strong>separate durable stores</strong>. Do not
+claim atomic cross-store commits unless a later implementation proves one shared
+Postgres transaction covering both.</p>
+<h2 id="external-effects-intent-ledger-idempotency-reconciliation">External effects: intent ledger, idempotency, reconciliation</h2>
+<p>Every external effect (provider dispatch, Slack write, GitHub mutation, callback
+mutation, merge/deployment action) requires:</p>
+<ol>
+<li><strong>Durable intent</strong> — commit durable effect intent to the ledger <strong>before</strong> the
+external call.</li>
+<li><strong>Budget reservation</strong> — dispatch and review cost reserved before paid work.</li>
+<li><strong>Stable idempotency key</strong> — same key replays durable outcome or stops.</li>
+<li><strong>Ledger consult on graph replay</strong> — when a node reruns after interrupt or
+restart, consult the effect ledger by the stable idempotency key; do not blindly
+re-execute if intent or terminal evidence already exists.</li>
+<li><strong>Fail-closed on drift</strong> — any crash window, checkpoint-ledger drift, or
+disagreement between graph checkpoint state and ledger rows enters fail-closed
+reconciliation and remote readback; never blind retry.</li>
+<li><strong>Terminal evidence</strong> — authenticated callback or remote readback bound to the
+original intent bindings.</li>
+<li><strong>Reconciliation for ambiguity</strong> — timeout, process loss, or conflicting callback
+moves to <code>RECONCILIATION_REQUIRED</code>; no blind resend.</li>
+</ol>
+<p>The primary effect executor adds an append-only execution marker between intent
+reservation and the mutating call. Exactly one current writer can create that
+marker. A restart that sees the marker but no remote binding records ambiguity
+and never calls the mutation again; a restart with a binding performs bounded
+readback only. The mutating and readback transports are explicit injected
+dependencies with fixed timeouts. Live startup fails closed when either is
+missing, and <code>/health.langgraph_primary.effect_executor_ready</code> must be true for
+<code>primary_runtime_active</code> to become true.</p>
+<p>Ambiguous effects never receive a second unreserved attempt. Owner or authenticated
+readback must settle reconciliation before progression.</p>
+<h2 id="single-writer-lease-and-fencing">Single-writer lease and fencing</h2>
+<p>Exactly one engine may own provider dispatch, Slack/GitHub writes, callback
+mutation, merge/deployment actions, and task-state transitions for a task.</p>
+<ul>
+<li>A <strong>durable single-writer lease</strong> with <strong>fencing generation</strong> protects every
+writer edge. A stale generation fails closed.</li>
+<li><strong>Dual writer ownership is a no-go.</strong> Legacy intake must be disabled before the
+graph writer lease is acquired for new work.</li>
+<li>Never run legacy and graph dispatchers against the same active task as a
+&quot;comparison.&quot;</li>
+<li><code>/health</code> must report checkpoint, writer, and reconciliation readiness before
+cutover; health never exposes secrets.</li>
+</ul>
+<h2 id="interrupts-approvals-and-idempotent-side-effects">Interrupts, approvals, and idempotent side effects</h2>
+<p>LangGraph may resume an interrupt by rerunning a node. Therefore every
+pre-interrupt side effect must be idempotent under replay.</p>
+<p>Approval and callback resumes bind:</p>
+<ul>
+<li>task ID and assignment ID;</li>
+<li>writer generation and scope;</li>
+<li>candidate digest/SHA;</li>
+<li>actor identity and expiry.</li>
+</ul>
+<p>Stale approval, rebinding, or scope mismatch fails closed. Interrupt resume does
+not transfer writer ownership to model output.</p>
+<h2 id="provider-roles">Provider roles</h2>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>OpenAI / Codex</strong></td>
+<td>Default runtime Director; bounded engineering and eligible independent review</td>
+</tr>
+<tr>
+<td><strong>Claude</strong></td>
+<td>Engineering/review peer; alternate runtime Director only when explicitly activated</td>
+</tr>
+<tr>
+<td><strong>Cursor</strong></td>
+<td>Full-spectrum implementation and review peer</td>
+</tr>
+<tr>
+<td><strong>Grok</strong></td>
+<td>Independent xAI lane; adversarial and security value; Grok Bot and Cursor-hosted models are separate routes</td>
+</tr>
+<tr>
+<td><strong>Gemini / Antigravity</strong></td>
+<td>Isolated implementation, simulation, behavioral validation, bounded debate</td>
+</tr>
+<tr>
+<td><strong>Perplexity</strong></td>
+<td>Public sourced evidence only; no private data expansion</td>
+</tr>
+<tr>
+<td><strong>Firecrawl</strong></td>
+<td>Public repository-research acquisition where the selected profile permits it</td>
+</tr>
+<tr>
+<td><strong>GitHub Copilot</strong></td>
+<td>Bounded hygiene where the selected profile permits it; distinct from retired Microsoft 365 Copilot</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Acceptance rule:</strong> a producer cannot independently accept its own exact candidate.
+Exact-head acceptance requires a different provider than the implementation producer.</p>
+<h2 id="native-long-table-canary-evidence">Native Long Table canary evidence</h2>
+<p>The Native Long Table canary proves the full all-provider graph on an isolated lane.
+It is evidence for orchestration graduation only. <strong>Physical Quest validation</strong> is a
+separate gate and is not satisfied by this canary. Passing the canary does not
+claim production readiness, deployment permission, or permission to merge product
+<code>main</code>.</p>
+<p><strong>Accepted Native Long Table source baseline (canary authority):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Commit</td>
+<td><code>4d26680fb99abacb20ecb18807b7c8833646cfa3</code></td>
+</tr>
+<tr>
+<td>Tree</td>
+<td><code>1e0db56f1e85d66c93ab64bc3dca8c237947c210</code></td>
+</tr>
+<tr>
+<td>Source worktree</td>
+<td><code>&lt;worktree&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Canary target:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Worktree</td>
+<td><code>&lt;worktree&gt;</code></td>
+</tr>
+<tr>
+<td>Branch</td>
+<td><code>codex/native-langgraph-canary</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Prohibited canary authority:</strong> do not use stale native-first-deal commit
+<code>fb729579</code> or its branch as canary authority. Those identifiers are historical only.</p>
+<p>Procedure:</p>
+<ol>
+<li>Bind the accepted source baseline commit and tree above as the immutable authority
+for Native Long Table canary intake.</li>
+<li>Execute in the isolated canary worktree and branch listed above.</li>
+<li>Run the scoped graph with applicable qualified providers, deterministic IDs
+and Postgres checkpointing in the selected isolated canary namespace. A zero
+allocation target does not permit filler assignments to manufacture coverage.</li>
+<li><strong>Freeze exact head</strong> — record commit SHA and tree digest at canary completion.</li>
+<li>Require <strong>targeted and full tests</strong>, Unreal build/automation evidence where
+applicable, trusted CI, security review, <strong>contract-eligible independent exact-head
+acceptance</strong>, restart/Docker/network recovery drills, <strong>zero duplicate</strong>
+provider/Slack/GitHub effects, and rollback evidence with preserved ledgers.</li>
+<li><strong>Merge scope:</strong> the canary may merge only an <strong>isolated test-only candidate</strong>
+when separately owner-authorized. It may <strong>never</strong> merge product <code>main</code> or
+deploy merely because the canary passes.</li>
+</ol>
+<h2 id="activation">Activation</h2>
+<p>LangGraph becomes primary only after <strong>all</strong> gates pass and owner accepts evidence:</p>
+<ol>
+<li>Independent review and trusted CI/security on the exact candidate SHA.</li>
+<li>Postgres checkpointer live with backup/restore drill recorded.</li>
+<li>Distinct namespaces for deployment, graph, checkpoint, and effect ledger stores.</li>
+<li><strong>Legacy intake disabled</strong> before acquiring the graph writer lease for new tasks.</li>
+<li>Pre-cutover tasks <strong>bound or explicitly migrated</strong>; no orphaned dual ownership.</li>
+<li><code>/health</code> shows checkpoint, writer, and reconciliation readiness.</li>
+<li>Kill switch blocks new graph tasks and reconciles in-flight effects.</li>
+<li>Long Table canary evidence bundle complete (see above).</li>
+<li>Owner/operator acceptance recorded with exact commits, profile IDs, store digests,
+provider run IDs, costs, and rollback drill results.</li>
+</ol>
+<p>Merged code or documentation alone satisfies none of these rows.</p>
+<h2 id="rollback">Rollback</h2>
+<p>Rollback preserves evidence and never deletes ledgers to enable retry.</p>
+<ol>
+<li>Stop new graph intake; engage parallel kill switch if active.</li>
+<li>Allow in-flight effects to complete or move through authenticated reconciliation.</li>
+<li>Do not hand unresolved packet assignments to the legacy engine.</li>
+<li>Disable graph writer and live dispatch; confirm legacy sole-writer for new tasks.</li>
+<li>Export checkpoint, task, and effect state; switch deployment flag to last accepted
+engine; restart isolated profile.</li>
+<li>Reconcile provider runs and Slack/GitHub writes by idempotency key.</li>
+<li>Resume only after owner review; preserve checkpoint and ledger databases as evidence.</li>
+</ol>
+<p>Destructive rollback (ledger deletion, checkpoint wipe, secret-bearing export) is
+prohibited.</p>
+<h2 id="explicit-no-go-conditions">Explicit no-go conditions</h2>
+<p>Do not activate or widen the canary when any condition holds:</p>
+<table>
+<thead>
+<tr>
+<th>No-go</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dual writers</td>
+<td>Race on dispatch, Slack, GitHub, or task state</td>
+</tr>
+<tr>
+<td>Missing durable Postgres checkpointing</td>
+<td>Cannot survive restart or prove recovery</td>
+</tr>
+<tr>
+<td>Unreserved external effects</td>
+<td>Duplicate charge or write risk</td>
+</tr>
+<tr>
+<td>Ambiguous paid retries without readback</td>
+<td>Blind resend violates reconciliation policy</td>
+</tr>
+<tr>
+<td>Stale evidence</td>
+<td>Acceptance bound to wrong SHA or digest</td>
+</tr>
+<tr>
+<td>Approval rebinding</td>
+<td>Stale or widened approval scope</td>
+</tr>
+<tr>
+<td>Secret-bearing checkpoints</td>
+<td>Credential leakage and rollback contamination</td>
+</tr>
+<tr>
+<td>Budget reset after restart</td>
+<td>Cost escape</td>
+</tr>
+<tr>
+<td>Revived cancelled work</td>
+<td>Policy violation</td>
+</tr>
+<tr>
+<td>Destructive rollback</td>
+<td>Evidence loss and unsafe retry</td>
+</tr>
+<tr>
+<td>Stale native-first-deal authority (<code>fb729579</code>)</td>
+<td>Wrong Long Table baseline</td>
+</tr>
+</tbody>
+</table>
+<h2 id="relationship-to-runtime-switches">Relationship to runtime switches</h2>
+<p>Pre-primary documents described SQLite-backed packet runtime switches
+(<code>LANGGRAPH_RUNTIME_*</code>, shadow flags). Those paths are <strong>historical local-dev
+evidence</strong>. Primary activation targets Postgres checkpointing, graph-coordinated
+lifecycle, and the writer lease described here.</p>
+<p>Until activation evidence passes, treat any <code>LANGGRAPH_*</code> switch in a deployment as
+operator-local unless health and ledger inspection prove otherwise. Do not present
+contract-only or default-off features as active production behavior.</p>
+<h2 id="source-architecture-and-review-boundaries">Source architecture and review boundaries</h2>
+<p>The accepted release must expose distinct request and result boundaries around
+its internal checkpoint state, preserve compatible persisted keys and keep
+sequential parent-node fields under LastValue semantics. Parallel assignment
+coordination must not introduce concurrent writes or additive reducers for those
+fields without a separately reviewed contract. Bind proof of these requirements
+to the exact accepted release and its schema/regression tests; an implementation
+assignment or this document alone does not prove that the schemas have landed.
+Typed ingress and provider packet contracts remain binding independently.</p>
+<p>Ordinary repository PRs follow the current <a href="../AGENTS.md">agent rules</a>: one material
+non-author reviewer records exact-head ACCEPT and performs the authorized merge.
+That does not remove provider identity separation required by runtime acceptance
+issuers or completion receipts. Runtime provider evidence must satisfy its actual
+binding contract; a PR comment is not a provider activation receipt.</p>
+<p>Workload targets come from <code>allocation_profiles.py</code>, selected per intake. The
+engineering profile assigns OpenAI/Claude/Cursor/Grok/Antigravity 40/25/15/10/10;
+its other lanes have zero targets. Other profiles enable research or hygiene as
+needed. Preserve the twenty-real-assignment denominator, soft tolerance and hard
+limits; use neither fake assignments nor automatic redistribution.</p>
+<h2 id="active-documentation-guard">Active documentation guard</h2>
+<p><code>python scripts/check_active_documentation.py</code> checks active Markdown and YAML under <code>docs/</code>
+and <code>prompts/</code>, plus root README/agent instructions. It excludes <code>docs/archive/**</code>.
+Its semantic rules target obsolete fixed allocation, unconditional legacy-writer
+claims and retired blanket provider restrictions; this is a focused regression
+check, not a proof of every statement or current deployment state.</p>
+<p>A necessary historical quotation outside the archive can use an explicit HTML
+comment pair <code>director-doc-history BEGIN: &lt;reason&gt;</code> / <code>director-doc-history END</code>
+around only the quotation. The reason is mandatory; nested, unmatched or empty
+blocks fail validation. Reviewers must reject a history exemption used to hide
+current instructions. The checker does not exempt whole dated files automatically.</p>
+<h2 id="work-ownership">Work ownership</h2>
+<ul>
+<li><strong>Owner / Director:</strong> authority, exceptions, cutover, rollback, final acceptance.</li>
+<li><strong>Control-plane implementation:</strong> graph, Postgres persistence, state mapping,
+compatibility, recovery.</li>
+<li><strong>Provider adapters:</strong> translate neutral packets; do not own workflow state.</li>
+<li><strong>Independent review:</strong> behavior, security, evidence, provider parity.</li>
+<li><strong>Project consumers:</strong> validate orchestration cannot alter product canon or
+evidence meaning.</li>
+</ul>
+<p>No model approves its own migration PR or accepts its own exact candidate.</p>
+<!-- [[Cursor Agent | Composer | 2026-08-31 | 09:50 UTC | END]] -->
+<!-- [[Cursor Agent | Composer | 2026-08-31 | 09:55 UTC | END]] -->
+<h2 id="windows-docker-activation-tooling">Windows Docker activation tooling</h2>
+<p>See <a href="primary-staging-controls.html">primary staging and generation controls</a> for
+explicit image preparation, identity-only bootstrap, immutable generation
+selection, and the evidence-only service boundary.</p>
+<p>The following tools are operational mechanisms, not activation evidence by
+their mere presence:</p>
+<ul>
+<li><code>scripts/windows-primary-snapshot.ps1</code> creates a new snapshot only when its
+target does not exist, or verifies an existing clean snapshot against an exact
+repository, starting ref, commit, and tree. It never resets or replaces an
+existing checkout. When a source checkout has multiple remotes,
+<code>-SourceRemoteName</code> selects one explicitly; creation requires that remote to
+be an exact GitHub URL for the allowlisted repository and requires its live
+starting-ref head to equal the pinned commit before creating the target.
+Snapshot verification uses <code>LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_*</code>
+when both are set; otherwise it reuses <code>LANGGRAPH_PRIMARY_PINNED_*</code> for the
+allowlisted repository worktree while service acceptance keeps the Director
+candidate pins.</li>
+<li><code>scripts/windows-host-provider-bridge.ps1 -Action Preflight</code> verifies the
+allowlisted Windows command map without invoking a provider. <code>-Action Run</code>
+starts the authenticated host bridge in the foreground for supervision.
+<code>-Action CheckEnvironment</code> prints the per-lane production configuration
+digests and makes no provider call. It opens no validation route, so it
+omits <code>antigravity</code>, which the bridge validates only through the team route,
+and omits <code>openai</code> when <code>DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG</code>
+is set; for those lanes the bridge binds the team fingerprint or the
+Responses route digest, which only the authenticated
+<code>GET /v1/provider/configuration-digest</code> endpoint reports. Host-command
+provider children and those digests read only ten operating-system names
+(<code>SYSTEMROOT</code>, <code>WINDIR</code>, <code>PATH</code>, <code>PATHEXT</code>,
+<code>TEMP</code>, <code>TMP</code>, <code>COMSPEC</code>, <code>LOCALAPPDATA</code>, <code>APPDATA</code>, <code>USERPROFILE</code>) and the
+lane credentials (<code>ANTHROPIC_API_KEY</code>, <code>CLAUDE_CODE_OAUTH_TOKEN</code>,
+<code>XAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>GOOGLE_API_KEY</code>, <code>GH_TOKEN</code>,
+<code>GITHUB_TOKEN</code>). When the profile sets
+<code>DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE</code>, the bridge, before any
+digest or provider run, replaces the ten names with the pinned file's values
+and drops every inherited lane credential. A lane credential then reaches a
+provider only when the bridge profile sets it and names it in
+<code>DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES</code> (comma-separated, no spaces); the
+launcher copies that value from the profile and refuses an unknown or unset
+name. With a pin, the digests depend on the pinned file and the profile, not
+on the launching shell. Without a pin, the launching shell's values are used.
+The <code>openai</code> lane's native Codex child is not a host command: besides the ten
+names it inherits <code>HOME</code>, <code>PROGRAMDATA</code>, <code>PROGRAMFILES</code>, <code>PROGRAMFILES(X86)</code>,
+<code>LANG</code> and <code>LC_ALL</code> from the bridge process. Those six are neither pinned nor
+hashed, so that child still follows the launching shell or Scheduled Task.
+The pinned file is a UTF-8 JSON object of at most 64 KiB at an absolute path
+with exactly two keys: <code>version</code>, equal to
+<code>director-native-process-environment/v1</code>, and <code>environment</code>, an object with
+the ten names above and optionally <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>, <code>ALL_PROXY</code>,
+<code>NO_PROXY</code>, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>, <code>REQUESTS_CA_BUNDLE</code> and
+<code>CURL_CA_BUNDLE</code>. Under a pin the bridge drops those proxy and CA names (in
+any case) from its inherited environment and uses only the file's; they reach
+the bridge's own HTTPS client, never a host-command child, and the Responses
+route digest binds them. Every value is a non-empty string without CR, LF
+or NUL, every <code>PATH</code> entry and the <code>TEMP</code>, <code>TMP</code>, <code>SYSTEMROOT</code>, <code>WINDIR</code>,
+<code>USERPROFILE</code>, <code>APPDATA</code> and <code>LOCALAPPDATA</code> directories must be absolute and
+exist, <code>COMSPEC</code> must be an absolute existing file, and an empty <code>PATH</code> entry
+(including a trailing <code>;</code>) refuses. Any other file refuses startup without
+echoing its content.
+<code>-Action Install -InstallRoot &lt;dir&gt;</code> requires the pinned file and a clean
+checkout: the runtime paths it copies (<code>src/director_orchestrator</code>,
+<code>docs/schemas</code>, <code>docs/provider-profiles</code>, <code>prompts</code> and the launcher) may hold
+no modified, untracked or ignored file other than bytecode caches. It copies
+the bridge runtime into a content-addressed directory, records the source
+commit and tree beside it in <code>&lt;digest&gt;.source.json</code>, runs <code>CheckEnvironment</code>
+from the copy and registers a restart-on-failure Scheduled Task without
+starting it. Each <code>Run</code> or <code>CheckEnvironment</code> from an installed copy
+recomputes its manifest and refuses to start on a mismatch; that detects
+drift, not a same-user edit, since that user can also edit the task. The
+<code>-Python</code> interpreter and its packages are neither copied nor hashed: the task
+runs them in place, so Install requires an explicit absolute <code>-Python</code> path
+outside the source checkout and refuses the in-checkout <code>.venv-win</code> default
+or any interpreter under the checkout, before copying anything. Symlink and
+junction components of the interpreter, the checkout and the install root are
+resolved to their final targets before those containment checks (a reparse
+point without a link target refuses), and the task registers the resolved
+interpreter path. Before provenance is written or the task registered, every
+installed file is re-proved against the recorded commit's blob (with this
+checkout's line-ending conversion, via <code>git hash-object --path</code>), so a file
+changed after the clean-source check cannot be attested. Every lane digest
+(native, team and Responses) also binds the runtime content address: every
+file Install copies (code, <code>docs/schemas</code>, <code>docs/provider-profiles</code>,
+<code>prompts</code> and the launcher), which for an installed copy equals its
+directory name. Each validation request hashes those bytes before
+admission and rehashes them at every post-execution check, never trusting
+file size or modification time. The Responses digest also binds the proxies
+urllib resolves, the bytes of the <code>SSL_CERT_FILE</code> bundle or every file in
+<code>SSL_CERT_DIR</code> (both must be absolute paths, and absolute existing entries
+when pinned),
+which on Windows fall back to the registry when no proxy variable is set, and
+<code>SSLKEYLOGFILE</code> joins the proxy and CA names dropped under a pin.
+Install is persistent host configuration and needs owner
+approval. Generations must pin the digests printed by the installed copy,
+and for the routed <code>openai</code> and <code>antigravity</code> lanes the digests the running
+bridge's authenticated endpoint reports.</li>
+<li><code>scripts/windows-langgraph-primary-control.ps1</code> provides separate <code>Preflight</code>,
+<code>Accept</code>, <code>Migrate</code>, <code>Backup</code>, <code>RestoreDrill</code>, <code>Health</code>, <code>Activate</code>,
+<code>ActivateOffline</code>, and <code>Rollback</code> operations. Every invocation requires the exact environment-file path,
+Compose project, and host port; profile identity is never inferred.</li>
+<li><code>scripts/windows-postgres-test-lane.ps1</code> starts, inspects, exports, tests
+against, and removes one disposable <code>postgres:17-alpine</code> container pinned to
+the same digest as Compose and CI, bound to <code>127.0.0.1:55433</code> with trust auth
+for the throwaway <code>director_ci</code> role, mirroring the CI Linux lane. It exists
+only to satisfy <code>LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN</code> and
+<code>LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER</code> for the local unit-test run. It is
+not the primary database, records no activation evidence, never reads an
+environment file, never starts Compose services, and refuses to touch any
+container it did not label.</li>
+</ul>
+<p>The Windows host bridge is an optional narrow transport for supported native
+CLIs. It uses a secret distinct from API, Slack, callback, reconciliation, and
+writer secrets. Requests bind provider, task, assignment, canonical packet
+digest, hashed idempotency key, and current writer generation. The bridge
+commits a durable claim before one <code>shell=False</code> subprocess attempt. Successful
+outcomes replay from the durable result; timeouts, process loss, nonzero exits,
+or malformed output become ambiguous and are never resent.</p>
+<p>The container client accepts only an exact <code>http</code> URL at
+<code>/v1/provider/dispatch</code>, with an explicit port and the host
+<code>host.docker.internal</code> or an exact loopback address. User information, query
+strings, fragments, alternate paths, remote hosts, TLS-looking aliases, and
+redirects are rejected. Immediately before any child-process I/O, the Windows
+bridge reads the authoritative Postgres task-writer row and requires the
+LangGraph owner, signed owner-token digest, exact fencing generation, and a live
+lease. A missing, stale, inaccessible, or mismatched row fails closed. The child
+receives only a minimal Windows process environment plus the selected lane's
+explicit authentication variables; Director API, bridge, callback,
+reconciliation, and shared secrets are never inherited. Each profile must set
+<code>DIRECTOR_HOST_PROVIDER_POSTGRES_DSN</code> to its own reachable primary database;
+that host-side DSN is a secret-store value and must never be copied into logs or
+checked-in profile files.</p>
+<p>The bridge currently permits only explicitly configured Claude, Grok,
+Antigravity, and GitHub Copilot packet-wrapper commands. Cursor remains direct and is never aliased through the Windows bridge.</p>
+<p>Endpoint and secret configuration alone never makes a host-bridge lane callable.
+Before composing adapters, the container sends a fresh HMAC-authenticated
+challenge and verifies the signed, digest-bound configured-provider command map.
+Missing, stale, redirected, malformed, unsigned, or mismatched challenge evidence
+leaves every affected bridge lane unavailable. This liveness challenge performs
+no provider subprocess or paid action.</p>
+<p>Independent exact-head review, trusted CI, and security results are stored as one
+immutable completion-evidence bundle in the primary Postgres control plane. The
+bundle is accepted only under the current unexpired LangGraph writer fence and is
+bound to the task, candidate SHA, provider-result digest, gate-ledger digest, and
+individual result digests. Independent review, CI, and security each use a
+different secret, issuer, and authenticated principal; one aggregate signer is
+not an authority. Restart readback revalidates the canonical content and all
+three distinct authority proofs;
+missing or conflicting evidence remains <code>OWNER_DECISION_REQUIRED</code> and can never
+be replaced with a synthetic pass.</p>
+<p>For every profile, execute the control actions in this order while Slack intake
+is closed: <code>Preflight</code>, <code>Accept</code>, <code>Migrate</code>, <code>Backup</code>, <code>RestoreDrill</code>, provider
+activation evidence, then <code>Activate</code>. Under the default <code>github-v1</code> acceptance mode, <code>Accept</code> reads the canonical GitHub pull
+request, requires its head to equal the frozen candidate, requires every named
+CI check to be completed successfully with no skipped/pending/failed check, and
+requires distinct non-author security and independent-review ACCEPT artifacts
+that both name the exact head. Each must be an <code>APPROVED</code> review from the
+corresponding configured, disjoint GitHub actor allowlist with an acceptable
+GitHub author association, and its body must exactly equal the canonical
+<code>director-activation-review/v1</code> JSON artifact. Comments, quoted markers, and
+free-form prose never qualify. For alternative modes, see the separately signed
+<a href="provider-acceptance-v2.html">provider-acceptance-v2</a> and
+<a href="two-party-activation-v3.html">two-party-activation-v3</a> contracts, and the owner-signed, not provider-signed
+<code>owner-local-evidence-v1</code> owner adoption described below. Under <code>github-v1</code>, the CI, security, and independent-review issuers
+must supply a closed canonical artifact with a canonical facts digest and their
+separate domain-separated HMAC attestations.</p>
+<p>The <code>github-v1</code> control process does not mint those attestations: it requires
+<code>-AcceptanceArtifactPath</code>, independently reads
+GitHub, and fails unless the supplied artifact exactly matches the observed
+repository, pull request, head, checks, and reviews. <code>ACCEPTED</code> accepts only that
+exact artifact path;
+raw <code>--facts-json</code> and caller-selected <code>--evidence-digest</code> values are rejected.</p>
+<p>With explicit owner authorization, <code>owner-local-evidence-v1</code> instead adopts an
+exact release's retained local QA, independent review and security evidence. It
+keeps hosted checks recorded as <code>HOSTED_NOT_EXECUTED</code>; actual failed run records
+remain in the pinned evidence bundle. This is owner adoption, not a GitHub or
+provider signature. Default <code>github-v1</code> and both signed provider modes are unchanged.</p>
+<p>Mount the owner-protected evidence directory read-only in <strong>every</strong> Compose
+invocation and the persistent service. Set <code>LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH</code>
+to its container-side <code>adoption.json</code> and pin its bytes with
+<code>LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256</code>. The closed adoption document
+uses <code>director-primary-local-evidence-adoption/v1</code>, decision
+<code>ADOPT_SCOPED_LOCAL_EVIDENCE</code>, and the existing owner token's domain-separated
+signature. <code>load_pinned_owner_local_adoption</code> rejects unsigned documents.
+Its QA, independent review and security digests must identify actual
+files in <code>pinned_evidence</code>; each path is a simple filename beside the adoption
+document. Loading enforces at most 32 unique pins, a 64 MiB aggregate bundle
+limit, and an 8 MiB per-file cap before hashing. Loading and replay verify those file bytes. Reviewed source must match
+the candidate tree. An earlier full-suite receipt remains earlier evidence;
+changed code needs fresh focused QA and current-head independent/security review.</p>
+<p>The acceptance artifact uses version
+<code>director-primary-acceptance-artifact/owner-local-evidence-v1</code> and a single
+<code>owner_adoption</code> attestation from <code>owner-local-evidence-adoption</code>, signed with the
+existing owner token over its canonical unsigned artifact using the
+<code>director-primary-acceptance/owner_adoption/owner-local-evidence-adoption/v1</code> domain.
+The control command checks the explicitly supplied repository, PR and reviewer
+allowlists. It never manufactures an independent reviewer or security signature.</p>
+<p>Select a fresh owner-pinned generation with version
+<code>director-primary-generation/owner-local-evidence-v1</code>; it retains the existing
+generation fields, substituting <code>owner_adoption_path</code>/<code>owner_adoption_sha256</code> for
+the provider registry pair. All image, resolved Compose, configuration, provider
+binding, candidate and database checks still run. Its SQLite generation marker
+has a companion <code>.evidence.json</code> file for the ordered activation history, so older
+generations are preserved. The existing <code>SelectGeneration</code>, <code>Preflight</code>, <code>Accept</code>,
+<code>Migrate</code>, <code>Backup</code>, <code>RestoreDrill</code>, staging and activation sequence applies.
+Startup verifies readiness and generation before opening the primary database.
+This path changes no enrollment, budget, provider qualification or Slack delivery
+requirement.
+The durable record retains the source artifact and its digest for deterministic
+offline replay. Every reader needs the selected mode's verifier secrets:
+<code>github-v1</code> requires three distinct authorities, while <code>owner-local-evidence-v1</code>
+requires the owner adoption authority. Replay revalidates the full closed artifact
+and its attestations before readiness can pass. Acceptance signatures detect
+artifact substitution. Later stage digests detect inconsistent or corrupted
+facts; their public hashes do not authenticate someone who can rewrite both
+facts and hashes. Protect the durable evidence volume and generation pins.
+Operator-set booleans are not acceptance evidence.</p>
+<p>For <code>github-v1</code>, before issuer signing, <code>windows-langgraph-primary-control.ps1 -Action PrepareAcceptance -GitHubRepository owner/repository -PullRequestNumber 98 -CandidateCommit &lt;exact-40-character-PR-head&gt; -SecurityReviewerAllowlistJson '[&quot;security-login&quot;]' -IndependentReviewerAllowlistJson '[&quot;independent-login&quot;]' emits an unsigned JSON request to stdout. Supply operator-authorized nonsecret reviewer allowlists; these inputs do not grant GitHub membership or create a review. Preparation fetches the candidate tree from GitHub and reuses </code>Accept<code>'s exact check/review validation and serialization. Missing, failed, stale, unaffiliated, prose-only, or author-self-acceptance evidence emits no request. Preparation accepts no runtime environment file or prebuilt facts, reads no deployment secrets, starts no Docker services, writes no files, and does not record an activation stage. The unsigned five-field request lacks </code>attestations`, so the existing verifier
+rejects it as an acceptance artifact. This is preparation tooling, not a
+production signer or proof of acceptance.</p>
+<p>Production issuer provisioning remains required. Two independently controlled,
+non-author GitHub identities must provide the exact canonical APPROVED review
+bodies above and have an eligible repository association. A shared owner token,
+provider prose, CI check name, or environment flag cannot supply those identities.
+Each issuer must independently refresh and validate the request's GitHub facts,
+and authenticate its own principal in its own execution context. The CI issuer
+needs a deployment that binds authenticated GitHub Actions provenance to the
+exact successful run/candidate; no such identity integration is implemented here.
+Only after provisioning should each issuer sign its own role using its separately
+held role secret. The coordinator must never generate all three signatures.
+The three distinct verifier secrets remain provisioned through the existing
+secret store/environment mechanism; preparation neither accesses nor creates them.
+Assemble only attestations over the identical canonical unsigned request, with
+issuer names matching the facts and domain-separated signatures specified by
+<code>primary_activation_evidence.py</code>. Submit the completed package through unchanged
+<code>Accept</code>, which rereads GitHub and verifies all signatures. A facts change requires
+fresh issuer validation and signatures. This tooling does not supply reviewer
+accounts, signing credentials, deployment authority, or a fallback acceptance mode.</p>
+<p>Activation reopens Slack only after the observed health
+projection proves Postgres, writer fencing, reconciliation, current provider
+activation, graph ownership, and zero ambiguous effects. It creates the Slack
+gateway stopped from the verified candidate image, reads back the created
+gateway's image ID, records <code>ACTIVATED</code>, and only then starts n8n and the
+gateway, so a failed readback or evidence write unwinds with Slack and n8n
+intake still closed. <code>ActivateOffline</code> needs the same
+acceptance, migration and restore evidence but not provider readiness: it turns
+offline simulation on and paid runs and live dispatch off, requires the paid-off
+intake projection with the live runtime inactive, and records no <code>ACTIVATED</code>
+stage. <code>ActivateOffline</code> first applies the <code>PrepareOfflineHandoff</code> profile
+guard (a provider-v2 or provider-v3-two-party generation, and explicit <code>false</code>
+for <code>ALLOW_PAID_RUNS</code>, <code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code> and
+<code>DIRECTOR_PROVIDER_VALIDATION_ENABLED</code>) before anything stops. Both <code>Activate</code>
+and <code>ActivateOffline</code> require a quiescent primary plane
+(<code>primary_quiescence_metrics().rollback_safe</code>) before they stop anything, and
+again after the stop, so unfinished work approved in one mode is never
+recovered by the other mode's dispatcher; on refusal nothing is switched. The
+post-stop check keeps writer leases: it waits up to 75 seconds (the 60-second
+default lease plus margin) only while leases are the sole blocker, refuses at
+once on any other unfinished work, and refuses a lease still live after the
+wait. If paid <code>Activate</code> fails after recording <code>ACTIVATED</code> (for example an n8n
+or Slack start), the next <code>Activate</code> on the same identity resumes only from
+that unwound state: a read-only <code>require-activated</code> check, a readback that
+every intake surface is already stopped (a running <code>ACTIVATED</code> deployment is
+refused as already activated and nothing is stopped), and a proof that the
+primary still owns new intake (Rollback forces a new generation) replace the
+quiescence, inventory and <code>require-ready</code> steps, and the same switches, image
+readbacks and health proof precede reopening intake. <code>ACTIVATED</code> is never
+recorded twice; before reopening, the resume also waits (bounded, as above) for
+no writer lease to be live, so it never runs beside a foreign writer. A failed
+<code>ActivateOffline</code> leaves a marker beside the profile; the next <code>ActivateOffline</code>
+then requires only that no writer lease is live (its runtime took intake before
+its health proof could pass, so it may have admitted offline work), and paid
+<code>Activate</code> clears the marker once it proves quiescence. <code>SSLKEYLOGFILE</code> is
+refused in the pinned file. A recovered task keeps its persisted <code>execution_mode</code> exactly;
+an empty or blank label is held, never defaulted. Independently, live dispatch holds any task whose persisted
+<code>execution_mode</code> is not exactly <code>live</code> (including <code>unknown</code>, missing or
+malformed labels), and the offline dispatcher holds any task not labelled
+<code>offline_simulation</code> or <code>paid_off</code>.
+A later paid <code>Activate</code> can reuse that evidence chain only while the
+legacy SQLite task ID/status inventory is unchanged: it binds the inventory
+again and refuses any difference as immutable. Legacy tasks stay live under
+primary (startup and periodic recovery of queued, planning, running and
+reviewing legacy tasks, legacy approvals and callbacks), so a legacy status
+change during offline operation means paid activation needs a new generation.
+Rollback stops Slack and the orchestrator, waits for the writer lease to expire,
+refuses when ambiguous effects exist, performs the fenced generation change back
+to legacy, and preserves the primary database. It then recreates the
+orchestrator on the image recorded before the first candidate recreate (by
+<code>StageRuntime</code>, or by activation when no staging ran) in
+<code>&lt;profile&gt;.prior-images.&lt;generation&gt;.&lt;image&gt;.json</code>, reads its image ID back and
+waits for health, creates the gateway stopped on the recorded gateway image and
+reads it back, and only then starts n8n and the gateway. If a readback or health
+check fails after the compare-and-swap, it stops and proves Slack, n8n and API
+intake closed again before it reports the failure. An invalid record refuses
+rollback before anything stops. With no record, the fenced return to legacy
+still runs on the candidate image with paid runs and primary off, and the tool
+reports that no image was restored. No record is written when the orchestrator
+or gateway container is absent (a fresh stack, or after <code>docker compose down</code>)
+or already runs the candidate image; staging and activation then proceed.</p>
+<p>The control tool persists <code>/data/langgraph-primary-activation-evidence.json</code> as
+an atomic versioned state machine. Its identity binds the exact Director
+candidate commit/tree, profile, Compose project, opaque Postgres storage
+identity, schema, and checkpoint namespace. The only accepted sequence is
+<code>PREFLIGHT -&gt; ACCEPTED -&gt; MIGRATED -&gt; BACKED_UP -&gt; RESTORE_PROVED -&gt; ACTIVATED</code>; missing,
+duplicate, out-of-order, corrupt, cross-candidate, cross-profile, or cross-store
+evidence fails closed. Restore proof requires all named primary control-plane
+tables, all four LangGraph checkpoint tables, and a nonzero control-plane schema
+row from the restored disposable database. A successful command exit or a zero
+table count is not restore evidence.</p>
+<p><code>RestoreDrill</code> copies the selected dump to its random container staging path,
+hashes those exact staged bytes, and compares the lowercase <code>sha256:</code> digest to
+the prior durable <code>BACKED_UP</code> record under the same activation identity before
+database creation or <code>pg_restore</code>. Missing files, mutated dumps, and substituted
+but otherwise valid dumps fail closed. <code>RESTORE_PROVED</code> records the same bound
+backup digest, so a later activation cannot splice restore evidence from another
+artifact.</p>
+<p>Before rollback changes the intake generation, the Postgres quiescence query
+must prove zero unresolved effect/provider reservations, zero pending/active/
+ambiguous parallel assignments, zero live task-writer leases, zero unresolved
+reconciliation claims, zero unsettled claims, and zero ambiguous effects. The
+legacy engine never receives tasks merely because the intake lease expired.</p>
+<p>Preflight first bootstraps only the profile's PostgreSQL service and persists a
+database-instance UUID inside the control-plane singleton. Activation evidence
+binds both the canonical connection target and that instance UUID, so replacing
+a volume or server behind the same DSN invalidates the earlier evidence chain.</p>
+<p>Immediately before cutover, the control tool stops and verifies all authenticated
+intake surfaces: Slack, n8n, and the API orchestrator. It then hashes the complete
+legacy SQLite task ID/status inventory and durably binds that immutable snapshot
+to legacy ownership before <code>require-ready</code> may pass. Pre-cutover tasks remain
+legacy-owned; only the fenced new-intake generation transfers to LangGraph.</p>
+<p>If any post-start activation check fails, including the gateway image readback,
+the tool stops and proves Slack, n8n, and API intake closed, and restores the
+paid, live, offline-simulation and new-intake switches to their closed values. Rollback uses unconditional runtime exceptions for
+ambiguous-effect and quiescence failures; Python optimization cannot remove the
+safety checks.</p>
+<p>The checked-in local Docker Compose topology uses <code>sslmode=disable</code> only for the
+exact service hostname <code>langgraph-primary-db</code> and only under the explicit
+<code>LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=true</code> exception injected by
+Compose. Loopback remains allowed for local tests. Lookalike names, arbitrary
+container names, private-network IPs, mixed remote <code>hostaddr</code> values, and every
+other non-loopback target fail closed. Managed or remote production PostgreSQL
+must use <code>verify-ca</code> or <code>verify-full</code> with an explicit CA root; the local Compose
+exception is not production TLS evidence.</p>
+<h2 id="default-parallel-assignment-lifecycle">Default parallel assignment lifecycle</h2>
+<p>For live Default intake, the configured provider list is an available pool, not a
+requirement to dispatch every provider. Current authenticated app and adapter
+readiness must cover OpenAI orchestration and at least two other primary providers
+capable of implementation and independent review. OpenAI production is explicitly assigned under the frozen allocation profile;
+control-plane work creates no production credit and material authors cannot self-review. The planner freezes one implementation provider and a
+different reviewer before the existing exact-plan execution approval. Every task
+stops there except a small read-only task that a live standing grant
+pre-authorizes (phase 4S in <code>docs/human-out-of-the-loop-operation.html</code>), which
+is audited and then dispatched without that button. Eligible
+providers exclude only zero-target lanes; the retired rolling-twenty hard cap no
+longer blocks admission, and the normal band guides preference, then
+operator-configured comparable cost ranks break ties. Pair selection projects
+research (when requested), production, then review in dependency order so rollover
+can unlock an independent reviewer; these projections never create ledger rows. Missing cost authority
+holds selection. Dispatch rechecks admission atomically; it never substitutes a
+new provider after approval. Concurrency remains the configured initial bound,
+independent of the inventory size.</p>
+<p>Structured <code>primary_required_capabilities</code> on authenticated intake can request
+<code>public_research</code>, <code>enterprise_context</code>, <code>bounded_scaffolding</code>, or
+<code>repository_assistance</code>; private task prose never grants these scopes.
+Public research requires <code>primary_public_research_query</code>, selects an eligible
+Perplexity or Firecrawl contact under the frozen profile,
+and precedes implementation. Its outbound task contains only that explicit public
+query. Enterprise context stops when its scoped adapter is unavailable:
+allocation targets do not supply missing enterprise adapter capability or source
+authorization. Enterprise lanes are never aliased into another provider's allocation. Missing requested scope/readiness similarly holds.</p>
+<p>Startup uses the owner-approved full twenty-slot denominator with only real
+assignments. Primary and legacy admission retain real reserved assignments;
+accepted productive output remains separately recorded. Neither ledger fabricates
+rows. Recognized genuine v2 primary constraints may be upgraded to the new profile
+policy while preserving existing rows. Unknown or incompatible schema/history
+fails closed; the v1-only table still requires explicit remediation before any
+provider attempt. Legacy reservations without frozen profile-admission provenance
+require explicit reconciliation before new admissions, preserving their history.
+Mature windows still assess last nineteen plus the prospective assignment
+against the normal ±3-point band as an advisory preference; the owner retired
+the target+5 rolling-twenty hard ceiling on 2026-09-21.
+The approved Engineering profile replaces the former unsustainable core-only
+allocation: OpenAI35/Claude30/Cursor15/Grok10/Antigravity10. The full matrix,
+role boundaries, zero-target rule and preserved-history profile changes are in
+<a href="provider-allocation-profiles.html">Provider allocation profiles</a>. Real authenticated
+adapter capability and independent review remain prerequisites; percentages alone
+do not prove operational throughput or authorize deployment.</p>
+<p>The Default primary application registers this complete assignment DAG in the
+Postgres parallel ledger before an execution approval can cross the provider
+boundary. After approval, the historical single-assignment graph edge is an
+interrupt only: it never owns provider transport. The parallel ledger is the sole
+dispatch owner and commits each assignment reservation before invoking its exact
+packet adapter.</p>
+<p>Each wave concurrently consumes every dependency-ready assignment allowed by
+the configured task, provider, deployment, and write-surface caps. A dependent
+packet is built only after all named upstream result packets are durably accepted.
+Unknown provider exceptions are ambiguous and are never resent. Only the trusted
+transport's typed pre-dispatch temporary failure permits recovery. Each assignment
+has at most three attempts and stops immediately on authenticated success. Attempt
+two may reuse a transport after that temporary failure. Attempt three requires a
+different underlying transport category; format changes and HTTP bridge wrappers
+around the same native command do not qualify. The live path has no trusted new
+information input and therefore cannot use that alternative as retry authority.
+The writer-fenced Postgres reservation rechecks the stored prior outcome and
+transport before inserting the next STARTED event, before provider I/O. A prior
+success, active or ambiguous attempt cannot be redispatched after restart. Three
+recorded failures exhaust the assignment route; the assignment fails closed for
+configured fallback or owner routing rather than silently selecting another paid
+provider. An ambiguous paid dispatch stops immediately for reconciliation.
+The graph task is successful only when the deterministic aggregate proves every
+assignment succeeded; a pending, active, ambiguous, failed, or dependency-blocked
+member cannot be reported as successful completion.</p>
+<h2 id="authenticated-recovery-and-completion-ingress">Authenticated recovery and completion ingress</h2>
+<p>The periodic recovery worker heartbeats only task-writer leases touched by its
+current process. A live database-clock lease proves normal <code>DISPATCHING</code> or
+<code>EXECUTING</code> work is still owned and is never recovered by the sweep. Only a
+nonterminal task with an absent or expired lease may be taken over through the
+next fencing generation and reconciled; terminal tasks are ignored.</p>
+<p>Cancel and recover commands require a fresh Slack-channel HMAC proof bound to
+the exact route, task, command body, projection digest, writer generation,
+actor, timestamp, and nonce. The nonce and command identity are claimed in an
+append-only Postgres row under that live writer fence before state changes. An
+exact redelivery is idempotent; nonce or command rebinding is rejected.</p>
+<p>Completion evidence enters through the signed adapter-callback route only when
+the transport actor equals the evidence actor. The route binds the exact task,
+candidate SHA, provider-result digest, projection, and writer generation, then
+uses the immutable writer-fenced completion store. Evidence without a valid
+signature, exact gate/result digests, current writer lease, or exact replay
+identity cannot authorize successful completion.</p>
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:12 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:31 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 10:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 17:28 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

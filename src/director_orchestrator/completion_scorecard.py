@@ -103,6 +103,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
@@ -127,7 +128,10 @@ from .process_isolation import (
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    ci_workflow_pin, cli_release_descriptor, evaluator_pin, security_base_pin, decision_follows_prompt, delivery_settled as _delivery_settled,
+    ci_workflow_pin, cli_release_descriptor, evaluator_pin, owner_home, reviewed_release_pin, security_base_pin,
+    workload_journal_pin,
+    decision_follows_prompt,
+    delivery_settled as _delivery_settled,
     lifecycle_error, missing_result_packets,
     ordered as _ordered,
     required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
@@ -157,7 +161,14 @@ _UNATTESTED = "-unattested"
 REAL_PRODUCTS = {lane: set(by_transport.values()) for lane, by_transport in _TRANSPORT_PRODUCTS.items()}
 # Fixed, owner-installed verification key with no CLI override, the same
 # stance as _native_security_index: a caller cannot nominate its own signer.
-CI_REPLICA_KEY = Path.home() / ".director-scorecard" / "ci-replica-signer.ed25519.pub"
+CI_REPLICA_KEY: Path | None = None  # in-process override only; normally the owner root the launcher handed over
+
+
+def _ci_replica_key() -> Path | None:
+    if CI_REPLICA_KEY is not None:
+        return CI_REPLICA_KEY
+    home = owner_home()
+    return None if home is None else home / ".director-scorecard" / "ci-replica-signer.ed25519.pub"
 # Any of these from a source becomes UNKNOWN. Exception text is never reported:
 # third-party errors can contain credentials or response bodies. ArithmeticError
 # covers malformed decimal timestamps; ImportError an unavailable reader module.
@@ -516,12 +527,20 @@ _EVIDENCE_SERVICES = ("orchestrator", "langgraph-primary-db", "n8n", "n8n-db")
 
 
 def _deployment_state(project: str, gateway: str | None) -> tuple:
-    """Identity and run state (Id, Image, Created, StartedAt, Running) of every container whose state backs
-    evidence and of the named gateway, compared whole between the deployment probe and the final cutoff."""
+    """Identity, run state (Id, Image, Created, StartedAt, Running) and network wiring (attachments and published
+    ports) of every container whose state backs evidence and of the named gateway, compared whole between the
+    deployment probe and the final cutoff: a route hop removed after the route read must not keep its PASS."""
     ids = [item for service in _EVIDENCE_SERVICES for item in _compose_ids(project, service)]
     rows = _run_json(["docker", "inspect", *ids, *([gateway] if gateway else [])])
+
+    def wiring(row: dict[str, Any]) -> str:
+        settings = row.get("NetworkSettings") or {}
+        return json.dumps({"networks": settings.get("Networks"), "ports": settings.get("Ports")},
+                          sort_keys=True, default=str)
+
     return tuple(sorted((str(row.get("Id")), str(row.get("Image")), str(row.get("Created")),
-                         str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True)
+                         str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True,
+                         wiring(row))
                         for row in rows))
 
 
@@ -1435,7 +1454,7 @@ def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False, t
 # Input trust is transitive, including prerequisites shared by collectors. T is
 # owner configuration, independent transport/store facts or pinned computation;
 # C is candidate-controlled data, even when fetched over authenticated transport.
-# Keep the expanded audit in docs/twenty-check-completion-scorecard.md in sync.
+# Keep the expanded audit in docs/twenty-check-completion-scorecard.html in sync.
 _DEPLOYMENT_INPUTS = (
     ("owner selections; Docker inventory, configuration, networks and lifecycle", "T"),
 )
@@ -1536,8 +1555,22 @@ def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: 
                             _CONSISTENCY_SOURCE, facts, at, **binding)
     owned = (authority.get("intake_owner") == "langgraph" and authority["legacy_new_intake_disabled"]
              and authority["lease_live"] and authority["owner_token_matches"] and fence > 0 and expires > at)
+    if owned:
+        # Cross-check (reviewed-image trust, owner ruling 2026-10-02): the store shows the fence owned, and the
+        # Director's own health says whether THIS process holds that same fence (writer_lease_ready is true only when
+        # its in-memory generation equals the stored one). Health alone never promotes 05; a disagreement is a FAIL.
+        primary = runtime.health.get("langgraph_primary", {}) if isinstance(runtime.health, dict) else {}
+        process_ready, process_fence = primary.get("writer_lease_ready"), primary.get("intake_fencing_generation")
+        facts = {**facts, "process_writer_lease_ready": process_ready, "process_fence": process_fence}
+        if type(process_ready) is not bool or type(process_fence) is not int:
+            return _observation("05", None, "The store shows the fence owned, but the Director's health does not say "
+                                "whether this process holds it.", _CONSISTENCY_SOURCE, facts, at, **binding)
+        if not process_ready or process_fence != fence:
+            return _observation("05", False, "The store shows the fence owned, but this Director process reports that "
+                                "it does not hold that same fence.", _CONSISTENCY_SOURCE, facts, at, **binding)
     return _observation("05", owned, "The persisted intake authority read in the evaluator's snapshot "
-                        + ("shows LangGraph owning intake under this deployment's live writer lease with a positive fence."
+                        + ("shows LangGraph owning intake under this deployment's live writer lease with a positive "
+                           "fence, and this process reports holding it."
                            if owned else "does not show LangGraph owning intake under this deployment's live writer "
                            "lease with legacy intake disabled and a positive fence."),
                         _CONSISTENCY_SOURCE, facts, at, **binding,
@@ -2356,7 +2389,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     entry = ((consistency or {}).get("tasks") or {}).get(task_id)
     receipts = entry.get("approval_receipts") if isinstance(entry, dict) else None
     receipts = receipts if isinstance(receipts, list) else []
-    failures, gaps, joined = [], 0, []
+    # Receipt joins need a complete read; positive delivery/Slack/order violations do not.
+    failures, receipt_failures, gaps, joined = [], [], 0, []
     for delivery in approvals:
         slack_ts = delivery.get("slack_ts")
         decided = _when(delivery["owner_decision_at"]) if delivery.get("owner_decision_at") else None
@@ -2418,7 +2452,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             else:
                 receipted = False
         if len(matches) > 1:
-            failures.append("one approved delivery matches more than one approval_resume receipt")
+            receipt_failures.append("one approved delivery matches more than one approval_resume receipt")
         if delivery.get("owner_decision") == "approve":
             joined += matches
         if not (_delivery_settled(delivery) and slack_ts and delivery.get("owner_decision") == "approve"
@@ -2430,18 +2464,25 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     # The reverse join: every approval_resume receipt of this task belongs to exactly one approved delivery. A
     # receipt no delivery claims, or one two deliveries claim, is a resume the Slack record does not account for.
     if sorted(joined) != list(range(len(receipts))):
-        failures.append("an approval_resume receipt is not the one receipt of exactly one approved delivery")
+        receipt_failures.append("an approval_resume receipt is not the one receipt of exactly one approved delivery")
     # And every approval prompt the bot posted in the thread (render_notification's pending header) is one of the
     # approval deliveries: a prompt with no delivery row is an approval surface the ledger does not account for.
     header = task_id + " — OWNER DECISION REQUIRED"
     posted = {m.get("ts") for m in messages if m.get("user") == t.bot and t.m.reply_header(m.get("text", "")) == header}
     if complete and not posted <= {delivery.get("slack_ts") for delivery in approvals}:
         failures.append("a posted approval prompt has no approval delivery")
+    receipts_complete = isinstance(entry, dict) and entry.get("approval_receipts_truncated") is False
+    if receipts_complete:
+        failures += receipt_failures
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
                "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
+    if not receipts_complete:
+        facts08["approval_receipts_truncated"] = entry.get("approval_receipts_truncated") if isinstance(entry, dict) else None
     if failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
+    elif not receipts_complete:
+        passed08, explanation08 = None, "The approval_resume receipt read is truncated or not proven complete."
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
                                          "an approval_resume command receipt re-read from the control plane whose command "
@@ -2934,9 +2975,14 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                 used = value["exposure_usd"]
                 if used > budget:
                     over.append("usage monitor " + str(provider))
-            if (attempted and value.get("cost_visibility_complete") is not True
-                    and value.get("reserved_cost_usd") is None and str(provider) not in over):
-                # reported_cost_usd sums known costs only; unknown cost is not zero.
+            unsettled = value.get("unsettled_request_count")
+            if (real is not None or value["unreconciled_request_count"] is not None) and (
+                type(value["unreconciled_request_count"]) is not int
+                or type(unsettled) is not int or unsettled != 0
+            ):
+                # Real reservations not proven bounded need valid actual charges, including fresh ones.
+                # Outstanding prior-day requests count even when today's provider_request_count is zero.
+                # Neither a reservation estimate nor the probes' price visibility proves their final cost.
                 unpriced.append(str(provider))
     budgets = None
     if paid is not None and consistency is not None:
@@ -3008,12 +3054,101 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                         "request-correlated meter rows; unknown cost is not zero.", source, facts, at, **runtime.binding)
 
 
+@dataclass
+class _Held:
+    """What the deployment phase graded before containment overwrote it, for the reviewed-image admission gate.
+
+    ``observations`` are the real graded results of the contained checks and ``identity`` is what the running
+    Director and its gateway are; both stay empty when the runtime could not be discovered, so nothing is admitted.
+    """
+    observations: dict = field(default_factory=dict)
+    identity: dict = field(default_factory=dict)
+
+
+ADMISSION_RULING = "Admitted under reviewed-image trust (owner ruling 2026-10-02, #313)"
+ADMISSION_NOTE = (" [" + ADMISSION_RULING + ": the running image, candidate and tree equal the owner-pinned reviewed "
+                  "release and checks 16, 17 and 18 passed for it. Director-written inputs are not independent proof.]")
+
+
+def _relabel(item: Observation, extra: dict, suffix: str = "") -> Observation:
+    """The same observation with ``extra`` merged into its facts (digest recomputed) and ``suffix`` appended to a
+    PASS or FAIL explanation; an UNKNOWN keeps its own reason."""
+    facts = item.facts if isinstance(item.facts, dict) else {"collected": item.facts}
+    facts = {**facts, **extra}
+    digest = hashlib.sha256(json.dumps(facts, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    explanation = item.explanation + suffix if suffix and item.passed is not None else item.explanation
+    return replace(item, facts=facts, digest=digest, explanation=explanation)
+
+
+def _reviewed_image_gate(candidate_sha: str, held: _Held, others: list[Observation]) -> tuple[str | None, dict]:
+    """(None, facts) when every admission condition holds, else (the first unmet condition, facts compared).
+
+    Director-written evidence is admitted only for a runtime that is exactly the release the owner reviewed:
+    the Director's image digest, commit and tree equal the descriptor's ``reviewed_release``, the gateway was bound
+    to that same image, and checks 16 (exact-head CI), 17 (independent adoption) and 18 (Security scan) passed for
+    this candidate in the same collection. Otherwise containment stands unchanged.
+    """
+    pin = reviewed_release_pin(cli_release_descriptor())
+    if pin is None:
+        return "the owner release descriptor pins no valid reviewed_release (candidate commit, tree, Director image)", {}
+    identity = held.identity
+    running = {key: identity.get(key) for key in ("runtime_sha", "runtime_tree", "director_image_id")}
+    required: dict[str, str] = {}
+    for key in ("16", "17", "18"):
+        item = held.observations.get(key) if key == "17" else next((o for o in others if o.check_id == key), None)
+        required[key] = ("missing" if item is None else "PASS" if item.passed is True and item.candidate_sha == candidate_sha
+                         else "not PASS")
+    facts = {"ruling": ADMISSION_RULING, "pinned": pin, "running": running,
+             "gateway_bound": identity.get("gateway_bound") is True, "required_checks": required}
+    if identity.get("gateway_bound") is not True:
+        return "the gateway was not shown to run the Director's image (--gateway)", facts
+    if running["director_image_id"] != pin["director_image_id"]:
+        return "the running Director image is not the pinned reviewed image", facts
+    if not (candidate_sha == running["runtime_sha"] == pin["candidate_commit"]):
+        return "the candidate, the running commit and the pinned reviewed commit are not one commit", facts
+    if running["runtime_tree"] != pin["candidate_tree"]:
+        return "the running image's tree is not the pinned reviewed tree", facts
+    unmet = [key for key, state in required.items() if state != "PASS"]
+    if unmet:
+        return "checks " + ", ".join(unmet) + " did not pass for this candidate in this collection", facts
+    return None, facts
+
+
+def _apply_reviewed_image_admission(candidate_sha: str, held: _Held, deployed: list[Observation],
+                                    others: list[Observation], started: datetime) -> list[Observation]:
+    """Release the held originals over the containment UNKNOWNs when the gate holds; otherwise record why not."""
+    if not held.observations:
+        # No runtime was discovered (or collection stopped before one was read): nothing to release, but the
+        # report still says why the contained checks were not admitted.
+        reason, facts = "no Director runtime evidence was held; the runtime was not discovered", {}
+    else:
+        reason, facts = _reviewed_image_gate(candidate_sha, held, others)
+    contained = set(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)
+    out = []
+    for item in deployed:
+        if item.check_id not in contained:
+            out.append(item)
+        elif reason is not None:
+            out.append(_relabel(item, {"reviewed_image_admission": "refused: " + reason}))
+        elif item.check_id in held.observations:
+            out.append(_relabel(replace(held.observations[item.check_id], _made=started),
+                                {"reviewed_image_trust": facts}, ADMISSION_NOTE))
+        else:
+            # Not admitted: `reviewed_image_trust` is the marker _containment_limitations reads as admission, so
+            # a placeholder with no collected source must not carry it and stays reported as contained.
+            out.append(_relabel(replace(item, explanation="No source was collected for this check in this run."),
+                                {"reviewed_image_admission": "not admitted: no source was collected",
+                                 "reviewed_image_gate": facts}))
+    return out
+
+
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
                              owner: str | None = None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
                              paid_rubric_path: Path | None,
-                             collection_end: Any = None) -> tuple[list[Observation], tuple | None]:
+                             collection_end: Any = None,
+                             held: _Held | None = None) -> tuple[list[Observation], tuple | None]:
     try:
         runtime_rows, runtime = _runtime(at, project, collection_end)
     except _SOURCE_ERRORS:
@@ -3152,6 +3287,12 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     finally:
         if t is not None:
             t.close()
+    if held is not None:  # kept for the reviewed-image admission gate before containment overwrites them
+        held.observations = {key: found[key] for key in
+                             _CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE if key in found}
+        held.identity = {"runtime_sha": director_runtime.runtime_sha, "runtime_tree": director_runtime.runtime_tree,
+                         "director_image_id": director_runtime.image_id,
+                         "gateway_bound": gateway is not None and not gateway_unbound}
     # Trusted reports do not remove candidate inputs used by the same check.
     unknown(_CONTAINED_RUNTIME, "collector not yet trusted", _CONSISTENCY_SOURCE)
     unknown(_CONTAINED_CAPTURES, "collector not yet trusted", _CAPTURES_SOURCE)
@@ -3163,7 +3304,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
 def _native_security_index() -> Path:
     # Native installed-plugin default, not an imported report path or CLI trust override.
     # Custom CODEX_SECURITY_STATE_DIR installations remain UNKNOWN until supported.
-    return Path.home() / ".codex/state/plugins/codex-security/workbench.sqlite3"
+    home = owner_home()
+    if home is None:  # not started by the owner-installed launcher: no owner store is consulted
+        return Path(os.devnull) / "codex-security-workbench.sqlite3"
+    return home / ".codex/state/plugins/codex-security/workbench.sqlite3"
 
 
 def _read_bounded_file(root: Path, relative: str) -> bytes:
@@ -3417,9 +3561,10 @@ def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Obs
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    if CI_REPLICA_KEY.is_symlink() or not CI_REPLICA_KEY.is_file():
+    key = _ci_replica_key()
+    if key is None or key.is_symlink() or not key.is_file():
         raise ValueError("owner replica signer key unavailable")
-    key_hex = CI_REPLICA_KEY.read_text(encoding="ascii").strip()
+    key_hex = key.read_text(encoding="ascii").strip()
     if not _HEX64.fullmatch(key_hex):
         raise ValueError("owner replica signer key is malformed")
     source = Path(path)
@@ -3476,6 +3621,34 @@ def _compare_status(base: str, head: str) -> str:
     """GitHub's ahead/behind/identical/diverged status of head against base (GET only)."""
     value = _run_json(["gh", "api", f"repos/{REPOSITORY}/compare/{base}...{head}", "--jq", "{status: .status}"])
     return value["status"] if isinstance(value, dict) and isinstance(value.get("status"), str) else ""
+
+
+def _journal_pinned(path: Path) -> bool:
+    """Whether ``path`` is the one journal the owner's descriptor pins, reached without a link (#287 item 35)."""
+    pin = workload_journal_pin(cli_release_descriptor())
+    try:
+        if pin is None:
+            return False
+        for candidate in (pin, path):
+            if str(candidate).startswith(("\\", "//")) or not candidate.is_absolute():
+                return False
+            for component in (*reversed(candidate.parents), candidate):
+                info = os.lstat(component)
+                if (stat.S_ISLNK(info.st_mode)
+                        or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                    return False
+        return os.path.abspath(str(path)) == os.path.abspath(str(pin)) and os.path.samefile(path, pin)
+    except (OSError, ValueError):
+        return False
+
+
+def _require_journal_without_sidecars(path: Path) -> None:
+    for suffix in ("-wal", "-journal", "-shm"):
+        try:
+            os.lstat(str(path) + suffix)
+        except FileNotFoundError:
+            continue
+        raise ValueError("workload journal has a SQLite sidecar")
 
 
 def _workload_observation(path: Path, at: datetime) -> list[Observation]:
@@ -3609,6 +3782,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
     result: list[Observation] = []
     deployed: list[Observation] = []
     state = None
+    held = _Held()
+    deployment_started = at
 
     def since(started: datetime, items: list[Observation]) -> list[Observation]:
         # A composite (health, Slack, consistency, captures, ...) is stamped when its source phase began reading,
@@ -3624,8 +3799,9 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
             at, candidate_sha, deployment, channel=channel, owner=owner, gateway=gateway, topology=topology,
             drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
-            paid_rubric_path=paid_rubric_path, collection_end=collection_end)
+            paid_rubric_path=paid_rubric_path, collection_end=collection_end, held=held)
         deployed = since(started, deployed)
+        deployment_started = started
     if github:
         started = datetime.now(timezone.utc)
         try:
@@ -3633,13 +3809,67 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
         except _SOURCE_ERRORS:
             result.append(_observation("16", None, "GitHub CI or the local-replica receipt could not be verified; no retry was made.",
                                        "GitHub Actions", {}, at, candidate_sha=candidate_sha))
-    if ledger_path is not None:
+    if ledger_path is not None and not _journal_pinned(ledger_path):
+        result.extend(_observation(key, None, "The selected assignment journal is not the one the owner's release descriptor "
+                                   "pins as the deployment's workload journal; it is not read.",
+                                   str(ledger_path), {}, at) for key in ("13", "14"))
+    elif ledger_path is not None:
         try:
             started = datetime.now(timezone.utc)
-            result.extend(since(started, list(_workload_observation(ledger_path, collection_end()))))
+            reason = "The assignment journal path or held-file identity could not be verified across the read."
+            # The reader consumes the held handle's bytes, so a path swap (even with restore) cannot change
+            # what is graded. The remaining assumption is that a writer with access to the real journal
+            # does not rewrite its inode in place; size/mtime checks detect ordinary concurrent writes.
+            if not stat.S_ISREG(os.stat(ledger_path).st_mode):
+                raise ValueError("workload journal is not a regular file")
+            fd = os.open(ledger_path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, "rb") as journal:
+                held_stat = os.fstat(journal.fileno())
+                if held_stat.st_nlink != 1:
+                    reason = "The assignment journal does not have exactly one hard link; another link could carry its own SQLite sidecars."
+                    raise ValueError("workload journal link count is not one")
+                identity = (held_stat.st_dev, held_stat.st_ino)
+                before = os.stat(ledger_path)
+                if (not stat.S_ISREG(held_stat.st_mode) or not _journal_pinned(ledger_path)
+                        or identity != (before.st_dev, before.st_ino)):
+                    raise ValueError("workload journal identity changed before read")
+                with tempfile.TemporaryDirectory() as folder:
+                    snapshot = Path(folder) / "journal.sqlite3"
+                    reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                    # _journal_pinned guarantees ledger_path is exactly the pinned pathname.
+                    # A multiply-linked journal is refused because any other link could carry its own sidecars.
+                    _require_journal_without_sidecars(ledger_path)
+                    reason = "The held assignment journal could not be copied to a stable private snapshot."
+                    copy_before = os.fstat(journal.fileno())
+                    digest = hashlib.sha256()
+                    journal.seek(0)
+                    with snapshot.open("wb") as target:
+                        while chunk := journal.read(1024 * 1024):
+                            target.write(chunk)
+                            digest.update(chunk)
+                    copy_after = os.fstat(journal.fileno())
+                    if copy_after.st_nlink != 1:
+                        reason = "The assignment journal does not have exactly one hard link after copying; another link could carry its own SQLite sidecars."
+                        raise ValueError("workload journal link count is not one after snapshot")
+                    if ((copy_before.st_size, copy_before.st_mtime_ns)
+                            != (copy_after.st_size, copy_after.st_mtime_ns)):
+                        raise ValueError("workload journal changed during snapshot")
+                    reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                    _require_journal_without_sidecars(ledger_path)
+                    reason = "The private assignment journal snapshot could not be read."
+                    observations = [replace(_relabel(item, {"journal_snapshot_sha256": digest.hexdigest()}),
+                                            source=str(ledger_path))
+                                    for item in _workload_observation(snapshot, collection_end())]
+                reason = "The assignment journal path or held-file identity could not be verified across the read."
+                after = os.stat(ledger_path)
+                if not _journal_pinned(ledger_path) or identity != (after.st_dev, after.st_ino):
+                    raise ValueError("workload journal identity changed during read")
+                reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                _require_journal_without_sidecars(ledger_path)
+            result.extend(since(started, observations))
         except _SOURCE_ERRORS:
-            result.extend(_observation(key, None, "The assignment journal could not be verified; no retry was made.",
-                                       str(ledger_path.resolve()), {}, at) for key in ("13", "14"))
+            result.extend(_observation(key, None, reason + " No retry was made.",
+                                       str(ledger_path), {}, at) for key in ("13", "14"))
     if security_scan_id is not None:
         try:
             started = datetime.now(timezone.utc)
@@ -3649,6 +3879,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
     if deployment is not None:
+        # After 16 and 18 exist, before the restart check, so released evidence is re-inspected like any other.
+        deployed = _apply_reviewed_image_admission(candidate_sha, held, deployed, result, deployment_started)
         deployed = _still_deployed(deployed, state, deployment, gateway)
     return _finalize(deployed + result, collection_end(), live=now is None)
 
@@ -3841,7 +4073,7 @@ def _file_references(folder: Path | None) -> list[dict[str, str]]:
     # Explicit directory only, no recursion, no hidden files or credential stores.
     result = []
     for path in sorted(folder.iterdir())[:100]:
-        if path.is_symlink() or path.name.startswith(".") or path.suffix.lower() not in {".json", ".md"}:
+        if path.is_symlink() or path.name.startswith(".") or path.suffix.lower() not in {".json", ".html", ".md"}:
             continue
         if not path.is_file() or path.stat().st_size > MAX_BYTES:
             continue
@@ -3861,6 +4093,25 @@ def _launcher():
 
 def report_is_attested(report: dict[str, Any]) -> bool:
     return _launcher().report_is_attested(report)
+
+
+def _containment_limitations(rows: list[dict]) -> list[str]:
+    everything = set(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)
+    admitted = sorted(row["id"] for row in rows if row["id"] in everything and any(
+        isinstance(evidence.get("facts"), dict) and "reviewed_image_trust" in evidence["facts"]
+        for evidence in row["evidence"]))
+    contained = sorted(everything - set(admitted))
+    lines = []
+    if contained:
+        lines.append("Checks " + ", ".join(contained) + " are contained by the trusted-collection follow-up "
+                     "(#313 / PR #327); other missing selections or unavailable sources also stay UNKNOWN.")
+    if admitted:
+        lines.append("Checks " + ", ".join(admitted) + " were admitted under reviewed-image trust (owner ruling "
+                     "2026-10-02, #313): their Director-written inputs count only because the running image, commit "
+                     "and tree equal the owner-pinned reviewed release and checks 16, 17 and 18 passed for it. That "
+                     "is evidence about the reviewed image's behaviour, not independent proof of execution or "
+                     "authorship, and a cross-check that contradicts it reports FAIL.")
+    return lines
 
 
 def score(candidate_sha: str, observations: list[Observation] | None = None, *,
@@ -3921,9 +4172,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Checks " + ", ".join(sorted(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)) +
-                            " are contained by the trusted-collection follow-up (#313 / PR #327); "
-                            "other missing selections or unavailable sources also stay UNKNOWN.",
+                            *_containment_limitations(rows),
                             "Trusted collection verifies store consistency and signatures with evaluator code. Rows and HMAC keys the candidate can write are not independent proof of execution or authorship; missing owner bindings or snapshots remain UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}

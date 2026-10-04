@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import multiprocessing
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -79,9 +80,12 @@ def _run_packet_after_closure_process(
     ready,
     start,
     outcomes,
+    startup_stage,
 ) -> None:
+    startup_stage.value = 1  # Child target entered; imports completed.
     connection = sqlite3.connect(checkpoint_path, check_same_thread=False)
     try:
+        startup_stage.value = 2  # Runtime initialization in progress.
         runtime = LangGraphPacketRuntime(
             SqliteSaver(connection),
             ledger_database_path=ledger_path,
@@ -94,6 +98,7 @@ def _run_packet_after_closure_process(
         token = WriterOwnershipToken.issue(
             task_id=work["task_id"], owner_id="langgraph"
         )
+        startup_stage.value = 3  # Runtime initialized; parent may set up closure.
         ready.set()
         if not start.wait(60):
             raise TimeoutError("parent did not signal closure setup within 60s")
@@ -245,6 +250,7 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
         ready = context.Event()
         start = context.Event()
         outcomes = context.Queue()
+        startup_stage = context.RawValue("i", 0)
         process = context.Process(
             target=_run_packet_after_closure_process,
             args=(
@@ -256,30 +262,61 @@ class LangGraphPacketRuntimeTests(unittest.TestCase):
                 ready,
                 start,
                 outcomes,
+                startup_stage,
             ),
         )
         process.start()
-        self.assertTrue(ready.wait(60), "spawned runtime did not become ready within 60s")
-        with closing(
-            sqlite3.connect(self.ledger_path, timeout=30, isolation_level=None)
-        ) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """INSERT INTO runtime_pre_submit_closures(
-                    idempotency_key, parallel_effect_key, closed_at
-                ) VALUES (?, NULL, ?)""",
-                (self.work["idempotency_key"], "2026-08-25T15:43:00+00:00"),
-            )
-            start.set()
-            time.sleep(0.25)
-            self.assertTrue(process.is_alive())
-            connection.commit()
-        status, reason, calls = outcomes.get(timeout=15)
-        process.join(15)
-        self.assertEqual(0, process.exitcode)
-        self.assertEqual(RuntimeExecutionStatus.REJECTED.value, status)
-        self.assertIn("closed before submit", reason)
-        self.assertEqual(0, calls)
+        def cleanup_child():
+            # Assertion/queue failures must not leave a child using the fixture
+            # database while tearDown removes its directory.
+            if process.is_alive():
+                process.terminate()
+            process.join(5)
+            if process.is_alive():
+                process.kill()
+                process.join(5)
+            outcomes.close()
+            outcomes.join_thread()
+            self.assertFalse(process.is_alive(), "spawned runtime cleanup did not finish")
+        try:
+            if not ready.wait(60):
+                # Distinct source lines survive CI's content-redacting traceback
+                # filter without exposing child output or database contents.
+                stage = startup_stage.value
+                if stage == 0:
+                    self.fail(f"child target not entered; exitcode={process.exitcode}")
+                if stage == 1:
+                    self.fail(f"checkpoint connection not ready; exitcode={process.exitcode}")
+                if stage == 2:
+                    self.fail(f"runtime initialization not ready; exitcode={process.exitcode}")
+                self.fail(f"readiness signal not received; exitcode={process.exitcode}")
+            with closing(
+                sqlite3.connect(self.ledger_path, timeout=30, isolation_level=None)
+            ) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """INSERT INTO runtime_pre_submit_closures(
+                        idempotency_key, parallel_effect_key, closed_at
+                    ) VALUES (?, NULL, ?)""",
+                    (self.work["idempotency_key"], "2026-08-25T15:43:00+00:00"),
+                )
+                start.set()
+                time.sleep(0.25)
+                self.assertTrue(process.is_alive())
+                connection.commit()
+            status, reason, calls = outcomes.get(timeout=15)
+            process.join(15)
+            self.assertEqual(0, process.exitcode)
+            self.assertEqual(RuntimeExecutionStatus.REJECTED.value, status)
+            self.assertIn("closed before submit", reason)
+            self.assertEqual(0, calls)
+        finally:
+            primary_failure = sys.exc_info()[0] is not None
+            try:
+                cleanup_child()
+            except Exception:
+                if not primary_failure:
+                    raise
 
     def test_live_dispatch_timeout_returns_and_never_redispatches(self):
         release = threading.Event()

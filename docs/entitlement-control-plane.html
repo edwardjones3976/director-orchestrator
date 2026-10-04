@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Entitlement control plane (default off) · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#contracts-and-signing">Contracts and signing</a></li><li class="top"><a href="#configuration-secret-reference&#45;-file-only">Configuration (secret-reference / file only)</a></li><li class="top"><a href="#dormant-action-boundary-query">Dormant action-boundary query</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | BEGIN]] -->
+<h1 id="entitlement-control-plane-default-off">Entitlement control plane (default off)</h1>
+<p><strong>Status:</strong> Mechanism only. Default off. No readiness router, provider dispatch,
+or external-effect consumer wires the dormant action-boundary query.</p>
+<p>SQLite rights provisioning, startup authorization snapshots, and the pending
+readiness hunk are removed. Entitlements live in PostgreSQL with immutable
+generation/event lineage, generation CAS, idempotent stored outcomes, and
+mandatory owner notices.</p>
+<h2 id="contracts-and-signing">Contracts and signing</h2>
+<table>
+<thead>
+<tr>
+<th>Contract</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SignedEntitlementTemplate/v1</code></td>
+<td>Owner-signed profile template composed with universal <code>shared-integrations/v1</code></td>
+</tr>
+<tr>
+<td><code>ProjectRegistration/v1</code></td>
+<td>Owner-signed project/profile registration with destinations, scopes, budgets</td>
+</tr>
+<tr>
+<td><code>InstallAttestation/v1</code></td>
+<td>Authenticated install evidence with non-self-referential verifier signature</td>
+</tr>
+<tr>
+<td><code>EntitlementEvent/v1</code></td>
+<td>Immutable <code>GRANT</code>, <code>SUSPEND</code>, <code>REVOKE</code>, <code>RESTORE</code>, <code>SUPERSEDE</code>, <code>UNINSTALL</code></td>
+</tr>
+<tr>
+<td><code>OwnerNotice/v1</code></td>
+<td><code>PENDING</code>, <code>DELIVERED</code>, <code>FAILED</code>, <code>ACKNOWLEDGED</code></td>
+</tr>
+</tbody>
+</table>
+<p>Signing bytes exclude signature fields. Subjects never declare rights.</p>
+<h2 id="configuration-secret-reference&#45;-file-only">Configuration (secret-reference / file only)</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENTITLEMENT_CONTROL_PLANE_ENABLED</code></td>
+<td>Default <code>false</code></td>
+</tr>
+<tr>
+<td><code>ENTITLEMENT_POSTGRES_DSN_FILE</code></td>
+<td>File containing the Postgres DSN</td>
+</tr>
+<tr>
+<td><code>ENTITLEMENT_POSTGRES_SCHEMA</code></td>
+<td>Versioned schema (default <code>entitlement_control_plane_v1</code>)</td>
+</tr>
+<tr>
+<td><code>ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE</code></td>
+<td>File containing the install attestation verifier secret</td>
+</tr>
+<tr>
+<td><code>ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE</code></td>
+<td>File containing the distinct route and destination-health verifier secret</td>
+</tr>
+<tr>
+<td><code>ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE</code></td>
+<td>File containing the owner authority secret</td>
+</tr>
+<tr>
+<td><code>ENTITLEMENT_ALLOW_INSECURE_LOCAL_POSTGRES</code></td>
+<td>Loopback/approved disposable endpoint only; parsed host, never substring</td>
+</tr>
+</tbody>
+</table>
+<h2 id="dormant-action-boundary-query">Dormant action-boundary query</h2>
+<p><code>EntitlementControlPlaneStore.query_action_boundary()</code> intersects live entitlement
+with registration generation, template composition, build digest, repository/ref/path,
+budget, notice deadline (five-minute fail-closed without scheduler), and audit lineage.</p>
+<p>Runtime authorization proofs are single-use effect claims. The first exact,
+fresh, signed proof can reserve its installation/action/destination/effect/build/source
+binding. An exact replay receives the stored binding but is denied permission to
+execute the effect again; reuse of the nonce with any different binding fails closed.</p>
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-04 | 21:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

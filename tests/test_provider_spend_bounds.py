@@ -78,8 +78,9 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     self.assertEqual(ledger.reservations(provider, now=now, include_released=False), [])
                     self.assertEqual(ledger.reservations(provider, now=now), [(effect, 0.75)])
                     self.assertEqual(ledger.exposure(provider, now=now), (0, 0))
-                    self.assertEqual(monitor._provider_request_count(provider.value, [], now), 0)
-                    self.assertEqual(monitor._exposure_usd(provider.value, [], now), 0)
+                    with monitor.provider_spend.read_snapshot() as snapshot:
+                        self.assertEqual(monitor._provider_request_count(provider.value, [], now, snapshot), 0)
+                        self.assertEqual(monitor._exposure_usd(provider.value, [], now, snapshot), 0)
                     with ledger._connect() as db:
                         self.assertEqual(db.execute("SELECT COUNT(*) FROM provider_daily_spend_reservations").fetchone()[0], 1)
                     ledger.record_charge(provider=provider, effect_key=effect, actual_cost_usd=cost, now=now)
@@ -92,7 +93,8 @@ class ProviderSpendBoundsTests(unittest.TestCase):
                     self.assertEqual(reopened.exposure(provider, now=now), (1, 0.75 if cost is None else cost))
                     self.assertEqual(reopened.unreconciled(provider, stale_after=timedelta(hours=1), now=now),
                                      [effect] if cost is None else [])
-                    self.assertEqual(monitor._provider_request_count(provider.value, [], now), 1)
+                    with monitor.provider_spend.read_snapshot() as snapshot:
+                        self.assertEqual(monitor._provider_request_count(provider.value, [], now, snapshot), 1)
                     with self.assertRaises(ProviderDailyLimitExceeded):
                         reopened.reserve(provider=provider, effect_key=key("next"), estimated_cost_usd=0.1,
                                          request_limit=1, budget_usd=1, now=now)

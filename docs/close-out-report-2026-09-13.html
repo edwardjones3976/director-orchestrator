@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Close-out report — LangGraph-primary and n8n delivery · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#1-identity-and-starting-state">1. Identity and starting state</a></li><li class="top"><a href="#2-status-by-phase">2. Status by phase</a></li><li class="top"><a href="#3-activation-gate-ledger">3. Activation gate ledger</a></li><li class="sub"><a href="#why-gate-8-cannot-be-closed-here">Why Gate 8 cannot be closed here</a></li><li class="top"><a href="#4-participation-by-lane">4. Participation by lane</a></li><li class="top"><a href="#5-tests-ci-security-review">5. Tests, CI, security, review</a></li><li class="top"><a href="#6-cost-effort-and-time">6. Cost, effort and time</a></li><li class="top"><a href="#7-how-the-decision-rules-performed">7. How the decision rules performed</a></li><li class="top"><a href="#8-corrections-issued">8. Corrections issued</a></li><li class="top"><a href="#9-scope-and-authority-changes">9. Scope and authority changes</a></li><li class="top"><a href="#10-recovery-and-rollback">10. Recovery and rollback</a></li><li class="top"><a href="#11-next-gate-and-follow-on">11. Next gate and follow-on</a></li><li class="top"><a href="#12-owner-decisions">12. Owner decisions</a></li><li class="top"><a href="#13-explicitly-not-done-and-not-verified">13. Explicitly not done and not verified</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | BEGIN]] -->
+<h1 id="close-out-report--langgraph-primary-and-n8n-delivery">Close-out report — LangGraph-primary and n8n delivery</h1>
+<p><strong>Status: DRAFT.</strong> Sections marked <strong>PENDING</strong> await execution and carry no
+value yet. Nothing in this document is activation evidence. Every gate value is
+<code>T</code>, <code>F</code> or <code>U</code>, computed rather than asserted, and <code>U</code> means unknown and is
+never rounded to a pass.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Project</td>
+<td>Director-Orchestrator (<code>edwardjones3976/director-orchestrator</code>)</td>
+</tr>
+<tr>
+<td>Delivery</td>
+<td>LangGraph-primary activation and n8n integration</td>
+</tr>
+<tr>
+<td>Owner</td>
+<td>Ed Jones</td>
+</tr>
+<tr>
+<td>Acting Director</td>
+<td>Claude (Cowork session)</td>
+</tr>
+<tr>
+<td>Objective</td>
+<td>Earliest completion; Sunday 2026-09-13 07:00 PDT an outer bound, not a due date</td>
+</tr>
+<tr>
+<td>Plan of record</td>
+<td><code>docs/activation-plan-2026-09-13.html</code> (v4)</td>
+</tr>
+<tr>
+<td>Delegation round</td>
+<td><code>docs/delegation-round-2026-09-09.html</code> supersedes the matrix assignment table for 2026-09-09</td>
+</tr>
+<tr>
+<td>Governing rules</td>
+<td><code>docs/director-decision-rules.html</code> (R1–R7)</td>
+</tr>
+<tr>
+<td>Delegation</td>
+<td><code>docs/delegation-matrix-2026-09-13.html</code> (rev 2)</td>
+</tr>
+<tr>
+<td>Determinations</td>
+<td><code>docs/findings-2026-09-09-gate8-and-holds.html</code></td>
+</tr>
+<tr>
+<td>Self-audit</td>
+<td><code>docs/protocol-compliance-audit-2026-09-09.html</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="1-identity-and-starting-state">1. Identity and starting state</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GitHub <code>main</code> at planning</td>
+<td><code>c81e388ff0a9bc97a59df007589ef4c7810ba429</code> (Merge PR #120)</td>
+<td><code>.git/FETCH_HEAD</code>, fetched 2026-09-09 00:52 PDT</td>
+</tr>
+<tr>
+<td>Frozen candidate</td>
+<td><strong>PENDING</strong></td>
+<td>freeze decision</td>
+</tr>
+<tr>
+<td>Candidate tree</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Deployment snapshot at planning</td>
+<td><code>a05237776bf4aac0f8224947cf44dea356ed8f56</code>, tree <code>4e1d578ccbd2db1e92b81de1659884061a87d160</code></td>
+<td>snapshot checkout</td>
+</tr>
+<tr>
+<td>Deployment control-script version</td>
+<td><code>OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC</code></td>
+<td>snapshot <code>scripts/</code></td>
+</tr>
+<tr>
+<td>Delivery branch (merged)</td>
+<td><code>claude/activation-plan-2026-09-13</code>, merged via PR #159 at 2026-09-09 19:18 UTC</td>
+<td>head <code>7f14e8b</code>; merge commit <code>4f1d9c3</code>; nine commits, documentation only</td>
+</tr>
+</tbody>
+</table>
+<p>The deployment ran eleven merges behind <code>main</code>, and the local <code>main</code> ref was 313
+commits stale. Neither was used as authority.</p>
+<h2 id="2-status-by-phase">2. Status by phase</h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Status</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Planning and decomposition</td>
+<td><strong>Complete</strong></td>
+<td>Eight documents, 1,492+ lines, nine commits</td>
+</tr>
+<tr>
+<td>Decision rules adopted and applied</td>
+<td><strong>Complete</strong></td>
+<td>R1–R7 governing; the plan's schedule and ledger are their output</td>
+</tr>
+<tr>
+<td>Lane eligibility established</td>
+<td><strong>Complete</strong></td>
+<td>From <code>allocation_profiles.py</code>, <code>workload_policy.py</code>, <code>primary_transports.py</code> and the readiness functions, not from profile prose</td>
+</tr>
+<tr>
+<td>Gate 8 determination</td>
+<td><strong>Complete — <code>F</code></strong></td>
+<td>Canary registered, not run</td>
+</tr>
+<tr>
+<td>Schedule feasibility (WO-14)</td>
+<td><strong>Complete</strong></td>
+<td>Lags satisfiable, capacity violated, fix identified</td>
+</tr>
+<tr>
+<td>Antigravity credential</td>
+<td><strong>Complete — already provisioned</strong></td>
+<td>Eleven of eleven readiness checks pass</td>
+</tr>
+<tr>
+<td>Candidate freeze</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Acceptance lifecycle on profile S</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Stage A simulated pass</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>n8n intake and status against S</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Live activation</td>
+<td><strong>Not attempted — not permitted</strong></td>
+<td>Gate 8 <code>F</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-activation-gate-ledger">3. Activation gate ledger</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Gate</th>
+<th>Value</th>
+<th>Basis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Independent review, CI, security on the exact candidate</td>
+<td><code>U</code></td>
+<td>Awaiting the two ACCEPT artifacts</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Postgres checkpointer live; backup and restore drill</td>
+<td><code>U</code></td>
+<td>Awaiting lifecycle</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Distinct namespaces</td>
+<td><code>U</code></td>
+<td>Worksheet pending</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Legacy intake disabled before writer lease</td>
+<td><code>U</code></td>
+<td>Awaiting health read</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Pre-cutover tasks bound or migrated</td>
+<td><code>U</code></td>
+<td>Inventory pending</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>/health</code> checkpoint, writer, reconciliation readiness</td>
+<td><code>U</code></td>
+<td>Awaiting lifecycle</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Kill switch drill</td>
+<td><code>U</code></td>
+<td>Awaiting lifecycle</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>Long Table canary evidence bundle complete</strong></td>
+<td><strong><code>F</code></strong></td>
+<td><code>langgraph-canary.yaml</code> declares <code>terminal_condition.registration_only: true</code>, <code>director_runtime.mode: disabled</code>, intake owned by <code>legacy</code>, every dispatch, paid and effect switch false. The canary evidence directory holds four documents dated 2026-08-25 that predate the program (2026-08-31); none is a canary run</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Owner acceptance</td>
+<td><code>U</code></td>
+<td>Downstream of 1–8</td>
+</tr>
+</tbody>
+</table>
+<pre><code>Done      = AND over gates 1..9              F
+Permitted = Done AND NOT (OR over no-go)     F
+</code></pre>
+<p><strong>No live provider execution occurred.</strong> Nothing in this delivery — not merged
+code, not green CI, not a configured switch, not the leadership handoff, and not
+the simulated pass if it completes — constitutes evidence that a provider
+executed work through the primary plane.</p>
+<h3 id="why-gate-8-cannot-be-closed-here">Why Gate 8 cannot be closed here</h3>
+<p>The canary's <code>provider_surfaces.required</code> names all nine lanes with both
+application and runtime-adapter live evidence required, including Microsoft 365
+Copilot, whose transport is hard-coded unauthenticated pending tenant
+administration:</p>
+<pre><code>Gate 8 → canary run → nine lanes LIVE_OK → M365 Work IQ → tenant admin consent
+</code></pre>
+<h2 id="4-participation-by-lane">4. Participation by lane</h2>
+<p>Authenticated participation only. A predicted position is never recorded as
+participation, and lane membership attests no enrolled or live route.</p>
+<table>
+<thead>
+<tr>
+<th>Lane</th>
+<th>Assigned</th>
+<th>Executed</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude (Director)</td>
+<td>Coordination, planning, determinations, audit</td>
+<td>Complete</td>
+<td>Coordination creates <strong>no production credit</strong></td>
+</tr>
+<tr>
+<td>OpenAI / Codex</td>
+<td>A-01 audit, A-03 and A-05 implementation</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>A-02 triage, A-04 implementation, four reviews</td>
+<td><strong>PENDING</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>Grok</td>
+<td>A-11, A-12 analyses</td>
+<td><strong>PENDING</strong></td>
+<td>Analysis only; CLI contact unbound</td>
+</tr>
+<tr>
+<td>Antigravity</td>
+<td>A-13 fixture artifact, A-14 debate seat</td>
+<td><strong>PENDING</strong></td>
+<td>Credential provisioned; readiness all-pass</td>
+</tr>
+<tr>
+<td>Perplexity</td>
+<td>A-15 research</td>
+<td><strong>PENDING</strong></td>
+<td>Needs owner approval bound to the query digest</td>
+</tr>
+<tr>
+<td>Firecrawl</td>
+<td>A-16 research</td>
+<td><strong>Partially executed</strong></td>
+<td>One Director-side MCP query returned; the repository lane remains unexercised, and the two surfaces are not interchangeable</td>
+</tr>
+<tr>
+<td>GitHub Copilot</td>
+<td>A-17 hygiene</td>
+<td><strong>PENDING</strong></td>
+<td>Post-freeze, non-gating</td>
+</tr>
+<tr>
+<td>Microsoft 365 Copilot</td>
+<td>None</td>
+<td>Not assigned</td>
+<td>Transport-blocked; correctly absent from the binding map</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation quota consumed: OpenAI 2 of 8, Claude 1 of 5, Cursor 1 of 3,
+Grok 0 of 3, Antigravity 1 of 3 — five of twenty. No lane over its ceiling; no
+zero-target lane holds an implementation assignment.</p>
+<h2 id="5-tests-ci-security-review">5. Tests, CI, security, review</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source, test or workflow changes</td>
+<td><strong>None.</strong> The branch is additive documentation only</td>
+</tr>
+<tr>
+<td>CI on the candidate</td>
+<td><strong>PENDING</strong></td>
+</tr>
+<tr>
+<td>Codex Security ACCEPT</td>
+<td><strong>PENDING</strong></td>
+</tr>
+<tr>
+<td>Independent different-provider ACCEPT</td>
+<td><strong>PENDING</strong></td>
+</tr>
+<tr>
+<td>Contribution tags</td>
+<td>Four policy conditions verified directly against <code>contribution_tags.py</code>; one defect found and fixed. The authoritative run belongs to CI</td>
+</tr>
+<tr>
+<td>Director self-audit</td>
+<td><code>docs/protocol-compliance-audit-2026-09-09.html</code> — a self-audit, substituting for no independent review</td>
+</tr>
+</tbody>
+</table>
+<h2 id="6-cost-effort-and-time">6. Cost, effort and time</h2>
+<table>
+<thead>
+<tr>
+<th>Measure</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Paid provider execution</td>
+<td><strong>Zero.</strong> No provider dispatch, no <code>ValidateProviders</code>, no <code>Activate</code></td>
+</tr>
+<tr>
+<td>Spend against the USD 10 campaign ceiling</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Owner-attended time consumed</td>
+<td><strong>PENDING</strong> — 3.6 h estimated</td>
+</tr>
+<tr>
+<td>Owner-attended time in the pre-compression plan</td>
+<td>12.1 h estimated</td>
+</tr>
+<tr>
+<td>Serial critical path after compression</td>
+<td>10.6 h</td>
+</tr>
+<tr>
+<td>Schedule pull-in</td>
+<td>~3.5–4 days earlier than the original Sunday plan</td>
+</tr>
+</tbody>
+</table>
+<h2 id="7-how-the-decision-rules-performed">7. How the decision rules performed</h2>
+<p>Measured, not claimed. <strong>PENDING</strong> rows fill in on completion.</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>R1</strong> sequencing</td>
+<td><strong>The largest single effect in the delivery.</strong> Determining Gate 8 by cost rather than by position moved it from the Saturday go/no-go to Tuesday night — from eighteen hours of remaining runway to about a hundred. It also changed the outcome: knowing Gate 8 was <code>F</code> before committing to the live path is what made the compression possible</td>
+</tr>
+<tr>
+<td><strong>R2</strong> three-valued ledger</td>
+<td>Prevented <code>U</code> from being read as a pass; produced a computed <code>F</code> with its source rather than an assertion</td>
+</tr>
+<tr>
+<td><strong>R3</strong> value of information</td>
+<td>Narrowed WO-02 from a full live-path audit to one question about the Accept/Migrate/Stage A path, removing roughly a day from the critical path</td>
+</tr>
+<tr>
+<td><strong>R4</strong> temporal network</td>
+<td>Confirmed the 24-hour maximum lag satisfiable with no negative cycle; established the latest feasible evidence start</td>
+</tr>
+<tr>
+<td><strong>R5</strong> operator minutes</td>
+<td>Found the real infeasibility that aggregate slack hid — Thursday over by 1.50 h, Friday by 0.50 h, with 7.42 h idle Wednesday</td>
+</tr>
+<tr>
+<td><strong>R6</strong> keyed evidence</td>
+<td>Applied to the audit packets; payoff arrives on the next candidate change</td>
+</tr>
+<tr>
+<td><strong>R7</strong> integer quotas</td>
+<td>Made the allocation checkable; surfaced correction 2</td>
+</tr>
+</tbody>
+</table>
+<h2 id="8-corrections-issued">8. Corrections issued</h2>
+<p>Three substantive Director errors, each corrected in the record rather than
+overwritten. All three read the protocol as more restrictive than it is, and each
+would have idled a capable lane.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Error</th>
+<th>Correction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Zero allocation target read as ineligible for all work</td>
+<td>A zero target refuses the lane in that profile, including for accepted non-code research; a profile with a non-zero target (public_research: Perplexity 25%, Firecrawl 15%) admits it.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Analysis and review charged against direct-production quota</td>
+<td>The allocation check counts accepted productive work — implementation, plus accepted Perplexity/Firecrawl research — and ordinary analysis and review consume no production credit (Grok's analyses are unused quota)</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Antigravity team mode described as needing a contract rewrite</td>
+<td>Implemented behind a configuration switch with team DDL, guard trigger, grant writable paths, pinned SSH worker and qualification canary</td>
+</tr>
+</tbody>
+</table>
+<p>One attribution defect: two documents edited across multiple commits without a
+fresh outer contribution pair. Fixed and verified.</p>
+<h2 id="9-scope-and-authority-changes">9. Scope and authority changes</h2>
+<ul>
+<li>Objective changed from &quot;complete by Sunday&quot; to earliest completion, Sunday as
+an outer bound (owner, 2026-09-09).</li>
+<li>Live phase decoupled to a follow-on. Gate 8 <code>F</code> makes it impermissible, and
+under an earliest-completion objective it is also strictly slower.</li>
+<li>Profile L not built. Profile S is the only new deployment.</li>
+<li>No authority was granted, widened or assumed. No deterministic gate was
+removed, relaxed or made advisory.</li>
+</ul>
+<h2 id="10-recovery-and-rollback">10. Recovery and rollback</h2>
+<p>Not exercised. <strong>PENDING</strong> on the lifecycle's <code>Backup</code> and <code>RestoreDrill</code>.</p>
+<p>Recorded for the operator: the deployed control script does not carry PR #115's
+rollback correction. <code>Rollback</code> refuses on ambiguous effects or non-quiescence
+<em>after</em> stopping intake, and never reverses an external effect already executed.
+It is not a safety net.</p>
+<h2 id="11-next-gate-and-follow-on">11. Next gate and follow-on</h2>
+<p>Immediate: the two ACCEPT artifacts on the frozen candidate. Everything
+downstream of <code>Accept</code> waits on them; nothing else does.</p>
+<p>Follow-on, decoupled with its own schedule: the five evidence blockers, the
+provider activation evidence campaign, Grok's CLI contact, Antigravity team mode,
+Firecrawl's repository credential, and the Long Table canary that Gate 8
+requires.</p>
+<h2 id="12-owner-decisions">12. Owner decisions</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Decision</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D-01…D-05</td>
+<td>Windows, repository plan, topology, canary task, status channel</td>
+<td>Recorded, delegated to the Director</td>
+</tr>
+<tr>
+<td>D-07</td>
+<td>Allocation profile change</td>
+<td><strong>Prerequisite</strong> for A-15/A-16</td>
+</tr>
+<tr>
+<td>D-09</td>
+<td>Copilot Lite authenticated contact</td>
+<td>Open</td>
+</tr>
+<tr>
+<td>D-10</td>
+<td>Perplexity query approval bound to digest</td>
+<td>Open</td>
+</tr>
+<tr>
+<td>D-11</td>
+<td>Grok CLI contact via host-bridge preflight</td>
+<td>Open, recommended</td>
+</tr>
+<tr>
+<td>D-12</td>
+<td>Delivery scope</td>
+<td>Resolved to option A by the earliest-completion objective</td>
+</tr>
+<tr>
+<td>D-13</td>
+<td>Wednesday capacity move</td>
+<td>Open, free</td>
+</tr>
+<tr>
+<td>D-14</td>
+<td>Reachable SSH worker host for Antigravity team mode</td>
+<td>Open</td>
+</tr>
+<tr>
+<td>D-15</td>
+<td>Work or school M365 tenant with admin consent</td>
+<td>Open; a &quot;no&quot; permanently closes that lane and the canary path</td>
+</tr>
+</tbody>
+</table>
+<h2 id="13-explicitly-not-done-and-not-verified">13. Explicitly not done and not verified</h2>
+<ul>
+<li>No live provider execution, no paid dispatch, no <code>Activate</code>, no canary task.</li>
+<li>Gate 8 <code>F</code>; gates 1–7 and 9 <code>U</code>.</li>
+<li>The deployment's runtime state is unverified — WO-01's health read is
+outstanding, so whether the existing deployment already owns intake as
+<code>langgraph</code> is unknown.</li>
+<li>The contribution-tag gate has not been validly run by the Director; CI owns it.</li>
+<li>The Firecrawl repository lane and the Perplexity lane are unexercised.</li>
+<li>This report is a self-produced document and has had no independent review.</li>
+</ul>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

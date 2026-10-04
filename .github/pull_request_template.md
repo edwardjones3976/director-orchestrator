@@ -2,8 +2,7 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
-<!-- Replace placeholders. Add ; assistance: <id>[, <id>...] on the header line when applicable. Follow PR #284. -->
-Sole author: <assistant> (<model>)
+<!-- Owner direction, 2026-10-01: no custom attribution headers, trailers or percentage/share paperwork. Preserve ordinary Git provenance and use existing authenticated records to verify actual identity and reviewer/merger independence under AGENTS.md. -->
 
 ## Outcome
 
@@ -12,12 +11,12 @@ Sole author: <assistant> (<model>)
 ## Evidence
 
 - Changed surface:
-- Sole author and shares (at least 52 %, with receipt references; see docs/contribution-attribution-policy.md#sole-author-rule):
+- Producer/contributor and reviewer-independence evidence (ordinary Git and existing authenticated task/run records; see docs/contribution-attribution-policy.html#sole-author-rule):
 - `base_sha` (target-branch tip at review):
-- `merge_base_sha` (for authorship share computation):
+- `merge_base_sha` (base of the reviewed diff):
 - Head SHA:
-- `share_record_sha256`: <reviewer-recorded SHA-256 of the exact UTF-8 share-record text used, including the PR share table, maintenance-exclusion MX references, and human-attribution entries; exclude this digest field itself>
-  Any change to that record or to `base_sha`, `merge_base_sha`, or head SHA invalidates the verdict.
+- Tree/artifact digest (as applicable):
+  A change to `base_sha`, `merge_base_sha`, head SHA or the reviewed artifact invalidates the bound verdict. Reconcile conflicting producer evidence before acceptance; preserve all inputs required by the existing deterministic gates.
 - Tests and checks:
 - Independent reviewer:
 - Known limitations:
@@ -28,7 +27,6 @@ Sole author: <assistant> (<model>)
 - Secrets committed: no
 - Merge/deployment/publication performed: no
 
-<!-- Every commit: Contributed-by: <Assistant or Tool> | <Complete Model or System>. Keep Co-Authored-By trailers; do not write new in-file tags. -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:09 UTC | END]] -->

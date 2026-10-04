@@ -275,7 +275,7 @@ $acl = Get-Acl -LiteralPath $manifestPath
 $acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
 Set-Acl -LiteralPath $manifestPath -AclObject $acl
 Write-Output "Installed dormant $Role tooling at $root. Config SHA256 $configDigest."
-Write-Output 'No key generated and no native login or dispatch occurred. Follow docs/native-acceptance-issuers.md for separate identity enrollment and deny-access checks.'
+Write-Output 'No key generated and no native login or dispatch occurred. Follow docs/native-acceptance-issuers.html for separate identity enrollment and deny-access checks.'
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:31 UTC | END]]
