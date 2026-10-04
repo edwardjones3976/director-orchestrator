@@ -12,7 +12,6 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 import tarfile
-import tempfile
 
 import yaml
 
@@ -186,9 +185,10 @@ def source_sections(text):
     mapping = {name.casefold(): name for name in CONTEXT_SECTIONS}
     for index, (level, name, start, body, title_span) in enumerate(headings):
         if level == 1 and title is None:
-            if text[title_span["start"]:title_span["end"]] == name:
-                title = title_span
-                continue  # The document title is not also an input section.
+            if text[title_span["start"]:title_span["end"]] != name:
+                raise Refusal("AMBIGUOUS_INPUT_TITLE")
+            title = title_span
+            continue  # The document title is not also an input section.
         key_name = heading_name(name)
         key = mapping.get(key_name)
         if key_name == "alpha":
@@ -204,7 +204,215 @@ def source_sections(text):
 
 
 def visibly_nonempty(text):
-    return any(char.isalnum() for _, visible, _ in visible_lines(text) for char in visible)
+    fence = None
+    for _, visible, fenced in visible_lines(text):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", visible.rstrip("\r\n"))
+        if fenced and marker:
+            if fence is None:
+                fence = (marker[1][0], len(marker[1]))
+                continue  # The info string is a delimiter, not section content.
+            if marker[1][0] == fence[0] and len(marker[1]) >= fence[1] and not marker[2].strip():
+                fence = None
+                continue
+        if any(char.isalnum() for char in visible):
+            return True
+    return False
+
+
+class _WindowsDirectories:
+    """Retained no-delete-sharing handles anchor every Windows path component."""
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+        self.ctypes = ctypes
+        class FileId(ctypes.Structure):
+            _fields_ = [("volume", ctypes.c_ulonglong), ("identifier", ctypes.c_ubyte * 16)]
+        class Attributes(ctypes.Structure):
+            _fields_ = [("attributes", wintypes.DWORD), ("reparse_tag", wintypes.DWORD)]
+        class UnicodeString(ctypes.Structure):
+            _fields_ = [("length", wintypes.USHORT), ("maximum_length", wintypes.USHORT),
+                        ("buffer", wintypes.LPWSTR)]
+        class ObjectAttributes(ctypes.Structure):
+            _fields_ = [("length", wintypes.ULONG), ("root", wintypes.HANDLE),
+                        ("name", ctypes.POINTER(UnicodeString)), ("attributes", wintypes.ULONG),
+                        ("security_descriptor", ctypes.c_void_p), ("security_qos", ctypes.c_void_p)]
+        class StatusUnion(ctypes.Union):
+            _fields_ = [("status", wintypes.LONG), ("pointer", ctypes.c_void_p)]
+        class IoStatus(ctypes.Structure):
+            _fields_ = [("status", StatusUnion), ("information", ctypes.c_size_t)]
+        self.FileId, self.Attributes = FileId, Attributes
+        self.UnicodeString, self.ObjectAttributes, self.IoStatus = UnicodeString, ObjectAttributes, IoStatus
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.create = kernel.CreateFileW
+        self.create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        self.create.restype = wintypes.HANDLE
+        self.info = kernel.GetFileInformationByHandleEx
+        self.info.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        self.info.restype = wintypes.BOOL
+        self.close = kernel.CloseHandle
+        self.close.argtypes, self.close.restype = [wintypes.HANDLE], wintypes.BOOL
+        native = ctypes.WinDLL("ntdll")
+        self.native_create = native.NtCreateFile
+        self.native_create.argtypes = [ctypes.POINTER(wintypes.HANDLE), wintypes.ULONG,
+            ctypes.POINTER(ObjectAttributes), ctypes.POINTER(IoStatus), ctypes.c_void_p,
+            wintypes.ULONG, wintypes.ULONG, wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, wintypes.ULONG]
+        self.native_create.restype = wintypes.LONG
+        self.native_error = native.RtlNtStatusToDosError
+        self.native_error.argtypes, self.native_error.restype = [wintypes.LONG], wintypes.ULONG
+        self.Handle = wintypes.HANDLE
+
+    def open(self, path, *, sharing=3, access=0x80000000, creation=3, flags=0x02200000):
+        handle = self.create(str(path), access, sharing, None, creation, flags, None)
+        if handle == self.ctypes.c_void_p(-1).value:
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return handle
+
+    def identity(self, handle):
+        file_id, attributes = self.FileId(), self.Attributes()
+        if not self.info(handle, 18, self.ctypes.byref(file_id), self.ctypes.sizeof(file_id)) or not self.info(
+                handle, 9, self.ctypes.byref(attributes), self.ctypes.sizeof(attributes)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        if not attributes.attributes & 0x10 or attributes.attributes & 0x400:
+            raise Refusal("PROTECTED_OUTPUT_PATH")
+        return file_id.volume, bytes(file_id.identifier)
+
+    def snapshot(self, path):
+        handle = self.open(path, sharing=7)
+        try:
+            return self.identity(handle)
+        finally:
+            self.close(handle)
+
+    def create_directory(self, parent, name):
+        """FILE_CREATE returns the birth handle; never mkdir then authenticate a pathname."""
+        if not parent or not name or name in (".", "..") or any(char in name for char in "\\/:\0"):
+            raise Refusal("PROTECTED_OUTPUT_PATH")
+        buffer = self.ctypes.create_unicode_buffer(name)
+        length = len(name.encode("utf-16-le"))
+        if length + 2 > 65535:
+            raise Refusal("PROTECTED_OUTPUT_PATH")
+        string = self.UnicodeString(length, length + 2, self.ctypes.cast(buffer, self.ctypes.c_wchar_p))
+        attributes = self.ObjectAttributes(self.ctypes.sizeof(self.ObjectAttributes), parent,
+            self.ctypes.pointer(string), 0x40, None, None)  # OBJ_CASE_INSENSITIVE, relative RootDirectory.
+        handle, status = self.Handle(), self.IoStatus()
+        # SYNCHRONIZE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, share read/write only;
+        # FILE_CREATE, DIRECTORY_FILE | SYNCHRONOUS_IO_NONALERT | OPEN_REPARSE_POINT.
+        code = self.native_create(self.ctypes.byref(handle), 0x00100081, self.ctypes.byref(attributes),
+            self.ctypes.byref(status), None, 0x10, 3, 2, 0x00200021, None, 0)
+        if code != 0:
+            if handle.value:
+                self.close(handle.value)
+            raise self.ctypes.WinError(self.native_error(code))
+        if not handle.value or status.information != 2:  # FILE_CREATED, not FILE_OPENED.
+            if handle.value:
+                self.close(handle.value)
+            raise Refusal("OUTPUT_BIRTH_NOT_CREATED")
+        return handle.value
+
+
+class _Publication:
+    """Publish through acquired directory objects, never a mutable output pathname."""
+    def __init__(self, out):
+        self.out = out
+        self.directories, self.files = [], []
+        self.windows = _WindowsDirectories() if os.name == "nt" else None
+        self.output_handle = None
+
+    def _snapshot(self, path, parent=None):
+        return self.windows.snapshot(path)
+
+    def _take_directory(self, path, parent, expected):
+        handle = None
+        try:
+            handle = self.windows.open(path)  # FILE_SHARE_DELETE deliberately absent.
+            identity = self.windows.identity(handle)
+            if identity != expected:
+                raise Refusal("OUTPUT_PATH_RACE")
+            self.directories.append(handle)
+            return handle
+        except BaseException:
+            if handle is not None:
+                self.windows.close(handle)
+            raise
+
+    def _create_directory(self, path, parent):
+        handle = self.windows.create_directory(parent, path.name)
+        try:
+            self.windows.identity(handle)  # Validate the returned birth object, not an output-path snapshot.
+            self.directories.append(handle)
+            return handle
+        except BaseException:
+            self.windows.close(handle)
+            raise
+
+    def __enter__(self):
+        try:
+            if self.windows is None:
+                raise Refusal("OUTPUT_PLATFORM_UNQUALIFIED")
+            chain = list(reversed(self.out.parent.parents)) + [self.out.parent]
+            snapshots = {}
+            for path in chain:
+                try:
+                    snapshots[path] = self._snapshot(path)
+                except FileNotFoundError:
+                    snapshots[path] = None
+            parent = None
+            for path in chain:
+                expected = snapshots[path]
+                if expected is None:
+                    try:
+                        parent = self._create_directory(path, parent)
+                    except FileExistsError:
+                        raise Refusal("OUTPUT_PATH_RACE") from None
+                else:
+                    parent = self._take_directory(path, parent, expected)
+            try:
+                self.output_handle = self._create_directory(self.out, parent)
+            except FileExistsError:
+                raise Refusal("OUTPUT_EXISTS") from None
+            return self
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def _write_temp(self, raw):
+        name = ".kep-" + os.urandom(16).hex()
+        import msvcrt
+        handle = self.windows.open(self.out / name, access=0x40000000, creation=1, flags=0x00200080)
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+        except BaseException:
+            self.windows.close(handle)
+            raise
+        self.files.append((name, fd))
+        remaining = memoryview(raw)
+        while remaining:
+            count = os.write(fd, remaining)
+            if count <= 0:
+                raise OSError("short publication write")
+            remaining = remaining[count:]
+        os.fsync(fd)
+        return name
+
+    def publish(self, data, manifest):
+        for final, raw in (("inputs.jsonl", data), ("manifest.json", manifest)):
+            staged = self._write_temp(raw)
+            # All ancestor/destination and staging-file objects deny rename/delete.
+            os.link(self.out / staged, self.out / final)
+            # The complete manifest is linked last, never exposed while being written.
+
+    def __exit__(self, *_exc):
+        for name, fd in reversed(self.files):
+            os.close(fd)
+            try:
+                (self.out / name).unlink()
+            except OSError:
+                pass  # Preserve partial output; no pathname-based recursive cleanup/retry.
+        self.files.clear()
+        for handle in reversed(self.directories):
+            self.windows.close(handle)
+        self.directories.clear()
 
 
 def metadata_identity(raw):
@@ -330,6 +538,7 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         if not isinstance(number, str) or not number.isascii() or not number.isdigit():
             raise Refusal("CENSUS_IDENTITY_MISMATCH")
         number = int(number)
+        decision["kep_number"] = number  # Retained for every authenticated census entry.
         if re.fullmatch(r"[0-9a-f]{64}", str(entry.get("metadata_sha256"))) is None:
             raise Refusal("INVALID_CENSUS")
         # Census/YAML identity is authoritative. Directory disagreements are
@@ -460,22 +669,8 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 "inputs_sha256": digest(data), "records": [{"source_group": record["source_group"], "selection_rank": record["selection_rank"], "sha256": digest(payload)} for record, payload in zip(records, payloads)]}
     if dry_run:
         return {"dry_run": True, **summary}
-    out.parent.mkdir(parents=True, exist_ok=True)
-    # Directory reservation is atomic/no-clobber. The manifest is installed last
-    # as the commit marker; readers must ignore an interrupted directory lacking it.
-    with tempfile.TemporaryDirectory(prefix=".kep-inputs-", dir=out.parent) as folder:
-        staging = Path(folder)
-        for name, raw in (("inputs.jsonl", data), ("manifest.json", json_bytes(manifest) + b"\n")):
-            with (staging / name).open("xb") as handle:
-                handle.write(raw)
-                handle.flush()
-                os.fsync(handle.fileno())
-        try:
-            out.mkdir()
-        except FileExistsError:
-            raise Refusal("OUTPUT_EXISTS") from None
-        os.link(staging / "inputs.jsonl", out / "inputs.jsonl")
-        os.link(staging / "manifest.json", out / "manifest.json")
+    with _Publication(out) as publication:
+        publication.publish(data, json_bytes(manifest) + b"\n")
     return {"dry_run": False, **summary}
 
 

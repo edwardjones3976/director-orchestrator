@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -91,6 +92,7 @@ class Fixture:
         return values
 
 
+@unittest.skipUnless(os.name == "nt", "Two-file publication qualified on Windows only; no POSIX birth implementation")
 class PrepareKepInputsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="synthetic-kep-inputs-")
@@ -175,6 +177,18 @@ class PrepareKepInputsTests(unittest.TestCase):
         self.assertEqual(len(provider), 6)
         self.assertEqual(sum(entry["reason"] == "INELIGIBLE_STATUS" for entry in provider), 5)
         self.assertTrue(all(entry["selection_rank"] is None for entry in provider if entry["reason"]))
+        self.assertEqual({entry["kep_number"] for entry in provider}, {423, 2313, 2314, 2315, 629, 630})
+
+    def test_replaced_and_implemented_identity_has_one_eligible_group(self):
+        fixture = Fixture(self.root, [dict(number=2133, sig="sig-legacy", status="replaced", text="Not read."),
+                                      dict(number=2133, sig="sig-current", status="implemented", text=source(2133))])
+        result = tool.prepare(**fixture.args())
+        _, rows, manifest = self.load()
+        self.assertEqual(result["metadata_candidates"], 2)
+        self.assertEqual(result["usable_inputs"], 1)
+        self.assertEqual([row["kep_number"] for row in rows], [2133])
+        self.assertEqual(result["refused_by_reason"], {"INELIGIBLE_STATUS": 1})
+        self.assertEqual([item["kep_number"] for item in manifest["qualification"]["census"]], [2133, 2133])
 
     def test_provider_buckets_keep_frozen_round_robin_rank_and_census_order_independence(self):
         items = [dict(number=2313, sig="provider-aws", status="implemented", text=source(2313).replace("## Non-Goals", "## Unmapped")),
@@ -393,6 +407,8 @@ class PrepareKepInputsTests(unittest.TestCase):
             "beta": (source().replace("### Alpha", "### Gamma"), "MISSING_OR_EMPTY_SUPPORT_SECTION"),
             "goals": (source().replace("## Goals", "## Other Goals"), "INPUT_GOALS_MISSING"),
             "title": (source().replace("# Synthetic KEP", "Synthetic KEP", 1), "INPUT_TITLE_MISSING"),
+            "ambiguous_first_title": (source().replace("# Synthetic KEP 19 – café", "# First <!-- hidden --> title\n# Later title"), "AMBIGUOUS_INPUT_TITLE"),
+            "empty_fenced_section": (source().replace("Do not expand unrelated work.", "```text\n```"), "MISSING_OR_EMPTY_SUPPORT_SECTION"),
         }
         for name, (text, reason) in cases.items():
             with self.subTest(name=name):
@@ -404,6 +420,12 @@ class PrepareKepInputsTests(unittest.TestCase):
                 self.assertEqual(str(raised.exception), "NO_USABLE_INPUTS")
                 self.assertEqual(raised.exception.summary["refused_by_reason"], {reason: 1})
                 self.assertFalse((root / "out").exists())
+
+    def test_fence_delimiters_do_not_count_as_content_but_literal_body_does(self):
+        self.assertFalse(tool.visibly_nonempty("```text\n```\n"))
+        self.assertFalse(tool.visibly_nonempty("~~~markdown\n \n~~~\n"))
+        self.assertTrue(tool.visibly_nonempty("```text\nactual body\n```\n"))
+        self.assertTrue(tool.visibly_nonempty("```text\n<!-- literal body -->\n```\n"))
 
     def test_explicit_alpha_heading_and_optional_annotation(self):
         text = source().replace("## Graduation Criteria\n### Alpha", "## Alpha Graduation Criteria")
@@ -507,16 +529,140 @@ class PrepareKepInputsTests(unittest.TestCase):
             tool.prepare(**fixture.args())
         self.assertEqual((out / "sentinel").read_text(), "existing")
         raced = self.root / "raced"
-        real_mkdir = Path.mkdir
-        def race(path, *args, **kwargs):
-            if path == raced and not path.exists():
-                real_mkdir(path)
-                (path / "sentinel").write_text("racer")
-            return real_mkdir(path, *args, **kwargs)
-        with patch.object(Path, "mkdir", race), self.assertRaisesRegex(tool.Refusal, "OUTPUT_EXISTS"):
+        native_create = tool._WindowsDirectories.create_directory
+        def race(api, parent, name):
+            if name == raced.name:
+                raced.mkdir()
+                (raced / "sentinel").write_text("racer")
+            return native_create(api, parent, name)
+        with patch.object(tool._WindowsDirectories, "create_directory", race), self.assertRaisesRegex(tool.Refusal, "OUTPUT_EXISTS"):
             tool.prepare(**fixture.args(out=raced))
         self.assertEqual((raced / "sentinel").read_text(), "racer")
         self.assertFalse((raced / "inputs.jsonl").exists())
+
+    def test_atomic_birth_blocks_output_and_new_ancestor_swap_before_first_identity_query(self):
+        for target in ("output", "new_ancestor"):
+            with self.subTest(target=target):
+                root = self.root / target
+                root.mkdir()
+                fixture = Fixture(root)
+                foreign, moved = root / "synthetic-foreign-empty", root / "moved-reservation"
+                foreign.mkdir()
+                out = root / "out" if target == "output" else root / "new-parent" / "out"
+                attacked = out if target == "output" else out.parent
+                native_create = tool._WindowsDirectories.create_directory
+                attempted = False
+                def swap(api, parent, name):
+                    nonlocal attempted
+                    handle = native_create(api, parent, name)
+                    if name == attacked.name:
+                        attempted = True
+                        # This is the old gap: immediately after creation, before first identity query.
+                        # The returned birth handle already denies rename, so the foreign object stays separate.
+                        with self.assertRaises(PermissionError):
+                            attacked.rename(moved)
+                        with self.assertRaises(OSError):
+                            foreign.rename(attacked)
+                    return handle
+                with patch.object(tool._WindowsDirectories, "create_directory", swap):
+                    result = tool.prepare(**fixture.args(out=out))
+                self.assertTrue(attempted)
+                self.assertEqual(result["usable_inputs"], 1)
+                self.assertEqual(list(foreign.iterdir()), [])
+                self.assertFalse(moved.exists())
+                self.assertTrue((out / "manifest.json").is_file())
+
+    def test_foreign_directory_inserted_before_atomic_create_is_never_opened(self):
+        for target, expected in (("output", "OUTPUT_EXISTS"), ("new_ancestor", "OUTPUT_PATH_RACE")):
+            with self.subTest(target=target):
+                root = self.root / target
+                root.mkdir()
+                fixture = Fixture(root)
+                foreign = root / "synthetic-foreign-empty"
+                foreign.mkdir()
+                out = root / "out" if target == "output" else root / "new-parent" / "out"
+                attacked = out if target == "output" else out.parent
+                native_create = tool._WindowsDirectories.create_directory
+                def swap(api, parent, name):
+                    if name == attacked.name:
+                        foreign.rename(attacked)
+                    return native_create(api, parent, name)
+                with patch.object(tool._WindowsDirectories, "create_directory", swap), self.assertRaisesRegex(tool.Refusal, expected):
+                    tool.prepare(**fixture.args(out=out))
+                self.assertEqual(list(attacked.iterdir()), [])
+
+    def test_ancestor_swap_before_handle_acquisition_is_refused(self):
+        fixture = Fixture(self.root)
+        parent, moved = self.root / "publish-parent", self.root / "moved-parent"
+        parent.mkdir()
+        original = tool._Publication._take_directory
+        def swap(publication, path, parent_handle, expected):
+            if path == parent:
+                parent.rename(moved)
+                parent.mkdir()
+                (parent / "sentinel").write_text("replacement")
+            return original(publication, path, parent_handle, expected)
+        with patch.object(tool._Publication, "_take_directory", swap), self.assertRaisesRegex(tool.Refusal, "OUTPUT_PATH_RACE"):
+            tool.prepare(**fixture.args(out=parent / "out"))
+        self.assertEqual((parent / "sentinel").read_text(), "replacement")
+        self.assertEqual(list(moved.iterdir()), [])
+        self.assertFalse((parent / "out").exists())
+
+    def test_acquired_output_and_ancestor_swaps_cannot_redirect_publication(self):
+        for target in ("output", "ancestor"):
+            with self.subTest(target=target):
+                root = self.root / target
+                root.mkdir()
+                fixture = Fixture(root)
+                parent = root / "publish-parent"
+                parent.mkdir()
+                out = parent / "out"
+                moved = root / "moved"
+                original = tool._Publication._write_temp
+                attempted = False
+                def swap(publication, raw):
+                    nonlocal attempted
+                    if not attempted:
+                        attempted = True
+                        attacked = out if target == "output" else parent
+                        with self.assertRaises(PermissionError):
+                            attacked.rename(moved)
+                    return original(publication, raw)
+                with patch.object(tool._Publication, "_write_temp", swap):
+                    tool.prepare(**fixture.args(out=out))
+                self.assertTrue(attempted)
+                self.assertTrue((out / "manifest.json").is_file())
+                self.assertFalse(moved.exists())
+
+    def test_interrupted_publication_has_no_manifest_and_refuses_retry(self):
+        fixture = Fixture(self.root)
+        original = tool.os.link
+        calls = 0
+        def fail_second(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("synthetic interruption")
+            return original(*args, **kwargs)
+        with patch.object(tool.os, "link", fail_second), self.assertRaises(OSError):
+            tool.prepare(**fixture.args())
+        self.assertTrue((self.root / "out" / "inputs.jsonl").is_file())
+        self.assertFalse((self.root / "out" / "manifest.json").exists())
+        with self.assertRaisesRegex(tool.Refusal, "OUTPUT_EXISTS"):
+            tool.prepare(**fixture.args())
+
+    def test_junction_ancestor_refused_without_foreign_writes(self):
+        import subprocess
+        fixture = Fixture(self.root)
+        foreign, junction = self.root / "synthetic-foreign-empty", self.root / "junction"
+        foreign.mkdir()
+        creation = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(foreign)],
+                                  capture_output=True, check=True, timeout=15)
+        self.assertEqual(creation.returncode, 0)
+        self.assertTrue(junction.is_junction())
+        with self.assertRaisesRegex(tool.Refusal, "PROTECTED_OUTPUT_PATH"):
+            tool.prepare(**fixture.args(out=junction / "out"))
+        self.assertEqual(list(foreign.iterdir()), [])
 
     def test_dry_run_has_no_outputs_network_subprocess_or_protected_imports(self):
         fixture = Fixture(self.root)
@@ -545,6 +691,17 @@ class PrepareKepInputsTests(unittest.TestCase):
         self.assertNotIn(SENTINEL, stdout.getvalue() + stderr.getvalue())
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(json.loads(stderr.getvalue())["refused"], "ARTIFACT_PIN_MISMATCH")
+
+
+class PublicationPlatformTests(unittest.TestCase):
+    def test_non_windows_publication_refuses_without_any_directory_operation(self):
+        with tempfile.TemporaryDirectory(prefix="synthetic-publication-platform-") as folder:
+            out = Path(folder) / "out"
+            with patch.object(tool.os, "name", "posix"), patch.object(Path, "mkdir", side_effect=AssertionError("mkdir")):
+                with self.assertRaisesRegex(tool.Refusal, "OUTPUT_PLATFORM_UNQUALIFIED"):
+                    with tool._Publication(out):
+                        self.fail("unqualified publication allowed")
+            self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":

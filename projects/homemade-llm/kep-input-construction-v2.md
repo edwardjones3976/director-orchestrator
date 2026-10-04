@@ -18,7 +18,10 @@ uniquely named regular members after validating their paths and evidence pins.
 
 Rule v2 accepts exact metadata statuses `implemented` and `implementable` and
 does not filter by creation date. A positive unique KEP number identifies one
-source group. Duplicate identities and conflicting evidence are refused.
+source group among status-eligible entries. Duplicate eligible positive identities
+and conflicting evidence are refused. A replaced/ineligible entry and one
+implemented entry with the same authenticated number retain two census decisions
+but only one eligible source group; they do not veto unrelated candidates.
 The authenticated YAML `kep-number`, equal to the census ID, is the identity
 authority. A directory numeric-prefix disagreement receives one explicit
 `DIRECTORY_ID_MISMATCH` refusal in the qualification census and aggregate counts;
@@ -27,6 +30,8 @@ valid entries may continue. Nonpositive IDs retain their counted refusal when
 their directory prefix agrees. Before any README read, every census entry
 (including directory-refused and ineligible entries) must match the number
 and exact status in its independently pinned `kep.yaml` bytes and Git blob.
+Every census decision retains that authenticated number, including ineligible
+and nonpositive entries; a null number must not erase the audited identity.
 Untrusted evidence (a hash failure, YAML/census identity or status disagreement,
 or duplicate eligible positive identity) still refuses the whole run.
 Metadata is inspected as YAML nodes with the existing PyYAML dependency; no YAML
@@ -40,6 +45,9 @@ Comment literals inside fences do not open HTML comments; a real unterminated
 comment remains invisible through EOF. Optional annotations also normalize the
 Graduation Criteria parent. Closing heading hashes require preceding whitespace,
 and the selected H1 title cannot also supply a mapped input section.
+An inline-comment ambiguity in the first visible H1 refuses the input rather
+than selecting a later H1. Fence delimiters and their info strings do not make
+an otherwise empty support section nonempty; actual fenced body text may count.
 
 Inputs also need a genuine first H1 title and a nonempty original Goals section
 for the objective. Missing input facts are refused, never invented. Context
@@ -89,15 +97,50 @@ outputs are refused without replacement. No usable input means no successful
 published input artifact. Errors and stdout contain counts and reasons only,
 never source excerpts. A dry run qualifies and validates without publishing.
 
-Publication reserves the destination directory with atomic `mkdir`, then installs
-the staged files without replacement using hard links. `manifest.json` is the
-last, atomic commit marker: consumers must ignore a directory lacking it. This
-does not claim an atomic two-file directory rename. An interrupted publication
-may leave an incomplete reserved directory; a later invocation refuses that
-directory instead of deleting or overwriting it. Filesystem support for hard
-links is required; unsupported filesystems fail rather than falling back to
-replacement. Protected held-out paths and symlinked artifact/output paths are
-refused.
+The two-file output format is retained. Publication is qualified on Windows only;
+other platforms, including POSIX, refuse `OUTPUT_PLATFORM_UNQUALIFIED` before
+creating output directories. Dry-run qualification publishes nothing and does not
+claim publication compatibility. The previous POSIX mkdir/stat/open sequence did
+not establish newly created directory birth identity and is not a safe fallback.
+
+Existing Windows ancestor identities are captured before acquisition and must
+equal the acquired objects; pre-acquisition changes refuse publication. Retained
+[CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+directory handles request `GENERIC_READ` (metadata-only access did not enforce
+the rename-sharing restriction in the synthetic regression), use
+`BACKUP_SEMANTICS` and `OPEN_REPARSE_POINT`, deliberately
+omitting `FILE_SHARE_DELETE` on every ancestor and output, preventing their rename
+or deletion through the publication window. Reparse points are refused. Handle
+identity compares both volume serial and the full 128-bit file ID via
+[FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info),
+without assuming Python's Windows inode width.
+
+Every new ancestor and output directory is atomically created relative to an
+already acquired parent by the documented user-mode
+[NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile).
+`RootDirectory` binds the parent object; a single-component name, `FILE_CREATE`
+and `FILE_DIRECTORY_FILE` create one new directory and return its birth handle.
+The handle requests `FILE_LIST_DIRECTORY`, `FILE_READ_ATTRIBUTES`, `SYNCHRONIZE`
+and no delete sharing; `FILE_SYNCHRONOUS_IO_NONALERT` and
+`FILE_OPEN_REPARSE_POINT` are used. Success must report `FILE_CREATED`.
+There is no pathname `mkdir` followed by a first snapshot of a possibly
+substituted object. The returned birth handle already denies rename before its
+first identity query. An object inserted before creation is refused rather than
+opened; an unexpected new ancestor is `OUTPUT_PATH_RACE`, and an occupied output
+is `OUTPUT_EXISTS`. Staging files retain handles without delete sharing until
+publication completes. Unsupported native/identity/filesystem APIs fail closed;
+the actual synthetic Windows test does not qualify other filesystems or hosts.
+
+Files are written exclusively through opened handles, flushed, and installed
+without replacement using hard links. `manifest.json` is linked last as a
+complete atomic commit marker; consumers ignore a directory lacking it. This
+does not claim an atomic two-file directory rename, nor protection against an
+actor authorized to modify file contents after successful publication. An
+interruption may leave an incomplete reserved directory; later invocation refuses
+it instead of deleting or replacing it. Cleanup concerns only constructor-owned
+temporary filenames through the acquired destination, never recursive pathname
+cleanup. Hard-link and handle API failures have no weaker pathname fallback.
+Protected held-out paths and symlink/reparse artifact/output paths are refused.
 
 ## Constructor interface
 
