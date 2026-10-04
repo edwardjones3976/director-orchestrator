@@ -180,7 +180,7 @@ Write-Output 'tls-lifecycle-passed'
         self.assertIn("SourceRemoteName", text)
         self.assertIn("remote get-url $SourceRemoteName", text)
         self.assertIn(
-            "git ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef",
+            "$GitExecutable ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef",
             text,
         )
         self.assertIn(
@@ -217,9 +217,316 @@ Write-Output 'tls-lifecycle-passed'
         # so the initial checkout uses them and later checkouts keep using them.
         # `git -c ... clone` would apply to the clone only and not persist.
         self.assertIn(
-            "git clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks",
+            "$GitExecutable clone -c core.autocrlf=false -c core.eol=lf -c core.hooksPath=/dev/null --no-hardlinks",
             text,
         )
+
+    @unittest.skipUnless(shutil.which("pwsh") and shutil.which("git"), "PowerShell and Git are required")
+    def test_snapshot_clone_disables_inherited_template_hooks_before_checkout(self) -> None:
+        line = next(line.strip() for line in self.text("windows-primary-snapshot.ps1").splitlines()
+                    if line.strip().startswith("& $GitExecutable clone "))
+        git = str(Path(shutil.which("git")).resolve())
+        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+                           GIT_CONFIG_SYSTEM=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty, source, template = [root / name for name in ("empty", "source", "template")]
+            empty.mkdir()
+            (template / "hooks").mkdir(parents=True)
+            hook = template / "hooks/post-checkout"
+            hook.write_text(
+                '#!/bin/sh\nprintf template-executed > "$PR411_HOOK_MARKER"\n', encoding="utf-8")
+            hook.chmod(0o755)
+            def invoke(*args):
+                return subprocess.check_output([git, *args], env=environment, stderr=subprocess.STDOUT, timeout=20)
+            invoke("init", "--template=" + str(empty), "-b", "main", str(source))
+            (source / "reviewed.txt").write_bytes(b"reviewed fixture\n")
+            invoke("-C", str(source), "add", "reviewed.txt")
+            invoke("-C", str(source), "-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+                   "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+            for mode in ("GIT_TEMPLATE_DIR", "init.templateDir"):
+                for guarded in (False, True):
+                    with self.subTest(inheritance=mode, guarded=guarded):
+                        stem = mode.replace(".", "-") + str(guarded)
+                        marker, target = root / (stem + ".marker"), root / stem
+                        env = dict(environment, PR411_HOOK_MARKER=marker.as_posix())
+                        if mode == "GIT_TEMPLATE_DIR":
+                            env[mode] = str(template)
+                        else:
+                            env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="init.templateDir",
+                                       GIT_CONFIG_VALUE_0=str(template))
+                        command = line if guarded else line.replace(" -c core.hooksPath=/dev/null", "")
+                        harness = ("$GitExecutable=$args[0]; $StartingRef='main'; "
+                                   "$sourceRemoteUrl=$args[1]; $targetPath=$args[2]\n" + command + "\nexit $LASTEXITCODE\n")
+                        script = root / (stem + ".ps1")
+                        script.write_text(harness, encoding="utf-8")
+                        result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script),
+                                                 git, str(source), str(target)], env=env, capture_output=True,
+                                                text=True, timeout=30)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual((target / "reviewed.txt").read_bytes(), b"reviewed fixture\n")
+                        self.assertEqual(marker.exists(), not guarded)
+                        if guarded:
+                            self.assertEqual(invoke("-C", str(target), "config", "--get", "core.hooksPath").strip(), b"/dev/null")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_fsmonitor_gate_protects_the_real_authority_resolver(self) -> None:
+        from types import SimpleNamespace
+        from director_orchestrator.models import Assignment, ProviderName
+        from director_orchestrator.packet_transports import LocalGitAuthoritySnapshotResolver
+        from unittest.mock import patch
+
+        git = str(Path(shutil.which("git")).resolve())
+        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_SYSTEM=os.devnull,
+                           GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty-template"
+            empty.mkdir()
+            for mode in ("absent", "false", "true", "malformed", "direct", "included", "masked"):
+                with self.subTest(mode=mode):
+                    repo = root / mode
+                    def invoke(*args):
+                        return subprocess.check_output([git, "-C", str(repo), *args], env=environment,
+                                                       stderr=subprocess.STDOUT, timeout=20)
+                    subprocess.run([git, "init", "--template=" + str(empty), "-b", "main", str(repo)],
+                                   env=environment, check=True, capture_output=True, timeout=20)
+                    (repo / "README.md").write_bytes(b"reviewed synthetic authority\n")
+                    invoke("add", "README.md")
+                    invoke("-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+                    invoke("remote", "add", "origin", "https://github.com/example/demo.git")
+                    commit = invoke("rev-parse", "HEAD").decode().strip()
+                    tree = invoke("rev-parse", "HEAD^{tree}").decode().strip()
+                    marker, hook = root / (mode + ".marker"), repo / ".git/hooks/fsmonitor-watchman"
+                    hook.parent.mkdir(exist_ok=True)
+                    hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() +
+                                    '"\nprintf "token\\0"\n', encoding="utf-8")
+                    hook.chmod(0o755)
+                    verify_env = dict(environment)
+                    if mode in ("false", "true", "malformed"):
+                        invoke("config", "core.fsmonitor", mode)
+                    elif mode == "included":
+                        included = repo / ".git/fixture-config"
+                        included.write_text("[core]\n\tfsmonitor = .git/hooks/fsmonitor-watchman\n", encoding="utf-8")
+                        invoke("config", "include.path", str(included))
+                    elif mode in ("direct", "masked"):
+                        invoke("config", "core.fsmonitor", ".git/hooks/fsmonitor-watchman")
+                        if mode == "masked":
+                            verify_env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.fsmonitor", GIT_CONFIG_VALUE_0="false")
+                    command = ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                        str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify",
+                        "-Source", str(repo), "-Target", str(repo), "-ExpectedRepository", "example/demo",
+                        "-StartingRef", "main", "-ExpectedCommit", commit, "-ExpectedTree", tree, "-GitExecutable", git]
+                    result = subprocess.run(command, env=verify_env, capture_output=True, timeout=30)
+                    self.assertFalse(marker.exists(), "verification itself must never execute the hook")
+                    allowed = mode in ("absent", "false")
+                    # If an unsafe path is certified, demonstrate its real later
+                    # consumer before failing the regression. Never enable the
+                    # built-in fsmonitor daemon for the true/malformed controls.
+                    if result.returncode == 0 and mode not in ("true", "malformed"):
+                        resolver = LocalGitAuthoritySnapshotResolver("example/demo", str(repo),
+                            pinned_commit_sha=commit, pinned_tree_sha=tree)
+                        assignment = Assignment(sequence=1, agent=ProviderName.CURSOR, task="inspect",
+                            acceptance=["report"], repository="example/demo", starting_ref=commit)
+                        record = SimpleNamespace(plan=SimpleNamespace(prestage=SimpleNamespace(
+                            worktree=str(repo), base_sha=commit, branch=commit)))
+                        with patch.dict(os.environ, environment, clear=True):
+                            inventory = resolver.resolve(record, assignment)
+                        self.assertEqual([item["path"] for item in inventory], ["README.md"])
+                    if allowed:
+                        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(b"Snapshot Git includes are unsupported" if mode == "included" else
+                                      b"fsmonitor must be disabled", result.stderr)
+                        self.assertNotIn(b"bad boolean", result.stderr)
+                        self.assertNotIn(b"fsmonitor-watchman", result.stderr)
+                    self.assertFalse(marker.exists(), "a certified snapshot must be safe for the unmodified resolver")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_rejects_relocation_sensitive_and_missing_git_includes(self) -> None:
+        from types import SimpleNamespace
+        from director_orchestrator.models import Assignment, ProviderName
+        from director_orchestrator.packet_transports import LocalGitAuthoritySnapshotResolver
+        from unittest.mock import patch
+
+        git = str(Path(shutil.which("git")).resolve())
+        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_SYSTEM=os.devnull,
+                           GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty-template"
+            empty.mkdir()
+            for mode in ("conditional", "missing_absolute"):
+                with self.subTest(mode=mode):
+                    producer, consumer = root / (mode + "-producer"), root / "consumer"
+                    def invoke(*args):
+                        return subprocess.check_output([git, "-C", str(producer), *args], env=environment,
+                                                       stderr=subprocess.STDOUT, timeout=20)
+                    subprocess.run([git, "init", "--template=" + str(empty), "-b", "main", str(producer)],
+                                   env=environment, check=True, capture_output=True, timeout=20)
+                    (producer / "README.md").write_bytes(b"reviewed synthetic authority\n")
+                    invoke("add", "README.md")
+                    invoke("-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+                    invoke("remote", "add", "origin", "https://github.com/example/demo.git")
+                    commit, tree = [invoke("rev-parse", value).decode().strip() for value in ("HEAD", "HEAD^{tree}")]
+                    marker = root / "relocated-hook-ran"
+                    if mode == "conditional":
+                        included = producer / ".git/conditional-fsmonitor.inc"
+                        included.write_text("[core]\n\tfsmonitor = .git/hooks/fsmonitor-watchman\n", encoding="utf-8")
+                        hook = producer / ".git/hooks/fsmonitor-watchman"
+                        hook.parent.mkdir(exist_ok=True)
+                        hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() +
+                                        '"\nprintf "token\\0"\n', encoding="utf-8")
+                        hook.chmod(0o755)
+                        invoke("config", "includeIf.gitdir:**/consumer/.git.path", "conditional-fsmonitor.inc")
+                        shutil.copytree(producer, consumer)
+                        for path in (".git/config", ".git/conditional-fsmonitor.inc", ".git/hooks/fsmonitor-watchman", "README.md"):
+                            self.assertEqual((producer / path).read_bytes(), (consumer / path).read_bytes())
+                        for path, expected in ((producer, None), (consumer, b".git/hooks/fsmonitor-watchman")):
+                            query = subprocess.run([git, "-C", str(path), "config", "--get-all", "core.fsmonitor"],
+                                                   env=environment, capture_output=True, timeout=20)
+                            self.assertEqual(query.returncode, 1 if expected is None else 0)
+                            self.assertEqual(query.stdout.strip(), expected or b"")
+                    else:
+                        missing = root / "missing-owner-config.inc"
+                        self.assertFalse(missing.exists())
+                        invoke("config", "include.path", str(missing))
+                    command = ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                        str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify",
+                        "-Source", str(producer), "-Target", str(producer), "-ExpectedRepository", "example/demo",
+                        "-StartingRef", "main", "-ExpectedCommit", commit, "-ExpectedTree", tree, "-GitExecutable", git]
+                    result = subprocess.run(command, env=environment, capture_output=True, timeout=30)
+                    if result.returncode == 0 and mode == "conditional":
+                        # The baseline certifies identical config bytes whose
+                        # conditional meaning changes in the consumer context.
+                        resolver = LocalGitAuthoritySnapshotResolver("example/demo", str(consumer),
+                            pinned_commit_sha=commit, pinned_tree_sha=tree)
+                        assignment = Assignment(sequence=1, agent=ProviderName.CURSOR, task="inspect",
+                            acceptance=["report"], repository="example/demo", starting_ref=commit)
+                        record = SimpleNamespace(plan=SimpleNamespace(prestage=SimpleNamespace(
+                            worktree=str(consumer), base_sha=commit, branch=commit)))
+                        with patch.dict(os.environ, environment, clear=True):
+                            inventory = resolver.resolve(record, assignment)
+                        self.assertEqual([item["path"] for item in inventory], ["README.md"])
+                        self.assertTrue(marker.exists())
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b"Snapshot Git includes are unsupported", result.stderr)
+                    self.assertNotIn(b"missing-owner-config.inc", result.stderr)
+                    self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_verify_refuses_local_filters_and_suppresses_fsmonitor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "snapshot"
+            repo.mkdir()
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+            env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=repo, env=env, stderr=subprocess.DEVNULL)
+            git("init", "-q", "-b", "main")
+            (repo / ".gitattributes").write_text("data filter=fixture\n")
+            (repo / "data").write_text("original\n")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+            git("remote", "add", "origin", "https://github.com/example/demo.git")
+            command = ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify",
+                "-Source", str(repo), "-Target", str(repo), "-ExpectedRepository", "example/demo",
+                "-StartingRef", "main", "-ExpectedCommit", git("rev-parse", "HEAD").decode().strip(),
+                "-ExpectedTree", git("rev-parse", "HEAD^{tree}").decode().strip()]
+            baseline = subprocess.run(command, env=env, capture_output=True, timeout=30)
+            self.assertEqual(baseline.returncode, 0, baseline.stderr.decode(errors="replace"))
+            marker, hook = root / "executed", root / "filter-hook"
+            hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() + '"\ncat\n')
+            hook.chmod(0o700)
+            git("config", "filter.fixture.clean", hook.as_posix())
+            # Same byte length forces content comparison, rather than Git's
+            # size-only dirty shortcut; a later mtime avoids stat-cache reuse.
+            data = repo / "data"
+            timestamp = data.stat().st_mtime + 2
+            data.write_text("modified\n")
+            os.utime(data, (timestamp, timestamp))
+            git("status", "--porcelain=v2")
+            self.assertTrue(marker.exists(), "fixture must demonstrate a real executable filter")
+            marker.unlink()
+            blocked = subprocess.run(command, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn(b"executable Git filters", blocked.stderr)
+            self.assertFalse(marker.exists())
+            git("config", "--unset", "filter.fixture.clean")
+            hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() + '"\nprintf "token\\0"\n')
+            git("config", "core.fsmonitor", hook.as_posix())
+            blocked = subprocess.run(command, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn(b"fsmonitor must be disabled", blocked.stderr)
+            self.assertFalse(marker.exists())
+
+    def test_snapshot_hook_override_resolves_to_a_non_directory(self) -> None:
+        # Resolve the hook using real Git without installing/executing a root hook.
+        text = self.text("windows-primary-snapshot.ps1")
+        override = re.search(r"-c (core\.hooksPath=\S*)", text).group(1)
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["git", "init", "-q", directory], check=True, capture_output=True)
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+            env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            hook = subprocess.check_output(["git", "-C", directory, "-c", override,
+                "rev-parse", "--git-path", "hooks/post-index-change"], env=env).decode().strip()
+            self.assertIn("/dev/null/", hook.replace("\\", "/"))
+            self.assertFalse(Path(hook).parent.is_dir())
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows PowerShell native path regression")
+    def test_snapshot_explicit_git_path_ignores_a_candidate_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            executable = str(Path(shutil.which("git")).resolve())
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+            env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            def git(*args):
+                return subprocess.check_output([executable, *args], cwd=repo, env=env, stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q", "-b", "main")
+            (repo / ".gitignore").write_text("git.exe\n")
+            (repo / "tracked.txt").write_text("fixture\n")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+            git("remote", "add", "origin", "https://github.com/example/demo.git")
+            shutil.copyfile(Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe", repo / "git.exe")
+            result = subprocess.run([str(Path(shutil.which("pwsh")).resolve()), "-NoProfile", "-NonInteractive", "-File",
+                str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify", "-Source", str(repo),
+                "-Target", str(repo), "-ExpectedRepository", "example/demo", "-StartingRef", "main",
+                "-ExpectedCommit", git("rev-parse", "HEAD"), "-ExpectedTree", git("rev-parse", "HEAD^{tree}"),
+                "-GitExecutable", executable], cwd=repo, env=env, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_verifies_actual_bytes_despite_hidden_index_flags(self) -> None:
+        for flag in ("assume-unchanged", "skip-worktree"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                repo = Path(directory)
+                env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+                env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+                def git(*args):
+                    return subprocess.check_output(["git", *args], cwd=repo, env=env, stderr=subprocess.DEVNULL).decode().strip()
+                git("init", "-q", "-b", "main")
+                path = repo / "run.py"
+                path.write_bytes(b"SAFE = True\n")
+                git("add", ".")
+                git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+                git("remote", "add", "origin", "https://github.com/example/demo.git")
+                command = ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts/windows-primary-snapshot.ps1"),
+                    "-Action", "Verify", "-Source", str(repo), "-Target", str(repo), "-ExpectedRepository", "example/demo",
+                    "-StartingRef", "main", "-ExpectedCommit", git("rev-parse", "HEAD"), "-ExpectedTree", git("rev-parse", "HEAD^{tree}")]
+                git("update-index", "--" + flag, "run.py")
+                path.write_bytes(b"SAFE = False\n")
+                self.assertEqual(git("status", "--porcelain=v2"), "")
+                result = subprocess.run(command, env=env, capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0, "snapshot accepted changed bytes hidden by the index")
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_creation_binds_content_to_the_selected_remote(self) -> None:
@@ -273,7 +580,12 @@ function global:git {
         New-Item -ItemType Directory -Path (Join-Path $arguments[-1] ".git") -Force | Out-Null
         return
     }
-    if ($arguments -contains "set-url" -or $arguments -contains "status") { return }
+    if ($arguments -contains "--get-all" -and $arguments[-1] -eq "core.fsmonitor") {
+        $global:LASTEXITCODE = 1 # Git's absent-key result, not an empty success.
+        return
+    }
+    if ($arguments -contains "set-url" -or $arguments -contains "status" -or $arguments -contains "config" -or
+        $arguments -contains "ls-files" -or $arguments -contains "ls-tree") { return }
     if ($arguments -contains "rev-parse") {
         if ($arguments[-1] -eq 'HEAD^{tree}') { Write-Output "__TREE__" } else { Write-Output "__COMMIT__" }
         return
@@ -469,7 +781,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertNotIn("New-TemporaryFile", text)
         # Free-form comments and quoted markers are not review authority. Only an
         # exact canonical JSON body on an APPROVED trusted review can match.
-        github_view = text[text.index("gh pr view") : text.index("$pull =", text.index("gh pr view"))]
+        github_view = text[text.index("& $GitHubExecutable pr view") : text.index("$pull =", text.index("& $GitHubExecutable pr view"))]
         self.assertNotIn("comments", github_view)
         review_parser = text[text.index("function Get-ExactReviewArtifact") : text.index("function Get-GitHubAcceptanceFacts")]
         self.assertIn("[string]$Review.body -cne $canonical", review_parser)
@@ -522,6 +834,105 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         digest = text[text.index("function Get-ResolvedDeploymentDigest"):text.index("function Assert-RunningCandidate")]
         self.assertNotIn("| & docker", digest)
         self.assertIn("Invoke-NativeBytes", digest)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_direct_digest_probe_uses_selected_docker_without_logging_export(self) -> None:
+        harness = r'''
+param($Source, $Output)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-ResolvedDeploymentDigest'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production digest helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$script:ComposeProject = 'fixture-sibling'
+$script:environmentPath = 'fixture-runtime.env'
+$script:runtimeImageId = 'sha256:' + ('8' * 64)
+$DockerExecutable = 'owner-selected-docker'
+$script:calls = [Collections.Generic.List[object]]::new()
+function Invoke-NativeBytes {
+    param($FilePath, $ArgumentList, [byte[]]$InputBytes)
+    $script:calls.Add(@{ executable=$FilePath; argv=@($ArgumentList); input_present=($null -ne $InputBytes) })
+    if ($ArgumentList[0] -eq 'compose') { return ,[Text.Encoding]::UTF8.GetBytes('{"services":{}}') }
+    return ,[Text.Encoding]::UTF8.GetBytes('a' * 64)
+}
+if ((Get-ResolvedDeploymentDigest) -cne ('a' * 64)) { throw 'digest result changed' }
+@($script:calls) | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Output -Encoding utf8
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, runner, output = (root / name for name in ("control.ps1", "harness.ps1", "calls.json"))
+            source.write_text(self.text("windows-langgraph-primary-control.ps1"), encoding="utf-8")
+            runner.write_text(harness, encoding="utf-8")
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(runner),
+                str(source), str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = json.loads(output.read_text(encoding="utf-8-sig"))
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(all(call["executable"] == "owner-selected-docker" for call in calls))
+            self.assertEqual(calls[0]["argv"][:2], ["compose", "--project-name"])
+            argv = calls[1]["argv"]
+            self.assertTrue(calls[1]["input_present"])
+            self.assertIn("--log-driver", argv)
+            self.assertEqual(argv[argv.index("--log-driver") + 1], "none")
+            self.assertEqual(argv[argv.index("--network") + 1], "none")
+            self.assertEqual(argv[argv.index("--entrypoint") + 1], "python")
+            self.assertIn("sha256:" + "8" * 64, argv)
+            self.assertEqual(argv[-5:], ["-m", "director_orchestrator.primary_generation", "compose-digest", "--image-id", "sha256:" + "8" * 64])
+            self.assertNotIn("--volume", argv)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_github_checks_and_invocations_use_explicit_tool_without_path_gh(self) -> None:
+        harness = r'''
+param($Source, $GitHubExecutable)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-GitHubAcceptanceFacts'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production acceptance helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$script:GitHubRepository = 'fixture/project'; $script:PullRequestNumber = 1
+$script:candidateCommit = 'a' * 40
+try { $null = Get-GitHubAcceptanceFacts; throw 'wrong head was accepted' }
+catch { if ($_.Exception.Message -cne 'Pull request head does not match the exact activation candidate.') { throw } }
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, runner, marker = (root / name for name in ("control.ps1", "harness.ps1", "called.json"))
+            source.write_text(self.text("windows-langgraph-primary-control.ps1"), encoding="utf-8")
+            runner.write_text(harness, encoding="utf-8")
+            empty = root / "empty-path"
+            empty.mkdir()
+            fake = root / "owner-selected-gh.ps1"
+            fake.write_text("[IO.File]::WriteAllText('" + str(marker).replace("'", "''") + "', (ConvertTo-Json -InputObject @($args) -Compress))\n"
+                "$global:LASTEXITCODE = 0\n'" + json.dumps({"headRefOid": "b" * 40, "sha": "b" * 40, "tree": {"sha": "c" * 40}}) + "'\n", encoding="utf-8")
+            environment = dict(os.environ, PATH=str(empty))
+            powershell = str(Path(shutil.which("pwsh")).resolve())
+            for mode in ("facts", "prepare"):
+                with self.subTest(mode=mode):
+                    marker.unlink(missing_ok=True)
+                    argv = ([str(runner), str(source), str(fake)] if mode == "facts" else [str(source), "-Action", "PrepareAcceptance",
+                        "-CandidateCommit", "a" * 40, "-GitHubRepository", "fixture/project", "-PullRequestNumber", "1", "-GitHubExecutable", str(fake)])
+                    result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", *argv],
+                        env=environment, capture_output=True, text=True, timeout=30)
+                    if mode == "facts":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("GitHub candidate identity is invalid", result.stderr)
+                    self.assertTrue(marker.exists(), "selected executable was not reached without PATH gh")
+                    called = json.loads(marker.read_text())
+                    self.assertEqual(called[:2], ["pr", "view"] if mode == "facts" else ["api", "--hostname"])
+            # Default gh remains supported for standalone use; the exact-head
+            # rejection above remains the trust gate after a successful lookup.
+            shutil.copyfile(fake, empty / "gh.ps1")
+            result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", str(runner), str(source), "gh"],
+                env=environment, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_native_bytes_transport_is_exact(self) -> None:

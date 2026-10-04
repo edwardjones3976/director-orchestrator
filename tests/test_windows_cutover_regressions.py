@@ -94,6 +94,8 @@ ROLLBACK_HARNESS = r'''
 param($Source, $EnvironmentPath, $EventsPath, $Python, $Runner, $Scenario)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# The parameter block is not extracted; route native calls to the fixture below.
+$DockerExecutable = 'docker'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'control script parse failed' }
@@ -179,6 +181,8 @@ ACTIVATION_HARNESS = r'''
 param($Source, $EnvironmentPath, $EventsPath, $Action, $HealthJson, $ImagesJson, $Scenario)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# The parameter block is not extracted; route native calls to the fixture below.
+$DockerExecutable = 'docker'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'control script parse failed' }
@@ -265,6 +269,8 @@ OFFLINE_HANDOFF_HARNESS = r'''
 param($Source, $EnvironmentPath, $EventsPath, $Python, $IdentityPath, $Scenario)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# The parameter block is not extracted; route native calls to the fixture below.
+$DockerExecutable = 'docker'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'control script parse failed' }
