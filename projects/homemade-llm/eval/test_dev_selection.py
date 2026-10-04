@@ -5,6 +5,7 @@ from dev_selection import (
     evaluate_cell_counts,
     evaluate_primary_score,
     primary_fraction,
+    is_selectable,
     select_checkpoint,
     evaluate_confirmation,
     whole_group_counts,
@@ -77,7 +78,7 @@ class TestPrimaryScore(unittest.TestCase):
         refs = [_ref_row("r1", "g1", acceptance_checks=["A"] * 100, constraints=["B"],
                           evidence_requirements=["C"], non_goals=["D"])]
         cands = {"r1": _full_cand(acceptance_checks=["A"] * 100)}
-        res = evaluate_primary_score(refs, cands, ["g1"])
+        res = evaluate_primary_score(refs, cands, ["g1"], (), {"g1": ["r1"]})
         self.assertAlmostEqual(res["primary"], 0.25)
         self.assertAlmostEqual(res["micro"], 200 / 203)
         self.assertFalse(res["incomplete"])
@@ -244,17 +245,21 @@ class TestConfirmation(unittest.TestCase):
 
 
 class TestWholeGroupConfirmation(unittest.TestCase):
-    def _packet(self, schema_valid=True, grok_as_is=True, zai_as_is=True):
-        return {"schema_valid": schema_valid, "grok_as_is": grok_as_is, "zai_as_is": zai_as_is}
+    def _packet(self, packet_id="p", schema_valid=True, grok_as_is=True, zai_as_is=True):
+        return {"packet_id": packet_id, "schema_valid": schema_valid,
+                "grok_as_is": grok_as_is, "zai_as_is": zai_as_is}
 
     def test_failing_packet_keeps_group_from_passing(self):
         roster = ["g1"]
-        before = {"g1": [self._packet(), self._packet()]}
-        after = {"g1": [self._packet(), self._packet(grok_as_is=False)]}
-        res = confirm_whole_groups(roster, before, after)
+        before = {"g1": [self._packet("p1"), self._packet("p2")]}
+        after = {"g1": [self._packet("p1"), self._packet("p2", grok_as_is=False)]}
+        # Bind a valid, complete manifest so "complete" reflects certified
+        # (roster-bound) evidence, not just arm data presence.
+        res = confirm_whole_groups(roster, before, after, {"g1": ["p1", "p2"]})
         self.assertEqual(res["b"], 0)
         self.assertEqual(res["c"], 1)
         self.assertTrue(res["complete"])
+        self.assertTrue(res["roster_bound"])
 
     def test_missing_packet_keeps_group_from_passing(self):
         roster = ["g1"]
@@ -343,10 +348,21 @@ class TestExpectedPacketRoster(unittest.TestCase):
     def test_without_expected_roster_never_passes(self):
         roster = [f"g{i}" for i in range(1, 21)]
         before, after = self._arms(roster)
+        # Arm data itself is complete (every packet present and real-boolean)
+        # even with no manifest at all.
+        counts = whole_group_counts(roster, before, after)
+        self.assertTrue(counts["complete"])
+        self.assertFalse(counts["roster_bound"])
+        self.assertTrue(counts["diagnostic_only"])
+        self.assertFalse(counts["evidence_complete"])
+        # But confirm_whole_groups' terminal "complete" is evidence_complete:
+        # an omitted manifest can never be a confirmed PASS.
         res = confirm_whole_groups(roster, before, after)
-        self.assertTrue(res["complete"])
+        self.assertFalse(res["complete"])
         self.assertFalse(res["roster_bound"])
+        self.assertTrue(res["diagnostic_only"])
         self.assertFalse(res["passes"])
+        self.assertFalse(is_selectable(res))
 
     def test_string_false_flags_are_incomplete_not_a_pass(self):
         roster = ["g1"]
@@ -468,6 +484,237 @@ class TestExpectedPacketsPrimaryScore(unittest.TestCase):
         # (1/3 vs 2/6) tie-break to the earlier checkpoint.
         checkpoints = [("later", 2, frac), ("earlier", 1, Fraction(2, 6))]
         self.assertEqual(select_checkpoint(checkpoints), "earlier")
+
+
+class TestManifestValidationGate(unittest.TestCase):
+    """Contract (issue 299 comment 5980052003): a manifest is valid only if
+    it is a dict whose keys exactly equal the frozen roster, with every value
+    a non-empty, duplicate-free list of non-empty str ids. Anything else
+    (given but malformed) is unbound, exactly like an omitted manifest, and
+    neither can ever yield a confirmed PASS or a selectable score."""
+
+    def _packet(self, packet_id, schema_valid=True, grok_as_is=True, zai_as_is=True):
+        return {"packet_id": packet_id, "schema_valid": schema_valid,
+                "grok_as_is": grok_as_is, "zai_as_is": zai_as_is}
+
+    def _arms(self, roster):
+        """20 groups; g1..g6 flip to passing, the rest fail in both arms."""
+        fail = dict(schema_valid=False, grok_as_is=False, zai_as_is=False)
+        before = {g: [self._packet(f"{g}-p1", **fail), self._packet(f"{g}-p2", **fail)]
+                  for g in roster}
+        after = {g: [self._packet(f"{g}-p1"), self._packet(f"{g}-p2")] for g in roster[:6]}
+        for g in roster[6:]:
+            after[g] = [self._packet(f"{g}-p1", **fail), self._packet(f"{g}-p2", **fail)]
+        return before, after
+
+    def _valid_manifest(self, roster):
+        return {g: [f"{g}-p1", f"{g}-p2"] for g in roster}
+
+    def _assert_blocked(self, roster, before, after, manifest):
+        res = confirm_whole_groups(roster, before, after, manifest)
+        self.assertFalse(res["passes"])
+        self.assertFalse(res["roster_bound"])
+        self.assertFalse(is_selectable(res))
+        return res
+
+    def test_omitted_manifest_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        res = confirm_whole_groups(roster, before, after)
+        self.assertFalse(res["passes"])
+        self.assertFalse(res["roster_bound"])
+        self.assertTrue(res["diagnostic_only"])
+        self.assertFalse(is_selectable(res))
+
+    def test_twenty_group_none_value_matches_defect_repro(self):
+        # Exact repro of the verified defect: six groups flip to passing
+        # (B=6, C=0), but every manifest value is None -- confirm_whole_groups
+        # must neither report roster_bound/complete nor pass.
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = {g: None for g in roster}
+        res = self._assert_blocked(roster, before, after, manifest)
+        self.assertEqual((res["b"], res["c"]), (0, 0))
+
+    def test_empty_list_value_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = {g: [] for g in roster}
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_duplicate_ids_block_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = self._valid_manifest(roster)
+        manifest["g1"] = ["g1-p1", "g1-p1"]
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_non_string_id_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = self._valid_manifest(roster)
+        manifest["g1"] = [7, "g1-p2"]
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_empty_string_id_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = self._valid_manifest(roster)
+        manifest["g1"] = ["", "g1-p2"]
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_missing_group_key_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = self._valid_manifest(roster)
+        del manifest["g1"]
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_extra_group_key_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = self._valid_manifest(roster)
+        manifest["g21"] = ["g21-p1"]
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_non_dict_manifest_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = list(self._valid_manifest(roster).values())
+        self._assert_blocked(roster, before, after, manifest)
+
+    def test_valid_manifest_positive_control_is_selectable(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        manifest = self._valid_manifest(roster)
+        res = confirm_whole_groups(roster, before, after, manifest)
+        self.assertEqual((res["b"], res["c"]), (6, 0))
+        self.assertAlmostEqual(res["p_value"], 1 / 32)
+        self.assertTrue(res["passes"])
+        self.assertTrue(res["roster_bound"])
+        self.assertTrue(is_selectable(res))
+
+
+class TestManifestValidationPrimaryScore(unittest.TestCase):
+    def test_malformed_manifest_zeroes_every_group(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"]),
+                _ref_row("r2", "g2", non_goals=["B"])]
+        cands = {"r1": _full_cand(non_goals=["A"]), "r2": _full_cand(non_goals=["B"])}
+        manifest = {"g1": None, "g2": ["r2"]}  # g1 malformed -> whole manifest invalid
+        res = evaluate_primary_score(refs, cands, ["g1", "g2"], expected_packets=manifest)
+        self.assertEqual(res["primary"], 0.0)
+        self.assertTrue(res["incomplete"])
+        self.assertEqual(sorted(res["incomplete_groups"]), ["g1", "g2"])
+        self.assertFalse(res["roster_bound"])
+        self.assertFalse(res["diagnostic_only"])
+        self.assertFalse(is_selectable(res))
+        with self.assertRaises(ValueError):
+            primary_fraction(res)
+
+    def test_omitted_manifest_is_diagnostic_only_and_not_selectable(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"])]
+        cands = {"r1": _full_cand(non_goals=["A"])}
+        res = evaluate_primary_score(refs, cands, ["g1"])
+        self.assertFalse(res["incomplete_groups"])  # arithmetic unchanged
+        self.assertTrue(res["incomplete"])
+        self.assertTrue(res["diagnostic_only"])
+        self.assertFalse(res["roster_bound"])
+        self.assertFalse(is_selectable(res))
+        with self.assertRaises(ValueError):
+            primary_fraction(res)
+
+    def test_bound_complete_result_is_selectable_and_fraction_exact(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"])]
+        cands = {"r1": _full_cand(non_goals=["A"])}
+        res = evaluate_primary_score(refs, cands, ["g1"], expected_packets={"g1": ["r1"]})
+        self.assertFalse(res["incomplete"])
+        self.assertTrue(res["roster_bound"])
+        self.assertTrue(is_selectable(res))
+        self.assertEqual(primary_fraction(res), Fraction(1, 1))
+
+
+class TestStrictStatusBooleans(unittest.TestCase):
+    """Every status flag must be the literal boolean: a missing key or a
+    truthy/falsy stand-in ("yes", 1, 0, [], "False") never makes a result
+    selectable, and `primary_fraction` refuses exactly what `is_selectable`
+    refuses (plus a malformed `primary_exact`)."""
+
+    def _primary_result(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"])]
+        cands = {"r1": _full_cand(non_goals=["A"])}
+        return evaluate_primary_score(refs, cands, ["g1"],
+                                      expected_packets={"g1": ["r1"]})
+
+    def _whole_group_result(self):
+        packet = {"packet_id": "p1", "schema_valid": True,
+                  "grok_as_is": True, "zai_as_is": True}
+        return confirm_whole_groups(
+            ["g1"], {"g1": [packet]}, {"g1": [packet]},
+            expected_packets={"g1": ["p1"]})
+
+    def _assert_refused(self, result):
+        self.assertFalse(is_selectable(result))
+        with self.assertRaises(ValueError):
+            primary_fraction(result)
+
+    def test_incomplete_must_be_literal_false(self):
+        for bad in ([], "False", 0):
+            res = self._primary_result()
+            res["incomplete"] = bad
+            self._assert_refused(res)
+
+    def test_roster_bound_must_be_literal_true(self):
+        for bad in ("yes", 1):
+            res = self._primary_result()
+            res["roster_bound"] = bad
+            self._assert_refused(res)
+
+    def test_diagnostic_only_must_be_literal_false(self):
+        res = self._primary_result()
+        res["diagnostic_only"] = 0
+        self._assert_refused(res)
+        res = self._primary_result()
+        del res["diagnostic_only"]
+        self._assert_refused(res)
+
+    def test_evidence_complete_must_be_literal_true(self):
+        for bad in ("yes", 1):
+            res = self._whole_group_result()
+            res["evidence_complete"] = bad
+            self._assert_refused(res)
+
+    def test_missing_roster_bound_key_refused(self):
+        res = self._primary_result()
+        del res["roster_bound"]
+        self._assert_refused(res)
+
+    def test_unrelated_dict_refused(self):
+        self._assert_refused({})
+        self._assert_refused({"roster_bound": True, "diagnostic_only": False})
+
+    def test_primary_exact_must_be_two_ints_positive_denominator(self):
+        for exact in (
+            {"numerator": 1, "denominator": 0},
+            {"numerator": "1", "denominator": 2},
+            {"numerator": 1.0, "denominator": 2},
+            {"numerator": True, "denominator": 2},
+            {"numerator": 1},
+        ):
+            res = self._primary_result()
+            res["primary_exact"] = exact
+            self.assertTrue(is_selectable(res))  # tampering is invisible here
+            with self.assertRaises(ValueError):
+                primary_fraction(res)
+
+    def test_real_bound_complete_primary_result_accepted(self):
+        res = self._primary_result()
+        self.assertTrue(is_selectable(res))
+        self.assertEqual(primary_fraction(res), Fraction(1, 1))
+
+    def test_real_bound_complete_whole_group_result_accepted(self):
+        res = self._whole_group_result()
+        self.assertTrue(res["evidence_complete"])
+        self.assertTrue(is_selectable(res))
 
 
 if __name__ == '__main__':

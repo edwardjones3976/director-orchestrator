@@ -51,13 +51,42 @@ def _ids_match_expected(ids: List[Any], expected: Sequence[str]) -> bool:
     return sorted(ids) == sorted(expected)
 
 
+def _manifest_is_well_formed(
+    expected_packets: Any,
+    frozen_roster: Sequence[str],
+) -> bool:
+    """True only for a *given* (non-None) manifest that exactly binds every
+    roster group to a non-empty, duplicate-free list of non-empty str packet
+    ids, with no missing/extra group keys. The frozen roster itself must be
+    non-empty and duplicate-free for an exact key match to mean anything."""
+    if not isinstance(expected_packets, dict):
+        return False
+    roster_list = list(frozen_roster)
+    if not roster_list or len(set(roster_list)) != len(roster_list):
+        return False
+    if set(expected_packets.keys()) != set(roster_list):
+        return False
+    for group in roster_list:
+        ids = expected_packets[group]
+        if not isinstance(ids, list) or not ids:
+            return False
+        if not all(isinstance(pid, str) and pid for pid in ids):
+            return False
+        if len(set(ids)) != len(ids):
+            return False
+    return True
+
+
 def _roster_is_bound(
     expected_packets: Optional[Dict[str, Sequence[str]]],
     frozen_roster: Sequence[str],
 ) -> bool:
-    return expected_packets is not None and all(
-        group in expected_packets for group in frozen_roster
-    )
+    """A roster is bound only by a fully valid manifest (see
+    `_manifest_is_well_formed`); an omitted (`None`) manifest is a diagnostic
+    call, and a given-but-malformed manifest is unbound, never both."""
+    if expected_packets is None:
+        return False
+    return _manifest_is_well_formed(expected_packets, frozen_roster)
 
 
 def evaluate_primary_score(
@@ -75,6 +104,13 @@ def evaluate_primary_score(
         if sg in rows_by_group:
             rows_by_group[sg].append(row)
 
+    diagnostic_only = expected_packets is None
+    roster_bound = _roster_is_bound(expected_packets, frozen_roster)
+    # Given (non-None) but not fully valid: the manifest cannot be trusted at
+    # all, so every roster group is forced incomplete rather than partially
+    # trusting whichever entries happen to look valid.
+    manifest_malformed = expected_packets is not None and not roster_bound
+
     cell_fractions: List[Fraction] = []
     field_tp = {field: 0 for field in TARGET_FIELDS}
     field_fp = {field: 0 for field in TARGET_FIELDS}
@@ -83,11 +119,14 @@ def evaluate_primary_score(
 
     for group in frozen_roster:
         packets = rows_by_group[group]
-        broken = not packets
-        if not broken and expected_packets is not None and group in expected_packets:
-            ref_ids = [row.get("row_id") for row in packets]
-            if not _ids_match_expected(ref_ids, expected_packets[group]):
-                broken = True
+        if manifest_malformed:
+            broken = True
+        else:
+            broken = not packets
+            if not broken and roster_bound:
+                ref_ids = [row.get("row_id") for row in packets]
+                if not _ids_match_expected(ref_ids, expected_packets[group]):
+                    broken = True
         if not broken:
             for row in packets:
                 row_id = row.get("row_id")
@@ -131,6 +170,10 @@ def evaluate_primary_score(
         for field in TARGET_FIELDS
     }
 
+    # Without a fully bound manifest, completeness can never be certified,
+    # regardless of whether any individual group looked complete.
+    incomplete = (not roster_bound) or bool(incomplete_groups)
+
     return {
         "primary": float(primary_frac),
         "primary_exact": {
@@ -139,19 +182,72 @@ def evaluate_primary_score(
         },
         "micro": float(micro_fraction),
         "per_field": per_field,
-        "incomplete": bool(incomplete_groups),
+        "incomplete": incomplete,
         "incomplete_groups": incomplete_groups,
         "groups": len(frozen_roster),
-        "roster_bound": _roster_is_bound(expected_packets, frozen_roster),
+        "roster_bound": roster_bound,
+        "diagnostic_only": diagnostic_only,
     }
 
 
+def is_selectable(result: Dict[str, Any]) -> bool:
+    """True only if `result` is roster-bound, not diagnostic-only, and has no
+    incompleteness: for a primary result (one with `primary_exact`) that
+    means `incomplete` is False; for a whole-group
+    (`whole_group_counts`/`confirm_whole_groups`) result (one with
+    `group_results`) that means `evidence_complete` is True. An omitted or
+    malformed manifest (`roster_bound` False) or a diagnostic-only call is
+    never selectable, and neither is a result of neither kind. Every status
+    flag must be the literal boolean: a missing key or a stand-in like
+    "yes"/1/0/[] never qualifies."""
+    if result.get("roster_bound") is not True:
+        return False
+    if result.get("diagnostic_only") is not False:
+        return False
+    if "primary_exact" in result:
+        return result.get("incomplete") is False
+    if "group_results" in result:
+        return result.get("evidence_complete") is True
+    return False
+
+
 def primary_fraction(result: Dict[str, Any]) -> Fraction:
-    exact = result["primary_exact"]
-    return Fraction(exact["numerator"], exact["denominator"])
+    """Exact primary-score Fraction for a selectable primary result. Raises
+    `ValueError` for anything not selectable (unbound/malformed/omitted
+    manifest, diagnostic-only call, or any remaining incompleteness). Later
+    slices must only feed `select_checkpoint` scores obtained from this
+    function (or, for non-selectable-gated callers, plain Fraction/int/float
+    values); it does not itself call `select_checkpoint`."""
+    if not is_selectable(result):
+        raise ValueError(
+            "primary_fraction requires a selectable result: roster_bound "
+            "must be True, diagnostic_only must be False, and the result "
+            "must be complete"
+        )
+    exact = result.get("primary_exact")
+    if not isinstance(exact, dict):
+        raise ValueError(
+            "primary_fraction requires a primary result with a "
+            "primary_exact dict of numerator/denominator ints"
+        )
+    numerator = exact.get("numerator")
+    denominator = exact.get("denominator")
+    if (
+        type(numerator) is not int
+        or type(denominator) is not int
+        or denominator <= 0
+    ):
+        raise ValueError(
+            "primary_fraction requires primary_exact to hold two ints "
+            "with a positive denominator"
+        )
+    return Fraction(numerator, denominator)
 
 
 def select_checkpoint(checkpoints: List[Tuple[str, int, Any]]) -> str:
+    """Selects the best-scoring checkpoint. Accepts plain Fraction/int/float
+    scores unchanged; later slices must only feed this `primary_fraction`
+    values (never a raw, unvalidated `result["primary"]`/`primary_exact`)."""
     if not checkpoints:
         raise ValueError("select_checkpoint requires at least one checkpoint")
 
@@ -237,15 +333,25 @@ def whole_group_counts(
     after: Dict[str, List[Optional[Dict[str, Any]]]],
     expected_packets: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
+    diagnostic_only = expected_packets is None
+    roster_bound = _roster_is_bound(expected_packets, frozen_roster)
+    # Given (non-None) but not fully valid: do not trust any single group's
+    # entry either; every group is forced to neither pass nor be complete.
+    manifest_malformed = expected_packets is not None and not roster_bound
+
     b = 0
     c = 0
     complete = True
     group_results: List[Dict[str, Any]] = []
 
     for group in frozen_roster:
-        expected = expected_packets.get(group) if expected_packets is not None else None
-        before_pass, before_complete = _group_arm_status(before.get(group), expected)
-        after_pass, after_complete = _group_arm_status(after.get(group), expected)
+        if manifest_malformed:
+            before_pass = after_pass = False
+            before_complete = after_complete = False
+        else:
+            expected = expected_packets.get(group) if roster_bound else None
+            before_pass, before_complete = _group_arm_status(before.get(group), expected)
+            after_pass, after_complete = _group_arm_status(after.get(group), expected)
         if not (before_complete and after_complete):
             complete = False
         if after_pass and not before_pass:
@@ -259,7 +365,9 @@ def whole_group_counts(
         "c": c,
         "groups": len(frozen_roster),
         "complete": complete,
-        "roster_bound": _roster_is_bound(expected_packets, frozen_roster),
+        "roster_bound": roster_bound,
+        "diagnostic_only": diagnostic_only,
+        "evidence_complete": complete and roster_bound,
         "group_results": group_results,
     }
 
@@ -274,6 +382,10 @@ def confirm_whole_groups(
     confirmation = evaluate_confirmation(counts["b"], counts["c"])
     result: Dict[str, Any] = dict(counts)
     result.update(confirmation)
-    if not counts["complete"] or not counts["roster_bound"]:
+    # The terminal "complete" here means fully certified evidence (arm data
+    # complete AND roster-bound); a malformed or omitted manifest can never
+    # pass, even if the arithmetic alone would have met margin/p-value.
+    result["complete"] = counts["evidence_complete"]
+    if not counts["evidence_complete"]:
         result["passes"] = False
     return result
