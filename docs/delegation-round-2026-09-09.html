@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Delegation round — 2026-09-09, ASAP scope · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#what-is-cut-and-why">What is cut, and why</a></li><li class="top"><a href="#assignments-this-round">Assignments this round</a></li><li class="top"><a href="#independence">Independence</a></li><li class="top"><a href="#a-06-specification-pre-staged">A-06 specification, pre-staged</a></li><li class="top"><a href="#standing-constraints-unchanged">Standing constraints, unchanged</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 12:00 UTC | BEGIN]] -->
+<h1 id="delegation-round--2026-09-09-asap-scope">Delegation round — 2026-09-09, ASAP scope</h1>
+<p><strong>Issued by:</strong> Claude, acting Director-Orchestrator</p>
+<p><strong>Where this is referenced:</strong> <code>docs/close-out-report-2026-09-13.html</code> links here.</p>
+<p><strong>Supersedes</strong> the assignment table in <code>docs/delegation-matrix-2026-09-13.html</code> for
+this round. The matrix's lane eligibility, quota arithmetic and independence
+rules are unchanged and still govern.</p>
+<p>The scope changed twice since that matrix was written: Gate 8 was determined <code>F</code>,
+and the owner reduced the objective to earliest completion. Several assignments
+were sized for a live path that no longer exists. Re-cutting rather than letting
+them stand, because dispatching work nobody needs is exactly the waste R3 exists
+to prevent.</p>
+<hr />
+<h2 id="what-is-cut-and-why">What is cut, and why</h2>
+<table>
+<thead>
+<tr>
+<th>Was</th>
+<th>Now</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A-03, A-04, A-05</strong> — three fix-PR partitions</td>
+<td><strong>Cut from this round</strong></td>
+<td>The five blockers live in the <code>LIVE_OK</code> and live-dispatch path. That path is not traversed by the floor deliverable, so the fixes are follow-on, not delivery work</td>
+</tr>
+<tr>
+<td><strong>A-15</strong> — Perplexity research on n8n auth</td>
+<td><strong>Cut under R3</strong></td>
+<td>The question it would answer has been answered: the A-16 Director-side research established <code>httpBearerAuth</code> for the bearer call, Header/JWT auth on the inbound hop, and <code>Respond to Webhook</code> for non-2xx mapping. No outcome of A-15 now changes any action, so its value of information is zero. Perplexity is admissible only under a profile with a non-zero target (public_research gives it 25%); under engineering it is refused; it simply has no live question this round</td>
+</tr>
+<tr>
+<td><strong>A-13, A-14</strong> — Antigravity fixture artifact and debate seat</td>
+<td><strong>Cut from this round</strong></td>
+<td>A-13's retry-backoff variants feed reconciliation work that is now follow-on. A-14's debate question — three-profile topology versus in-place repair — was settled when profile L left the plan. Antigravity's credential is provisioned and its readiness passes all eleven checks; it has no question this round, which is a scoping fact and not a capability judgement</td>
+</tr>
+<tr>
+<td><strong>A-01</strong> — full evidence blocker audit</td>
+<td><strong>Narrowed</strong></td>
+<td>Now one question about the <code>Accept</code>/<code>Migrate</code>/Stage A path only</td>
+</tr>
+</tbody>
+</table>
+<p>Cutting four assignments is the point of R3, not a failure of planning. Each was
+correct for the scope it was written against.</p>
+<h2 id="assignments-this-round">Assignments this round</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Work</th>
+<th>Lane</th>
+<th>Blocked on</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A-01′</strong></td>
+<td>Narrowed audit: does any of the five evidence blockers affect <code>PrepareAcceptance</code> → <code>Accept</code> → <code>Migrate</code> → <code>Backup</code> → <code>RestoreDrill</code>, or the Stage A switch set and its health verification? Live-dispatch and <code>LIVE_OK</code> paths explicitly out of scope</td>
+<td>Codex</td>
+<td>nothing — launchable now</td>
+</tr>
+<tr>
+<td><strong>A-02</strong></td>
+<td>Open pull request triage, including whether <code>main</code> has moved past <code>c81e388</code></td>
+<td>Cursor</td>
+<td>nothing — launchable now</td>
+</tr>
+<tr>
+<td><strong>A-06</strong></td>
+<td>n8n v2: intake hardening and the status workflow</td>
+<td>Claude Code session</td>
+<td>nothing — launchable now</td>
+</tr>
+<tr>
+<td><strong>A-11</strong></td>
+<td>Adversarial negative-path analysis of the activation switch coupling</td>
+<td>Grok</td>
+<td>nothing — analysis contact suffices</td>
+</tr>
+<tr>
+<td><strong>A-18</strong></td>
+<td>Independent exact-SHA review of the documentation candidate <code>DIR-2026-09-09-DOCS-01</code></td>
+<td>Cursor</td>
+<td>the pull request existing</td>
+</tr>
+<tr>
+<td><strong>A-19</strong></td>
+<td>Independent exact-SHA review of the A-06 n8n candidate</td>
+<td>Cursor, or Codex if Cursor is loaded</td>
+<td>A-06 landing</td>
+</tr>
+<tr>
+<td><strong>A-17</strong></td>
+<td>Copilot Lite hygiene observation</td>
+<td>GitHub Copilot</td>
+<td>the frozen candidate, checks green</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation quota consumed this round: Claude 1 of 5 (A-06). Everything else
+is analysis, triage or review, which consumes none.</p>
+<h2 id="independence">Independence</h2>
+<p>A-06 is produced by a Claude Code session and reviewed by Cursor. A-18 reviews
+Director-authored documents, and the Director is ineligible to review or accept
+them. No lane reviews its own material authorship in this round. Merge stays
+owner-only and is not delegable.</p>
+<h2 id="a-06-specification-pre-staged">A-06 specification, pre-staged</h2>
+<p>The implementer should need no further questions. Findings already established,
+so they are not re-derived:</p>
+<p><strong>Intake</strong> (<code>n8n/workflows/director-intake.json</code>)</p>
+<ul>
+<li>Outbound call to <code>/v1/intake</code>: generic auth type <strong><code>httpBearerAuth</code></strong>, not
+<code>httpHeaderAuth</code>. <code>httpHeaderAuth</code> is for custom headers such as <code>X-API-Key</code>;
+the bearer credential type takes a single token field and is the correct one
+for <code>Authorization: Bearer</code>.</li>
+<li>Inbound hop: enable Webhook node authentication — Header or JWT credential.
+Never an inline secret in a node parameter.</li>
+<li>Forward the Slack intake receipt fields required since PR #118, intact.</li>
+<li>Idempotency key: the stable Slack event ID, unmodified.</li>
+<li>Non-2xx from <code>/v1/intake</code>: set <code>Respond</code> to <strong>Using 'Respond to Webhook' Node</strong>
+and map the failure to an explicit error response with a real status code.
+Do not let a failure return 200.</li>
+<li>Consider the Webhook node's IP allowlist and bot-ignore options.</li>
+<li>Never echo raw provider output into the response body.</li>
+</ul>
+<p><strong>Status</strong> (<code>n8n/workflows/director-status.json</code>, new)</p>
+<ul>
+<li>Schedule trigger polling <code>GET /health</code> on the profiles in play, and
+<code>/v1/staging/status</code> only while a staging app is running.</li>
+<li>Diff the readiness booleans against the previous run using workflow static
+data; post <strong>only on change</strong>.</li>
+<li>Post immediately, regardless of change, when <code>ambiguous_effect_count &gt; 0</code>, the
+parallel kill switch is set, or health is unreachable.
+<em>(Correction 2026-09-12: The rule changed in #197; it speaks when the kill switch is engaged while parallel dispatch is enabled.)</em></li>
+<li>Target the configured Director channel variable. Never a literal channel ID in
+the workflow.</li>
+<li>Never post secret, DSN or allowlist values.</li>
+</ul>
+<p><strong>Both</strong>: validate with <code>python -m json.tool</code>. Workflow JSON carries <strong>no inline
+contribution tag</strong> — it is a syntax-sensitive contract and is attributed through
+the pull request envelope instead. Document in <code>docs/n8n-operations.html</code>,
+including how the webhook is repointed between profiles.</p>
+<h2 id="standing-constraints-unchanged">Standing constraints, unchanged</h2>
+<p><code>ALLOW_PAID_RUNS</code>, live provider dispatch and the provider activation bindings
+stay closed. Nothing in this round opens them. A-11 is a paid provider call; it
+is blocked while <code>ALLOW_PAID_RUNS</code> stays closed, and requires explicit owner
+authorization of the paid gate before it can run. Every submission carries a fresh
+outer contribution pair per changed commentable file. Merge current <code>main</code> into
+the branch (a merge commit, never a rebase or force-push) before opening any pull
+request — the attribution job diffs <code>pull_request.base.sha</code>..<code>head</code>, so a branch
+behind <code>main</code> fails on files it never touched.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 12:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

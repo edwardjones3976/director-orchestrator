@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Offline Slack trial evidence · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#declare-correctness-before-dispatch">Declare correctness before dispatch</a></li><li class="top"><a href="#collect-after-the-owner-completes-a-trial">Collect after the owner completes a trial</a></li><li class="top"><a href="#approval-pause">Approval pause</a></li><li class="top"><a href="#qualification-evidence-chain">Qualification evidence chain</a></li><li class="top"><a href="#record-one-row-and-stop-on-failure">Record one row and stop on failure</a></li><li class="top"><a href="#validation">Validation</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:55 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | BEGIN]] -->
+<h1 id="offline-slack-trial-evidence">Offline Slack trial evidence</h1>
+<p>This repository port collects and records evidence; the owner performs the
+trials. It does not send messages, approve work, dispatch providers, deploy, or
+award scorecard points. Retain the reviewed tooling commit with the receipts;
+each receipt also records the collector's file SHA256.</p>
+<p>The source collector SHA256 was
+<code>58f1ba7710e536f509104ae3b8913f4a8cd1ea8660478cfee2adef04a194c26b</code>;
+its 33-test suite was
+<code>aeff3998098be06db6d3eba69965e49ca3e0461c760b334371adb06c2676d21f</code>.
+All 33 source cases are retained and adapted to repository entry points.</p>
+<h2 id="declare-correctness-before-dispatch">Declare correctness before dispatch</h2>
+<p>Read <a href="examples/offline-slack-structural-rubric-v1.json">the structural rubric</a>
+before trial 2. It requires:</p>
+<ul>
+<li>Exactly one native terminal reply bound to its durable delivery receipt.</li>
+<li>The bound primary task is <code>DONE</code>.</li>
+<li>Every assignment outcome is an <code>offline-double:</code> run whose result is exactly
+<code>SIMULATION — NO PROVIDER INTERACTION</code>, the label in <code>primary_default.py</code>.</li>
+<li>Every outcome has a 64-hex <code>provider_result_digest</code>.</li>
+<li>Terminal text contains that simulation label and <code>Actual USD cost: not recorded</code>.
+A terminal reply Slack reports as edited, or with any subtype, never counts as
+containing either: Slack keeps its original timestamp but returns the new text.</li>
+</ul>
+<p>The collector accepts only this contract; a file cannot weaken its requirements.
+Owner ruling (2026-09-24), option chosen: &quot;Offline = pipeline proof&quot;. Check 10 proves the pipeline works end to end offline (delivery, simulation labels, ten consecutive, committed structural rubric); answer correctness is check 20's job (the real paid run). The structural rubric
+therefore proves the offline pipeline, not that any answer is correct; check
+10 does not verify answers and check 20 (the real paid run) does. A receipt
+counts only as a bot reply's leading header, never as text quoted inside a
+provider result.
+Compute its <strong>file-byte SHA256</strong> and include
+<code>rubric-sha256:&lt;64-lowercase-hex-digest&gt;</code> in the owner's original trial request.
+The collector matches that source event back to immutable intake text. The
+rubric's timezone-aware declaration time must precede the input. A backdated
+file alone is insufficient: changed bytes also change the digest already
+declared in the source message.</p>
+<pre><code class="language-powershell">(Get-FileHash docs/examples/offline-slack-structural-rubric-v1.json -Algorithm SHA256).Hash.ToLowerInvariant()
+</code></pre>
+<p>This measures simulated orchestration structure, not real provider answer
+quality. The good-run standard additionally requires authentic owner input,
+bounded work, one task, no ambiguous effects/delivery, and complete attributable
+evidence. Wall time, machine time and actual cost are reported metrics; the former
+60-second/USD 1 figures are not acceptance gates. Nonnegative measurements and
+wall = owner pause + machine remain required; separate spending caps still apply.</p>
+<h2 id="collect-after-the-owner-completes-a-trial">Collect after the owner completes a trial</h2>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+python scripts/collect-offline-slack-trials.py `
+  --expected-head &lt;full-observed-release-commit&gt; --trial &lt;thread-timestamp&gt; `
+  --rubric docs/examples/offline-slack-structural-rubric-v1.json `
+  --output-dir &lt;new-receipt-directory&gt;
+</code></pre>
+<p>Repeat <code>--trial</code> at most ten times. One bounded paginated <code>conversations.replies</code>
+read per thread supplies exactly one unambiguous task receipt in that thread from
+the bot authenticated by <code>auth.test</code>: the current gateway's <code>REQUEST RECEIVED</code>
+reply or the legacy <code>ACCEPTED</code> reply. Neither wording is approval or proof of
+successful execution. Missing, duplicate, mixed-wording, foreign-bot, wrong-thread
+or incomplete-readback evidence cannot select a task. The task API must bind its
+ID, engine header, intake thread, configured owner/channel, source event, and
+original message text together.</p>
+<p>The only network reads are GET-only: Slack <code>auth.test</code>, <code>conversations.replies</code>,
+Director <code>/health</code>, <code>/v1/tasks/{id}</code>, and <code>/v1/primary/tasks/{id}/deliveries</code>.
+Secrets and channel scope come from the running canonical container environment
+in memory. There is no channel CLI argument or home-directory helper dependency.
+Head, image, running state and localhost port are checked before and after reads.
+Each thread is bounded to five pages/500 messages, responses to 2 MiB, collection
+to 120 seconds plus at most one five-second blocked socket read. Docker
+inspections each have a separate 15-second timeout. Reads are never retried.</p>
+<p><code>receipt.json</code> follows <a href="schemas/director-slack-trial-observations-v1.schema.json">the observations schema</a>.
+It retains selected hashes, task/message identities, states, counts, rubric
+checks, timing and unknowns. Failed lookups/collections stay visible. Existing
+output directories are never overwritten. <a href="examples/offline-slack-trial-observations-v1.json">The synthetic example</a>
+illustrates a structural pass with remaining authority gaps.
+Its digest identifies repository LF bytes. Recompute the actual local file
+digest after checkout; newline conversion changes the bytes bound in live trials.</p>
+<p>Original-body capture is <strong>off by default</strong>. <code>--private-dir &lt;new-directory&gt;</code>
+creates a separate directory whose parent must exist, using current-user,
+SYSTEM and Administrators ACLs on Windows, or mode 0700 on POSIX. No home helper
+is loaded. Bodies containing detected configured credentials, scope values or
+Slack identities are withheld even in private mode; their hashes remain.
+Other originals are base64-preserved. Request parameters, authorization headers,
+container environments and private paths are excluded from source references.
+Do not publish private capture.</p>
+<h2 id="approval-pause">Approval pause</h2>
+<p>An additive, idempotent startup migration adds nullable <code>owner_decision</code> to the
+delivery table. A matching durable <code>approval_resume</code> command records <code>approve</code>
+or <code>reject</code> against the existing request/projection binding. The command enum
+<code>deny</code> maps to <code>reject</code>. Replays preserve the first evidence; legacy rows remain
+null. The existing GET endpoint exposes the field through <code>receipts</code>, without
+changing the endpoint handler. The migration has not been deployed by this work.</p>
+<p>Each pause is <code>owner_decision_at - slack_ts</code> for a delivered approval row with
+explicit <code>approve</code>, command identity, and a timezone-aware decision time. Waits
+must lie within the input-to-terminal interval and cannot overlap. Multiple
+approved waits are summed; no approval rows means zero pause. Reject, legacy,
+malformed, missing or truncated evidence leaves pause/machine time null.
+<code>machine_seconds = wall_seconds - owner_pause_seconds</code>. This arithmetic does not
+independently attest historical signed approval scope.</p>
+<h2 id="qualification-evidence-chain">Qualification evidence chain</h2>
+<p>The collector requests each task with the read-only opt-in
+<code>GET /v1/tasks/{id}?include_qualification_evidence=true</code> (the only permitted
+API query). The typed <code>qualification_evidence</code> in that response is one bounded
+<code>REPEATABLE READ</code> / <code>READ ONLY</code> snapshot of the persisted primary tables; the
+ordinary task record and its digests are unchanged. Each trial row carries a
+derived <code>qualification_evidence</code> object: <code>readback.state</code> is <code>collected</code>,
+<code>incomplete</code> (truncated sections are named), <code>rejected</code> (task/schema mismatch,
+duplicate attempt/assignment/effect/delivery/receipt identities, or attempts
+that do not join a listed assignment) or <code>absent</code> (no opt-in response), with
+the reason. The raw JSON is first validated through the product's own typed
+<code>QualificationEvidenceReadback</code> model (<code>models.py</code>) in strict JSON mode, so
+nested shapes, unknown keys at any level, boolean or string counts and naive
+or malformed timestamps are refused by the model itself; the collector adds
+only what the model cannot express: this task's binding and schema version,
+no <code>NaN</code>/<code>Infinity</code> anywhere, timezone-aware <code>task_created_at &lt;= task_updated_at &lt;= captured_at</code>, known and unique <code>truncated</code>/<code>absent</code>
+sections, <code>complete</code> agreeing with <code>truncated</code>, absent sections empty,
+elapsed time within <code>wall_seconds</code>, no section above <code>row_limit</code>, and for a
+complete readback <code>task_scope_counters</code> equal to its own rows. Rejection
+diagnostics name field locations, never payload values. Identity families
+stay distinct in <code>chain</code>: <code>assignment_ids</code> and <code>assignment_sequences</code>
+(AssignmentOutcome carries a sequence, not an ID), <code>attempt_ids</code> (primary
+attempt digests, never external run IDs), <code>effect_ids</code> (external-effect
+<code>effect_key_digest</code>), <code>delivery_ids</code> (Slack <code>client_msg_id</code>),
+<code>approval_delivery_keys</code>, <code>status_receipt_ids</code> and settled
+<code>provider_result_digests</code>. Slack notification keys must belong to the
+delivery producer's families: <code>terminal</code>, <code>hold:sha256:&lt;64 hex&gt;</code> or
+<code>approval:sha256:&lt;64 hex&gt;:sha256:&lt;64 hex&gt;</code> (152 characters); a malformed
+family or digest rejects the readback, an owner decision is accepted only on
+an approval row, and the generic identity bounds are not widened for them.
+<code>timestamps</code> keeps request, completion (latest settled attempt row),
+delivery (Slack acknowledgement) and readback distinct and lists every
+unproduced edge with its reason under <code>unknown_reasons</code>; first-byte and
+validation times have no producer. <code>lineage</code> reports provider routes,
+transports and the attempt-ordinal count from real attempt rows;
+<code>fallback_observed</code> stays <code>null</code> because no producer records fallback
+linkage (every attempt is bound to its assignment's immutable provider).
+<code>provider_effect_state</code> (<code>ZERO_PROVIDER_ATTEMPT</code>, <code>…STARTED_UNSETTLED</code>,
+<code>…AMBIGUOUS</code>, <code>PROVIDER_RESULT_RECORDED</code>) and <code>external_effect_state</code>
+(reservation, bound-unconfirmed, ambiguous or terminal disposition) are kept
+apart from the coarse <code>effect_state</code> the scorecard consumes; a nonempty
+run/contact/history list is never effect evidence. <code>usage.cost_basis</code> is
+<code>authenticated_usage_table</code> (summed <code>actual_microusd</code>, with the reserved
+budget reported separately), <code>provider_reported</code> (finite non-negative task
+value; <code>inf</code>, <code>nan</code>, negatives and booleans are rejected) or <code>UNKNOWN</code>.
+Validation before any derivation (<code>_validate_attempts</code>, <code>_validate_usage</code>):
+every attempt event must join a listed assignment with the same provider and
+sequence; the events of one attempt (assignment, ordinal) must share their
+attempt, idempotency and budget digests, provider, format and transport;
+event sequences are unique within 1..3, statuses are the producer's four, and
+one digest never names two attempts. The latest valid event settles an
+attempt, so an authenticated <code>SUCCEEDED</code> event 3 supersedes an earlier
+<code>AMBIGUOUS</code> event 2, while any attempt whose latest event is still
+<code>AMBIGUOUS</code> or <code>STARTED</code> keeps the whole task unsettled. Usage rows must join
+exactly one valid attempt of the same provider, once; duplicated, orphaned,
+provider-mismatched, boolean or negative usage rejects the readback. External
+effects are aggregated across every reservation: one completed sibling never
+hides an executed-but-unbound one (<code>EXTERNAL_EFFECT_AMBIGUOUS</code>), and a mix of
+reserved-only and terminal rows is reported as
+<code>EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:…</code>. <code>retry_observed</code> comes from
+a second ordinal on the same assignment. A rejected, incomplete or absent
+readback derives nothing: identities, sequences, routes, states and amounts
+stay empty/UNKNOWN, the chain never falls back to the ordinary task record's
+<code>assignment_outcomes</code> or to the separate deliveries endpoint, and an
+incomplete one carries only <code>readback.partial_diagnostics</code> (<code>not_proof: true</code>). That ordinary context (outcome sequences, providers and result
+digests, delivery <code>client_msg_id</code>s) is reported only under
+<code>unjoined_context</code> with a fixed note; it is not the validated snapshot join
+and is never qualification evidence.</p>
+<p>Status-only evidence is prospective. The readback exposes <code>captured_at</code> and
+<code>task_scope_counters</code> (<code>thread_tasks</code> bound to the same Slack thread, this
+task's <code>assignments</code>, <code>provider_attempts</code> event rows, distinct
+<code>attempt_ordinals</code>, <code>started_attempts</code>, durable <code>status_receipts</code> and
+<code>effect_reservations</code>; scope <code>task-and-thread-local/v1</code>) from the same
+snapshot. <code>status_receipt_delta</code> compares two complete typed readbacks of the
+same task, source event and engine, with the same runtime head/image and the
+same declared configuration scope/key set/digest, and requires
+before-capture &lt; receipt-creation &lt;= after-capture (timezone-aware), an exact
+unique receipt join absent from the baseline, no decreased counter and
+exactly one added durable receipt row. Consistency is not authentication:
+only readbacks this same process obtained through the authenticated GET (the
+signed synthetic test sequence) yield <code>proof: true</code>; a prior receipt supplied
+with <code>--status-baseline &lt;receipt.json&gt; --status-receipt-id &lt;id&gt;</code> must first be
+a schema-valid collected observation and then yields only
+<code>baseline.observed_delta</code> with <code>proof: null</code> and the reason that no existing
+mechanism authenticates a saved file. <code>provider_attempts_created</code> counts new
+attempt ordinals, never settlement events; <code>deduplicated_receipts</code> is set only
+from an observed replay, while <code>durable_receipt_rows</code> is the plain row count.
+After-only collection keeps the created counts <code>null</code>.</p>
+<p><code>revision_binding</code> is a read-time identity: <code>configuration_digest</code> covers the
+public fields resolved exactly as <code>Settings</code> resolves them (<code>ALLOW_PAID_RUNS</code>,
+the three LangGraph primary switches as booleans with default <code>false</code>,
+<code>LANGGRAPH_PRIMARY_POSTGRES_SCHEMA</code> with its declared default and
+<code>INTAKE_ALLOCATION_PROFILE</code> lower-cased with the default profile and validated
+against the allocation profiles), scope
+<code>supplied-public-configuration-resolved-with-declared-defaults/v1</code>, with
+<code>configuration_keys</code> and <code>supplied_keys</code> listed and values never emitted. An
+omitted field equal to its default does not change the digest; a changed
+profile, switch or schema does; secret, identity and unlisted keys are
+excluded by construction; malformed values or unknown profiles refuse
+collection. <code>inspect_runtime</code> derives the emitted <code>offline_configured</code> and
+<code>paid_configured</code> flags through that same resolver (<code>1</code>/<code>true</code>/<code>yes</code>/<code>on</code>
+and declared defaults, as <code>Settings</code> reads them), and <code>revision_binding</code>
+re-derives its public flags from the resolver rather than copying the
+runtime dict, so a spelling difference can never split the flags from their
+digest. It is neither the native account/credential pin nor an
+execution-time binding (<code>execution_time_binding: UNKNOWN</code> with its reason).
+This block adds evidence; it changes no rubric check and cannot turn
+<code>EVIDENCE_ONLY_NOT_QUALIFIED</code> into a pass.</p>
+<h2 id="record-one-row-and-stop-on-failure">Record one row and stop on failure</h2>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+python scripts/record-offline-trial.py `
+  --receipt &lt;receipt-directory&gt;/receipt.json `
+  --rubric docs/examples/offline-slack-structural-rubric-v1.json `
+  --trial-index 1 --output &lt;sequence-file&gt;.jsonl
+</code></pre>
+<p><code>--trial-index</code> is one-based. Record trials in their actual order and retain the
+receipt/rubric with the JSONL. CLI output includes their file hashes. Rows use
+exactly <code>OFFLINE_RUN_RECORD_FIELDS</code>: <code>RUN_RECORD_FIELDS</code> plus <code>simulation_label</code>.
+The recorder and ten-run evaluator share <code>evaluate_run_record</code>; the latter keeps
+its count and duplicate-ID requirements. Both schemas are checked, rubric
+evaluations are recomputed, and changed rubric hashes or conflicting checks fail.</p>
+<table>
+<thead>
+<tr>
+<th>Receipt evidence</th>
+<th>Run fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Accepted task or unresolved thread</td>
+<td><code>run_id</code></td>
+</tr>
+<tr>
+<td>Matched owner input, gateway-attested by the task's one append-only intake claim (its digests re-derived from the served intake, in a complete readback)</td>
+<td><code>actual_owner_event</code></td>
+</tr>
+<tr>
+<td>Recomputed predeclared rubric</td>
+<td><code>correctness_verified</code></td>
+</tr>
+<tr>
+<td>Global deduplication authority</td>
+<td><code>task_count</code>, otherwise null</td>
+</tr>
+<tr>
+<td>Native terminal count and approved-pause arithmetic</td>
+<td><code>terminal_reply_count</code>, <code>wall_seconds</code>, <code>owner_pause_seconds</code>, <code>machine_seconds</code></td>
+</tr>
+<tr>
+<td>Stable health and complete delivery evidence</td>
+<td><code>ambiguous_effects</code>, <code>delivery_ambiguous</code></td>
+</tr>
+<tr>
+<td>Verified historical execution image</td>
+<td><code>runtime_sha</code>, <code>image_id</code>, otherwise null</td>
+</tr>
+<tr>
+<td>Complete zero-call authority, labeled doubles, empty exposed attempt lists, stable offline runtime and paid disabled</td>
+<td><code>operational_provider_attempts: 0</code>, <code>actual_cost_usd: 0</code>, <code>cost_basis: simulation_zero_calls</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Zero-call-verified offline run → <code>actual_cost_usd</code> 0 with <code>cost_basis</code>
+<code>simulation_zero_calls</code>.</strong> This accounts for the simulated run only, not unrelated
+engineering/review usage or actual billing. Empty exposed lists alone do not
+establish complete operational calls. Unknown cost remains null; terminal text
+continues to say actual cost is not recorded.</p>
+<p>The current GET surfaces do not independently establish complete operational
+attempts, global task deduplication or the historical execution image. Those
+collector fields remain null, and the recorder preserves them. Current collector
+receipts alone <strong>cannot qualify a run</strong>. Synthetic fixtures cover the fully
+evidenced mapping, not production authority. The separate in-process check-10
+collector order must supply that authority. Saved JSON never becomes a scored
+observation here.</p>
+<p>The recorder recomputes wall time from the input and terminal timestamps and
+reuses the collector's approved-interval calculation for owner pause and machine
+time. A numeric summary contradicting available source timestamps is refused.
+Missing timestamps, incomplete readback or incomplete approval evidence leave
+the affected timing fields unknown; a summary cannot fill that evidence gap.</p>
+<p>Exit 0 means the row's measured facts qualify; exit 2 means a non-qualifying row
+was appended and the sequence stopped; exit 1 means append was refused or
+unavailable. Storage errors report an unknown append outcome: inspect the file
+before retrying. The
+recorder refuses further appends after any non-qualifying row. Diagnose and
+retain that sequence before starting a separately identified one. It rejects
+duplicate IDs, changed known image/head, an eleventh row, malformed/truncated
+logs and an existing sibling <code>.lock</code>. The lock serializes read/check/append;
+a crash leaves a visible lock for diagnosis. There is no force/reset/retry mode.</p>
+<p>Historical trial 1, <code>D20-20260912-01</code> / <code>DIR-LG-9DF8291552</code>, remains
+<code>FAILED_DELIVERY_READBACK</code>; its original outcome recorded <strong>65.1816 s</strong> wall time.
+It is not rewritten or promoted. A qualification sequence starts at trial 2 only
+after diagnosis and the required evidence is available.</p>
+<h2 id="validation">Validation</h2>
+<p>Collector/recorder fixtures use synthetic HTTP and files. Repository CI already
+discovers these tests. For #201, run the delivery tests only on the assigned lane:</p>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+&amp; &lt;venv-python&gt; -m unittest tests.test_collect_offline_slack_trials tests.test_record_offline_trial tests.test_completion_scorecard -v
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-postgres-test-lane.ps1 -Action Test -ContainerName director-lane-201 -HostPort 55442 -Python &lt;venv-python&gt; -TestNames tests.test_primary_slack_delivery
+</code></pre>
+<p>Static source checks do not replace executed tests, exact-head review, CI or
+security evidence. Deterministic policy and activation gates are unchanged.</p>
+<p>Windows author validation on 2026-09-12 passed <strong>98 collector, recorder and
+scorecard tests in 1.979 seconds</strong>, without skips, after the receipt-timing
+correction. The unchanged primary delivery and schema code passed <strong>33 tests</strong>
+in the earlier combined <strong>126-test PostgreSQL run (50.022 seconds, no skips)</strong>.
+That disposable lane was removed. The negative controls confirmed that the old
+recorder admitted contradictory duration summaries and failed the new missing-
+evidence assertions. These are synthetic tests, not qualifying real Slack runs.</p>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

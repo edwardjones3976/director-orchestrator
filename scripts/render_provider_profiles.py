@@ -4,16 +4,13 @@
 Usage (PYTHONPATH=src):
 
     python scripts/render_provider_profiles.py --check
-    python scripts/render_provider_profiles.py --write \
-        --contributor "Claude Code" --system "Claude Fable 5.1" \
-        --at 2026-09-04T20:30:00Z
+    python scripts/render_provider_profiles.py --write
 
 ``--check`` renders every sheet in memory and compares it with the committed
-file after stripping contribution-tag lines; it exits 2 on a validation
-problem and 1 when any rendered output is stale or mistagged. ``--write``
-regenerates the Markdown sheets, the index, and the schema example, wrapping
-each Markdown file in a fresh outer contribution tag pair while preserving the
-pairs already inside it. The sheets grant no authority.
+file; it exits 2 on a validation problem and 1 when any output is stale.
+``--write`` renders semantic HTML directly from YAML and updates the schema
+example. No Markdown intermediate or contribution envelope is generated.
+The sheets grant no authority.
 """
 
 from __future__ import annotations
@@ -49,9 +46,9 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="verify rendered outputs are current")
     mode.add_argument("--write", action="store_true", help="regenerate rendered outputs")
-    parser.add_argument("--contributor", help="contribution tag contributor label (with --write)")
-    parser.add_argument("--system", help="contribution tag system label (with --write)")
-    parser.add_argument("--at", type=_parse_at, help="ISO-8601 UTC timestamp for the tag pair (with --write)")
+    parser.add_argument("--contributor", help=argparse.SUPPRESS)
+    parser.add_argument("--system", help=argparse.SUPPRESS)
+    parser.add_argument("--at", type=_parse_at, help=argparse.SUPPRESS)
     parser.add_argument("--root", type=Path, default=None, help="profile directory override (tests only)")
     args = parser.parse_args(argv)
 
@@ -64,10 +61,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print("Provider profile sheets are current.")
             return 0
-        if not (args.contributor and args.system and args.at):
-            parser.error("--write requires --contributor, --system, and --at")
-        identity = TagIdentity(contributor=args.contributor, system=args.system, at=args.at)
-        written = write_outputs(identity, root=args.root)
+        written = write_outputs(root=args.root)
     except ProviderProfileError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

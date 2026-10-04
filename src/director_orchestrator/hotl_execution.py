@@ -25,7 +25,7 @@ carries, because an unmapped item is the failure this had.
 Two properties matter more than the conjunction itself.
 
 The tier check runs before any term is evaluated and fails closed. Tier 1 is the
-closed five-class list in docs/human-out-of-the-loop-operation.md; anything not
+closed five-class list in docs/human-out-of-the-loop-operation.html; anything not
 plainly one of those is tier 0 and can never be autonomous, however many terms
 pass. A grant naming an unlisted class does not create one. The one
 pre-execution class is decided by `decide_pre_execution` over its own closed

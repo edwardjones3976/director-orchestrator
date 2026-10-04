@@ -201,8 +201,9 @@ def main() -> int:
     refusal = launch_refusal()
     if refusal is not None:
         parser.error("scorecard not run from the pinned evaluator checkout: " + refusal)
-    from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
+    from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, score,
                                                            untrusted_checkout, _launcher)
+    from director_orchestrator.scorecard_html import render_html
     try:
         launcher = _launcher()
         attestation = launcher.run_attestation(ROOT)
@@ -226,16 +227,18 @@ def main() -> int:
             report = refuse_untrusted(report, refused)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         json_path = args.output_dir / "completion-scorecard.json"
-        md_path = args.output_dir / "completion-scorecard.md"
+        html_path = args.output_dir / "completion-scorecard.html"
         json_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        md_path.write_text(render_markdown(report, _pending_launch=True), encoding="utf-8")
+        # This first display is UNATTESTED while its receipt is pending. The
+        # installed launcher replaces it only after sealing this exact JSON.
+        html_path.write_text(render_html(report), encoding="utf-8")
         if report["attested"] is True:
             Path(os.environ["DIRECTOR_SCORECARD_RESULT"]).write_text(json.dumps(report), encoding="utf-8")
         else:
             print(launcher.UNATTESTED)
         print(json.dumps({"score": f"{report['passed']}/20" if report["attested"] else "UNATTESTED",
                           "attested": report["attested"], "json": str(json_path.resolve()),
-                          "markdown": str(md_path.resolve()), "activation_authorized": False}))
+                          "html": str(html_path.resolve()), "activation_authorized": False}))
     except (OSError, ValueError) as error:
         parser.error(str(error))
     return 0

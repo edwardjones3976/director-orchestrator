@@ -24,7 +24,7 @@ display_name: OpenAI (ChatGPT/Codex Director)
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -216,15 +216,15 @@ authority:
 
 platform_limitations:
   - limitation: "The Responses API route is separately billed; the owner's OpenAI Pro 20x subscription does not fund it."
-    source: "docs/provider-allocation-profiles.md, Capacity, roles, and authority"
+    source: "docs/provider-allocation-profiles.html, Capacity, roles, and authority"
   - limitation: "The legacy provider registry contains no OpenAI production adapter; the lane's allocation exists in accounting but cannot execute there without a real authenticated adapter."
-    source: "docs/provider-allocation-profiles.md"
+    source: "docs/provider-allocation-profiles.html"
   - limitation: "The native Codex host transport is packet-only analysis with read-only sandboxing and no repository inspection; a timeout, nonzero exit, oversized output, or invalid terminal stream is ambiguous and never redispatched."
-    source: "docs/native-codex-packet-transport.md"
+    source: "docs/native-codex-packet-transport.html"
   - limitation: "The isolated CI acceptance issuer is a separate GitHub OIDC workflow that is dormant until owner adoption; it is not an OpenAI contact."
-    source: "docs/ci-acceptance-issuer.md"
+    source: "docs/ci-acceptance-issuer.html"
   - limitation: "Director oversight of the repository is read-only; any write requires exact stored owner authorization and every current deterministic gate."
-    source: "docs/team-operating-charter.md, Purpose"
+    source: "docs/team-operating-charter.html, Purpose"
   - limitation: "OPENAI_ACCOUNT_CONTEXT holds the owner-reported account context string surfaced in the provider strategy; it is informational and never an entitlement, quota, or budget."
     source: "src/director_orchestrator/config.py:provider_strategy"
 
@@ -319,11 +319,11 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-- document: docs/team-operating-charter.md
+- document: docs/team-operating-charter.html
   anchor: The policy target is a ChatGPT/Codex Director lane for priorities,
-- document: docs/provider-setup.md
+- document: docs/provider-setup.html
   anchor: OpenAI Responses API with Structured Outputs
-- document: docs/native-codex-packet-transport.md
+- document: docs/native-codex-packet-transport.html
   anchor: The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`
 - document: docs/templates/project-bootstrap/provider-roles-contract.yaml
   anchor: The appointed Director keeps Moderator, Participant, and Director functions separate
