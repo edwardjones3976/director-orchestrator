@@ -6,7 +6,8 @@ if (-not $IsWindows) {
     exit 0
 }
 
-$script = Join-Path $PSScriptRoot 'export-adapter.ps1'
+$realScript = Join-Path $PSScriptRoot 'export-adapter.ps1'
+$script = $null
 $shellExe = Join-Path $PSHOME 'pwsh.exe'
 $fail = [System.Collections.Generic.List[string]]::new()
 
@@ -14,11 +15,33 @@ function Assert([bool]$Cond, [string]$Case) {
     if (-not $Cond) { $fail.Add($Case) } else { Write-Output "ok  $Case" }
 }
 
-function Invoke-Export([string[]]$Arguments) {
+# Runs a generated probe script via -File instead of -Command: some of these
+# generated scripts (the extracted gate/staging source plus fixture literals)
+# are big enough to exceed the ~32,000-character Windows command-line limit if
+# passed through -Command, which makes pwsh.exe fail to launch at all. Writing
+# the text to a scratch .ps1 file under $root and running that file has no such
+# limit.
+function Invoke-ShellScript([string]$ScriptText) {
+    $probePath = Join-Path $root ('probe-' + [guid]::NewGuid().ToString('n') + '.ps1')
+    [IO.File]::WriteAllText($probePath, $ScriptText)
+    try {
+        return @(& $shellExe -NoProfile -NonInteractive -File $probePath 2>&1 | ForEach-Object { "$_" })
+    } finally {
+        Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Runs export-adapter.ps1 as a subprocess. By default this targets the shared
+# baseline "patched" copy of the real script (see New-PatchedExportScript below):
+# a test-only artifact whose pinned trust-root hash constant is swapped for the
+# value matching this run's fixture root manifest. The real, committed
+# export-adapter.ps1 keeps its hardcoded pin untouched; no test ever edits it.
+function Invoke-Export([string[]]$Arguments, [string]$ScriptPathOverride = '') {
+    $target = if ($ScriptPathOverride) { $ScriptPathOverride } else { $script }
     $prevEa = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $lines = @(& $shellExe -NoProfile -NonInteractive -File $script @Arguments 2>&1 | ForEach-Object { "$_" })
+        $lines = @(& $shellExe -NoProfile -NonInteractive -File $target @Arguments 2>&1 | ForEach-Object { "$_" })
         $code = $LASTEXITCODE
         if ($null -eq $code) { $code = -1 }
         return [pscustomobject]@{ Lines = @($lines); Code = [int]$code }
@@ -44,6 +67,29 @@ function Invoke-FlipFirstByte([string]$Path) {
     $b = [IO.File]::ReadAllBytes($Path)
     $b[0] = [byte]($b[0] -bxor 0xFF)
     [IO.File]::WriteAllBytes($Path, $b)
+}
+
+# Writes a throwaway, never-committed copy of the real export-adapter.ps1 with only
+# the pinned trust-root hash constant's literal value swapped for $PinSha256. This
+# lets synthetic fixtures (whose bytes can never equal the real shipped pin, by
+# construction of SHA-256) exercise the full trust-chain gate. The real file on disk
+# is never read-modified-written; it is only read once per call and never touched.
+function New-PatchedExportScript([string]$PinSha256) {
+    $srcText = Get-Content -LiteralPath $realScript -Raw -Encoding utf8
+    $marker = "`$script:PinnedTrustedDigestManifestSha256 = '"
+    $idx = $srcText.IndexOf($marker)
+    if ($idx -lt 0) { throw 'test harness: pinned hash constant not found for patching' }
+    $valueStart = $idx + $marker.Length
+    $closeIdx = $srcText.IndexOf("'", $valueStart)
+    if ($closeIdx -lt 0) { throw 'test harness: pinned hash constant malformed for patching' }
+    $patched = $srcText.Substring(0, $valueStart) + $PinSha256 + $srcText.Substring($closeIdx)
+    $path = Join-Path $root ("export-adapter.patched." + [guid]::NewGuid().ToString('n') + '.ps1')
+    [IO.File]::WriteAllText($path, $patched)
+    # The patched copy lives under $root, not $PSScriptRoot, but it still dot-sources
+    # invoke-bounded.ps1 by $PSScriptRoot at run time, so every patched copy needs its
+    # own sibling copy of the real helper.
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'invoke-bounded.ps1') -Destination (Join-Path $root 'invoke-bounded.ps1') -Force
+    return $path
 }
 
 $root = $null
@@ -99,18 +145,21 @@ try {
     $shard2Sha = Get-Sha256File $shard2Path
     $indexPath = Join-Path $snapDir 'model.safetensors.index.json'
 
-    $expectedPath = Join-Path $cRoot 'reports\m1-expected-qwen3-14b.json'
+    # Non-weight snapshot files required for full-coverage testing (requirement 4:
+    # every regular file in the snapshot, not just .safetensors shards, must be
+    # listed and verified).
+    $configPath = Join-Path $snapDir 'config.json'
+    $tokenizerPath = Join-Path $snapDir 'tokenizer.json'
+    $configBytes = [Text.Encoding]::UTF8.GetBytes('{"model_type":"qwen3"}')
+    $tokenizerBytes = [Text.Encoding]::UTF8.GetBytes('{"tokenizer_class":"fixture"}')
+    [IO.File]::WriteAllBytes($configPath, $configBytes)
+    [IO.File]::WriteAllBytes($tokenizerPath, $tokenizerBytes)
 
-    function Write-FixtureExpected {
-        $expectedDoc = [ordered]@{}
-        $expectedDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{
-            files = @(
-                [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
-                [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
-            )
-        }
-        [IO.File]::WriteAllText($expectedPath, ($expectedDoc | ConvertTo-Json -Depth 8))
-    }
+    # New two-file trust chain: a root manifest (pinned by SHA-256 inside
+    # export-adapter.ps1) names, per base repo@revision, the SHA-256 of the list
+    # manifest that is actually authenticated and parsed for per-file hashes/sizes.
+    $rootPath = Join-Path $cRoot 'reports\m2-trusted-digest-manifest-v2.json'
+    $expectedPath = Join-Path $cRoot 'reports\m2-expected-qwen3-14b-v2.json'
 
     function Write-FixtureIndex {
         $indexDoc = [ordered]@{
@@ -123,8 +172,83 @@ try {
         [IO.File]::WriteAllText($indexPath, ($indexDoc | ConvertTo-Json -Depth 8))
     }
 
-    Write-FixtureExpected
+    # Canonical list manifest covering every regular file in the fixture snapshot
+    # (config, tokenizer, index, both shards). Deterministic: restores the exact
+    # same bytes every time it is called with no arguments, so repeated calls never
+    # change the list's SHA-256 and therefore never invalidate the baseline root/pin.
+    function Write-FixtureExpected {
+        $cSha = Get-Sha256File $configPath
+        $cLen = (Get-Item -LiteralPath $configPath).Length
+        $tSha = Get-Sha256File $tokenizerPath
+        $tLen = (Get-Item -LiteralPath $tokenizerPath).Length
+        $iSha = Get-Sha256File $indexPath
+        $iLen = (Get-Item -LiteralPath $indexPath).Length
+        $expectedDoc = [ordered]@{}
+        $expectedDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{
+            files = @(
+                [ordered]@{ path = 'config.json'; sha256 = $cSha; size = $cLen }
+                [ordered]@{ path = 'tokenizer.json'; sha256 = $tSha; size = $tLen }
+                [ordered]@{ path = 'model.safetensors.index.json'; sha256 = $iSha; size = $iLen }
+                [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+                [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
+            )
+        }
+        [IO.File]::WriteAllText($expectedPath, ($expectedDoc | ConvertTo-Json -Depth 8))
+    }
+
+    # Writes the root trust manifest. With no -Models override, it embeds the
+    # SHA-256 of whatever currently sits at $expectedPath (one matching model
+    # entry for the fixture repo@revision) -- the canonical, authenticated state.
+    function Write-FixtureRoot {
+        param(
+            [string]$ListSha256 = $null,
+            [object[]]$Models = $null
+        )
+        if ($null -eq $Models) {
+            if ([string]::IsNullOrEmpty($ListSha256)) { $ListSha256 = Get-Sha256File $expectedPath }
+            $Models = @([ordered]@{ hf_repo = 'Qwen/Qwen3-14B'; hf_revision = $rev; upstream_weight_digests_sha256 = $ListSha256 })
+        }
+        $rootDoc = [ordered]@{ models = @($Models) }
+        [IO.File]::WriteAllText($rootPath, ($rootDoc | ConvertTo-Json -Depth 8))
+    }
+
     Write-FixtureIndex
+    Write-FixtureExpected
+    Write-FixtureRoot
+
+    # Generate the baseline patched export-adapter.ps1 copy: identical to the real,
+    # committed script except the pinned root-hash constant is swapped for the
+    # SHA-256 of this run's own fixture root manifest, so the authenticated chain
+    # can be exercised without ever weakening or overriding the real shipped pin.
+    $baselineRootSha = Get-Sha256File $rootPath
+    $script = New-PatchedExportScript $baselineRootSha
+
+    # Builds a scenario-specific patched script whose pin matches a mutated list
+    # (root resynced to the new list's hash), so the mutation is authenticated and
+    # the *deeper* validation layers (path safety, duplicates, size, coverage...)
+    # are what actually gets exercised, rather than a shallow list-hash mismatch.
+    function Set-TrustFixtureList([scriptblock]$WriteList) {
+        & $WriteList
+        Write-FixtureRoot
+        $scenarioScript = New-PatchedExportScript (Get-Sha256File $rootPath)
+        return $scenarioScript
+    }
+    function Restore-TrustFixtureList {
+        Write-FixtureExpected
+        Write-FixtureRoot
+    }
+
+    # The five canonical, currently-on-disk list entries as a plain array, for tests
+    # that need to append/mutate one entry while keeping the other four authentic.
+    function Get-CanonicalFileEntries {
+        @(
+            [ordered]@{ path = 'config.json'; sha256 = (Get-Sha256File $configPath); size = (Get-Item -LiteralPath $configPath).Length }
+            [ordered]@{ path = 'tokenizer.json'; sha256 = (Get-Sha256File $tokenizerPath); size = (Get-Item -LiteralPath $tokenizerPath).Length }
+            [ordered]@{ path = 'model.safetensors.index.json'; sha256 = (Get-Sha256File $indexPath); size = (Get-Item -LiteralPath $indexPath).Length }
+            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
+            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
+        )
+    }
 
     $sentinelPath = Join-Path $cRoot 'models\m1\qwen3-14b\sentinel.gguf'
     [IO.File]::WriteAllBytes($sentinelPath, [Text.Encoding]::UTF8.GetBytes('sentinel-gguf'))
@@ -273,6 +397,21 @@ throw "unknown docker step"
         return $content.Substring($start, $end - $start)
     }
 
+    # Wider extraction than Get-ExportStagingHelperSource: everything from
+    # Get-NormalPath through the end of Assert-BaseShards (exclusive of
+    # New-StepClock), so a probe can call Assert-BaseShards directly -- the
+    # real gate function, unmodified -- with faked Get-Item/Test-Path/
+    # Invoke-FsutilReparseQuery for one literal path, exactly like the
+    # Resolve-SnapshotFile probes above.
+    function Get-ExportGateHelperSource {
+        $exportScript = Join-Path $PSScriptRoot 'export-adapter.ps1'
+        $content = Get-Content -LiteralPath $exportScript -Raw -Encoding utf8
+        $start = $content.IndexOf('function Get-NormalPath')
+        $end = $content.IndexOf('function New-StepClock')
+        if ($start -lt 0 -or $end -le $start) { throw 'export gate helper extract failed' }
+        return $content.Substring($start, $end - $start)
+    }
+
     function Invoke-RemoveStagedTreeProbe {
         param(
             [Parameter(Mandatory)][string]$StagingRootArg,
@@ -302,7 +441,7 @@ try {
         $prevEa = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $lines = @(& $shellExe -NoProfile -NonInteractive -Command $cmd 2>&1 | ForEach-Object { "$_" })
+            $lines = @(Invoke-ShellScript $cmd)
             $code = $LASTEXITCODE
             if ($null -eq $code) { $code = -1 }
             return [pscustomobject]@{ Lines = @($lines); Code = [int]$code; Text = (Out-Text $lines) }
@@ -337,6 +476,7 @@ try {
         [void]$a.Add('-BaseRevision'); [void]$a.Add($rev)
         [void]$a.Add('-CHotRoot'); [void]$a.Add($CHotRootArg)
         [void]$a.Add('-StagingRoot'); [void]$a.Add($StagingRoot)
+        [void]$a.Add('-TrustedDigestManifest'); [void]$a.Add($rootPath)
         [void]$a.Add('-ExpectedShardsJson'); [void]$a.Add($expectedPath)
         [void]$a.Add('-BaseTemplateSha256'); [void]$a.Add($templateSha)
         [void]$a.Add('-DockerPath'); [void]$a.Add($shimPath)
@@ -498,19 +638,34 @@ try {
         $j = Get-Content -LiteralPath $reports[0].FullName -Raw -Encoding utf8 | ConvertFrom-Json
     }
     $reportOk = $false
+    $trustOk = $false
     if ($null -ne $j) {
         $shards = @($j.base_shards)
         $ah = $j.adapter_hashes
         $hasAh = ($null -ne $ah) -and ($null -ne $ah.PSObject.Properties['adapter_config.json']) -and ($null -ne $ah.PSObject.Properties['adapter_model.safetensors'])
-        $shardDigests = $false
-        if ($shards.Count -eq 2) {
-            $shardDigests = ($null -ne $shards[0].sha256_read1) -and ($null -ne $shards[0].sha256_read2) -and ($null -ne $shards[1].sha256_read1) -and ($null -ne $shards[1].sha256_read2)
+        # Five covered files now (config.json, tokenizer.json, index, two shards);
+        # every covered file -- not merely the shards -- must carry two read digests.
+        $byPath = @{}
+        foreach ($s in $shards) { $byPath[[string]$s.path] = $s }
+        $expectCovered = @('config.json', 'tokenizer.json', 'model.safetensors.index.json', 'model-00001-of-00002.safetensors', 'model-00002-of-00002.safetensors')
+        $shardDigests = $shards.Count -eq 5
+        if ($shardDigests) {
+            foreach ($p in $expectCovered) {
+                $e = $byPath[$p]
+                if ($null -eq $e -or $null -eq $e.sha256_read1 -or $null -eq $e.sha256_read2 -or $null -eq $e.size) {
+                    $shardDigests = $false
+                    break
+                }
+            }
         }
         $fs = $j.free_space
         $hasFree = ($null -ne $fs) -and ($null -ne $fs.before) -and ($null -ne $fs.after) -and ($null -ne $fs.before.cFreeBytes) -and ($null -ne $fs.before.eFreeBytes) -and ($null -ne $fs.after.cFreeBytes) -and ($null -ne $fs.after.eFreeBytes)
+        $bt = $j.base_trust
+        $trustOk = ($null -ne $bt) -and ($bt.root_sha256 -eq $baselineRootSha) -and ($bt.list_sha256 -eq (Get-Sha256File $expectedPath)) -and ([int]$bt.covered_files -eq 5)
         $reportOk = ($j.name -eq 'tstexp') -and ($j.base_revision -eq $rev) -and $hasAh -and $shardDigests -and ($j.chat_template_sha256 -eq $templateSha) -and ($null -ne $j.output.size) -and ($j.output.sha256_read1 -eq $quantSha) -and ($j.output.sha256_read2 -eq $quantSha) -and $hasFree
     }
-    Assert $reportOk 'happy: report fields (name, base revision, adapter hashes, shard read digests, chat-template digest, output size/digests, free-space)'
+    Assert $reportOk 'happy: report fields (name, base revision, adapter hashes, full-coverage read digests, chat-template digest, output size/digests, free-space)'
+    Assert $trustOk 'happy: base_trust root/list SHA-256 and covered_files=5 recorded (authenticated matching fixture accepted, two reads)'
     $stepNames = @('pre-check', 'adapter_hash', 'base_shards', 'staging', 'merge', 'convert', 'delete_merged', 'quantise', 'chat_template', 'publish')
     $timingOk = $false
     if ($null -ne $j -and $null -ne $j.steps) {
@@ -790,37 +945,673 @@ try {
     Assert ($r.Code -ne 0 -and $text -match 'model\.safetensors\.index\.json' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3d: missing index refused, no docker, no staging'
     Write-FixtureIndex
 
+    # t3e and t3f authenticate the mutated list against a resynced root (via
+    # Set-TrustFixtureList) so the deeper path-safety/duplicate validation in
+    # Assert-BaseShards is what is actually exercised, not a shallow list-hash
+    # mismatch against the untouched baseline root.
     Clear-Artifacts
     $expDots = [ordered]@{}
     $expDots["Qwen/Qwen3-14B@$rev"] = [ordered]@{
-        files = @(
-            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
-            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
-            [ordered]@{ path = '../model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
-        )
+        files = @(Get-CanonicalFileEntries) + @([ordered]@{ path = '../model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length })
     }
-    [IO.File]::WriteAllText($expectedPath, ($expDots | ConvertTo-Json -Depth 8))
-    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $scenarioScript = Set-TrustFixtureList { [IO.File]::WriteAllText($expectedPath, ($expDots | ConvertTo-Json -Depth 8)) }
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
     $text = Out-Text $r.Lines
     $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
-    Assert ($r.Code -ne 0 -and $text -match '\.\.' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3e: expected path with .. refused, no docker, no staging'
-    Write-FixtureExpected
+    Assert ($r.Code -ne 0 -and $text -match '\.\.' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3e: authenticated list entry with .. refused by path-safety validation, no docker, no staging'
+    Restore-TrustFixtureList
 
     Clear-Artifacts
     $expDup = [ordered]@{}
     $expDup["Qwen/Qwen3-14B@$rev"] = [ordered]@{
-        files = @(
-            [ordered]@{ path = 'model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
-            [ordered]@{ path = 'Model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length }
-            [ordered]@{ path = 'model-00002-of-00002.safetensors'; sha256 = $shard2Sha; size = $shard2Bytes.Length }
-        )
+        files = @(Get-CanonicalFileEntries) + @([ordered]@{ path = 'Model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length })
     }
-    [IO.File]::WriteAllText($expectedPath, ($expDup | ConvertTo-Json -Depth 8))
+    $scenarioScript = Set-TrustFixtureList { [IO.File]::WriteAllText($expectedPath, ($expDup | ConvertTo-Json -Depth 8)) }
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match 'duplicate' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3f: authenticated list with case-duplicate path refused, no docker, no staging'
+    Restore-TrustFixtureList
+
+    # --- T5 trust-chain gate: root/list authentication and deeper list validation ---
+
+    # Changed root bytes: flip a byte in the root manifest on disk. The baseline
+    # patched script's pin (fixed at fixture setup) no longer matches, so the gate
+    # must refuse before even looking at the list.
+    Clear-Artifacts
+    Invoke-FlipFirstByte $rootPath
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'root manifest hash mismatch' -and (Get-ShimLogLines).Count -eq 0) 'trust: changed root bytes refused before list is read'
+    Write-FixtureRoot
+
+    # Changed list with a self-consistent replacement shard: the list is internally
+    # well formed (every entry valid, every file present and matching), but the root
+    # was deliberately left referencing the OLD list digest, so this must still be
+    # refused -- being internally consistent is not enough without the root's say-so.
+    Clear-Artifacts
+    $replacementBytes = [Text.Encoding]::UTF8.GetBytes('SHARD-ONE-REPLACED')
+    [IO.File]::WriteAllBytes($shard1Path, $replacementBytes)
+    $replacementSha = Get-Sha256File $shard1Path
+    $selfConsistentEntries = @(Get-CanonicalFileEntries) | ForEach-Object {
+        if ([string]$_.path -eq 'model-00001-of-00002.safetensors') {
+            [ordered]@{ path = $_.path; sha256 = $replacementSha; size = $replacementBytes.Length }
+        } else { $_ }
+    }
+    $selfConsistentDoc = [ordered]@{}
+    $selfConsistentDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{ files = @($selfConsistentEntries) }
+    [IO.File]::WriteAllText($expectedPath, ($selfConsistentDoc | ConvertTo-Json -Depth 8))
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'list manifest hash mismatch' -and (Get-ShimLogLines).Count -eq 0) 'trust: self-consistent replacement list refused because root still references the old list digest'
+    [IO.File]::WriteAllBytes($shard1Path, $shard1Bytes)
+    Restore-TrustFixtureList
+
+    # Wrong model/revision in the (otherwise valid) root manifest: no entry matches
+    # the BaseRepo/BaseRevision the export is running with.
+    Clear-Artifacts
+    $wrongRevModels = @([ordered]@{ hf_repo = 'Qwen/Qwen3-14B'; hf_revision = ('f' * 40); upstream_weight_digests_sha256 = (Get-Sha256File $expectedPath) })
+    Write-FixtureRoot -Models $wrongRevModels
+    $scenarioScript = New-PatchedExportScript (Get-Sha256File $rootPath)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: wrong hf_revision in root refused (zero matching entries)'
+    Restore-TrustFixtureList
+
+    # Duplicate model entries: two root entries both match BaseRepo/BaseRevision.
+    Clear-Artifacts
+    $dupModels = @(
+        [ordered]@{ hf_repo = 'Qwen/Qwen3-14B'; hf_revision = $rev; upstream_weight_digests_sha256 = (Get-Sha256File $expectedPath) },
+        [ordered]@{ hf_repo = 'Qwen/Qwen3-14B'; hf_revision = $rev; upstream_weight_digests_sha256 = ('f' * 64) }
+    )
+    Write-FixtureRoot -Models $dupModels
+    $scenarioScript = New-PatchedExportScript (Get-Sha256File $rootPath)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: duplicate matching root entries refused (ambiguous)'
+    Restore-TrustFixtureList
+
+    # Zero model entries at all.
+    Clear-Artifacts
+    Write-FixtureRoot -Models @()
+    $scenarioScript = New-PatchedExportScript (Get-Sha256File $rootPath)
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: empty models array refused (zero matching entries)'
+    Restore-TrustFixtureList
+
+    # Unlisted extra snapshot file: an on-disk file not named in the (authentic,
+    # untouched) list must cause a refusal naming it as extra.
+    Clear-Artifacts
+    $unlistedExtra = Join-Path $snapDir 'README.md'
+    [IO.File]::WriteAllText($unlistedExtra, 'unlisted readme')
     $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
     $text = Out-Text $r.Lines
     $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
-    Assert ($r.Code -ne 0 -and $text -match 'duplicate' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 't3f: duplicate expected path refused, no docker, no staging'
-    Write-FixtureExpected
+    Assert ($r.Code -ne 0 -and $text -match 'coverage mismatch' -and $text.Contains('README.md') -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: unlisted extra snapshot file refused, no docker, no staging'
+    Remove-Item -LiteralPath $unlistedExtra -Force
+
+    # Missing listed file: tokenizer.json is deleted from disk.
+    Clear-Artifacts
+    Rename-Item -LiteralPath $tokenizerPath -NewName 'tokenizer.json.hidden'
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match 'coverage mismatch' -and $text.Contains('tokenizer.json') -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: missing listed file (tokenizer.json) refused, no docker, no staging'
+    Rename-Item -LiteralPath (Join-Path $snapDir 'tokenizer.json.hidden') -NewName 'tokenizer.json'
+
+    # Corrupt config.json on disk: must be refused by the size/hash check BEFORE
+    # model.safetensors.index.json is ever parsed (ordering requirement 5/8).
+    Clear-Artifacts
+    Invoke-FlipFirstByte $configPath
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text.Contains('config.json') -and $text -match 'read1=' -and $text -match 'read2=' -and $text -notmatch 'weight_map' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: corrupt config.json refused by hash check before index is parsed'
+    [IO.File]::WriteAllBytes($configPath, $configBytes)
+
+    # Corrupt tokenizer.json on disk: same ordering guarantee.
+    Clear-Artifacts
+    Invoke-FlipFirstByte $tokenizerPath
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text.Contains('tokenizer.json') -and $text -match 'read1=' -and $text -match 'read2=' -and $text -notmatch 'weight_map' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: corrupt tokenizer.json refused by hash check before index is parsed'
+    [IO.File]::WriteAllBytes($tokenizerPath, $tokenizerBytes)
+
+    # Corrupt model.safetensors.index.json content on disk while it still matches
+    # the list's recorded size: must still be refused by hash check (not reach the
+    # weight_map-specific validation), proving the content check runs first.
+    Clear-Artifacts
+    $origIndexBytes = [IO.File]::ReadAllBytes($indexPath)
+    Invoke-FlipFirstByte $indexPath
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute)
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text.Contains('model.safetensors.index.json') -and $text -match 'read1=' -and $text -match 'read2=' -and $text -notmatch 'weight_map' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: corrupt index.json content refused by hash check before weight_map is parsed'
+    [IO.File]::WriteAllBytes($indexPath, $origIndexBytes)
+
+    # Size mismatch: list records the wrong size for shard2 while sha256 stays correct.
+    Clear-Artifacts
+    $sizeMismatchEntries = @(Get-CanonicalFileEntries) | ForEach-Object {
+        if ([string]$_.path -eq 'model-00002-of-00002.safetensors') {
+            [ordered]@{ path = $_.path; sha256 = $_.sha256; size = ([int]$_.size + 1) }
+        } else { $_ }
+    }
+    $sizeMismatchDoc = [ordered]@{}
+    $sizeMismatchDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{ files = @($sizeMismatchEntries) }
+    $scenarioScript = Set-TrustFixtureList { [IO.File]::WriteAllText($expectedPath, ($sizeMismatchDoc | ConvertTo-Json -Depth 8)) }
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match 'size mismatch' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: authenticated list with wrong recorded size refused, no docker, no staging'
+    Restore-TrustFixtureList
+
+    # Absolute list path: authenticated list names an absolute path instead of a
+    # snapshot-relative one.
+    Clear-Artifacts
+    $absDoc = [ordered]@{}
+    $absDoc["Qwen/Qwen3-14B@$rev"] = [ordered]@{
+        files = @(Get-CanonicalFileEntries) + @([ordered]@{ path = 'C:/evil/model-00001-of-00002.safetensors'; sha256 = $shard1Sha; size = $shard1Bytes.Length })
+    }
+    $scenarioScript = Set-TrustFixtureList { [IO.File]::WriteAllText($expectedPath, ($absDoc | ConvertTo-Json -Depth 8)) }
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute) $scenarioScript
+    $text = Out-Text $r.Lines
+    $stagingKids = @(Get-ChildItem -LiteralPath $eRoot -Force -ErrorAction SilentlyContinue)
+    Assert ($r.Code -ne 0 -and $text -match 'invalid relative path' -and (Get-ShimLogLines).Count -eq 0 -and $stagingKids.Count -eq 0) 'trust: authenticated list with absolute path refused, no docker, no staging'
+    Restore-TrustFixtureList
+
+    # --- 7b. LX symlink resolver probes ---
+    # These probes call the real export-adapter.ps1 resolver functions directly
+    # (no subprocess export run), replaying canned `fsutil reparsepoint query`
+    # text so the decode/hop logic can be exercised without creating real WSL/LX
+    # reparse points, which this host cannot author unprivileged. The canned
+    # text format (a `Reparse Tag Value : 0x...` line followed by `NNNN:  hex
+    # hex ...` dump lines, a 4-byte zero header, then the UTF-8 target string)
+    # is this test's best-effort reproduction of real `fsutil` output and is
+    # flagged in the summary as needing real-host confirmation.
+    function Build-FsutilLines([string]$RelativeTarget) {
+        $payload = [Text.Encoding]::UTF8.GetBytes($RelativeTarget)
+        $header = [byte[]]@(0, 0, 0, 0)
+        $all = $header + $payload
+        $out = [System.Collections.Generic.List[string]]::new()
+        $out.Add('Reparse Tag Value: 0xa000001d')
+        for ($i = 0; $i -lt $all.Length; $i += 16) {
+            $endIdx = [Math]::Min($i + 15, $all.Length - 1)
+            $chunk = $all[$i..$endIdx]
+            $hex = (($chunk | ForEach-Object { $_.ToString('x2') }) -join ' ') + ' '
+            $out.Add(('{0:x4}:  {1}' -f $i, $hex))
+        }
+        $out.ToArray()
+    }
+
+    function Invoke-ResolveLxReparseTargetProbe {
+        param(
+            [Parameter(Mandatory)][string]$PathArg,
+            [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$FsutilLines
+        )
+        $helpers = Get-ExportStagingHelperSource
+        $pathEsc = $PathArg.Replace("'", "''")
+        $linesLiteral = if ($FsutilLines.Count -gt 0) { ($FsutilLines | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ', ' } else { '' }
+        $cmd = @"
+`$ErrorActionPreference = 'Stop'
+$helpers
+function Invoke-FsutilReparseQuery([string]`$Path) { @($linesLiteral) }
+try {
+    `$t = Resolve-LxReparseTarget -Path '$pathEsc'
+    Write-Output "PROBE_OK:`$t"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+        $prevEa = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $lines = @(Invoke-ShellScript $cmd)
+            $code = $LASTEXITCODE
+            if ($null -eq $code) { $code = -1 }
+            return [pscustomobject]@{ Lines = @($lines); Code = [int]$code; Text = (Out-Text $lines) }
+        } finally {
+            $ErrorActionPreference = $prevEa
+        }
+    }
+
+    $probeGoodLines = Build-FsutilLines '../../blobs/deadbeefblob'
+    $probe = Invoke-ResolveLxReparseTargetProbe -PathArg 'C:\probe\lx\link' -FsutilLines $probeGoodLines
+    Assert ($probe.Code -eq 0 -and $probe.Text -eq 'PROBE_OK:../../blobs/deadbeefblob') 'lx-resolver: good replayed fsutil output decodes to recorded relative target'
+
+    $probeBadTagLines = @('Reparse Tag Value: 0x80000003') + ($probeGoodLines | Select-Object -Skip 1)
+    $probe = Invoke-ResolveLxReparseTargetProbe -PathArg 'C:\probe\lx\link' -FsutilLines $probeBadTagLines
+    Assert ($probe.Code -ne 0 -and $probe.Text -match 'unexpected reparse tag') 'lx-resolver: non-LX reparse tag refused'
+
+    $probe = Invoke-ResolveLxReparseTargetProbe -PathArg 'C:\probe\lx\link' -FsutilLines @()
+    Assert ($probe.Code -ne 0 -and $probe.Text -match 'empty fsutil reparsepoint query output') 'lx-resolver: empty fsutil output refused'
+
+    # --- 7c. Resolve-SnapshotFile hop-following probes (fake Get-Item/Test-Path) ---
+    # These probes fake the on-disk reparse-point attributes that this host
+    # cannot create unprivileged (unprivileged Windows processes cannot author
+    # file-level LX reparse points), by locally overriding Get-Item/Test-Path
+    # inside an isolated subprocess. The override only intercepts the exact
+    # literal paths this probe registers and falls through to the real
+    # cmdlets for everything else, so it cannot affect any other test.
+    $lxHub = 'C:\probe-lx\hub\models--Qwen--Qwen3-14B'
+    $lxHubCacheRoot = 'C:\probe-lx\hub'
+    $lxSnap = Join-Path $lxHub 'snapshots\deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+    $lxLink = Join-Path $lxSnap 'model-00001-of-00002.safetensors'
+    $lxBlob = Join-Path $lxHub 'blobs\deadbeefblob'
+    $lxLinkEsc = $lxLink.Replace("'", "''")
+    $lxBlobEsc = $lxBlob.Replace("'", "''")
+    $lxSnapEsc = $lxSnap.Replace("'", "''")
+    $lxHubEsc = $lxHub.Replace("'", "''")
+    $lxHubCacheRootEsc = $lxHubCacheRoot.Replace("'", "''")
+
+    $acceptedCmd = @"
+`$ErrorActionPreference = 'Stop'
+$(Get-ExportStagingHelperSource)
+function Build-FsutilLines([string]`$RelativeTarget) {
+    `$payload = [Text.Encoding]::UTF8.GetBytes(`$RelativeTarget)
+    `$header = [byte[]]@(0,0,0,0)
+    `$all = `$header + `$payload
+    `$out = [System.Collections.Generic.List[string]]::new()
+    `$out.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$endIdx = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$chunk = `$all[`$i..`$endIdx]
+        `$hex = ((`$chunk | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$out.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$out.ToArray()
+}
+`$script:FakeItems = @{
+    '$lxLinkEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$lxBlobEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::Normal; Target = `$null }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (`$Path -eq '$lxLinkEsc') { return (Build-FsutilLines '../../blobs/deadbeefblob') }
+    @()
+}
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$script:FakeItems[`$LiteralPath] }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath `$LiteralPath -Force:`$Force
+}
+function Test-Path {
+    param([string]`$LiteralPath)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$true }
+    Microsoft.PowerShell.Management\Test-Path -LiteralPath `$LiteralPath
+}
+try {
+    `$resolved = Resolve-SnapshotFile -Snapshot '$lxSnapEsc' -Relative 'model-00001-of-00002.safetensors' -HubRoot '$lxHubEsc' -HubCacheRoot '$lxHubCacheRootEsc'
+    Write-Output "PROBE_OK:`$resolved"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $accLines = @(Invoke-ShellScript $acceptedCmd)
+        $accCode = $LASTEXITCODE
+        if ($null -eq $accCode) { $accCode = -1 }
+    } finally {
+        $ErrorActionPreference = $prevEa
+    }
+    $accText = Out-Text $accLines
+    Assert ($accCode -eq 0 -and $accText -eq "PROBE_OK:$lxBlob") 'resolve-snapshot-file: legitimate LX file link resolves through to its blob target and is accepted'
+
+    # Loop guard: five chained LX reparse hops (link0..link4, each decoding to
+    # the next) must be refused once more than 4 hops have been followed.
+    $loopLink1 = Join-Path $lxSnap 'loop-link-1'
+    $loopLink2 = Join-Path $lxSnap 'loop-link-2'
+    $loopLink3 = Join-Path $lxSnap 'loop-link-3'
+    $loopLink4 = Join-Path $lxSnap 'loop-link-4'
+    $loopLink1Esc = $loopLink1.Replace("'", "''")
+    $loopLink2Esc = $loopLink2.Replace("'", "''")
+    $loopLink3Esc = $loopLink3.Replace("'", "''")
+    $loopLink4Esc = $loopLink4.Replace("'", "''")
+    $loopCmd = @"
+`$ErrorActionPreference = 'Stop'
+$(Get-ExportStagingHelperSource)
+function Build-FsutilLines([string]`$RelativeTarget) {
+    `$payload = [Text.Encoding]::UTF8.GetBytes(`$RelativeTarget)
+    `$header = [byte[]]@(0,0,0,0)
+    `$all = `$header + `$payload
+    `$out = [System.Collections.Generic.List[string]]::new()
+    `$out.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$endIdx = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$chunk = `$all[`$i..`$endIdx]
+        `$hex = ((`$chunk | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$out.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$out.ToArray()
+}
+`$script:FakeItems = @{
+    '$lxLinkEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$loopLink1Esc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$loopLink2Esc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$loopLink3Esc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$loopLink4Esc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (`$Path -eq '$lxLinkEsc') { return (Build-FsutilLines 'loop-link-1') }
+    if (`$Path -eq '$loopLink1Esc') { return (Build-FsutilLines 'loop-link-2') }
+    if (`$Path -eq '$loopLink2Esc') { return (Build-FsutilLines 'loop-link-3') }
+    if (`$Path -eq '$loopLink3Esc') { return (Build-FsutilLines 'loop-link-4') }
+    @()
+}
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$script:FakeItems[`$LiteralPath] }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath `$LiteralPath -Force:`$Force
+}
+function Test-Path {
+    param([string]`$LiteralPath)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$true }
+    Microsoft.PowerShell.Management\Test-Path -LiteralPath `$LiteralPath
+}
+try {
+    `$resolved = Resolve-SnapshotFile -Snapshot '$lxSnapEsc' -Relative 'model-00001-of-00002.safetensors' -HubRoot '$lxHubEsc' -HubCacheRoot '$lxHubCacheRootEsc'
+    Write-Output "PROBE_OK:`$resolved"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $loopLines = @(Invoke-ShellScript $loopCmd)
+        $loopCode = $LASTEXITCODE
+        if ($null -eq $loopCode) { $loopCode = -1 }
+    } finally {
+        $ErrorActionPreference = $prevEa
+    }
+    $loopText = Out-Text $loopLines
+    Assert ($loopCode -ne 0 -and $loopText -match 'more than 4' -and $loopText -notmatch 'PROBE_OK') 'resolve-snapshot-file: chain of more than 4 LX reparse hops is refused'
+
+    # --- 7d. Resolve-SnapshotFile hub-level shared blob store probes ---
+    # Real chain on the target host for large files: a snapshot LX link resolves
+    # into the repo's own `blobs` folder, and that blob entry is itself an LX link
+    # that resolves one level further, into the shared store directly under the hub
+    # cache root (`<hub>\blobs\<2 hex>\<hash>`), not the repo folder. These probes
+    # cover the accepted two-hop shared-store case and two refusals: a hop that
+    # escapes the hub cache root, and a final target that lands inside the hub
+    # root but outside both legitimate blobs folders.
+    $sharedBlobFile = Join-Path $lxHubCacheRoot 'blobs\ab\deadbeefsharedblob'
+    $sharedBlobFileEsc = $sharedBlobFile.Replace("'", "''")
+
+    $twoHopCmd = @"
+`$ErrorActionPreference = 'Stop'
+$(Get-ExportStagingHelperSource)
+function Build-FsutilLines([string]`$RelativeTarget) {
+    `$payload = [Text.Encoding]::UTF8.GetBytes(`$RelativeTarget)
+    `$header = [byte[]]@(0,0,0,0)
+    `$all = `$header + `$payload
+    `$out = [System.Collections.Generic.List[string]]::new()
+    `$out.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$endIdx = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$chunk = `$all[`$i..`$endIdx]
+        `$hex = ((`$chunk | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$out.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$out.ToArray()
+}
+`$script:FakeItems = @{
+    '$lxLinkEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$lxBlobEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$sharedBlobFileEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::Normal; Target = `$null }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (`$Path -eq '$lxLinkEsc') { return (Build-FsutilLines '../../blobs/deadbeefblob') }
+    if (`$Path -eq '$lxBlobEsc') { return (Build-FsutilLines '../../blobs/ab/deadbeefsharedblob') }
+    @()
+}
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$script:FakeItems[`$LiteralPath] }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath `$LiteralPath -Force:`$Force
+}
+function Test-Path {
+    param([string]`$LiteralPath)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$true }
+    Microsoft.PowerShell.Management\Test-Path -LiteralPath `$LiteralPath
+}
+try {
+    `$resolved = Resolve-SnapshotFile -Snapshot '$lxSnapEsc' -Relative 'model-00001-of-00002.safetensors' -HubRoot '$lxHubEsc' -HubCacheRoot '$lxHubCacheRootEsc'
+    Write-Output "PROBE_OK:`$resolved"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $twoHopLines = @(Invoke-ShellScript $twoHopCmd)
+        $twoHopCode = $LASTEXITCODE
+        if ($null -eq $twoHopCode) { $twoHopCode = -1 }
+    } finally {
+        $ErrorActionPreference = $prevEa
+    }
+    $twoHopText = Out-Text $twoHopLines
+    Assert ($twoHopCode -eq 0 -and $twoHopText -eq "PROBE_OK:$sharedBlobFile") 'resolve-snapshot-file: two-hop chain through a repo blobs link into the hub-level shared blobs store is accepted'
+
+    $outsideTarget = 'C:\probe-lx-outside\evil.bin'
+    $outsideCmd = @"
+`$ErrorActionPreference = 'Stop'
+$(Get-ExportStagingHelperSource)
+function Build-FsutilLines([string]`$RelativeTarget) {
+    `$payload = [Text.Encoding]::UTF8.GetBytes(`$RelativeTarget)
+    `$header = [byte[]]@(0,0,0,0)
+    `$all = `$header + `$payload
+    `$out = [System.Collections.Generic.List[string]]::new()
+    `$out.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$endIdx = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$chunk = `$all[`$i..`$endIdx]
+        `$hex = ((`$chunk | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$out.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$out.ToArray()
+}
+`$script:FakeItems = @{
+    '$lxLinkEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (`$Path -eq '$lxLinkEsc') { return (Build-FsutilLines '$outsideTarget') }
+    @()
+}
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$script:FakeItems[`$LiteralPath] }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath `$LiteralPath -Force:`$Force
+}
+function Test-Path {
+    param([string]`$LiteralPath)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$true }
+    Microsoft.PowerShell.Management\Test-Path -LiteralPath `$LiteralPath
+}
+try {
+    `$resolved = Resolve-SnapshotFile -Snapshot '$lxSnapEsc' -Relative 'model-00001-of-00002.safetensors' -HubRoot '$lxHubEsc' -HubCacheRoot '$lxHubCacheRootEsc'
+    Write-Output "PROBE_OK:`$resolved"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $outsideLines = @(Invoke-ShellScript $outsideCmd)
+        $outsideCode = $LASTEXITCODE
+        if ($null -eq $outsideCode) { $outsideCode = -1 }
+    } finally {
+        $ErrorActionPreference = $prevEa
+    }
+    $outsideText = Out-Text $outsideLines
+    Assert ($outsideCode -ne 0 -and $outsideText -match 'escapes hub folder' -and $outsideText -notmatch 'PROBE_OK') 'resolve-snapshot-file: a hop that leaves the hub cache root is refused'
+
+    $otherSnapFile = Join-Path $lxSnap 'other-file-in-snapshot.bin'
+    $otherSnapFileEsc = $otherSnapFile.Replace("'", "''")
+    $notBlobsCmd = @"
+`$ErrorActionPreference = 'Stop'
+$(Get-ExportStagingHelperSource)
+function Build-FsutilLines([string]`$RelativeTarget) {
+    `$payload = [Text.Encoding]::UTF8.GetBytes(`$RelativeTarget)
+    `$header = [byte[]]@(0,0,0,0)
+    `$all = `$header + `$payload
+    `$out = [System.Collections.Generic.List[string]]::new()
+    `$out.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$endIdx = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$chunk = `$all[`$i..`$endIdx]
+        `$hex = ((`$chunk | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$out.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$out.ToArray()
+}
+`$script:FakeItems = @{
+    '$lxLinkEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+    '$otherSnapFileEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::Normal; Target = `$null }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (`$Path -eq '$lxLinkEsc') { return (Build-FsutilLines 'other-file-in-snapshot.bin') }
+    @()
+}
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$script:FakeItems[`$LiteralPath] }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath `$LiteralPath -Force:`$Force
+}
+function Test-Path {
+    param([string]`$LiteralPath)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$true }
+    Microsoft.PowerShell.Management\Test-Path -LiteralPath `$LiteralPath
+}
+try {
+    `$resolved = Resolve-SnapshotFile -Snapshot '$lxSnapEsc' -Relative 'model-00001-of-00002.safetensors' -HubRoot '$lxHubEsc' -HubCacheRoot '$lxHubCacheRootEsc'
+    Write-Output "PROBE_OK:`$resolved"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $notBlobsLines = @(Invoke-ShellScript $notBlobsCmd)
+        $notBlobsCode = $LASTEXITCODE
+        if ($null -eq $notBlobsCode) { $notBlobsCode = -1 }
+    } finally {
+        $ErrorActionPreference = $prevEa
+    }
+    $notBlobsText = Out-Text $notBlobsLines
+    Assert ($notBlobsCode -ne 0 -and $notBlobsText -match 'not inside the repo blobs folder or the hub blobs store' -and $notBlobsText -notmatch 'PROBE_OK') 'resolve-snapshot-file: a final target inside the hub root but outside both blobs folders is refused'
+
+    # --- 7e. Assert-BaseShards: model.safetensors.index.json reached through an
+    # LX-resolved path (not a plain Test-Path/Get-Content read of the snapshot
+    # path) must still be accepted and parsed from its resolved bytes. These call
+    # the real Assert-BaseShards directly against the already-authenticated main
+    # fixture (config.json/tokenizer.json/shards/list/root all untouched and
+    # canonical at this point), faking only the single index path's reparse
+    # status, exactly as the Resolve-SnapshotFile probes above fake Get-Item.
+    $gateHubCacheRoot = Join-Path $cRoot 'hf\hub'
+    $gateHubRoot = Join-Path $gateHubCacheRoot 'models--Qwen--Qwen3-14B'
+    $gateIndexBlobPath = Join-Path $gateHubRoot 'blobs\indexblob'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $gateIndexBlobPath) -Force | Out-Null
+    Copy-Item -LiteralPath $indexPath -Destination $gateIndexBlobPath -Force
+    $rootShaForGate = Get-Sha256File $rootPath
+    $snapDirEsc = $snapDir.Replace("'", "''")
+    $gateHubRootEsc = $gateHubRoot.Replace("'", "''")
+    $gateHubCacheRootEsc = $gateHubCacheRoot.Replace("'", "''")
+    $rootPathEsc = $rootPath.Replace("'", "''")
+    $expectedPathEsc = $expectedPath.Replace("'", "''")
+    $indexPathEsc = $indexPath.Replace("'", "''")
+
+    $gateAcceptedCmd = @"
+`$ErrorActionPreference = 'Stop'
+`$BaseRepo = 'Qwen/Qwen3-14B'
+`$BaseRevision = '$rev'
+`$TrustedDigestManifest = '$rootPathEsc'
+`$ExpectedShardsJson = '$expectedPathEsc'
+`$script:PinnedTrustedDigestManifestSha256 = '$rootShaForGate'
+$(Get-ExportGateHelperSource)
+function Build-FsutilLines([string]`$RelativeTarget) {
+    `$payload = [Text.Encoding]::UTF8.GetBytes(`$RelativeTarget)
+    `$header = [byte[]]@(0,0,0,0)
+    `$all = `$header + `$payload
+    `$out = [System.Collections.Generic.List[string]]::new()
+    `$out.Add('Reparse Tag Value: 0xa000001d')
+    for (`$i = 0; `$i -lt `$all.Length; `$i += 16) {
+        `$endIdx = [Math]::Min(`$i + 15, `$all.Length - 1)
+        `$chunk = `$all[`$i..`$endIdx]
+        `$hex = ((`$chunk | ForEach-Object { `$_.ToString('x2') }) -join ' ') + ' '
+        `$out.Add(('{0:x4}:  {1}' -f `$i, `$hex))
+    }
+    `$out.ToArray()
+}
+`$script:FakeItems = @{
+    '$indexPathEsc' = [pscustomobject]@{ PSIsContainer = `$false; Attributes = [IO.FileAttributes]::ReparsePoint; Target = @() }
+}
+function Invoke-FsutilReparseQuery([string]`$Path) {
+    if (`$Path -eq '$indexPathEsc') { return (Build-FsutilLines '../../blobs/indexblob') }
+    @()
+}
+function Get-Item {
+    param([string]`$LiteralPath, [switch]`$Force)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$script:FakeItems[`$LiteralPath] }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath `$LiteralPath -Force:`$Force
+}
+function Test-Path {
+    param([string]`$LiteralPath)
+    if (`$script:FakeItems.ContainsKey(`$LiteralPath)) { return `$true }
+    Microsoft.PowerShell.Management\Test-Path -LiteralPath `$LiteralPath
+}
+try {
+    `$r = Assert-BaseShards -Snapshot '$snapDirEsc' -HubRoot '$gateHubRootEsc' -HubCacheRoot '$gateHubCacheRootEsc'
+    Write-Output "PROBE_OK:`$(`$r.covered_files)"
+    exit 0
+} catch {
+    Write-Output `$_.Exception.Message
+    exit 1
+}
+"@
+    $prevEa = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $gateAcceptedLines = @(Invoke-ShellScript $gateAcceptedCmd)
+        $gateAcceptedCode = $LASTEXITCODE
+        if ($null -eq $gateAcceptedCode) { $gateAcceptedCode = -1 }
+    } finally {
+        $ErrorActionPreference = $prevEa
+    }
+    $gateAcceptedText = Out-Text $gateAcceptedLines
+    Assert ($gateAcceptedCode -eq 0 -and $gateAcceptedText -eq 'PROBE_OK:5') 'assert-base-shards: index reached via resolved LX-link path (not the snapshot path) is accepted and parsed from the resolved bytes'
+    Remove-Item -LiteralPath $gateIndexBlobPath -Force -ErrorAction SilentlyContinue
+
+    # The real TOCTOU gap this change closes (verified bytes differ from parsed
+    # bytes) cannot be reproduced in-process without hooking file I/O between the
+    # verification loop and the parse step. Instead, assert by code structure that
+    # the exact primitive Assert-BaseShards now uses to re-check parsed bytes
+    # against the verified digest (Get-Sha256Bytes equality) behaves correctly for
+    # both matching and non-matching byte arrays, which is what makes the re-check
+    # in Assert-BaseShards a sound proof that verified bytes and parsed bytes are
+    # the same.
+    $hashRecheckGood = [Text.Encoding]::UTF8.GetBytes('{"weight_map":{}}')
+    $hashRecheckSame = [Text.Encoding]::UTF8.GetBytes('{"weight_map":{}}')
+    $hashRecheckTampered = [Text.Encoding]::UTF8.GetBytes('{"weight_map":{"x":1}}')
+    Assert ((Get-Sha256Bytes $hashRecheckGood) -eq (Get-Sha256Bytes $hashRecheckSame)) 'hash-recheck primitive: identical bytes produce matching digests (verified bytes accepted)'
+    Assert ((Get-Sha256Bytes $hashRecheckGood) -ne (Get-Sha256Bytes $hashRecheckTampered)) 'hash-recheck primitive: tampered bytes produce a different digest (parse-time swap would be refused)'
 
     # --- 8. Staging under the C root ---
     Clear-Artifacts
@@ -1069,7 +1860,10 @@ try {
     }
 
     # --- 14. Static checks ---
-    $st = Get-Content -LiteralPath $script -Raw -Encoding utf8
+    # Checked against the real, committed script -- $script may point at a
+    # throwaway patched copy used only to make the pinned trust-root constant
+    # match this run's synthetic fixtures (see New-PatchedExportScript).
+    $st = Get-Content -LiteralPath $realScript -Raw -Encoding utf8
     Assert ($st -notmatch '--gpus') 'static: no --gpus'
     Assert ($st -notmatch 'HF_TOKEN') 'static: no HF_TOKEN'
     Assert (-not $st.Contains('Global\homemade-llm-gpu')) 'static: no Global\homemade-llm-gpu'

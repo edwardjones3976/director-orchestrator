@@ -9,7 +9,8 @@ param(
     [string]$BaseRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18',
     [string]$CHotRoot = 'C:\llm',
     [string]$StagingRoot = 'E:\llm-staging\m2-export',
-    [string]$ExpectedShardsJson = 'C:\llm\reports\m1-expected-qwen3-14b.json',
+    [string]$TrustedDigestManifest = (Join-Path $CHotRoot 'reports\m2-trusted-digest-manifest-v2.json'),
+    [string]$ExpectedShardsJson = (Join-Path $CHotRoot 'reports\m2-expected-qwen3-14b-v2.json'),
     [string]$BaseTemplateSha256 = 'a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8',
     [double]$MinCFreeGiB = 150,
     [double]$MaxLlmGiB = 120,
@@ -26,6 +27,10 @@ $Checkpoint = [string[]](@($Checkpoint) | ForEach-Object { $_ -split ',' } | For
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
+
+# Pinned authority: the root trust manifest's bytes must hash to exactly this value.
+# No parameter may override this constant; only its path (-TrustedDigestManifest) may move.
+$script:PinnedTrustedDigestManifestSha256 = 'd1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'
 
 $MergePy = @'
 import os, sys
@@ -85,6 +90,13 @@ function Test-PathIsUnder([string]$Child, [string]$Parent) {
 
 function Get-FileSha256([string]$Path) {
     (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLower()
+}
+
+function Get-Sha256Bytes([byte[]]$Bytes) {
+    $h = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($h.ComputeHash($Bytes)).Replace('-', '').ToLowerInvariant()
+    } finally { $h.Dispose() }
 }
 
 function Get-StorageSnapshot {
@@ -152,17 +164,115 @@ function Assert-EFree([string]$Context) {
     $e
 }
 
-function Resolve-SnapshotFile([string]$Snapshot, [string]$Relative) {
-    $full = Join-Path $Snapshot $Relative
-    if (-not (Test-Path -LiteralPath $full)) { Write-Error "missing weight file $full" }
-    $item = Get-Item -LiteralPath $full -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        $target = $item.Target
-        if ($target.Count) { $target = $target[0] }
-        if ($target -match '^[\\/]') { return $target }
-        return (Get-NormalPath (Join-Path $Snapshot $target))
+# Small, test-replaceable wrapper: tests redefine this function to replay canned
+# `fsutil reparsepoint query` output instead of invoking the real tool.
+function Invoke-FsutilReparseQuery([string]$Path) {
+    & fsutil reparsepoint query $Path 2>&1
+}
+
+# Decodes the LX symlink (reparse tag 0xa000001d) hex dump that `fsutil reparsepoint
+# query` prints for the WSL-style reparse points found in the Hugging Face cache on
+# this host (where Get-Item's .Target is empty and Get-FileHash cannot read the link).
+function Resolve-LxReparseTarget([string]$Path) {
+    $lines = @(Invoke-FsutilReparseQuery $Path)
+    if ($lines.Count -lt 1) {
+        Write-Error "LX symlink gate: empty fsutil reparsepoint query output for $Path"
     }
-    $full
+    $tagLine = @($lines | Where-Object { $_ -match 'Reparse\s*Tag\s*Value\s*:\s*(0x[0-9A-Fa-f]+)' }) | Select-Object -First 1
+    if (-not $tagLine) {
+        Write-Error "LX symlink gate: no reparse tag found in fsutil output for $Path"
+    }
+    [void]($tagLine -match 'Reparse\s*Tag\s*Value\s*:\s*(0x[0-9A-Fa-f]+)')
+    $tag = $Matches[1].ToLower()
+    if ($tag -ne '0xa000001d') {
+        Write-Error "LX symlink gate: unexpected reparse tag $tag at $Path (expected 0xa000001d)"
+    }
+    $hexBytes = [System.Collections.Generic.List[byte]]::new()
+    $sawDump = $false
+    foreach ($line in $lines) {
+        if ($line -match '^\s*[0-9A-Fa-f]{4}:\s+((?:[0-9A-Fa-f]{2}\s+)+)') {
+            $sawDump = $true
+            foreach ($b in (($Matches[1].Trim()) -split '\s+')) {
+                [void]$hexBytes.Add([Convert]::ToByte($b, 16))
+            }
+        }
+    }
+    if (-not $sawDump -or $hexBytes.Count -le 4) {
+        Write-Error "LX symlink gate: unparsable or empty reparse data dump for $Path"
+    }
+    $payload = $hexBytes.GetRange(4, $hexBytes.Count - 4).ToArray()
+    $target = [Text.Encoding]::UTF8.GetString($payload)
+    if ([string]::IsNullOrWhiteSpace($target)) {
+        Write-Error "LX symlink gate: empty decoded target for $Path"
+    }
+    $target
+}
+
+function Assert-PathInsideHub([string]$Path, [string]$HubRoot, [string]$Context) {
+    $pathN = Get-NormalPath $Path
+    $hubN = Get-NormalPath $HubRoot
+    $hubPrefix = $hubN + [IO.Path]::DirectorySeparatorChar
+    if (-not $pathN.Equals($hubN, [StringComparison]::OrdinalIgnoreCase) -and -not $pathN.StartsWith($hubPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Error "${Context}: resolved path escapes hub folder ${hubN}: $pathN"
+    }
+}
+
+# Resolves a snapshot-relative weight/metadata file to its final, readable, regular-file
+# path, following at most 4 reparse hops. Supports ordinary NTFS symlinks/junctions
+# (non-empty .Target) and the WSL LX symlinks used by the Hugging Face cache on this
+# host (empty .Target, decoded via Resolve-LxReparseTarget). The snapshot's own entry
+# name must stay inside the repo's hub folder (HubRoot); every hop thereafter must stay
+# inside the shared hub cache root (HubCacheRoot, the parent of every repo folder),
+# because real weight blobs on this host resolve through a repo-folder link to a
+# second LX link that lands in the hub-level shared blob store one level above the
+# repo folder. A target reached through at least one hop must land inside either the
+# repo's own `blobs` folder or the hub cache root's shared `blobs` folder (including
+# its two-hex subfolders) -- the two legitimate Hugging Face cache layouts.
+function Resolve-SnapshotFile([string]$Snapshot, [string]$Relative, [string]$HubRoot, [string]$HubCacheRoot) {
+    $full = Get-NormalPath (Join-Path $Snapshot $Relative)
+    Assert-PathInsideHub $full $HubRoot 'LX symlink gate'
+    if (-not (Test-Path -LiteralPath $full)) { Write-Error "missing weight file $full" }
+    $current = $full
+    $hops = 0
+    while ($true) {
+        $item = Get-Item -LiteralPath $current -Force
+        if ($item.PSIsContainer) {
+            Write-Error "LX symlink gate: resolved target is a directory: $current"
+        }
+        if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            if ($hops -gt 0) {
+                $repoBlobsPrefix = (Get-NormalPath (Join-Path $HubRoot 'blobs')) + [IO.Path]::DirectorySeparatorChar
+                $hubBlobsPrefix = (Get-NormalPath (Join-Path $HubCacheRoot 'blobs')) + [IO.Path]::DirectorySeparatorChar
+                $inRepoBlobs = $current.StartsWith($repoBlobsPrefix, [StringComparison]::OrdinalIgnoreCase)
+                $inHubBlobs = $current.StartsWith($hubBlobsPrefix, [StringComparison]::OrdinalIgnoreCase)
+                if (-not $inRepoBlobs -and -not $inHubBlobs) {
+                    Write-Error "LX symlink gate: resolved link target is not inside the repo blobs folder or the hub blobs store: $current"
+                }
+            }
+            return $current
+        }
+        if ($hops -ge 4) {
+            Write-Error "LX symlink gate: more than 4 hops resolving $full"
+        }
+        $hops++
+        $target = $item.Target
+        $rel = $null
+        if ($target -and $target.Count -gt 0 -and -not [string]::IsNullOrEmpty([string]$target[0])) {
+            $rel = [string]$target[0]
+        } else {
+            $rel = Resolve-LxReparseTarget $current
+        }
+        $relNorm = $rel -replace '/', '\'
+        if ($relNorm -match '^[A-Za-z]:' -or $relNorm.StartsWith('\')) {
+            $current = Get-NormalPath $relNorm
+        } else {
+            $current = Get-NormalPath (Join-Path (Split-Path -Parent $current) $relNorm)
+        }
+        Assert-PathInsideHub $current $HubCacheRoot 'LX symlink gate'
+        if (-not (Test-Path -LiteralPath $current)) {
+            Write-Error "LX symlink gate: missing link target $current"
+        }
+    }
 }
 
 function ConvertTo-BashCommand([string]$Script) {
@@ -440,11 +550,45 @@ function Assert-AdapterHashes([string]$AdapterDir) {
     $result
 }
 
-function Assert-BaseShards([string]$Snapshot) {
+function Get-TrustedListDigest([string]$RootPath, [string]$Repo, [string]$Revision) {
+    if (-not (Test-Path -LiteralPath $RootPath -PathType Leaf)) {
+        Write-Error "trust root gate: root manifest not found: $RootPath"
+    }
+    $rootBytes = [IO.File]::ReadAllBytes($RootPath)
+    $rootHash = Get-Sha256Bytes $rootBytes
+    if ($rootHash -ne $script:PinnedTrustedDigestManifestSha256) {
+        Write-Error "trust root gate: root manifest hash mismatch expected=$($script:PinnedTrustedDigestManifestSha256) actual=$rootHash path=$RootPath"
+    }
+    $rootDoc = [Text.Encoding]::UTF8.GetString($rootBytes) | ConvertFrom-Json
+    if ($null -eq $rootDoc.models) {
+        Write-Error "trust root gate: root manifest has no models array"
+    }
+    $matched = @($rootDoc.models | Where-Object { [string]$_.hf_repo -eq $Repo -and [string]$_.hf_revision -eq $Revision })
+    if ($matched.Count -ne 1) {
+        Write-Error "trust root gate: expected exactly one model entry for $Repo@$Revision, found $($matched.Count)"
+    }
+    $digest = [string]$matched[0].upstream_weight_digests_sha256
+    if ($digest -cnotmatch '^[0-9a-f]{64}$') {
+        Write-Error "trust root gate: upstream_weight_digests_sha256 is not 64 lowercase hex for $Repo@$Revision"
+    }
+    [pscustomobject]@{
+        RootSha256 = $rootHash
+        ListDigest = $digest
+    }
+}
+
+function Assert-BaseShards([string]$Snapshot, [string]$HubRoot, [string]$HubCacheRoot) {
+    $trust = Get-TrustedListDigest $TrustedDigestManifest $BaseRepo $BaseRevision
+
     if (-not (Test-Path -LiteralPath $ExpectedShardsJson -PathType Leaf)) {
         Write-Error "base shard gate: ExpectedShardsJson not found: $ExpectedShardsJson"
     }
-    $doc = Get-Content -LiteralPath $ExpectedShardsJson -Raw -Encoding utf8 | ConvertFrom-Json
+    $listBytes = [IO.File]::ReadAllBytes($ExpectedShardsJson)
+    $listHash = Get-Sha256Bytes $listBytes
+    if ($listHash -ne $trust.ListDigest) {
+        Write-Error "base shard gate: list manifest hash mismatch expected=$($trust.ListDigest) actual=$listHash path=$ExpectedShardsJson"
+    }
+    $doc = [Text.Encoding]::UTF8.GetString($listBytes) | ConvertFrom-Json
     $key = "$BaseRepo@$BaseRevision"
     $prop = $doc.PSObject.Properties[$key]
     if ($null -eq $prop) {
@@ -454,32 +598,115 @@ function Assert-BaseShards([string]$Snapshot) {
     if ($files.Count -lt 1) {
         Write-Error "base shard gate: no files listed for $key"
     }
-    $snapN = Get-NormalPath $Snapshot
-    $insidePrefix = $snapN + [IO.Path]::DirectorySeparatorChar
-    $seenExpected = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
+    # Step 3: validate every authenticated list entry (normalized path, 64-hex sha256,
+    # non-negative integer size, no case-insensitive duplicates).
+    $expectedAll = [ordered]@{}
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $expectedSafe = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $duplicate = [System.Collections.Generic.List[string]]::new()
-    foreach ($shard in $files) {
-        $rel = [string]$shard.path
+    foreach ($f in $files) {
+        $rel = [string]$f.path
         Assert-NormalizedRelativePath $rel 'base shard gate'
-        if (-not $seenExpected.Add($rel)) {
-            [void]$duplicate.Add($rel)
+        if (-not $seen.Add($rel)) {
             Write-Error "base shard gate: duplicate path $rel"
         }
-        $nameFull = [IO.Path]::GetFullPath((Join-Path $Snapshot ($rel -replace '/', '\')))
-        $nameN = Get-NormalPath $nameFull
-        if (-not $nameN.StartsWith($insidePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-Error "base shard gate: path not inside snapshot: $rel"
+        $sha = [string]$f.sha256
+        if ($sha -notmatch '^[0-9a-fA-F]{64}$') {
+            Write-Error "base shard gate: invalid sha256 for $rel"
+        }
+        $sizeRaw = $f.size
+        if ($null -eq $sizeRaw) {
+            Write-Error "base shard gate: missing size for $rel"
+        }
+        $sizeDouble = [double]$sizeRaw
+        if ($sizeDouble -lt 0 -or $sizeDouble -ne [math]::Floor($sizeDouble)) {
+            Write-Error "base shard gate: invalid size for $rel"
+        }
+        $expectedAll[$rel] = [pscustomobject]@{
+            path   = $rel
+            sha256 = $sha.ToLower()
+            size   = [long]$sizeDouble
         }
         if ($rel.EndsWith('.safetensors', [StringComparison]::OrdinalIgnoreCase)) {
             [void]$expectedSafe.Add($rel)
         }
     }
-    $indexPath = Join-Path $Snapshot 'model.safetensors.index.json'
-    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) {
+
+    # Step 4: full coverage. Walk the snapshot tree without following directory
+    # reparse points; the resulting path set must equal the approved list exactly.
+    $snapN = Get-NormalPath $Snapshot
+    $stack = [System.Collections.Generic.Stack[string]]::new()
+    $stack.Push($snapN)
+    $presentRel = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force)) {
+            if ($child.PSIsContainer) {
+                if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                    Write-Error "base shard gate: directory reparse point not permitted at $($child.FullName)"
+                }
+                $stack.Push($child.FullName)
+            } else {
+                $rel = Get-RelativePath $Snapshot $child.FullName
+                [void]$presentRel.Add($rel)
+            }
+        }
+    }
+    $expectedSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$expectedAll.Keys, [StringComparer]::OrdinalIgnoreCase)
+    if (-not $expectedSet.SetEquals($presentRel)) {
+        $missing = @($expectedSet | Where-Object { -not $presentRel.Contains($_) })
+        $extra = @($presentRel | Where-Object { -not $expectedSet.Contains($_) })
+        Write-Error ("base shard gate: coverage mismatch missing=" + ($missing -join ',') + " extra=" + ($extra -join ','))
+    }
+
+    # Step 5: verify size and two SHA-256 reads of every covered file BEFORE parsing
+    # model.safetensors.index.json or running any loader/Docker step.
+    $result = [System.Collections.Generic.List[object]]::new()
+    $resolvedByRel = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($rel in $expectedAll.Keys) {
+        $entry = $expectedAll[$rel]
+        $relWin = $rel -replace '/', '\'
+        $resolved = Resolve-SnapshotFile $Snapshot $relWin $HubRoot $HubCacheRoot
+        $item = Get-Item -LiteralPath $resolved -Force
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            Write-Error "base shard gate: $rel resolved to a non-regular file $resolved"
+        }
+        $actualSize = $item.Length
+        if ($actualSize -ne $entry.size) {
+            Write-Error "base shard gate: $rel size mismatch expected=$($entry.size) actual=$actualSize"
+        }
+        $read1 = Get-FileSha256 $resolved
+        $read2 = Get-FileSha256 $resolved
+        if ($read1 -ne $entry.sha256 -or $read2 -ne $entry.sha256) {
+            Write-Error "base shard gate: $rel expected=$($entry.sha256) read1=$read1 read2=$read2"
+        }
+        $resolvedByRel[$rel] = $resolved
+        $result.Add([pscustomobject]@{
+                path         = $rel
+                size         = $actualSize
+                sha256_read1 = $read1
+                sha256_read2 = $read2
+            })
+    }
+
+    # Only now parse model.safetensors.index.json. Its bytes were already verified
+    # above as a covered list entry, but ONLY through its resolved (LX-hop-followed)
+    # path: the snapshot path itself may be an LX reparse point PowerShell cannot
+    # read directly. Read the index from that same resolved path -- never from the
+    # snapshot path, and never with Test-Path/Get-Content on the snapshot path --
+    # and re-hash the exact bytes parsed so the verified bytes and the parsed bytes
+    # are provably identical (check/use gap closed).
+    $indexResolved = $null
+    if (-not $resolvedByRel.TryGetValue('model.safetensors.index.json', [ref]$indexResolved)) {
         Write-Error "base shard gate: missing model.safetensors.index.json"
     }
-    $indexDoc = Get-Content -LiteralPath $indexPath -Raw -Encoding utf8 | ConvertFrom-Json
+    $indexEntry = $expectedAll['model.safetensors.index.json']
+    $indexBytes = [IO.File]::ReadAllBytes($indexResolved)
+    $indexBytesHash = Get-Sha256Bytes $indexBytes
+    if ($indexBytesHash -ne $indexEntry.sha256) {
+        Write-Error "base shard gate: model.safetensors.index.json parsed-bytes hash mismatch expected=$($indexEntry.sha256) actual=$indexBytesHash"
+    }
+    $indexDoc = [Text.Encoding]::UTF8.GetString($indexBytes) | ConvertFrom-Json
     if ($null -eq $indexDoc.weight_map) {
         Write-Error "base shard gate: index has no weight_map"
     }
@@ -487,56 +714,23 @@ function Assert-BaseShards([string]$Snapshot) {
     foreach ($wm in $indexDoc.weight_map.PSObject.Properties) {
         $rel = [string]$wm.Value
         Assert-NormalizedRelativePath $rel 'base shard gate'
-        $nameFull = [IO.Path]::GetFullPath((Join-Path $Snapshot ($rel -replace '/', '\')))
-        $nameN = Get-NormalPath $nameFull
-        if (-not $nameN.StartsWith($insidePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-Error "base shard gate: path not inside snapshot: $rel"
+        if (-not $expectedSet.Contains($rel)) {
+            Write-Error "base shard gate: index references unapproved file $rel"
         }
         [void]$indexed.Add($rel)
     }
-    $present = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    Get-ChildItem -LiteralPath $Snapshot -Recurse -File -Force -Filter *.safetensors | ForEach-Object {
-        $rel = Get-RelativePath $Snapshot $_.FullName
-        [void]$present.Add($rel)
+    if (-not $indexed.SetEquals($expectedSafe)) {
+        $absent = @($expectedSafe | Where-Object { -not $indexed.Contains($_) })
+        $unindexed = @($indexed | Where-Object { -not $expectedSafe.Contains($_) })
+        Write-Error ("base shard gate: absent=" + ($absent -join ',') + " unindexed=" + ($unindexed -join ','))
     }
-    $setsEqual = $indexed.SetEquals($expectedSafe) -and $expectedSafe.SetEquals($present)
-    if (-not $setsEqual -or $duplicate.Count -gt 0) {
-        $absent = [System.Collections.Generic.List[string]]::new()
-        $unexpected = [System.Collections.Generic.List[string]]::new()
-        $unindexed = [System.Collections.Generic.List[string]]::new()
-        foreach ($x in $indexed) {
-            if (-not $present.Contains($x)) { [void]$absent.Add($x) }
-        }
-        foreach ($x in $expectedSafe) {
-            if (-not $present.Contains($x) -and -not $absent.Contains($x)) { [void]$absent.Add($x) }
-        }
-        foreach ($x in $present) {
-            if (-not $expectedSafe.Contains($x) -or -not $indexed.Contains($x)) { [void]$unexpected.Add($x) }
-            if (-not $indexed.Contains($x)) { [void]$unindexed.Add($x) }
-        }
-        foreach ($x in $expectedSafe) {
-            if (-not $indexed.Contains($x) -and -not $unindexed.Contains($x)) { [void]$unindexed.Add($x) }
-        }
-        Write-Error ("base shard gate: absent=" + ($absent -join ',') + " unexpected=" + ($unexpected -join ',') + " unindexed=" + ($unindexed -join ',') + " duplicate=" + ($duplicate -join ','))
+
+    [pscustomobject]@{
+        root_sha256   = $trust.RootSha256
+        list_sha256   = $listHash
+        covered_files = $result.Count
+        files         = $result
     }
-    $result = [System.Collections.Generic.List[object]]::new()
-    foreach ($shard in $files) {
-        $rel = [string]$shard.path
-        $expected = ([string]$shard.sha256).ToLower()
-        $relWin = $rel -replace '/', '\'
-        $resolved = Resolve-SnapshotFile $Snapshot $relWin
-        $read1 = Get-FileSha256 $resolved
-        $read2 = Get-FileSha256 $resolved
-        if ($read1 -ne $expected -or $read2 -ne $expected) {
-            Write-Error "base shard gate: $rel expected=$expected read1=$read1 read2=$read2"
-        }
-        $result.Add([pscustomobject]@{
-                path         = $rel
-                sha256_read1 = $read1
-                sha256_read2 = $read2
-            })
-    }
-    $result
 }
 
 function New-StepClock {
@@ -592,7 +786,12 @@ function Write-ExportReport {
         base_repo             = $BaseRepo
         base_revision         = $BaseRevision
         adapter_hashes        = $AdapterHashes
-        base_shards           = @($BaseShards)
+        base_trust            = [ordered]@{
+            root_sha256   = $BaseShards.root_sha256
+            list_sha256   = $BaseShards.list_sha256
+            covered_files = $BaseShards.covered_files
+        }
+        base_shards           = @($BaseShards.files)
         chat_template_sha256  = $ChatTemplateSha256
         output                = [ordered]@{
             path         = $OutputPath
@@ -794,6 +993,8 @@ if ($RunId -and $Checkpoint.Count -gt 1) {
 
 $utcStamp = Get-UtcStamp
 $snapshot = Get-SnapshotPath $BaseRepo $BaseRevision
+$hubCacheRoot = Join-Path $CHotRoot 'hf\hub'
+$hubRoot = Join-Path $hubCacheRoot (Get-HubFolderName $BaseRepo)
 $cSnap = Get-StorageSnapshot
 $eSnap = Get-EStorageSnapshot
 $plans = [System.Collections.Generic.List[object]]::new()
@@ -861,7 +1062,7 @@ foreach ($plan in $plans) {
         End-Step $steps 'adapter_hash'
 
         Start-Step $steps 'base_shards'
-        $baseShards = Assert-BaseShards $snapshot
+        $baseShards = Assert-BaseShards $snapshot $hubRoot $hubCacheRoot
         End-Step $steps 'base_shards'
 
         Start-Step $steps 'staging'
