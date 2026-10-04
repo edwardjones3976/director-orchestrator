@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Provider transport configuration · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#windows-host-bridge">Windows host bridge</a></li><li class="sub"><a href="#zai-glm-over-the-bridge">Z.ai (GLM) over the bridge</a></li><li class="top"><a href="#owner-only-chatgpt-slack-alias">Owner-only ChatGPT Slack alias</a></li><li class="top"><a href="#github-readback-and-merge-authority">GitHub readback and merge authority</a></li><li class="top"><a href="#firecrawl">Firecrawl</a></li><li class="top"><a href="#github-copilot">GitHub Copilot</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:19 UTC | BEGIN]] -->
+<h1 id="provider-transport-configuration">Provider transport configuration</h1>
+<p>Use this runbook to separate configuration, installation, authentication,
+packet qualification and live activation. A configured credential or installed
+CLI does not satisfy the later gates. Keep secrets in the approved deployment
+environment or protected files; report names and readiness booleans only.</p>
+<h2 id="windows-host-bridge">Windows host bridge</h2>
+<p>The Windows server and the orchestrator client have different environments.
+Setting client variables in Docker does not start the Windows server.</p>
+<table>
+<thead>
+<tr>
+<th>Process</th>
+<th>Required configuration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Client</td>
+<td><code>LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT</code>, <code>LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET</code></td>
+</tr>
+<tr>
+<td>Windows server</td>
+<td>Same bridge secret, <code>DIRECTOR_HOST_PROVIDER_COMMANDS_JSON</code>, <code>DIRECTOR_HOST_PROVIDER_BRIDGE_STORE</code>, <code>DIRECTOR_HOST_PROVIDER_POSTGRES_DSN</code>, <code>LANGGRAPH_PRIMARY_POSTGRES_SCHEMA</code>, workspace and Python</td>
+</tr>
+<tr>
+<td>Server listening beyond loopback</td>
+<td><code>DIRECTOR_HOST_PROVIDER_BIND=0.0.0.0</code>, <code>DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE</code>, <code>DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE</code></td>
+</tr>
+</tbody>
+</table>
+<p>The default port is18765. The supported Docker client URL is
+<code>https://host.docker.internal:18765/v1/provider/dispatch</code>; plain HTTP is accepted
+only for loopback hostnames/addresses. Install the existing approved CA in the
+actual client's trust configuration and verify certificate hostname matching.
+Do not downgrade TLS to make Docker connectivity work.</p>
+<p>Run the existing launcher from the reviewed checkout with explicit deployment
+paths. These shell variables denote operator-selected paths, not defaults:</p>
+<pre><code class="language-powershell">$env:PYTHONPATH = Join-Path $reviewedWorkspace 'src'
+&amp; (Join-Path $reviewedWorkspace 'scripts/windows-host-provider-bridge.ps1') `
+  -Action Preflight -EnvironmentFile $hostEnvironmentFile `
+  -Workspace $reviewedWorkspace -Python $pythonExecutable
+</code></pre>
+<p>Preflight checks configuration and executable resolution without provider work.
+An authorized <code>-Action Run</code> invocation starts the foreground server; it is a
+state-changing operation, not a diagnostic. Preserve the durable claim store.
+Use a supervised ordinary user process and sanitized logs. The host Postgres
+DSN must reach the same authoritative writer database from Windows. If Docker
+requires a database port publication, bind it to loopback and preserve the
+existing image, project, volume and data; review that change separately.</p>
+<p>Read-only diagnostics are executable resolution, path existence, listener
+inspection, <code>GET /health</code>, and the supported authenticated
+<code>challenge_host_provider_bridge(endpoint, secret)</code> helper. Never print secrets
+or construct authorization headers in chat. Challenge checks TLS/HMAC and roster;
+OpenAI also performs native authentication status. Claude/Grok roster entries
+alone do not establish login or packet conformance. The Postgres writer fence is
+checked before dispatch, not by health/challenge.</p>
+<p>See <code>host_provider_bridge.py</code>, <code>host_provider_bridge_server.py</code> and the launcher.
+Firecrawl is not a host-bridge lane.</p>
+<h3 id="zai-glm-over-the-bridge">Z.ai (GLM) over the bridge</h3>
+<p>Like native Codex, the <code>zai</code> entry configures an in-process transport rather
+than a generic child command. It is exactly
+<code>[&lt;absolute claude.exe&gt;, &lt;GLM model&gt;, &lt;max turns&gt;, &quot;read-only&quot; | &quot;owned-path-writes&quot;, &quot;sha256:&lt;SHA-256 of the key's ID part&gt;&quot;]</code>. Forward <code>ZAI_API_KEY</code> from the bridge
+profile by naming it in <code>DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES</code>; the bridge
+process reads it, refuses it if its key ID does not match the digest, and passes
+it to the CLI only as <code>ANTHROPIC_AUTH_TOKEN</code> for Z.ai's Coding Plan endpoint.
+The authenticated challenge reports the entry, and the Director client
+(<code>ZAI_TRANSPORT=host_bridge</code>, <code>ZAI_MODEL</code>, no local key or CLI) builds the lane
+only when the reported model equals its own. Preflight checks the executable
+path only; the entry's shape, the key-ID match and the executable file are
+checked when the server starts and on every challenge. See
+<code>docs/provider-setup.html#z-ai-production-lane</code>.</p>
+<h2 id="owner-only-chatgpt-slack-alias">Owner-only ChatGPT Slack alias</h2>
+<p>Use <code>CHATGPT_BRIDGE_ENABLED</code>, <code>CHATGPT_BRIDGE_SLACK_USER_ID</code>,
+<code>CHATGPT_BRIDGE_CHANNEL_IDS</code> and <code>SLACK_OWNER_USER_ID</code>. The orchestrator needs
+<code>OPENAI_API_KEY</code> and <code>OPENAI_CHATGPT_BRIDGE_MODEL</code>; the gateway does not receive
+the OpenAI key. Both services need their documented bearer/HMAC configuration,
+including the distinct <code>SLACK_GATEWAY_SECRET</code>.</p>
+<p>This alias accepts the exact owner's messages in allowlisted channels. It ignores
+bot messages and cannot be used to answer provider bot posts automatically. It
+uses the API through the Director identity, not a ChatGPT subscription session.
+The initial mention requests owner approval; the subsequent signed approval is
+bound to the exact prompt. It cannot delegate, review, merge or deploy.
+Inspect configuration presence and gateway readiness without sending a paid
+test prompt. See <a href="chatgpt-slack-alias-bridge.html">ChatGPT alias protocol</a>.</p>
+<h2 id="github-readback-and-merge-authority">GitHub readback and merge authority</h2>
+<p>The current backend credential fields retain their Oracle names:
+<code>ORACLE_AUTOMERGE_GITHUB_TOKEN</code>, or the complete alternative trio
+<code>ORACLE_AUTOMERGE_GITHUB_APP_ID</code>, <code>ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID</code>,
+<code>ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64</code>. Do not configure both alternatives.
+These credentials can support GitHub readback independently of enabling Oracle
+automerge. A developer's authenticated <code>gh</code> session is not automatically injected
+into the service.</p>
+<p>Keep <code>ORACLE_AUTOMERGE_ENABLED=false</code> and its kill switch engaged unless that
+specific workflow is separately authorized. Credential presence, successful
+readback or a mark-ready effect does not enable a generic review-to-merge loop.
+Exact-head review, CI, security, actor independence, allowlists and approval gates
+remain necessary. Inspect readiness booleans and authorized repository readback;
+do not use a merge as a credential test. See <code>config.py</code>, <code>main.py</code> and
+<code>primary_effect_gateways.py</code> for credential consumers.</p>
+<h2 id="firecrawl">Firecrawl</h2>
+<p>The primary transport needs both <code>FIRECRAWL_API_KEY</code> in its execution environment
+and a discoverable <code>firecrawl</code> CLI. <code>FIRECRAWL_API_URL</code> is the optional supported
+transport variable. A host CLI does not satisfy container executable discovery;
+use the reviewed runtime image containing the pinned CLI. Check executable
+resolution/version and key presence without printing the key or making a scrape.
+Qualification still requires the supported request/result contract and scoped
+research task; installation is not live acceptance.</p>
+<h2 id="github-copilot">GitHub Copilot</h2>
+<p>Use the installed native Copilot product's supported interactive OAuth login
+under the actual execution identity when subscription login is intended. Do not
+replace it with an unrelated GitHub API credential and call that subscription
+qualification. Current direct discovery checks <code>COPILOT_GITHUB_TOKEN</code>, <code>GH_TOKEN</code>
+or <code>GITHUB_TOKEN</code>; therefore native OAuth login alone is not proof that this
+backend discovery reports ready. The Windows bridge child allowlist carries
+<code>GH_TOKEN</code> and <code>GITHUB_TOKEN</code>, not every credential from the parent environment.</p>
+<p>Inspect native help/status locally using the installed version's supported
+commands, keeping account identifiers private. Then require exact packet/result
+qualification, bounded execution and accepted provider bindings. Merely adding
+<code>github-copilot</code> to the command map does not supply those proofs. See
+<code>primary_default.py</code>, <code>primary_transports.py</code> and the Copilot provider profile.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

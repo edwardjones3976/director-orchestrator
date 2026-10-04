@@ -45,7 +45,7 @@ class CiScopeTests(unittest.TestCase):
                 "git_output",
                 side_effect=[
                     f"{AFTER} {BEFORE} {BASE}\n".encode(),
-                    b"AGENTS.md\0docs/contribution-attribution-policy.md\0",
+                    b"AGENTS.md\0docs/contribution-attribution-policy.html\0",
                 ],
             ),
             patch.object(ci_scope, "previous_full_run_succeeded", return_value=123),
@@ -105,6 +105,9 @@ class CiScopeTests(unittest.TestCase):
                 f"{AFTER} {BEFORE} {BASE}\n".encode(),
                 b".github/workflows/ci.yml\0",
             ),
+            (f"{AFTER} {BEFORE} {BASE}\n".encode(), b"src/director_orchestrator/documentation.py\0"),
+            (f"{AFTER} {BEFORE} {BASE}\n".encode(), b"scripts/render_provider_profiles.py\0"),
+            (f"{AFTER} {BEFORE} {BASE}\n".encode(), b"docs/new-runtime-contract.html\0"),
         ):
             with self.subTest(parents=parents, files=files), patch.object(
                 ci_scope, "git_output", side_effect=[parents, files]

@@ -1517,7 +1517,7 @@ def _cursor_host_lane_prefix(executable: str | None) -> tuple[str, ...] | None:
 
     Downgrading to ``--sandbox disabled`` is deliberately not done here. That
     removes the operating-system containment the lane requires, and
-    ``docs/provider-validation-harness.md`` is explicit that metadata declaring
+    ``docs/provider-validation-harness.html`` is explicit that metadata declaring
     no tools is not an operating-system containment proof. The lane therefore
     fails closed on unsupported platforms, and qualifying it needs a macOS or
     Linux host rather than a weaker flag.

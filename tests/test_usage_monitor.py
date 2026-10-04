@@ -485,6 +485,81 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             accounting = monitor.health()["daily_accounting"]["grok"]
             self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
 
+    async def test_fresh_unsettled_real_request_counts_before_timeout(self):
+        before = datetime(2026, 10, 2, 23, 59, 59, tzinfo=timezone.utc)
+        for provider in (ProviderName.GEMINI, ProviderName.PERPLEXITY, ProviderName.GROK):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+                ledger = ProviderDailySpendLedger(store.path)
+                ledger.reserve(provider=provider, effect_key="b" * 64, estimated_cost_usd=0.01,
+                               request_limit=10, budget_usd=1.0, serialize=True, now=before)
+                monitor = UsageMonitor(BOUNDED_SETTINGS, store, adapters={provider: object()})
+                for now in (before, before + timedelta(seconds=2)):
+                    daily = monitor._daily_accounting(provider.value, now)
+                    self.assertEqual(ledger.unsettled_not_proven_bounded(provider), ["b" * 64])
+                    self.assertEqual(daily["unsettled_request_count"], 1)
+                    self.assertEqual(daily["unreconciled_request_count"], 0)
+                    self.assertEqual(daily["provider_request_count"], int(now == before))
+                ledger.record_charge(provider=provider, effect_key="b" * 64,
+                                     actual_cost_usd=0.02, now=now)
+                daily = monitor._daily_accounting(provider.value, now)
+                self.assertEqual(ledger.unsettled_not_proven_bounded(provider), [])
+                self.assertEqual(daily["unsettled_request_count"], 0)
+                self.assertEqual(daily["unreconciled_request_count"], 0)
+                self.assertIsNone(monitor._daily_accounting("openai", now)["unsettled_request_count"])
+
+    async def test_only_unbounded_probes_with_unknown_charges_are_unsettled(self):
+        from director_orchestrator.usage import _probe_key
+
+        for provider, serialized in ((ProviderName.GROK, False), (ProviderName.GEMINI, True),
+                                     (ProviderName.PERPLEXITY, True)):
+            for actual in (None, 0.0, 0.02):
+                with self.subTest(provider=provider, actual=actual), tempfile.TemporaryDirectory() as directory:
+                    store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+                    ledger = ProviderDailySpendLedger(store.path)
+                    now = datetime.now(timezone.utc)
+                    record = UsageCheckRecord(cycle_id="USAGE-PROBE", provider=provider.value,
+                                              status=UsageCheckStatus.ERROR, checked_at=now)
+                    store.add_usage_check(record)
+                    key = _probe_key(record.cycle_id, provider.value, 1)
+                    ledger.reserve(provider=provider, effect_key=key, estimated_cost_usd=0.01,
+                                   request_limit=10, budget_usd=1.0, serialize=serialized, now=now)
+                    ledger.record_charge(provider=provider, effect_key=key, actual_cost_usd=actual, now=now)
+                    monitor = UsageMonitor(BOUNDED_SETTINGS, store, adapters={provider: object()})
+                    daily = monitor._daily_accounting(provider.value, now)
+                    unsettled = serialized and actual is None
+                    self.assertEqual(ledger.unsettled_not_proven_bounded(provider), [key] if unsettled else [])
+                    self.assertEqual(daily["unsettled_request_count"], int(unsettled))
+                    self.assertEqual(daily["unreconciled_request_count"], 0)
+                    self.assertEqual(daily["provider_request_count"], 0)
+
+    async def test_outstanding_requests_reach_unsettled_count_across_timeout_and_day(self):
+        import sqlite3
+        from contextlib import closing
+        now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        timeout = timedelta(seconds=max(1, int(BOUNDED_SETTINGS.provider_timeout_seconds)) + 1)
+        for provider in (ProviderName.GEMINI, ProviderName.PERPLEXITY, ProviderName.GROK):
+            for age, actual in ((timeout, None), (timedelta(days=1), None),
+                                (timedelta(0), "unpriced"), (timedelta(0), float("inf"))):
+                with self.subTest(provider=provider, age=age, actual=actual), tempfile.TemporaryDirectory() as directory:
+                    store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+                    ledger = ProviderDailySpendLedger(store.path)
+                    ledger.reserve(provider=provider, effect_key="b" * 64, estimated_cost_usd=0.01,
+                                   request_limit=10, budget_usd=1.0, serialize=True, now=now - age)
+                    if actual is not None:
+                        with closing(sqlite3.connect(store.path)) as connection, connection:
+                            connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?",
+                                               (actual,))
+                    monitor = UsageMonitor(BOUNDED_SETTINGS, store, adapters={provider: object()})
+                    daily = monitor._daily_accounting(provider.value, now)
+                    self.assertEqual(daily["unsettled_request_count"], 1)
+                    self.assertEqual(daily["unreconciled_request_count"], int(age >= timeout))
+                    self.assertEqual(daily["provider_request_count"], int(age < timedelta(days=1)))
+                    ledger.record_charge(provider=provider, effect_key="b" * 64, actual_cost_usd=0.02, now=now)
+                    daily = monitor._daily_accounting(provider.value, now)
+                    self.assertEqual(daily["unsettled_request_count"], 0)
+                    self.assertEqual(daily["unreconciled_request_count"], 0)
+
     async def test_unbounded_probe_serializes_and_settlement_releases_capacity(self):
         """An unbounded request holds remaining capacity; only a known charge releases it."""
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>REVIEW_READY · Director Orchestrator</title>
+<link rel="stylesheet" href="../../assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../../index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../../../README.html">Overview</a><a href="../../index.html">All documents</a><a href="../../project-leadership.html">Leadership</a><a href="../../provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#candidate-identity">Candidate identity</a></li><li class="top"><a href="#scope-and-evidence">Scope and evidence</a></li><li class="top"><a href="#reviewer-request">Reviewer request</a></li><li class="top"><a href="#provider-to-provider-prompt">Provider-to-provider prompt</a></li><li class="top"><a href="#reviewer-result">Reviewer result</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
+<h1 id="review_ready">REVIEW_READY</h1>
+<p>The producer completes this handoff for a different eligible provider. The
+Director posts or prompts the review assignment in the project thread. This
+record requests independent review; it does not approve or merge the work. Do
+not place secrets, credentials, tokens, or raw private source in this handoff.
+Workflow skills are procedure overlays, not permission grants.</p>
+<h2 id="candidate-identity">Candidate identity</h2>
+<ul>
+<li><strong>Project/task:</strong> &lt;project ID and Director task ID&gt;</li>
+<li><strong>Assignment:</strong> &lt;producer assignment ID&gt;</li>
+<li><strong>Logical producer:</strong> &lt;provider&gt;</li>
+<li><strong>Material authors:</strong> &lt;all providers/people that materially shaped the artifact&gt;</li>
+<li><strong>Repository:</strong> &lt;exact owner/name or not applicable&gt;</li>
+<li><strong>Base branch/ref:</strong> &lt;exact durable ref&gt;</li>
+<li><strong>Target-tip base_sha:</strong> &lt;PR current target-tip, exact 40-hex SHA; exact-candidate binding&gt;</li>
+<li><strong>Review merge_base_sha:</strong> &lt;exact 40-hex SHA; merge base base used for the reviewed diff&gt;</li>
+<li><strong>Head branch:</strong> &lt;candidate branch&gt;</li>
+<li><strong>Head SHA:</strong> &lt;exact 40-hex SHA&gt;</li>
+<li><strong>Artifact digest:</strong> &lt;digest when not SHA-bound&gt;</li>
+<li><strong>Pull request:</strong> &lt;canonical draft PR URL or none&gt;</li>
+</ul>
+<h2 id="scope-and-evidence">Scope and evidence</h2>
+<ul>
+<li><strong>Changed files/artifact scope:</strong> &lt;complete list or canonical manifest&gt;</li>
+<li><strong>Outcome delivered:</strong> &lt;what changed&gt;</li>
+<li><strong>Acceptance checks:</strong> &lt;check and result&gt;</li>
+<li><strong>Tests:</strong> &lt;exact commands/checks and results&gt;</li>
+<li><strong>Security context:</strong> &lt;risk surface, scan evidence, or why not applicable&gt;</li>
+<li><strong>Known limitations:</strong> &lt;limitations and uncertainty&gt;</li>
+<li><strong>Unresolved findings:</strong> &lt;none or explicit list&gt;</li>
+</ul>
+<h2 id="reviewer-request">Reviewer request</h2>
+<ul>
+<li><strong>Eligible reviewer:</strong> &lt;different provider&gt;</li>
+<li><strong>Reviewer workflow skill:</strong> &lt;cursor-agent-workflow or none&gt;</li>
+<li><strong>Requested depth:</strong> &lt;focused, full diff, exact-SHA, security-adjacent, etc.&gt;</li>
+<li><strong>Required verdict:</strong> <code>ACCEPT</code>, <code>CHANGES_REQUIRED</code>, or
+<code>SERIOUS_SAFETY_STOP</code></li>
+<li><strong>Merge path after acceptance:</strong> &lt;configured deterministic gate and required CI/security&gt;</li>
+<li><strong>Candidate invalidation:</strong> Any base_sha, merge_base_sha, head SHA, or artifact change voids this
+handoff and all review, security, CI, and merge evidence tied to it.</li>
+</ul>
+<h2 id="provider-to-provider-prompt">Provider-to-provider prompt</h2>
+<pre><code class="language-text">REVIEW_REQUEST
+Project: &lt;project ID&gt;
+Task/assignment: &lt;task ID&gt; / &lt;review assignment ID&gt;
+Review exact candidate: &lt;repository&gt;
+Target-tip base_sha: &lt;PR current target-tip, exact 40-hex SHA; exact-candidate binding&gt;
+Review merge_base_sha: &lt;exact 40-hex SHA; base used for the reviewed diff&gt;
+Head SHA: &lt;exact 40-hex SHA or artifact digest&gt;
+Producer/material authors: &lt;names&gt;
+PR URL: &lt;pull-request URL or none&gt;
+Author/independence evidence: &lt;ordinary Git and authenticated run references; no prescribed header or share table&gt;
+Scope: &lt;changed files or artifact scope&gt;
+Acceptance evidence: &lt;concise exact evidence&gt;
+Known limitations/security context: &lt;concise details&gt;
+Bind the review to the actual target-tip base_sha, merge_base_sha and head SHA.
+Verify actual producer/contributor identities and reviewer independence from
+existing Git and authenticated run evidence. No custom attribution headers,
+trailers or percentage/share paperwork is required (owner, 2026-10-01).
+A real identity conflict must be reconciled; never invent evidence.
+Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
+evidence and actionable findings.
+Do not review a PR candidate whose sole author is you or shares your provider
+family. An assisting contributor may review under the owner rule, subject to
+the material-author gate limitations above. Under the owner's merge law, the
+thorough non-contributing reviewer merges after an exact-SHA ACCEPT and green
+checks; no contributor merges, including one with only uncounted maintenance.
+Immediately before an authorized merge, run the current merge preflight on
+the exact PR, full head SHA and reviewer family. Use only the command it prints
+on success. The owner lifted the temporary B2 hold; retain current live holds
+and every deterministic gate. A refusing runtime gate remains a concrete
+blocker to report and reconcile, never a check to bypass.
+Do not deploy, publish, change access, or infer authority from this request.
+</code></pre>
+<h2 id="reviewer-result">Reviewer result</h2>
+<ul>
+<li><strong>Reviewer/provider:</strong> &lt;provider&gt;</li>
+<li><strong>Authenticated run/session:</strong> &lt;run ID or callback identity&gt;</li>
+<li><strong>Reviewed target-tip base_sha:</strong> &lt;exact 40-hex SHA or n/a for artifact-only review&gt;</li>
+<li><strong>Reviewed merge_base_sha:</strong> &lt;exact 40-hex SHA or n/a for artifact-only review&gt;</li>
+<li><strong>Reviewed head SHA or artifact digest:</strong> &lt;exact 40-hex SHA or digest&gt;</li>
+<li><strong>Verdict:</strong> &lt;ACCEPT / CHANGES_REQUIRED / SERIOUS_SAFETY_STOP&gt;</li>
+<li><strong>Evidence/findings:</strong> &lt;concise result&gt;</li>
+<li><strong>Current CI/security evidence:</strong> &lt;exact status or pending&gt;</li>
+<li><strong>Next responsible party:</strong> &lt;producer, deterministic gate, Director, or owner&gt;</li>
+</ul>
+<p>Owner direction, 2026-10-01: contribution-documentation, tagging and acknowledgement procedures are discontinued. Do not require custom commit trailers, mandatory contribution headers or percentage/share paperwork. Preserve normal Git Author/Committer provenance, actual provider identity and ordinary task/review evidence. Independent review, contributor/merger separation and every existing deterministic gate remain in force.
+The authenticated run/session, exact candidate, independent verdict, current
+CI/security evidence, and deterministic policy gates remain authoritative.</p>
+<!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:23 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:37 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 07:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:32 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

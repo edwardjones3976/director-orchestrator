@@ -55,12 +55,12 @@ execution_modes:
     - bound_candidate_tree_generation_and_installation
     - bounded_native_worker_and_validated_result_capture
     - independent_review_and_director_acceptance
-    adoption_dependency: docs/antigravity-team-engineering.md and its separately reviewed default-off implementation
+    adoption_dependency: docs/antigravity-team-engineering.html and its separately reviewed default-off implementation
     selection_rule: Roster eligibility and this profile grant no execution authority; legacy Gemini flags and subordinate
       transport cannot select the team contract.
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -246,15 +246,15 @@ authority:
 
 platform_limitations:
   - limitation: "Ordinary work dispatch sends no model-authored prose. The request is composed only from fixed strings in antigravity.py, closed enum values, and bounded integers; the closed-vocabulary validator rejects any other outbound string."
-    source: "docs/team-operating-charter.md, Antigravity outbound contract"
+    source: "docs/team-operating-charter.html, Antigravity outbound contract"
   - limitation: "Managed-agent runs are stored background Interactions; requires_action and budget_exceeded fail closed and are never treated as completion."
-    source: "docs/provider-setup.md, Gemini Interactions API contract"
+    source: "docs/provider-setup.html, Gemini Interactions API contract"
   - limitation: "A revision reuses the same fixed work contract and the prior sandbox environment_id, failing closed rather than transmitting reviewer prose or provisioning an unrelated sandbox."
-    source: "docs/provider-setup.md, Antigravity subordinate profile"
+    source: "docs/provider-setup.html, Antigravity subordinate profile"
   - limitation: "A rights-ledger review_verdict grant mechanism exists but has no runtime consumer; no exception to the review restriction is live."
-    source: "docs/team-operating-charter.md; docs/entitlement-control-plane.md"
+    source: "docs/team-operating-charter.html; docs/entitlement-control-plane.html"
   - limitation: "Owner-reported account context: lower-capacity paid service; API billing and quotas must be verified separately, and the usage monitor is not on the default periodic-check roster."
-    source: "src/director_orchestrator/config.py:provider_strategy; docs/provider-setup.md"
+    source: "src/director_orchestrator/config.py:provider_strategy; docs/provider-setup.html"
 
 transports:
   - transport_id: "gemini-interactions-api"
@@ -321,13 +321,13 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "Ordinary Antigravity *work* is sent no"
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "Antigravity may hold a debate seat, but only one the Director gave it"
-  - document: "docs/provider-setup.md"
+  - document: "docs/provider-setup.html"
     anchor: "Antigravity is a subordinate Edge Oracle specialist, not a fourth primary"
-  - document: "docs/provider-allocation-profiles.md"
+  - document: "docs/provider-allocation-profiles.html"
     anchor: "Gemini and Antigravity share the Antigravity lane."
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
     anchor: "contact_scope:"
