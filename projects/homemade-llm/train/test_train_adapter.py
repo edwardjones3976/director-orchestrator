@@ -22,11 +22,83 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+
+class OfflineTrainerCallback:
+    """No-op lifecycle from the public Transformers TrainerCallback contract.
+
+    Heavy runtime imports stay stubbed for synthetic tests. Event dispatch below
+    uses the handler's attribute lookup and control return rules, with no fallback
+    for missing methods, so a plain epoch-only callback cannot pass.
+    """
+
+    def on_init_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        pass
+
+    def on_train_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        pass
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        pass
+
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        pass
+
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        pass
+
+    def on_substep_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_step_end(self, args, state, control, **kwargs):
+        pass
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        pass
+
+    def on_predict(self, args, state, control, **kwargs):
+        pass
+
+    def on_save(self, args, state, control, **kwargs):
+        pass
+
+    def on_log(self, args, state, control, **kwargs):
+        pass
+
+    def on_prediction_step(self, args, state, control, **kwargs):
+        pass
+
+
+class OfflineCallbackHandler:
+    def __init__(self, callbacks, model):
+        self.callbacks = callbacks
+        self.model = model
+
+    def call_event(self, event, args, state, control, **kwargs):
+        for callback in self.callbacks:
+            result = getattr(callback, event)(
+                args, state, control, model=self.model, processing_class=None,
+                optimizer=None, lr_scheduler=None, train_dataloader=None,
+                eval_dataloader=None, **kwargs,
+            )
+            if result is not None:
+                control = result
+        return control
+
+
 for name, attrs in {
     "torch": {},
     "unsloth": {"FastLanguageModel": object},
     "datasets": {"Dataset": object},
-    "transformers": {"set_seed": lambda *_a, **_k: None},
+    "transformers": {"set_seed": lambda *_a, **_k: None, "TrainerCallback": OfflineTrainerCallback},
     "huggingface_hub": {"snapshot_download": lambda *_a, **_k: ""},
     "trl": {"SFTConfig": object, "SFTTrainer": object},
 }.items():
@@ -850,6 +922,192 @@ $TrustedDigestRoot = ''
                 )
             parse.assert_called_once_with(snapshot)
 
+    def test_authenticated_snapshot_file_links_support_repo_and_shared_blobs(self):
+        for layout in ("repo", "shared", "two_hops"):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                trusted, listing, pin = self._complete_trusted_snapshot(root)
+                hub = root / "hub"
+                repo = hub / "models--Qwen--Qwen3-14B"
+                snapshot = repo / "snapshots" / train_adapter.WINNER_REVISION
+                snapshot.parent.mkdir(parents=True)
+                (root / "snapshot").rename(snapshot)
+                for path in list(snapshot.iterdir()):
+                    data = path.read_bytes()
+                    digest = hashlib.sha256(data).hexdigest()
+                    blobs = repo / "blobs" if layout == "repo" else hub / "blobs" / digest[:2]
+                    blobs.mkdir(parents=True, exist_ok=True)
+                    target = blobs / digest
+                    target.write_bytes(data)
+                    if layout == "two_hops":
+                        relay = repo / "blobs" / digest
+                        relay.parent.mkdir(parents=True, exist_ok=True)
+                        if not make_reparse_link(relay, Path(os.path.relpath(target, relay.parent))):
+                            self.skipTest("file symlink creation is unavailable")
+                        target = relay
+                    path.unlink()
+                    if not make_reparse_link(path, Path(os.path.relpath(target, path.parent))):
+                        self.skipTest("file symlink creation is unavailable")
+                with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                     mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot):
+                    report = train_adapter.digest_verification_before_load(
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
+                    self.assertEqual(report["files"], 4)
+                    self.assertEqual(report["snapshot_files"], 4)
+                    self.assertEqual(report["reads"], 2)
+                    self.assertTrue(report["weight_map_checked"])
+                    self.assertEqual(report["base"], train_adapter.WINNER_BASE)
+                    self.assertEqual(report["revision"], train_adapter.WINNER_REVISION)
+                    # The allowed location grants no byte authenticity.
+                    (snapshot / "config.json").write_bytes(b"changed synthetic configuration")
+                    with self.assertRaisesRegex(SystemExit, "(size|digest) mismatch"):
+                        train_adapter.digest_verification_before_load(
+                            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
+
+    def test_authenticated_cache_links_with_synthetic_file_link_emulation(self):
+        # Windows may deny native file symlinks. Emulate only these fixture file
+        # links; directory ancestry and all authentication/hash/index code run
+        # unchanged against real synthetic files. This is no native cache smoke.
+        for layout in ("repo", "shared", "two_hops", "external", "other_repo", "other_revision", "blob_ancestor"):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                trusted, listing, pin = self._complete_trusted_snapshot(root)
+                repo = root / "hub" / ("models--Other--Model" if layout == "other_repo" else "models--Qwen--Qwen3-14B")
+                revision = "b" * 40 if layout == "other_revision" else train_adapter.WINNER_REVISION
+                snapshot = repo / "snapshots" / revision
+                snapshot.parent.mkdir(parents=True)
+                (root / "snapshot").rename(snapshot)
+                links = {}
+                for path in list(snapshot.iterdir()):
+                    data = path.read_bytes()
+                    digest = hashlib.sha256(data).hexdigest()
+                    blobs = repo / "blobs" if layout in ("repo", "other_repo", "other_revision") else root / "hub" / "blobs"
+                    if layout == "external":
+                        blobs = root / "outside"
+                    blobs.mkdir(parents=True, exist_ok=True)
+                    target = blobs / digest
+                    target.write_bytes(data)
+                    if layout == "two_hops":
+                        relay = repo / "blobs" / digest
+                        relay.parent.mkdir(parents=True, exist_ok=True)
+                        relay.touch()
+                        links[relay] = Path(os.path.relpath(target, relay.parent))
+                        target = relay
+                    if layout == "blob_ancestor":
+                        alias = root / "hub" / "blobs" / "linked"
+                        if not alias.exists() and not make_reparse_link(alias, blobs):
+                            self.skipTest("directory link creation is unavailable")
+                        target = alias / digest
+                    links[path] = Path(os.path.relpath(target, path.parent))
+
+                original_symlink, original_readlink = Path.is_symlink, Path.readlink
+                original_stat, original_open = Path.stat, Path.open
+
+                def resolve_file(path):
+                    for _ in range(5):
+                        if path not in links:
+                            return path
+                        path = Path(os.path.abspath(path.parent / links[path]))
+                    raise OSError("synthetic file-link cycle")
+
+                with mock.patch.object(Path, "is_symlink", lambda p: p in links or original_symlink(p)), \
+                     mock.patch.object(Path, "readlink", lambda p: links[p] if p in links else original_readlink(p)), \
+                     mock.patch.object(Path, "stat", lambda p, **kw: original_stat(resolve_file(p), **kw)), \
+                     mock.patch.object(Path, "open", lambda p, *a, **kw: original_open(resolve_file(p), *a, **kw)), \
+                     mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                     mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot):
+                    if layout in ("repo", "shared", "two_hops"):
+                        payload = train_adapter.digest_verification_before_load(
+                            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
+                        self.assertEqual(payload["snapshot_files"], 4)
+                        self.assertTrue(payload["weight_map_checked"])
+                        (snapshot / "config.json").write_bytes(b"bad synthetic blob")
+                        with self.assertRaisesRegex(SystemExit, "(size|digest) mismatch"):
+                            train_adapter.digest_verification_before_load(
+                                train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
+                    else:
+                        with mock.patch.object(train_adapter, "_sha256_file") as hashed:
+                            with self.assertRaisesRegex(SystemExit, "(escapes the expected directory|directory link)"):
+                                train_adapter.digest_verification_before_load(
+                                    train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
+                            hashed.assert_not_called()
+
+    def test_cache_links_refuse_unbound_layout_and_arbitrary_external_files(self):
+        for layout in ("external", "other_repo", "other_revision", "copied"):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                trusted, listing, pin = self._complete_trusted_snapshot(root)
+                repo_name = "models--Other--Model" if layout == "other_repo" else "models--Qwen--Qwen3-14B"
+                revision = "b" * 40 if layout == "other_revision" else train_adapter.WINNER_REVISION
+                repo = root / "hub" / repo_name
+                snapshot = root / "copied" if layout == "copied" else repo / "snapshots" / revision
+                snapshot.parent.mkdir(parents=True, exist_ok=True)
+                (root / "snapshot").rename(snapshot)
+                target = root / "outside" if layout == "external" else repo / "blobs" / "synthetic"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                path = snapshot / "config.json"
+                target.write_bytes(path.read_bytes())
+                path.unlink()
+                if not make_reparse_link(path, target):
+                    self.skipTest("file symlink creation is unavailable")
+                with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                     mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                     mock.patch.object(train_adapter, "_sha256_file") as digest:
+                    with self.assertRaisesRegex(SystemExit, "escapes the expected directory"):
+                        train_adapter.digest_verification_before_load(
+                            train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
+                    digest.assert_not_called()
+
+    def test_cache_file_links_refuse_directory_ancestors_even_inside_allowed_roots(self):
+        for location in ("snapshot", "blob"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "hub" / "models--Qwen--Qwen3-14B"
+                snapshot = repo / "snapshots" / train_adapter.WINNER_REVISION
+                snapshot.mkdir(parents=True)
+                blobs = repo / "blobs"
+                actual = blobs / "actual"
+                actual.mkdir(parents=True)
+                target = actual / "synthetic"
+                target.write_bytes(b"synthetic weights")
+                if location == "blob":
+                    if not make_reparse_link(blobs / "linked", actual):
+                        self.skipTest("directory link creation is unavailable")
+                    target = blobs / "linked" / "synthetic"
+                    path = snapshot / "model.safetensors"
+                    if not make_reparse_link(path, target):
+                        self.skipTest("file symlink creation is unavailable")
+                    rel = path.name
+                else:
+                    real_dir = snapshot / "actual"
+                    real_dir.mkdir()
+                    (real_dir / "model.safetensors").write_bytes(b"synthetic weights")
+                    if not make_reparse_link(snapshot / "linked", real_dir):
+                        self.skipTest("directory link creation is unavailable")
+                    rel = "linked/model.safetensors"
+                roots = train_adapter.authenticated_cache_blob_roots(
+                    snapshot, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
+                with mock.patch.object(train_adapter, "_sha256_file") as digest:
+                    with self.assertRaisesRegex(SystemExit, "directory link"):
+                        train_adapter.verify_expected_digests(snapshot, [{
+                            "path": rel, "sha256": hashlib.sha256(b"synthetic weights").hexdigest(),
+                            "size": len(b"synthetic weights"),
+                        }], blob_roots=roots)
+                    digest.assert_not_called()
+
+    def test_authenticated_snapshot_root_refuses_directory_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            actual = root / "actual"
+            actual.mkdir()
+            snapshot = root / "hub" / "models--Qwen--Qwen3-14B" / "snapshots" / train_adapter.WINNER_REVISION
+            snapshot.parent.mkdir(parents=True)
+            if not make_reparse_link(snapshot, actual):
+                self.skipTest("directory link creation is unavailable")
+            with self.assertRaisesRegex(SystemExit, "directory link"):
+                train_adapter.authenticated_cache_blob_roots(
+                    snapshot, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
+
     def test_digest_paths_cannot_escape_complete_snapshot_coverage(self):
         for name in ("../escape.bin", "/absolute.bin", "C:/escape.bin", "folder\\escape.bin"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
@@ -1163,6 +1421,7 @@ $TrustedDigestRoot = ''
             self.assertIsNone(payload["memory_pass"])
             self.assertIsNone(payload["seconds_per_microstep"])
             self.assertIsNone(payload["peak_reserved_vram_gib"])
+            self.assertEqual(payload["warmup_discarded_microsteps"], 2)
 
     def test_probe_mode_and_authoritative_matrix(self):
         def report_for(base: str, revision: str, seq_len: int) -> dict:
@@ -1328,12 +1587,14 @@ $TrustedDigestRoot = ''
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
                 FakeTrainer.seen_args = kwargs["args"].__dict__
+                self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
 
             def train(self):
                 callback = self.kwargs["callbacks"][0]
                 for epoch in range(1, self.kwargs["args"].num_train_epochs + 1):
-                    state = types.SimpleNamespace(epoch=float(epoch), global_step=epoch * 8)
-                    callback.on_epoch_end(None, state, None)
+                    self.state.epoch = float(epoch)
+                    self.state.global_step = epoch * 8
+                    callback.on_epoch_end(None, self.state, None)
                 return types.SimpleNamespace(training_loss=1.25)
 
         fake_model = FakeModel()
@@ -1366,6 +1627,8 @@ $TrustedDigestRoot = ''
                                         )
             run_dir = root / "models" / "m2-run"
             self.assertEqual(report["completed_epochs"], 3)
+            self.assertEqual(report["completed_epoch_ids"], [1, 2, 3])
+            self.assertEqual(report["trainer_epoch"], 3.0)
             self.assertEqual(report["export_ready"], True)
             self.assertEqual(report["output_dir"], str(run_dir))
             self.assertEqual(FakeTrainer.seen_args["num_train_epochs"], 3)
@@ -1389,6 +1652,116 @@ $TrustedDigestRoot = ''
             self.assertEqual(final["dir"], str(run_dir / "epoch-03"))
             self.assertEqual(final["manifest_sha256"], report["checkpoints"][-1]["manifest_sha256"])
             self.assertFalse((run_dir / "epoch-03" / "adapter_model.safetensors").samefile(run_dir / "epoch-01" / "adapter_model.safetensors"))
+
+    def test_epoch_callback_supports_handler_lifecycle_and_preserves_control(self):
+        model = mock.Mock()
+        checkpoints = []
+        callback = train_adapter.EpochLeafCallback(model, Path("unused"), checkpoints)
+        self.assertIsInstance(callback, train_adapter.TrainerCallback)
+        handler = OfflineCallbackHandler([callback], model)
+        state = types.SimpleNamespace(epoch=1.0, global_step=8)
+        control = types.SimpleNamespace(should_training_stop=False)
+        entry = {"epoch": 1, "global_step": 8, "manifest_sha256": "a" * 64}
+        with mock.patch.object(train_adapter, "write_adapter_leaf", return_value=Path("epoch-01")) as save, \
+             mock.patch.object(train_adapter, "leaf_report_entry", return_value=entry):
+            for event in ("on_init_end", "on_train_begin", "on_epoch_begin", "on_step_begin",
+                          "on_pre_optimizer_step", "on_optimizer_step", "on_substep_end",
+                          "on_step_end", "on_log", "on_evaluate", "on_predict",
+                          "on_prediction_step", "on_epoch_end", "on_save", "on_train_end"):
+                self.assertIs(handler.call_event(event, None, state, control), control)
+        save.assert_called_once()
+        self.assertEqual(checkpoints, [entry])
+
+    def _maintenance_epoch_run(self, root: Path, trainer_type, epochs: int):
+        model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION))
+
+        def save(directory):
+            Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
+            Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+
+        model.save_pretrained.side_effect = save
+        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}]
+        report_path = root / "reports" / "maintenance.json"
+        with contextlib.ExitStack() as stack:
+            for patch in (
+                mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}),
+                mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(
+                    from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                    get_peft_model=mock.Mock(return_value=model))),
+                mock.patch.object(train_adapter.torch, "cuda", mock.Mock(
+                    max_memory_reserved=mock.Mock(return_value=1 * 2**30)), create=True),
+                mock.patch.object(train_adapter, "Dataset", mock.Mock()),
+                mock.patch.object(train_adapter, "encode_rows", return_value=encoded),
+                mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None),
+                mock.patch.object(train_adapter, "SFTConfig", lambda **kw: types.SimpleNamespace(**kw)),
+                mock.patch.object(train_adapter, "SFTTrainer", trainer_type),
+            ):
+                stack.enter_context(patch)
+            return train_adapter.train([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                       None, report_path, winner=False, epochs=epochs)
+
+    def test_epoch_normal_early_return_cannot_claim_completed_partial_epoch(self):
+        for progress in (0.75, 1.75):
+            with self.subTest(progress=progress), tempfile.TemporaryDirectory() as tmp:
+                class EarlyTrainer:
+                    def __init__(self, **kwargs):
+                        self.callback = kwargs["callbacks"][0]
+                        self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
+
+                    def train(self):
+                        if progress > 1:
+                            self.state.epoch, self.state.global_step = 1.0, 8
+                            self.callback.on_epoch_end(None, self.state, None)
+                        self.state.epoch, self.state.global_step = progress, 14
+                        self.callback.on_epoch_end(None, self.state, None)
+                        return types.SimpleNamespace(training_loss=1.25)
+
+                report = self._maintenance_epoch_run(Path(tmp), EarlyTrainer, epochs=2 if progress > 1 else 1)
+                self.assertEqual(report["trainer_epoch"], progress)
+                self.assertEqual(report["completed_epoch_ids"], [1] if progress > 1 else [])
+                self.assertEqual(report["completed_epochs"], 1 if progress > 1 else 0)
+                self.assertFalse(report["export_ready"])
+                self.assertIsNone(report["final_adapter"])
+                self.assertFalse((Path(tmp) / "models" / "maintenance" / "epoch-02").exists())
+
+    def test_epoch_readiness_requires_ordered_ids_and_final_actual_progress(self):
+        for observed, final_progress in (([2, 1], 2.0), ([1, 2], 1.75), ([1, 2], None)):
+            with self.subTest(observed=observed, final=final_progress), tempfile.TemporaryDirectory() as tmp:
+                class IncompleteTrainer:
+                    def __init__(self, **kwargs):
+                        self.callback = kwargs["callbacks"][0]
+                        self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
+
+                    def train(self):
+                        for epoch in observed:
+                            self.state.epoch, self.state.global_step = float(epoch), epoch * 8
+                            self.callback.on_epoch_end(None, self.state, None)
+                        self.state.epoch = final_progress
+                        return types.SimpleNamespace(training_loss=1.25)
+
+                report = self._maintenance_epoch_run(Path(tmp), IncompleteTrainer, epochs=2)
+                self.assertEqual(report["completed_epoch_ids"], observed)
+                self.assertEqual(report["trainer_epoch"], final_progress)
+                self.assertFalse(report["export_ready"])
+                self.assertIsNone(report["final_adapter"])
+
+    def test_epoch_constructor_failure_preserves_truthful_report(self):
+        def broken_constructor(**kwargs):
+            handler = OfflineCallbackHandler(kwargs["callbacks"], kwargs["model"])
+            handler.call_event("on_init_end", kwargs["args"], types.SimpleNamespace(epoch=0.0), object())
+            raise RuntimeError("constructor failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(RuntimeError, "constructor failed"):
+                self._maintenance_epoch_run(root, broken_constructor, epochs=1)
+            payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(payload["completed_epochs"], 0)
+            self.assertEqual(payload["completed_epoch_ids"], [])
+            self.assertIsNone(payload["trainer_epoch"])
+            self.assertFalse(payload["export_ready"])
+            self.assertIsNone(payload["final_adapter"])
+            self.assertTrue((root / "models" / "maintenance").is_dir())
 
     def _scratch_leaf(self, root: Path, extra: dict[str, bytes] | None = None) -> Path:
         leaf = root / "epoch-01"
@@ -1607,6 +1980,25 @@ $TrustedDigestRoot = ''
             self.assertFalse(payload["authoritative"])
             self.assertEqual(payload["overlength_rows"], 1)
             self.assertEqual(payload["max_tokens"], seq + 1)
+
+    def test_successful_probe_reports_actual_discarded_warmup_count(self):
+        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}]
+        model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION))
+        fake_flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                             get_peft_model=mock.Mock(return_value=model))
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter, "FastLanguageModel", fake_flm), \
+             mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+             mock.patch.object(train_adapter, "encode_rows", return_value=encoded), \
+             mock.patch.object(train_adapter, "prepare_probe_examples", return_value=(encoded, "synthetic")), \
+             mock.patch.object(train_adapter, "run_probe_microsteps", return_value=(0.5, 1.0)) as steps:
+            path = Path(tmp) / "probe.json"
+            report = train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                            path, probe_rows_total=None, probe_seq_len=12)
+            steps.assert_called_once_with(model, encoded, warmup_microsteps=10,
+                                          timed_microsteps=40, gradient_accumulation=8)
+            self.assertEqual(report["warmup_discarded_microsteps"], 2)
+            self.assertEqual(json.loads(path.read_bytes())["warmup_discarded_microsteps"], 2)
 
     def test_probe_exercise_rows_use_attended_prompt_repeat(self):
         seq_len = 12

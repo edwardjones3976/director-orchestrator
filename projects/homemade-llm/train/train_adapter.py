@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -31,7 +32,7 @@ import torch  # noqa: E402
 from unsloth import FastLanguageModel  # noqa: E402
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import snapshot_download  # noqa: E402
-from transformers import set_seed  # noqa: E402
+from transformers import TrainerCallback, set_seed  # noqa: E402
 from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 import prompt_template  # noqa: E402
@@ -131,7 +132,7 @@ def _collect_snapshot_files(snapshot_dir: Path) -> list[str]:
     """
     found: list[str] = []
     for path in snapshot_dir.rglob("*"):
-        if path.is_symlink() and path.is_dir():
+        if _is_directory_link(path):
             fail("snapshot directory symlinks are not supported")
         if path.is_file():
             found.append(path.relative_to(snapshot_dir).as_posix())
@@ -151,7 +152,9 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _index_weight_map_shards(snapshot_dir: Path) -> tuple[set[str], bool]:
+def _index_weight_map_shards(
+    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (),
+) -> tuple[set[str], bool]:
     index_path = snapshot_dir / "model.safetensors.index.json"
     if not index_path.is_file():
         return set(), False
@@ -167,15 +170,48 @@ def _index_weight_map_shards(snapshot_dir: Path) -> tuple[set[str], bool]:
         # The index is attacker-controlled loading metadata; each entry must
         # stay confined to the snapshot before any membership check uses it.
         require_confined_relative_path(
-            shard, snapshot_dir, "digest index paths must be confined relative snapshot files")
+            shard, snapshot_dir, "digest index paths must be confined relative snapshot files",
+            blob_roots=blob_roots)
     return shards, True
 
 
-def require_confined_relative_path(rel: str, directory: Path, message: str) -> str:
-    """Reject absolute, escaping or non-normalized paths and reparse targets.
+def _is_directory_link(path: Path) -> bool:
+    return ((path.is_symlink() and path.is_dir())
+            or getattr(os.path, "isjunction", lambda _p: False)(path))
 
-    Normalizes and resolves against ``directory`` so a lexically clean name
-    cannot point through a symlink outside it. Returns the normalized POSIX path.
+
+def _refuse_linked_ancestors(path: Path, message: str) -> None:
+    # Inspect lexical ancestors before resolving: even an in-root directory
+    # link can conceal a different loading tree. Include the snapshot root.
+    for ancestor in (path, *path.parents):
+        if ancestor.is_symlink() or getattr(os.path, "isjunction", lambda _p: False)(ancestor):
+            fail(f"{message} (directory link escapes the expected directory): {ancestor}")
+
+
+def authenticated_cache_blob_roots(snapshot: Path, base: str, revision: str) -> tuple[Path, ...]:
+    """Grant file-link targets only for the authenticated repo/revision layout.
+
+    Copied snapshots still work, but an arbitrary directory cannot grant access
+    to a sibling blob store merely by naming it 'blobs'.
+    """
+    snapshot = Path(os.path.abspath(snapshot))
+    repo = snapshot.parent.parent
+    if (snapshot.name != revision or snapshot.parent.name != "snapshots"
+            or repo.name != "models--" + base.replace("/", "--")):
+        return ()
+    _refuse_linked_ancestors(snapshot, "authenticated snapshot")
+    return (repo / "blobs", repo.parent / "blobs")
+
+
+def require_confined_relative_path(
+    rel: str, directory: Path, message: str, *, blob_roots: tuple[Path, ...] = (),
+) -> str:
+    """Reject unsafe names and directory links; allow authenticated file blobs.
+
+    A snapshot file may link to the bound repo's blobs or shared hub blobs,
+    through at most four file links. Every hop checks directory ancestors before
+    resolution; arbitrary external targets remain refused. Adapter callers do
+    not supply blob roots and retain their original confinement.
     """
     if (not isinstance(rel, str) or not rel or "\\" in rel or ":" in rel
             or rel.startswith("/") or any(
@@ -183,13 +219,28 @@ def require_confined_relative_path(rel: str, directory: Path, message: str) -> s
                 for part in rel.split("/")
             )):
         fail(f"{message}: {rel!r}")
-    resolved = (directory / rel).resolve()
-    if not resolved.is_relative_to(directory.resolve()):
-        fail(f"{message} (resolved path escapes the expected directory): {rel!r}")
+    directory = Path(os.path.abspath(directory))
+    current = directory / rel
+    allowed = (directory, *blob_roots)
+    for hop in range(5):
+        _refuse_linked_ancestors(current.parent, message)
+        if not any(current.is_relative_to(root) and current != root for root in allowed):
+            fail(f"{message} (resolved path escapes the expected directory): {rel!r}")
+        if _is_directory_link(current):
+            fail(f"{message} (directory link escapes the expected directory): {rel!r}")
+        if not current.is_symlink():
+            break
+        if hop == 4:
+            fail(f"{message} (more than four file-link hops): {rel!r}")
+        target = current.readlink()
+        current = Path(os.path.abspath(target if target.is_absolute() else current.parent / target))
     return rel
 
 
-def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], reads: int = 2) -> dict:
+def verify_expected_digests(
+    snapshot_dir: Path, expected_files: list[dict], reads: int = 2,
+    *, blob_roots: tuple[Path, ...] = (),
+) -> dict:
     """Authenticate every snapshot file before parsing any model-loading input.
 
     A weights-only approved list is insufficient when other snapshot files are
@@ -204,7 +255,8 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
         # Absolute, '..'-bearing and reparse-escaping names are refused before
         # the duplicate, index and digest checks below can be distracted by them.
         require_confined_relative_path(
-            rel, snapshot_dir, "digest manifest paths must be confined relative snapshot files")
+            rel, snapshot_dir, "digest manifest paths must be confined relative snapshot files",
+            blob_roots=blob_roots)
         if rel in seen_paths:
             fail(f"duplicate path in digest manifest: {rel}")
         seen_paths.add(rel)
@@ -236,7 +288,10 @@ def verify_expected_digests(snapshot_dir: Path, expected_files: list[dict], read
         total_bytes += expected_size
     # The index is executable loading metadata too: do not parse it before its
     # own bytes (and every other cached file) have passed the approved hashes.
-    index_shards, weight_map_checked = _index_weight_map_shards(snapshot_dir)
+    index_shards, weight_map_checked = (
+        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots) if blob_roots
+        else _index_weight_map_shards(snapshot_dir)
+    )
     manifest_weight_set = set(manifest_weight_paths)
     if weight_map_checked:
         for shard in sorted(index_shards):
@@ -350,7 +405,8 @@ def digest_verification_before_load(
     else:
         expected_files = load_expected_digests(expected_digests_path, base, revision)
     snapshot_dir = local_snapshot_dir(base, revision)
-    return {**verify_expected_digests(snapshot_dir, expected_files), **binding}
+    blob_roots = authenticated_cache_blob_roots(snapshot_dir, base, revision) if binding else ()
+    return {**verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots), **binding}
 
 
 def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
@@ -651,6 +707,7 @@ def build_report(
     final_adapter: dict[str, Any] | None = None,
     export_ready: bool | None = None,
     output_dir: str | None = None,
+    trainer_epoch: float | None = None,
 ) -> dict[str, Any]:
     report = {
         "run": run,
@@ -671,6 +728,8 @@ def build_report(
     # Epoch-mode evidence: only completed epochs and their pinned manifests.
     if epochs is not None:
         report["completed_epochs"] = len(checkpoints or [])
+        report["completed_epoch_ids"] = [entry["epoch"] for entry in checkpoints or []]
+        report["trainer_epoch"] = trainer_epoch
         report["checkpoints"] = checkpoints or []
         report["final_adapter"] = final_adapter
         report["export_ready"] = bool(export_ready)
@@ -956,14 +1015,13 @@ def epoch_leaf_name(epoch: int) -> str:
     return f"epoch-{epoch:02d}"
 
 
-class EpochLeafCallback:
+class EpochLeafCallback(TrainerCallback):
     """Turn each finished epoch into a clean adapter-only leaf directory.
 
     The Trainer's own epoch checkpoint keeps optimizer/RNG/trainer state for
     the run; the leaf written here is export input only. Assumption to confirm
-    on the real host: the pinned transformers/peft deliver ``model`` in the
-    callback kwargs and ``save_pretrained`` writes the adapter files; if the
-    pinned versions differ, the host check adjusts this one class.
+    on the real host: the pinned peft ``save_pretrained`` writes the adapter
+    files. Inherited TrainerCallback events implement the supported lifecycle.
     """
 
     def __init__(self, model: Any, run_dir: Path, checkpoints: list[dict[str, Any]]):
@@ -971,12 +1029,26 @@ class EpochLeafCallback:
         self.run_dir = run_dir
         self.checkpoints = checkpoints
 
-    def on_epoch_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
-        epoch = max(1, int(round(state.epoch)))
+    def on_epoch_end(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+        progress = actual_trainer_epoch(state)
+        # Trainer also emits this event when stopping inside an epoch. Saving
+        # that adapter as a completed epoch would invent completion evidence.
+        if progress is None or progress < 1 or not progress.is_integer():
+            return control
+        epoch = int(progress)
         leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
         self.checkpoints.append(
             leaf_report_entry(leaf_dir, epoch=epoch, global_step=int(state.global_step))
         )
+        return control
+
+
+def actual_trainer_epoch(state: Any) -> float | None:
+    value = getattr(state, "epoch", None)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    progress = float(value)
+    return progress if math.isfinite(progress) and progress >= 0 else None
 
 
 def train(
@@ -1038,17 +1110,18 @@ def train(
     checkpoints: list[dict[str, Any]] = []
     trainer_output = str(run_dir / "trainer") if epochs is not None else str(report_path.with_suffix("")) + "-trainer"
     callbacks = [EpochLeafCallback(model, run_dir, checkpoints)] if epochs is not None else []
-    trainer = SFTTrainer(
-        model=model,
-        processing_class=tokenizer,
-        train_dataset=Dataset.from_list(encoded),
-        data_collator=collate_features,
-        args=SFTConfig(**sft_arguments(trainer_output, steps, epochs=epochs)),
-        callbacks=callbacks,
-    )
-    torch.cuda.reset_peak_memory_stats()
+    trainer = None
     export_ready = False
     try:
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            train_dataset=Dataset.from_list(encoded),
+            data_collator=collate_features,
+            args=SFTConfig(**sft_arguments(trainer_output, steps, epochs=epochs)),
+            callbacks=callbacks,
+        )
+        torch.cuda.reset_peak_memory_stats()
         result = trainer.train()
     except BaseException:
         # Evidence (leaves, partial manifests) stays in run_dir; no success record.
@@ -1059,13 +1132,16 @@ def train(
                 loss=None, wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
                 digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
                 final_adapter=None, export_ready=False, output_dir=str(run_dir),
+                trainer_epoch=actual_trainer_epoch(getattr(trainer, "state", None)),
             )
             write_report(report_path, report)
         raise
     peak = torch.cuda.max_memory_reserved() / 2**30
     if epochs is not None:
         # Truthful completion: every requested epoch saved, hashed and retained.
-        export_ready = len(checkpoints) == epochs and all(
+        progress = actual_trainer_epoch(getattr(trainer, "state", None))
+        export_ready = (progress == epochs
+                        and [entry["epoch"] for entry in checkpoints] == list(range(1, epochs + 1))) and all(
             entry["manifest_sha256"] for entry in checkpoints
         )
         final = checkpoints[-1] if checkpoints else None
@@ -1074,8 +1150,9 @@ def train(
             mask_coverage=mask_coverage, peak_reserved_gib=peak, loss=round(result.training_loss, 4),
             wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
             digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
-            final_adapter={"dir": final["dir"], "manifest_sha256": final["manifest_sha256"]} if final else None,
+            final_adapter={"dir": final["dir"], "manifest_sha256": final["manifest_sha256"]} if final and export_ready else None,
             export_ready=export_ready, output_dir=str(run_dir),
+            trainer_epoch=progress,
         )
     else:
         report = build_report(
@@ -1219,6 +1296,7 @@ def run_probe(
         sequence_length=probe_seq_len,
         sequence_length_method=sequence_length_method,
         warmup_microsteps=PROBE_WARMUP_MICROSTEPS,
+        warmup_discarded_microsteps=PROBE_WARMUP_MICROSTEPS % PROBE_GRAD_ACCUM,
         timed_microsteps=PROBE_TIMED_MICROSTEPS,
         gradient_accumulation=PROBE_GRAD_ACCUM,
         timed_optimizer_updates=timed_updates,
