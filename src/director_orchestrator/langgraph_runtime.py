@@ -429,20 +429,20 @@ class LangGraphPacketRuntime:
             self._result_store = TaskStore(str(self._legacy_database))
             self._migrate_result_payloads()
 
+    _RESULT_PAYLOAD_BATCH_LIMIT = 1000
+    _RESULT_PAYLOAD_BATCHES_PER_ACTIVATION = 1
+
     def _migrate_result_payloads(self) -> None:
-        """Move still-needed legacy content, erase reset/consumed copies before activation."""
-        # Drain the finite startup backlog in bounded transactions; each committed
-        # batch makes progress even if a later batch or checkpoint is interrupted.
-        with closing(sqlite3.connect(self._ledger_database)) as connection:
-            remaining = connection.execute(
-                "SELECT COUNT(*) FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL"
-            ).fetchone()[0]
-        while remaining > 0:
+        """Move one bounded batch of legacy content, then resume on a later activation."""
+        # Each committed batch makes progress if a later batch or checkpoint is interrupted.
+        # One activation does not drain an unbounded historical ledger.
+        for _batch in range(self._RESULT_PAYLOAD_BATCHES_PER_ACTIVATION):
             with self._transaction() as connection:
                 rows = connection.execute(
                     "SELECT idempotency_key, task_id, work_packet_json, result_packet_json, "
                     "work_packet_digest, result_packet_digest, assignment_id, provider, authority_snapshot_digest "
-                    "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1000"
+                    "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT ?",
+                    (self._RESULT_PAYLOAD_BATCH_LIMIT,),
                 ).fetchall()
                 if not rows:
                     break
@@ -468,7 +468,8 @@ class LangGraphPacketRuntime:
                             self._result_store.save_runtime_result(result, encoded)
                     connection.execute(
                         "UPDATE runtime_dispatch_ledger SET result_packet_json=NULL WHERE idempotency_key=?", (key,))
-            remaining -= len(rows)
+            if len(rows) < self._RESULT_PAYLOAD_BATCH_LIMIT:
+                break
         # Legacy writers may have left copies in WAL frames. Refuse activation
         # until those frames can be truncated; never claim logical deletion is physical cleanup.
         with closing(sqlite3.connect(self._ledger_database, timeout=0.2)) as connection:

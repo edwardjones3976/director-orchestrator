@@ -1288,6 +1288,19 @@ class TaskStore:
         ):
             self._mark_privacy_cleanup_pending(connection)
 
+    @staticmethod
+    def _packet_plan_generation(work: dict) -> int | None:
+        """Return the generation encoded in a production idempotency key, if any."""
+        task_id = str(work["task_id"])
+        key = str(work["idempotency_key"])
+        prefix = f"{task_id}:"
+        if not key.startswith(prefix):
+            return None
+        generation, separator, _rest = key[len(prefix):].partition(":")
+        if not separator or not generation.isascii() or not generation.isdigit():
+            return None
+        return int(generation)
+
     def reserve_runtime_result(self, work: dict) -> None:
         """Bind recovery storage before I/O; a reset deletes this authority too."""
         with self._connect() as connection:
@@ -1298,6 +1311,9 @@ class TaskStore:
             correlation = work["correlation"]["correlation_id"]
             if not record.get("plan") or correlation in record.get("consumed_packet_results", {}):
                 raise ValueError("packet recovery storage has no current unconsumed task")
+            claimed = self._packet_plan_generation(work)
+            if claimed is not None and claimed != record["plan_generation"]:
+                raise ValueError("packet recovery storage generation is stale")
             expected = (work["task_id"], record["plan_generation"], correlation, 0)
             existing = connection.execute(
                 "SELECT task_id, plan_generation, correlation_id, closed FROM runtime_result_payloads "
