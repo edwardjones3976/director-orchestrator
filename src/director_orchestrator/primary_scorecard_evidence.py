@@ -1534,7 +1534,7 @@ def workload_journal_pin(descriptor):
     value = descriptor.get("workload_journal") if isinstance(descriptor, dict) else None
     if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
             or not isinstance(value, str) or not value or len(value) > 1024 or chr(0) in value
-            or value[:2].replace("\\", "/") == "//" or not os.path.isabs(value)):
+            or value.startswith("\\") or value[:2].replace("\\", "/") == "//" or not os.path.isabs(value)):
         return None
     return Path(value)
 

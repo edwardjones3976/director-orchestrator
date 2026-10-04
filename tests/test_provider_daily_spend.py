@@ -259,19 +259,53 @@ class ProviderDailySpendLedgerTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     ledger.record_charge(provider=ProviderName.GROK, effect_key=probe, actual_cost_usd=bad)
 
-    def test_non_numeric_persisted_charge_is_unreconciled_and_counts_its_estimate(self):
+    def test_malformed_persisted_charge_stays_outstanding_and_reserves_capacity(self):
         import sqlite3
         from contextlib import closing
         from datetime import timedelta
+        now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        for actual in ("unpriced", float("inf"), -0.1):
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as directory:
+                ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+                key = "a" * 64
+                ledger.reserve(provider=ProviderName.GEMINI, effect_key=key, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0, now=now)
+                ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key, actual_cost_usd=None, now=now)
+                with closing(sqlite3.connect(ledger.path)) as connection, connection:
+                    if actual == -0.1:
+                        # Model a legacy/corrupt persisted row without changing production constraints.
+                        connection.execute("CREATE TABLE charge_copy AS SELECT * FROM provider_daily_spend_reservations")
+                        connection.execute("DROP TABLE provider_daily_spend_reservations")
+                        connection.execute("ALTER TABLE charge_copy RENAME TO provider_daily_spend_reservations")
+                    connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?", (actual,))
+                self.assertEqual(ledger.unreconciled(ProviderName.GEMINI, stale_after=timedelta(0), now=now), [key])
+                self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=now), (1, 0.75))
+                with self.assertRaises(ProviderDailyLimitExceeded):
+                    ledger.reserve(provider=ProviderName.GEMINI, effect_key="b" * 64, estimated_cost_usd=0.5,
+                                   request_limit=10, budget_usd=1.0, now=now)
+                tomorrow = now + timedelta(days=1)
+                self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=tomorrow), (0, 0.0))
+                self.assertEqual(ledger.unreconciled(
+                    ProviderName.GEMINI, stale_after=timedelta(0), now=tomorrow), [key])
+
+    def test_valid_null_unresolved_and_released_charges_keep_their_meaning(self):
+        from datetime import timedelta
+        now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as directory:
             ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
-            key = "a" * 64
-            ledger.reserve(provider=ProviderName.GROK, effect_key=key, estimated_cost_usd=0.75,
-                           request_limit=10, budget_usd=1.0)
-            with closing(sqlite3.connect(ledger.path)) as connection, connection:
-                connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = 'unpriced'")
-            self.assertEqual(ledger.unreconciled(ProviderName.GROK, stale_after=timedelta(0)), [key])
-            self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 0.75))
+            for key, actual in (("a", 0.0), ("b", 0.2), ("c", None), ("d", 0.0), ("e", None)):
+                ledger.reserve(provider=ProviderName.GEMINI, effect_key=key * 64, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=10.0, now=now)
+                if key != "e":
+                    ledger.record_charge(provider=ProviderName.GEMINI, effect_key=key * 64,
+                                         actual_cost_usd=actual, request_exists=key != "d", now=now)
+            ledger.release_not_created(provider=ProviderName.GEMINI, effect_key="d" * 64)
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI, now=now), (4, 1.7))
+            self.assertEqual(ledger.unreconciled(
+                ProviderName.GEMINI, stale_after=timedelta(hours=1), now=now), ["c" * 64])
+            self.assertEqual(set(ledger.unreconciled(
+                ProviderName.GEMINI, stale_after=timedelta(hours=1), now=now + timedelta(hours=2))),
+                {"c" * 64, "e" * 64})
 
     def test_concurrent_reservations_cannot_both_pass_the_reconciled_cap(self):
         """Two admissions racing for the last $0.40 under a $1 cap (exposure $0.60): exactly one is admitted."""

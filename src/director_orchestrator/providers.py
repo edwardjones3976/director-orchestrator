@@ -62,6 +62,10 @@ from .process_isolation import ProcessContainmentError, launch_contained_process
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
+_VALID_ACTUAL_CHARGE = (
+    "typeof(actual_cost_usd) IN ('real', 'integer') "
+    "AND actual_cost_usd >= 0 AND actual_cost_usd < 9e999"
+)
 
 
 class ProviderError(RuntimeError):
@@ -241,8 +245,8 @@ class ProviderDailySpendLedger:
         transaction, so reserve() compares and inserts under one BEGIN IMMEDIATE write lock."""
 
         count, exposure = connection.execute(
-            """SELECT COUNT(*),
-                      COALESCE(SUM(CASE WHEN typeof(actual_cost_usd) IN ('real', 'integer')
+            f"""SELECT COUNT(*),
+                      COALESCE(SUM(CASE WHEN {_VALID_ACTUAL_CHARGE}
                                         THEN actual_cost_usd ELSE estimated_cost_usd END), 0)
             FROM provider_daily_spend_reservations
             WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
@@ -364,8 +368,8 @@ class ProviderDailySpendLedger:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
-                WHERE provider = ? AND typeof(actual_cost_usd) NOT IN ('real', 'integer') AND released_at IS NULL""",
+                f"""SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
+                WHERE provider = ? AND NOT ({_VALID_ACTUAL_CHARGE}) AND released_at IS NULL""",
                 (provider.value,),
             ).fetchall()
         return [str(key) for key, settled_at, recorded_at in rows

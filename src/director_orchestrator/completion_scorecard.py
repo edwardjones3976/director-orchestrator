@@ -103,6 +103,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
@@ -3620,13 +3621,19 @@ def _compare_status(base: str, head: str) -> str:
 def _journal_pinned(path: Path) -> bool:
     """Whether ``path`` is the one journal the owner's descriptor pins, reached without a link (#287 item 35)."""
     pin = workload_journal_pin(cli_release_descriptor())
-    # ponytail: check-then-open race remains because the ledger reopens the path; upgrade to open once and verify the handle.
     try:
-        return (pin is not None and not path.is_symlink() and not pin.is_symlink()
-                and os.path.normcase(os.path.realpath(pin)) == os.path.normcase(os.path.normpath(pin))
-                and os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.normpath(path))
-                and os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.realpath(pin)))
-    except OSError:
+        if pin is None:
+            return False
+        for candidate in (pin, path):
+            if str(candidate).startswith(("\\", "//")) or not candidate.is_absolute():
+                return False
+            for component in (*reversed(candidate.parents), candidate):
+                info = os.lstat(component)
+                if (stat.S_ISLNK(info.st_mode)
+                        or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                    return False
+        return os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(pin))
+    except (OSError, ValueError):
         return False
 
 
@@ -3795,10 +3802,25 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
     elif ledger_path is not None:
         try:
             started = datetime.now(timezone.utc)
-            result.extend(since(started, list(_workload_observation(ledger_path, collection_end()))))
+            # Windows keeps this handle open without delete sharing, blocking rename/delete during the read.
+            # POSIX permits swap-and-swap-back between checks; upgrade the ledger to read the held handle
+            # (and bind its SQLite sidecars) before claiming protection against that stronger race.
+            with ledger_path.open("rb") as journal:
+                held_stat = os.fstat(journal.fileno())
+                identity = (held_stat.st_dev, held_stat.st_ino)
+                before = os.stat(ledger_path)
+                if (not stat.S_ISREG(held_stat.st_mode) or not _journal_pinned(ledger_path)
+                        or identity != (before.st_dev, before.st_ino)):
+                    raise ValueError("workload journal identity changed before read")
+                observations = list(_workload_observation(ledger_path, collection_end()))
+                after = os.stat(ledger_path)
+                if not _journal_pinned(ledger_path) or identity != (after.st_dev, after.st_ino):
+                    raise ValueError("workload journal identity changed during read")
+            result.extend(since(started, observations))
         except _SOURCE_ERRORS:
-            result.extend(_observation(key, None, "The assignment journal could not be verified; no retry was made.",
-                                       str(ledger_path.resolve()), {}, at) for key in ("13", "14"))
+            result.extend(_observation(key, None, "The assignment journal path or held-file identity could not be "
+                                       "verified across the read; no retry was made.",
+                                       str(ledger_path), {}, at) for key in ("13", "14"))
     if security_scan_id is not None:
         try:
             started = datetime.now(timezone.utc)

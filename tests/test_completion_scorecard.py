@@ -3400,10 +3400,69 @@ class WorkloadJournalPinTests(unittest.TestCase):
                     self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
                     self.assertIn("pins as the deployment's workload journal", row(report, "13")["explanation"])
 
-    def test_unc_workload_journal_pin_is_rejected(self):
+    def test_nonlocal_workload_journal_namespaces_are_rejected(self):
         from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
-        self.assertIsNone(sc.workload_journal_pin({"version": CLI_RELEASE_DESCRIPTOR_VERSION,
-                                                 "workload_journal": r"\\server\share\j.sqlite3"}))
+        for value in (r"\\?\C:\journal.sqlite3", r"\\.\C:\journal.sqlite3",
+                      "//?/C:/journal.sqlite3", "//./C:/journal.sqlite3",
+                      "//server/share/j.sqlite3", r"\\server\share\j.sqlite3", r"\server\share\j.sqlite3"):
+            with self.subTest(value=value):
+                self.assertIsNone(sc.workload_journal_pin({
+                    "version": CLI_RELEASE_DESCRIPTOR_VERSION, "workload_journal": value}))
+                report, reads = self.collect(Path(value), {"workload_journal": value})
+                self.assertEqual(reads, 0)
+                self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows junctions only")
+    def test_a_pinned_journal_with_a_junction_parent_is_not_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent, link = Path(folder) / "parent", Path(folder) / "junction"
+            parent.mkdir()
+            (parent / "journal.sqlite3").write_bytes(b"")
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(parent)],
+                                  capture_output=True, check=False)
+            if made.returncode:
+                self.skipTest("junction creation is not permitted")
+            try:
+                journal = link / "journal.sqlite3"
+                report, reads = self.collect(journal, {"workload_journal": str(journal)})
+                self.assertEqual(reads, 0)
+                self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+            finally:
+                link.rmdir()
+
+    def test_ordinary_pinned_journal_is_read_and_substitution_voids_both_checks(self):
+        from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            journal = Path(folder) / "journal.sqlite3"
+            ledger_fixture(journal)
+            document = {"version": CLI_RELEASE_DESCRIPTOR_VERSION, "workload_journal": str(journal)}
+            with patch.object(sc, "cli_release_descriptor", return_value=document), \
+                    patch.object(sc, "_run_json", side_effect=ValueError("offline")):
+                report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=journal), now=NOW)
+                self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["PASS", "PASS"])
+                read, real_stat = sc._workload_observation, os.stat
+                changed = False
+
+                def substituted_stat(path, *args, **kwargs):
+                    info = real_stat(path, *args, **kwargs)
+                    if changed and Path(path) == journal:
+                        from types import SimpleNamespace
+                        return SimpleNamespace(st_dev=info.st_dev, st_ino=info.st_ino + 1)
+                    return info
+
+                def substitute_during_read(*args):
+                    nonlocal changed
+                    observations = read(*args)
+                    changed = True
+                    return observations
+
+                # Simulate a substituted identity: Windows's held handle blocks an actual os.replace.
+                with patch.object(sc, "_workload_observation", side_effect=substitute_during_read), \
+                        patch.object(sc.os, "stat", side_effect=substituted_stat):
+                    report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=journal), now=NOW)
+                self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+                self.assertIn("held-file identity", row(report, "13")["explanation"])
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links are not available")
     def test_a_pinned_journal_with_a_linked_parent_is_not_pinned(self):
@@ -6223,6 +6282,43 @@ class ScorecardCollectorTests(unittest.TestCase):
     def ledger_report(self, path):
         with patch.object(sc, "_run_json", side_effect=ValueError("offline")):
             return sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+
+    def test_malformed_persisted_charge_reaches_monitor_and_check_15(self):
+        import sqlite3
+        from contextlib import closing
+        from director_orchestrator.config import Settings
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import TaskStore
+        from director_orchestrator.usage import UsageMonitor
+
+        for actual in ("unpriced", float("inf"), -0.1):
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as folder:
+                store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+                ledger = ProviderDailySpendLedger(store.path)
+                ledger.reserve(provider=ProviderName.GEMINI, effect_key="a" * 64, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0, now=NOW)
+                ledger.record_charge(provider=ProviderName.GEMINI, effect_key="a" * 64,
+                                     actual_cost_usd=None, now=NOW)
+                with closing(sqlite3.connect(store.path)) as connection, connection:
+                    if actual == -0.1:
+                        # Only this test copy bypasses the production CHECK.
+                        connection.execute("CREATE TABLE charge_copy AS SELECT * FROM provider_daily_spend_reservations")
+                        connection.execute("DROP TABLE provider_daily_spend_reservations")
+                        connection.execute("ALTER TABLE charge_copy RENAME TO provider_daily_spend_reservations")
+                    connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?", (actual,))
+                settings = dataclasses.replace(Settings(), gemini_daily_budget_usd=1.0, gemini_daily_request_limit=10)
+                monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: object()})
+                daily = monitor._daily_accounting("gemini", NOW)
+                self.assertEqual(daily["provider_request_count"], 1)
+                self.assertGreater(daily["unreconciled_request_count"], 0)
+                self.assertEqual(daily["exposure_usd"], 0.75)
+                world = self.world(evaluate_rules=True)
+                self.assertEqual(world.state("15"), "PASS")
+                world.payload["usage_monitor"]["providers"].append("gemini")
+                world.payload["usage_monitor"]["daily_accounting"]["gemini"] = daily
+                self.assertEqual(world.state("15"), "UNKNOWN")
+                self.assertIn("no recorded actual charge", row(world.report(), "15")["explanation"])
 
     def test_ledger_bounds_14(self):
         self.assertEqual(row(sc.score(SHA, now=NOW), "14")["scope"], "coordination")
