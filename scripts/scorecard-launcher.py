@@ -17,7 +17,9 @@ adding only the archived ``src`` to its installed standard-library and site-pack
 This launch executes no working-checkout code. Candidates can execute their own copies;
 only reports verified against the owner-local receipt count. Git itself is trusted. Standard library only.
 """
+import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -204,6 +206,45 @@ def _reject_git_metadata(repo: Path) -> None:
     raise ValueError("grafts metadata is not permitted")
 
 
+def _publish_html(tree: Path, report: dict, arguments: list[str]) -> None:
+    """Publish the human view from the archived renderer after JSON sealing.
+
+    The output selector is the user's CLI argument, never a path in the report.
+    JSON/receipt verification stays unchanged; HTML is not an evidence format.
+    Legacy evaluators without an HTML renderer remain runnable at their exact
+    owner pin and are not modified by a newer installed launcher.
+    """
+    renderer = tree / "src" / "director_orchestrator" / "scorecard_html.py"
+    if not renderer.is_file():
+        return
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--output-dir", type=Path)
+    output, _ = parser.parse_known_args(arguments)
+    if output.output_dir is None:
+        return
+    json_path = output.output_dir / "completion-scorecard.json"
+    saved = json.loads(json_path.read_bytes())
+    if not report_is_attested(saved) or report_digest(saved) != report_digest(report):
+        raise ValueError("the saved JSON does not match the sealed report")
+    spec = importlib.util.spec_from_file_location("scorecard_html", renderer)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    document = module.render_html(saved)
+    if not report_is_attested(saved):
+        raise ValueError("the completed JSON receipt no longer verifies")
+    destination = output.output_dir / "completion-scorecard.html"
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                         dir=output.output_dir, prefix=".scorecard-", suffix=".html", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(document)
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def launch(repo: Path, arguments: list[str], descriptor: Path | None = None) -> int:
     descriptor = descriptor or release_descriptor()
     read = read_descriptor(descriptor)
@@ -279,7 +320,10 @@ def launch(repo: Path, arguments: list[str], descriptor: Path | None = None) -> 
                 return _refuse(UNATTESTED)
             receipt["report_sha256"] = report_digest(report)
             receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            _publish_html(tree, report, arguments)
         except (OSError, ValueError, TypeError):
+            receipt["report_sha256"] = "INVALID"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
             return _refuse(UNATTESTED)
         return 0
 

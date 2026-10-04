@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Project rollout packet · Director Orchestrator</title>
+<link rel="stylesheet" href="../../assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../../index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../../../README.html">Overview</a><a href="../../index.html">All documents</a><a href="../../project-leadership.html">Leadership</a><a href="../../provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#project-and-deployment-identity">Project and deployment identity</a></li><li class="top"><a href="#allowlists-and-execution-boundaries">Allowlists and execution boundaries</a></li><li class="top"><a href="#slack-isolation">Slack isolation</a></li><li class="top"><a href="#provider-and-workflow-readiness">Provider and workflow readiness</a></li><li class="top"><a href="#activation-evidence">Activation evidence</a></li><li class="top"><a href="#communication-fallback">Communication fallback</a></li><li class="top"><a href="#rollback">Rollback</a></li><li class="top"><a href="#disposition">Disposition</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
+<h1 id="project-rollout-packet">Project rollout packet</h1>
+<p>Create this packet whenever the owner presents a project to the Director. It
+records the project-specific deployment boundary even when the project remains
+analysis-only. Unknown or unavailable live identities stay <code>pending</code>; they are
+never borrowed from another deployment.</p>
+<p>Do not place secret values, credentials, tokens, private keys, or raw private
+source in this packet. Record only approved secret references and readiness
+status. The project profile, owner-authored work order, runtime allowlists, and
+deterministic gates remain authoritative.</p>
+<h2 id="project-and-deployment-identity">Project and deployment identity</h2>
+<ul>
+<li><strong>Project ID/name:</strong> &lt;stable ID and name&gt;</li>
+<li><strong>Repository/ref/worktree:</strong> &lt;exact values or analysis-only&gt;</li>
+<li><strong>Deployment intent:</strong> &lt;analysis_only | planned | live&gt;</li>
+<li><strong>Concurrent with other active Director deployments:</strong> &lt;true | false | unknown&gt;</li>
+<li><strong>Deployment profile:</strong> &lt;ignored environment-file name or not_created&gt;</li>
+<li><strong>Compose namespace:</strong> &lt;project-specific namespace or not_created&gt;</li>
+<li><strong>State namespace:</strong> &lt;project-specific database/volume/checkpoint namespace or not_created&gt;</li>
+<li><strong>Ports and volumes:</strong> &lt;project-specific values or not_created&gt;</li>
+</ul>
+<h2 id="allowlists-and-execution-boundaries">Allowlists and execution boundaries</h2>
+<ul>
+<li><strong>Project allowlist:</strong> &lt;exact project ID or pending&gt;</li>
+<li><strong>Repository allowlist:</strong> &lt;exact owner/name or pending&gt;</li>
+<li><strong>Starting-ref allowlist:</strong> &lt;durable ref or pending&gt;</li>
+<li><strong>Data classification:</strong> &lt;public | private | sensitive | mixed | none | unknown&gt;</li>
+<li><strong>External effects:</strong> &lt;analysis_only or exact owner-authorized effects&gt;</li>
+<li><strong>Paid execution:</strong> &lt;disabled | owner-authorized and gated&gt;</li>
+<li><strong>Automerge/deployment/publication:</strong> &lt;disabled or exact gated authority&gt;</li>
+</ul>
+<h2 id="slack-isolation">Slack isolation</h2>
+<ul>
+<li><strong>Workspace ID:</strong> &lt;exact ID or pending&gt;</li>
+<li><strong>Slack owner-user allowlist reference:</strong> &lt;ignored-profile or secret-store
+reference, or a non-reversible verification digest; exact IDs stay in the
+ignored deployment profile&gt;</li>
+<li><strong>Runtime channel allowlist:</strong> &lt;exact project channel ID(s) or pending&gt;</li>
+<li><strong>Dedicated Slack app display name:</strong> &lt;project-specific name or pending&gt;</li>
+<li><strong>Slack app ID:</strong> &lt;exact ID or pending&gt;</li>
+<li><strong>Slack bot user ID:</strong> &lt;exact ID or pending&gt;</li>
+<li><strong>Slack app manifest SHA-256:</strong> &lt;64-hex digest or pending&gt;</li>
+<li><strong>Installation status:</strong> &lt;not_created | created | installed | verified&gt;</li>
+<li><strong>Socket Mode status:</strong> &lt;disabled | configured | verified&gt;</li>
+<li><strong>Dedicated project channel ID:</strong> &lt;exact ID or pending&gt;</li>
+<li><strong>Bot membership:</strong> &lt;not_invited | invited | verified&gt;</li>
+<li><strong>App-token secret reference:</strong> <code>SLACK_APP_TOKEN</code> in the ignored deployment profile</li>
+<li><strong>Bot-token secret reference:</strong> <code>SLACK_BOT_TOKEN</code> in the ignored deployment profile</li>
+<li><strong>Concurrent-deployment collision check:</strong> &lt;pending | passed | not_applicable&gt;</li>
+</ul>
+<p>Every concurrently active deployment requires a distinct Slack app, a distinct
+project channel, and a distinct deployment profile/state namespace. A missing,
+reused, or unverified identity permits analysis-only shaping but blocks Slack
+gateway activation. Never copy token values into this packet or reuse another
+deployment's Slack app, channel, credentials, profile, database, volume, or
+checkpoint namespace.</p>
+<h2 id="provider-and-workflow-readiness">Provider and workflow readiness</h2>
+<ul>
+<li><strong>Providers enabled:</strong> &lt;provider names and readiness only&gt;</li>
+<li><strong>Budget and timeout:</strong> &lt;bounded values&gt;</li>
+<li><strong>n8n/workflow identity:</strong> &lt;project-specific workflow ID or not_applicable&gt;</li>
+<li><strong>Callback and internal-secret status:</strong> &lt;configured | pending; references only&gt;</li>
+<li><strong>Usage-monitor status:</strong> &lt;disabled | configured | verified&gt;</li>
+</ul>
+<h2 id="activation-evidence">Activation evidence</h2>
+<ul>
+<li><strong>Profile collision check:</strong> &lt;evidence or pending&gt;</li>
+<li><strong>Slack app/channel verification:</strong> &lt;evidence or pending&gt;</li>
+<li><strong>Off-channel event rejection:</strong> &lt;event ID and no-consumption evidence or pending&gt;</li>
+<li><strong>Non-owner event rejection:</strong> &lt;event ID and no-consumption evidence or pending&gt;</li>
+<li><strong>Replayed event handling:</strong> &lt;event ID and idempotent/no-duplicate evidence or pending&gt;</li>
+<li><strong>Cross-deployment isolation:</strong> &lt;proof no other active deployment consumed or persisted the event&gt;</li>
+<li><strong>Paid-disabled health check:</strong> &lt;endpoint/run and result or pending&gt;</li>
+<li><strong>Slack intake dry run:</strong> &lt;correlation ID and result or pending&gt;</li>
+<li><strong>n8n route check:</strong> &lt;workflow ID/run and result or not_applicable&gt;</li>
+<li><strong>Provider checks:</strong> &lt;provider/run IDs and terminal results or pending&gt;</li>
+<li><strong>Restart/recovery check:</strong> &lt;result or pending&gt;</li>
+<li><strong>Exact configuration identity:</strong> &lt;commit/digest or pending&gt;</li>
+</ul>
+<p>Activation may proceed only through the owner-authorized gates recorded in the
+project profile. Evidence is recorded without secret values.</p>
+<h2 id="communication-fallback">Communication fallback</h2>
+<p>Each Slack delivery obeys its immutable assignment-specific <code>retry_limit</code> of
+exactly 3. Stop on success. Recovery requires temporary failure; a third attempt requires materially new information or substantially different transport, with remaining resource budget. Never retry an ambiguous Slack side
+effect; reconcile it first. When the bounded route is exhausted, use
+the same project's prior durable communication path—SQLite/API task state and
+provider-native run/session evidence. Do not borrow another deployment's Slack
+app, channel, thread, credentials, profile, or state namespace as a fallback.</p>
+<h2 id="rollback">Rollback</h2>
+<ul>
+<li><strong>Stop command or action:</strong> &lt;bounded project-specific action&gt;</li>
+<li><strong>Configuration rollback:</strong> &lt;prior profile/config identity&gt;</li>
+<li><strong>State restore:</strong> &lt;project-specific database/volume/checkpoint procedure&gt;</li>
+<li><strong>Slack rollback:</strong> &lt;disable only this deployment's gateway/app connection&gt;</li>
+<li><strong>Evidence retained:</strong> &lt;task IDs, run IDs, logs, backups, and exact identities&gt;</li>
+</ul>
+<h2 id="disposition">Disposition</h2>
+<ul>
+<li><strong>Current state:</strong> &lt;analysis_only | blocked | ready for dry run | active | paused&gt;</li>
+<li><strong>Blocking fields:</strong> &lt;pending identities/evidence or none&gt;</li>
+<li><strong>Next responsible party:</strong> &lt;Director | provider | owner | deterministic gate&gt;</li>
+<li><strong>Next bounded action:</strong> &lt;one action&gt;</li>
+</ul>
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

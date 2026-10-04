@@ -14,7 +14,7 @@
   "ledger_series_id": "gate-series-DIR-COMPLETION-EXAMPLE-1",
   "ledger_id": "gate-ledger-DIR-COMPLETION-EXAMPLE-1-r2",
   "ledger_revision": 2,
-  "ledger_digest": "sha256:fcd2e76eb4df0fa10c116bf1f69cfa869e361fffbc2bf55fcb9a4416a0e30a1c",
+  "ledger_digest": "sha256:17ec72557cdd165cf3c344420c84749be859e9a2b5ce0dbafde41e646af25998",
   "ledger_state": "HEAD_BOUND",
   "expected_head_sha": "2222222222222222222222222222222222222222",
   "gate_id": "director.contract-tests",
@@ -130,5 +130,5 @@
     "secret_finding_count": 0,
     "secret_finding_categories": []
   },
-  "result_digest": "sha256:4071446c482c8b6e242dad58c689a6b02fb18b60029181e5d6bc395502f819b6"
+  "result_digest": "sha256:7ec4199c33fb590f70bbc1100352dc96902651ea86d3aa10c8fa522b18c3ef77"
 }

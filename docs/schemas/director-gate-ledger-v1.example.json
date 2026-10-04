@@ -30,7 +30,7 @@
     }
   ],
   "path_scope": [
-    "docs/director-completion-gates.md",
+    "docs/director-completion-gates.html",
     "docs/schemas",
     "tests/test_completion_gate_contracts.py"
   ],
@@ -172,5 +172,5 @@
     }
   ],
   "producer_added_gates": [],
-  "ledger_digest": "sha256:fcd2e76eb4df0fa10c116bf1f69cfa869e361fffbc2bf55fcb9a4416a0e30a1c"
+  "ledger_digest": "sha256:17ec72557cdd165cf3c344420c84749be859e9a2b5ce0dbafde41e646af25998"
 }

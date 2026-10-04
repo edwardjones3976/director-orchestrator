@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Historical review-handoff correction, 2026-09-09 · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#8-review-handoff--the-directors-job-corrected">8. Review handoff — the Director&#x27;s job, corrected</a></li><li class="sub"><a href="#the-ordinary-flow">The ordinary flow</a></li><li class="sub"><a href="#the-route-which-does-exist">The route, which does exist</a></li><li class="sub"><a href="#a-systemic-ci-defect-that-will-hit-any-branch-behind-main">A systemic CI defect that will hit any branch behind main</a></li><li class="sub"><a href="#handoff-issued-for-this-delivery">Handoff issued for this delivery</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
+<blockquote>
+<p><strong>Historical record restored on 2026-09-12.</strong> The observations and corrections below
+describe the author's 2026-09-09 session. They are not a current health check,
+route qualification, allocation decision, authorization, or activation receipt.
+Retained Microsoft 365 references describe the retired historical deployment;
+PR #161 retired that integration. Current authority is the
+<a href="team-operating-charter.html">team operating charter</a>,
+<a href="provider-allocation-profiles.html">provider allocation profiles</a>, and
+<a href="langgraph-primary-operations.html">LangGraph primary operations</a>.
+Verify current state through the <a href="state-witness.html">Witness Ledger</a> rather
+than treating a historical readiness claim as evidence of today's deployment.</p>
+</blockquote>
+<h1 id="historical-review-handoff-correction-2026-09-09">Historical review-handoff correction, 2026-09-09</h1>
+<p>Preserved from PR #167, commit <code>4324744701c867791f7d9ea7bf0523273c8aaa5d</code>,
+Claude Cowork / Claude Opus 5 material. The excerpt is retained as history with editorial corrections for current merge authority.
+Its owner-only push/merge language and two-artifact request are superseded by
+owner-authorized execution and the current one-author/one-non-author-reviewer
+protocol (merged PRs #178 and #179). A Slack identity or relay post does not
+prove that an autonomous provider received or completed an assignment. Use the
+current contribution checker and real CI result, not the historical diagnosis
+below, when assessing attribution. The ordinary review-candidate and activation
+acceptance artifacts remain distinct.</p>
+<h2 id="8-review-handoff--the-directors-job-corrected">8. Review handoff — the Director's job, corrected</h2>
+<p><strong>Correction, 2026-09-09.</strong> Earlier revisions told the owner to &quot;request the two
+ACCEPT artifacts.&quot; That was wrong: <code>docs/slack-collaboration-bus.html</code> and
+<code>review_handoff.py</code> assign review orchestration to the <strong>Director</strong>. The Director seeks the reviewer. The accepting non-author reviewer performs an
+eligible authorized merge; otherwise the action stops for owner authorization.</p>
+<h3 id="the-ordinary-flow">The ordinary flow</h3>
+<pre><code>producer authors  →  Director builds director_review_candidate/v1
+                  →  Director binds a reviewer assignment and relays it on the bus
+                  →  independent provider returns exactly one verdict
+                        ACCEPT              → eligibility and authorization checked → accepting non-author reviewer merges
+                        CHANGES_REQUIRED    → returns to author with correction notes → revise
+                        SERIOUS_SAFETY_STOP → stops
+</code></pre>
+<p>Two artifacts are <strong>not</strong> interchangeable: <code>director_review_candidate/v1</code> is the
+ordinary review handoff; <code>director-activation-review/v1</code> is the control script's
+activation acceptance. Conflating them was a separate Director error.</p>
+<p><code>ReviewCandidateArtifact</code> requires the logical producer to appear in
+<code>material_authors</code>, a <code>pull_number ≥ 1</code>, exact 40-hex base and head SHAs, changed
+files, tests, limitations, acceptance checks, security context, and a digest over
+the canonical contents. <strong>A pull request must therefore exist before a valid
+handoff can be built.</strong> The freshness rule is absolute: review only that exact
+base/head pair and digest; any new commit invalidates the review and every
+downstream security, CI and merge evidence item.</p>
+<p>Bus constraints: at most three delivery attempts with a stable client message ID;
+no raw provider output, credentials, secret-shaped values or raw private source
+in the relay; ordinary review-to-merge closes in at most five major orchestration
+actions; revision loops are capped.</p>
+<h3 id="the-route-which-does-exist">The route, which does exist</h3>
+<p><code>#project-director</code> carries four provider identities — Claude, Cursor, ChatGPT
+and Codex — plus Linear and GitHub. An earlier Director session ran this exact
+loop there on 2026-09-08. An earlier revision of this matrix said the Director
+held no way to reach a fellow provider; that was wrong, and the authorized
+<code>slack-collaboration-relay</code> route is the way.</p>
+<h3 id="a-systemic-ci-defect-that-will-hit-any-branch-behind-main">A systemic CI defect that will hit any branch behind <code>main</code></h3>
+<p>Recorded on the bus 2026-09-08 and confirmed as applying to this delivery's own
+candidate. The contribution-attribution job diffs <code>pull_request.base.sha</code>..<code>head</code>,
+so once <code>main</code> moves ahead the range includes files the branch never touched,
+which carry no fresh tag pair from this author. <strong>Rebase onto current <code>main</code>
+before opening the pull request.</strong> Two traps: <code>gh run rerun</code> replays the stored
+webhook payload, so re-running never sees a corrected body; and a body edit does
+not re-trigger CI, because <code>on: pull_request</code> carries no <code>types:</code> filter. The PR
+body needs <strong>bold</strong> contribution tags as its first and last visible lines — plain
+<code>[[...]]</code> is not recognized and reports the misleading &quot;envelope lacks one
+matching BEGIN/END pair.&quot;</p>
+<h3 id="handoff-issued-for-this-delivery">Handoff issued for this delivery</h3>
+<p><code>DIR-2026-09-09-DOCS-01</code>, posted to <code>#project-director</code> 2026-09-09. Producer
+Claude, sole material author, therefore ineligible to review or accept. Reviewer
+Cursor; ChatGPT/Codex alternate; Claude explicitly unassigned. Blocked on the
+pull request existing, which needs an owner push.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>No receipt, no state: the Witness Ledger · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#the-rule">The rule</a></li><li class="top"><a href="#the-four-enforced-properties">The four enforced properties</a></li><li class="top"><a href="#cost">Cost</a></li><li class="top"><a href="#not-in-this-version">Not in this version</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:34 UTC | BEGIN]] -->
+<h1 id="no-receipt-no-state-the-witness-ledger">No receipt, no state: the Witness Ledger</h1>
+<p>Adopted 2026-09-12 from the four-design, three-judge panel recorded in the
+good-test-run standard. Module: <code>src/director_orchestrator/state_witness.py</code>.</p>
+<h2 id="the-rule">The rule</h2>
+<p>An agent cannot make <strong>merged</strong>, <strong>green</strong>, <strong>reviewed</strong>, <strong>authorized</strong>,
+<strong>the document says</strong>, or <strong>provider down</strong> true by typing it. Each is a claim
+class, and a claim class is true only as a row in the insert-only
+<code>state_witness</code> table. Only an oracle wrapper writes rows.</p>
+<table>
+<thead>
+<tr>
+<th>Claim class</th>
+<th>Oracle</th>
+<th>MATCH means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gh_pr_merged</code></td>
+<td><code>gh api repos/{r}/pulls/{n}</code></td>
+<td><code>merged</code> equals the claim and the head SHA is the one claimed</td>
+</tr>
+<tr>
+<td><code>gh_checks_green</code></td>
+<td><code>gh api …/actions/runs</code> + <code>…/jobs</code></td>
+<td>every job at the SHA concluded <code>success</code> <strong>and ran at least one step</strong> — a zero-step billing stub is never green</td>
+</tr>
+<tr>
+<td><code>owner_authorization</code></td>
+<td>Slack message fetch</td>
+<td>the message at <code>channel/ts</code> exists and its author is the owner's user id</td>
+</tr>
+<tr>
+<td><code>doc_read</code></td>
+<td>filesystem read</td>
+<td>the bytes at <code>path</code> hash to the claimed sha256</td>
+</tr>
+<tr>
+<td><code>provider_reachable</code></td>
+<td>none yet</td>
+<td>never — <code>UNOBSERVABLE</code> by construction</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-four-enforced-properties">The four enforced properties</h2>
+<ol>
+<li><strong>Gates consume rows and re-execute when they act.</strong> <code>witnessed(kind, subject)</code>
+answers only from rows within their ttl (10 minutes). <code>verify_packet()</code> runs
+the oracle again and writes a fresh row before answering. Wired gates in this
+version: the exact-SHA merge (<code>OracleMergeService(state_witness=…, checks_green_oracle=…)</code> writes a <code>gh_pr_merged</code> row from its final snapshot
+and consumes a <code>gh_checks_green</code> row from a real checks oracle that sees job
+step counts — without that oracle the green claim is UNOBSERVABLE and the
+gate denies) and the durable authorization write (<code>TaskStore.record_external_openai_production_authorization</code>
+requires a fresh <code>owner_authorization</code> MATCH row for the exact digest).</li>
+<li><strong>Unobservable means deny.</strong> No row, no oracle, a probe that raised or timed
+out, a stale row: all <code>UNOBSERVABLE</code>, and every gate refuses. <code>MATCH</code> is
+never the default.</li>
+<li><strong>The loop closes inside the task.</strong> A refusal carries <code>(claimed, observed)</code>;
+<code>Refusal.feedback()</code> is the payload for the claiming agent's next turn.
+<code>strikes(agent, kind)</code> counts mismatches; only a MATCH row written by a gate
+(<code>oracle</code> ending in <code>#gate</code>) clears them — cheap true trivia does not.</li>
+<li><strong>Unwitnessed sentences still reach the owner, stamped.</strong> <code>stamp_unwitnessed()</code>
+runs on every Director Slack post (<code>slack_bot._tag</code>) and prefixes any
+sentence asserting a state claim that cites no <code>witness:&lt;id&gt;</code>. Cosmetic;
+nothing transitions on prose.</li>
+</ol>
+<h2 id="cost">Cost</h2>
+<p>No model calls. Oracles are <code>gh</code>, Slack, and file reads; a full packet check is
+under three seconds. Rows are append-only at the engine level (UPDATE and
+DELETE triggers abort), the same discipline as the delegation audit ledger.
+Growth is bounded: past <code>max_rows</code> (default 1,000,000) every write raises
+<code>WitnessLedgerFull</code>, so every gate denies until <code>rotate()</code> moves the full file
+aside under a dated name and starts an empty one; nothing is deleted. Only
+oracle wrappers write rows (<code>_record</code> is module-private); any exception inside
+an observation is recorded as UNOBSERVABLE; a persisted class or status this
+version does not know is not evidence; repository and pull-number inputs are
+validated before any <code>gh</code> endpoint is built.</p>
+<h2 id="not-in-this-version">Not in this version</h2>
+<p>A packet-parsing hook that extracts claims from provider output (callers build
+<code>Claim</code> objects today), a <code>provider_reachable</code> probe, and the strike-driven
+automatic-verification routing. Each is additive.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:34 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

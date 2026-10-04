@@ -1179,7 +1179,7 @@ class CompactProviderViewTests(unittest.TestCase):
         from director_orchestrator.policy import holds_opaque_token
 
         listed = subprocess.run(
-            ("git", "ls-files", "docs", "src", "prompts", "README.md", "AGENTS.md"),
+            ("git", "ls-files", "docs", "src", "prompts", "README.html", "README.md", "AGENTS.md"),
             cwd=ROOT, capture_output=True, text=True, check=False)
         if listed.returncode != 0:
             self.skipTest("git is unavailable")
@@ -1392,7 +1392,7 @@ class CompactProviderViewTests(unittest.TestCase):
         from director_orchestrator.policy import _holds_prefixed_token
 
         listed = subprocess.run(
-            ("git", "ls-files", "docs", "src", "prompts", "README.md", "AGENTS.md"),
+            ("git", "ls-files", "docs", "src", "prompts", "README.html", "README.md", "AGENTS.md"),
             cwd=ROOT, capture_output=True, text=True, check=False)
         if listed.returncode != 0:
             self.skipTest("git is unavailable")

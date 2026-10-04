@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>ChatGPT Slack alias bridge · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#boundary">Boundary</a></li><li class="top"><a href="#configuration">Configuration</a></li><li class="top"><a href="#failure-behavior">Failure behavior</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex | GPT-6 Astra | 2026-09-14 | 03:39 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
+<p><strong>[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]</strong>
+<strong>[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]</strong>
+<strong>[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | BEGIN]]</strong></p>
+<h1 id="chatgpt-slack-alias-bridge">ChatGPT Slack alias bridge</h1>
+<p>The official ChatGPT Slack app is used through its dedicated App/DM/sidebar. It
+does not provide a documented shared-channel <code>@ChatGPT</code> bot invocation. This
+bridge lets the owner mention the official ChatGPT Slack user ID in specifically
+allowlisted channels while Aesop Director posts the resulting answer honestly as:</p>
+<pre><code class="language-text">Aesop Director — ChatGPT bridge
+</code></pre>
+<p>It does not impersonate the OpenAI-managed Slack identity.</p>
+<h2 id="boundary">Boundary</h2>
+<ul>
+<li>Exact owner ID and exact channel allowlist are checked by both the Slack gateway
+and the authenticated orchestrator service. The shared bearer is defense in
+depth: a distinct <code>SLACK_GATEWAY_SECRET</code> HMAC binds every request, delivery
+acknowledgement, and ambiguity record to its Slack message identity, action,
+prompt digest, and age.</li>
+<li>The bridge uses OpenAI Responses without tools and with response storage disabled.</li>
+<li>It cannot create Director work orders, write repositories, delegate providers,
+approve, review, merge, deploy, purchase, or perform other external actions.</li>
+<li>The Slack gateway does not receive <code>OPENAI_API_KEY</code>; only the orchestrator does.</li>
+<li>Prompt and output sizes, requests per minute, conservative estimated cost per
+request, and a UTC daily estimated-cost ceiling are configurable.</li>
+<li>The first signed mention always stops at <code>OWNER_DECISION_REQUIRED</code> and performs
+no provider call. The owner must send a second signed <code>APPROVE</code> message that
+references the opaque pending identity and repeats the exact prompt.</li>
+<li>The approval transition is atomic. Duplicate initial or approval events cannot
+dispatch the provider twice.</li>
+<li>Raw prompts are never persisted. An undelivered completed answer is retained only
+as size-bounded AES-GCM ciphertext with request-bound associated data. A signed
+delivery acknowledgement clears that ciphertext. Startup and bounded periodic
+cleanup physically wipe ciphertext after its one-hour recovery TTL. Rotating
+either the gateway or internal bearer secret invalidates pending encrypted
+recovery material.</li>
+</ul>
+<h2 id="configuration">Configuration</h2>
+<p>For bridge-only paid answers while the main provider runtime stays offline, use
+the following settings in the ignored deployment environment file. See
+<a href="chatgpt-bridge-activation.html">ChatGPT bridge activation</a> for switch behavior,
+disable instructions, and release verification.</p>
+<pre><code class="language-dotenv">ALLOW_PAID_RUNS=false
+CHATGPT_BRIDGE_ENABLED=true
+CHATGPT_BRIDGE_ALLOW_PAID_RUNS=true
+CHATGPT_BRIDGE_SLACK_USER_ID=U0B9KFJPST1
+CHATGPT_BRIDGE_CHANNEL_IDS=C0BQ6GSCNLR,C0BAV9CMC80
+CHATGPT_BRIDGE_MAX_PROMPT_CHARS=4000
+CHATGPT_BRIDGE_MAX_OUTPUT_TOKENS=600
+CHATGPT_BRIDGE_REQUESTS_PER_MINUTE=4
+CHATGPT_BRIDGE_ESTIMATED_COST_USD=0.10
+CHATGPT_BRIDGE_DAILY_BUDGET_USD=2.00
+</code></pre>
+<p><code>CHATGPT_BRIDGE_ALLOW_PAID_RUNS</code> defaults to <code>false</code>. Paid bridge execution
+requires either this bridge-specific opt-in or the existing global
+<code>ALLOW_PAID_RUNS=true</code>; the global switch is not required for bridge-only answers.
+The bridge-specific flag leaves the main provider runtime gates unchanged. A valid
+<code>OPENAI_API_KEY</code>, the configured owner ID, and membership of the Aesop Director app
+in every allowlisted private channel remain required. Keep the bridge disabled
+until provider-side billing controls are set. Neither paid switch replaces the
+exact signed owner approval required for each request.</p>
+<p>Recreate the orchestrator and Slack gateway after changing the environment. Check
+<code>GET /health</code>: every <code>chatgpt_bridge</code> readiness field must be true. Then send one
+bounded message from the configured owner in an allowlisted channel:</p>
+<pre><code class="language-text">@ChatGPT Reply with exactly: BRIDGE_OK
+</code></pre>
+<p>Address the alias at the start of the message, optionally after other Slack user
+mentions in the opening address list. Mentions inside prose, quotes, code, or
+connector attribution footers do not invoke this bridge. This applies to request,
+APPROVE, and RECOVER commands. When paid execution is disabled, an intentional
+request receives a static PAUSED notice and does not dispatch a provider.</p>
+<p>The first bridge response must be a deterministic approval instruction and must
+not call OpenAI. Reply in that thread using the exact form it supplies:</p>
+<pre><code class="language-text">@ChatGPT APPROVE CBR-&lt;opaque-reference&gt; Reply with exactly: BRIDGE_OK
+</code></pre>
+<p>Only that matching approval may call OpenAI. Aesop attempts the Slack answer post
+once. Slack does not provide an exactly-once guarantee for a timed-out
+<code>chat.postMessage</code>, so the bridge never performs an automatic second post after an
+exception. It records the delivery as ambiguous and keeps only the encrypted answer.
+The owner may then authorize a budget-neutral recovery in the same thread:</p>
+<pre><code class="language-text">@ChatGPT RECOVER CBR-&lt;opaque-reference&gt; Reply with exactly: BRIDGE_OK
+</code></pre>
+<p>Recovery repeats the original prompt for digest binding, does not call OpenAI again,
+and attempts one new Slack post. Because Slack may have accepted the unacknowledged
+first post, this explicit recovery can create a duplicate. Repeating <code>APPROVE</code> does
+not release the answer, duplicate recovery events do not release the answer again,
+and a delivered replay is a no-op. Every recovery Slack event is durably consumed: if its post is
+ambiguous, another attempt requires a newly signed <code>RECOVER</code> message with a new Slack
+timestamp. Redelivery of the already-consumed event never releases the answer again.</p>
+<h2 id="failure-behavior">Failure behavior</h2>
+<p>Failed dispatches retain a nullable <code>failure_diagnostics_json</code> value on the existing
+<code>chatgpt_bridge_requests</code> row. The additive column contains only controlled stage,
+category and exception-class labels, HTTP status, allowlisted provider error
+code/type values, and a request ID matching <code>req_</code> plus 32 lowercase hexadecimal
+characters. Unknown codes and IDs are omitted; provider error JSON is inspected
+only for bodies of at most 16 KiB. Prompts, answers, exception messages, raw bodies,
+URLs and header collections are never copied into diagnostics. Diagnostics stay
+in the local store and do not change the HTTP or Slack response contracts.</p>
+<p>Empty output and incomplete responses without text have separate failure categories;
+this diagnostic change preserves existing handling of responses containing text.
+Failure metadata is committed with the terminal transition and survives reopening
+the store. It does not release the estimated reservation or authorize another
+dispatch. If diagnostic extraction fails, the terminal transition still runs; if
+the store itself fails, the original exception is preserved and the existing
+<code>DISPATCHING</code> reservation still prevents redispatch. Older failures have no new
+metadata: their original provider error cannot be reconstructed by this change.</p>
+<p>Non-owner and non-allowlisted alias mentions are not intercepted by the bridge and
+continue through the ordinary Director routing rules. Bot-authored, edited, and
+deleted events are ignored.
+Invalid configuration, rate or daily-budget exhaustion, provider failure, a stale
+or invalid gateway proof, a mismatched approval, and an event-identity conflict
+fail closed. An ambiguous orchestrator transport result gets one same-identity
+recovery request. If that retry observes a completed answer awaiting delivery, the
+gateway records ambiguity and posts the signed <code>RECOVER</code> instruction instead of
+silently dropping the result. An unresolved dispatch gets an honest <code>PENDING</code> status.
+An ambiguous answer post never
+causes a contradictory <code>BLOCKED</code> post or an automatic Slack retry; encrypted recovery
+remains available until acknowledged or its bounded recovery window expires. A
+startup and 60-second periodic sweep moves abandoned acknowledgement waits to the
+explicit recovery state and physically wipes expired ciphertext.</p>
+<p>Slack may deliver one message through both the <code>app_mention</code> and generic <code>message</code>
+handlers. The gateway claims the canonical channel-plus-message-timestamp identity
+only after the owner/channel/alias checks, so that duplicate ingress produces one
+backend request and one Slack response without suppressing unrelated messages.</p>
+<p><strong>[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | END]]</strong>
+<strong>[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]</strong>
+<strong>[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]</strong></p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-14 | 03:39 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

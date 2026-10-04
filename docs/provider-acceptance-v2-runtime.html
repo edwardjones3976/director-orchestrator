@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Provider-v2 runtime acceptance · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]] -->
+<h1 id="provider-v2-runtime-acceptance">Provider-v2 runtime acceptance</h1>
+<p>The v1 GitHub-account mode remains the default. Explicit provider-v2 mode uses a
+pre-migration SQLite journal as its authoritative activation state; it never
+projects a consumed nonce into a separately written JSON file. The existing v1
+JSON artifact is neither imported nor overwritten. Start a fresh PREFLIGHT sequence
+for the exact candidate/profile/database identity.</p>
+<p>Owner-provisioned configuration:</p>
+<ul>
+<li><code>LANGGRAPH_PRIMARY_ACCEPTANCE_MODE=provider-v2</code></li>
+<li><code>LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH</code>: absolute registry file path.</li>
+<li><code>LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256</code>: SHA256 of exact registry bytes.</li>
+<li><code>LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH</code>: absolute durable SQLite path.</li>
+</ul>
+<p>The path and digest pin are trusted deployment configuration, protected from the
+coordinator and providers. A caller-selected registry plus its matching digest is
+not enrollment authority. Mount the owner-controlled registry read-only. Compose
+uses <code>LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY</code> on the host, containing
+<code>registry.json</code>, mounted at <code>/run/director-acceptance-registry</code>; the shared named
+<code>director-data</code> volume stores <code>/data/primary-acceptance-v2.sqlite3</code>. Protect this
+journal against replacement, rollback, deletion and writes outside the trusted
+activation/runtime processes; SQLite transactions are concurrency/durability
+controls, not protection against an administrator rewriting storage. Preserve
+existing COMPOSE_FILE overrides and the staged Postgres port mapping.</p>
+<p>The closed registry document contains <code>version: director-acceptance-registry/v1</code>,
+<code>activation</code> (all ActivationIdentity fields), <code>repository</code>, <code>pull_request_number</code>,
+<code>packet_digest</code>, <code>material_author_providers</code>, <code>authorities</code>, <code>revoked_deployments</code>,
+and <code>ci_oidc_policy</code>. Production CI policy must include all six existing activation
+checks (attribution, both Python platforms, Compose/container build, secret hygiene
+and cross-process recovery); additional configured checks are also mandatory.
+The static CI template and dynamic OIDC policy must pin identical principal,
+deployment, workflow and required checks. Current revocations apply to the resolved
+CI identity as well as the static template. Each of the three authorities contains every IssuerAuthority
+field, with base64 public_key and a list of required_ci_checks. <code>ci_oidc_policy</code>
+is null for static protected CI keys, or the closed GitHubOIDCPolicy document from
+the CI issuer module. The full review-packet digest must be independently prepared
+from the complete exact source packet before owner provisioning. The registry
+constrains identity/context; no acceptance package can enroll itself.</p>
+<p>Run the existing control script's <code>Preflight</code>, then <code>Challenge</code>. Challenge emits
+ReviewContext JSON built only from the pinned registry, with a cryptographically
+random 256-bit nonce and one-hour window, durably stored before emission. Send this
+exact job to the independently protected issuers. <code>Accept -AcceptanceArtifactPath</code>
+selects the unchanged v1 gate in github-v1 mode, or the v2 transaction in provider-v2.
+Python CLI also exposes <code>challenge</code> with the existing exact identity arguments.
+The remaining Migrate/Backup/RestoreDrill/Activate/Rollback sequence is unchanged.</p>
+<p>Static CI uses the unchanged v2 signed package. Dynamic CI uses the closed wrapper
+<code>{version: director-provider-acceptance-envelope/v2, package: &lt;signed v2 package&gt;, ci_identity: &lt;director-ci-oidc/v1 envelope&gt;}</code>. First acceptance verifies CI OIDC
+online against the pinned GitHub issuer/workflow policy, never caller JWKS, then
+stores the resulting authority and original source in the SAME transaction as
+challenge consumption and ACCEPTED activation state. Both acceptance and readiness
+require the CI receipt session to equal the authenticated OIDC issuing run/attempt;
+the candidate check run is separate evidence and cannot substitute for issuer identity.
+Dynamic CI requires the
+independently reviewed CI issuer module; missing integration fails closed.</p>
+<p>BEGIN IMMEDIATE and state revision CAS serialize writers. Unknown, expired or
+already consumed challenges cannot be accepted; even an exact second submission
+is rejected. Failure after consumption but before state insertion rolls back both.
+State readback revalidates the original signed source at its trusted recorded
+acceptance timestamp and stored issuer registry, while also applying the currently
+owner-pinned policy and revocations. A changed context/key policy fails closed;
+renew acceptance under an explicitly provisioned policy rather than silently
+relabeling history. Dynamic CI JWT signatures are reauthenticated against the fixed GitHub JWKS endpoint
+at readiness using the original acceptance timestamp; the result must match the
+stored key and current pinned workflow policy. A substituted database key/JWT
+cannot authenticate itself. If GitHub is unavailable or its original signing key
+has rotated out, readiness fails closed. No caller/archive-supplied JWKS fallback
+is supported; an owner-pinned historical key archive would require separate work.</p>
+<p>DefaultPrimaryActivation now checks v2 acceptance/restore/inventory readiness
+before opening the primary database. It compares the accepted target identity
+before connecting, then reads existing server metadata and the database-instance
+UUID before any setup DDL. Each new pool connection validates this metadata, and
+control-plane setup repeats the check under its advisory lock on the same
+connection that performs setup, without reopening between validation and DDL.
+Missing metadata is rejected; v2 startup cannot initialize an unaccepted database.
+The existing post-open comparison remains a final consistency check before any
+intake/writer acquisition. GitHub-v1 retains its existing initialization path. Both
+pre-ACTIVATED readiness and a complete ACTIVATED restart are accepted. Missing,
+revoked, tampered or wrong-candidate evidence blocks startup. This does not waive
+provider LIVE_OK, owner approval, one-writer, migration/restore, kill-switch or
+rollback gates, and it does not create the independent issuers or authorize its
+own deployment/adoption.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

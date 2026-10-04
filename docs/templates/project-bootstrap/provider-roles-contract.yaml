@@ -46,7 +46,7 @@ schema_version: "director-provider-roles/v1"
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   precedence: "charter_and_deterministic_policy_override_this_template"
   drift_rule: "If this contract and the charter disagree, the charter wins and this file is wrong."
@@ -77,7 +77,7 @@ allocation_and_selection:
   default_profile: "engineering"
   allocation_profiles:
     # Z.ai enrolled at 18% on 2026-09-27; other nonzero lanes reduced
-    # proportionally to 82% (see docs/provider-allocation-profiles.md).
+    # proportionally to 82% (see docs/provider-allocation-profiles.html).
     lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
     weights:
       engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]
@@ -310,7 +310,7 @@ providers:
     coordination_functions: "bound_by_appointed_director"
     participation_record_rule: "Record only actual provider responses. Never draft a missing position, convert silence into assent, or claim participation, rebuttal, confidence, or a vote that was not returned."
     preserved_boundaries:
-      # See docs/contribution-attribution-policy.md#sole-author-rule.
+      # See docs/contribution-attribution-policy.html#sole-author-rule.
       producer_exclusion: "The logical producer of the reviewed assignment and its provider family are excluded from review and acceptance independently of the PR-level sole-author calculation. Among contributors, only assisting contributors (under 48 %) and the exactly-48 % co-author may review when otherwise eligible; the sole author (52 % or more) and its provider family never review or accept. No contributor may merge, including one whose only changes are uncounted maintenance, whatever their label."
       material_tie_escalation: "A material cost, authority, safety, privacy, scope, runtime, or direction tie requires one owner decision; only an ordinary tie reaches documented OpenAI evidence judgment."
       deterministic_gates: "Exact-SHA review, trusted checks, budgets, allowlists, and approval gates remain mandatory where configured."

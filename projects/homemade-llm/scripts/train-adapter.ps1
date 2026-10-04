@@ -17,6 +17,11 @@ param(
     [string]$MergeRevision = 'db4e90b8359f816f09bf5c944797ce116f26da3c',
     [int]$Steps = 20,
     [switch]$Winner,
+    [switch]$Fallback,
+    [switch]$Probe,
+    [string]$ExpectedDigests,
+    [int]$ProbeRowsTotal,
+    [int]$ProbeSeqLen = 2048,
     [double]$TimeoutMinutes = 90
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +29,11 @@ $ErrorActionPreference = 'Stop'
 
 $WinnerBase = 'Qwen/Qwen3-14B'
 $WinnerRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18'
+$FallbackBase = 'Qwen/Qwen3-8B'
+$FallbackRevision = 'b968826d9c46dd6066d109eabc6255188de91218'
+if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually exclusive' }
+if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
+if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
 if ($Winner) {
     foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
         if ($PSBoundParameters.ContainsKey($name)) { Write-Error "-Winner is pinned to $WinnerBase@$WinnerRevision; do not pass -$name" }
@@ -33,7 +43,18 @@ if ($Winner) {
     $MergeSource = $WinnerBase
     $MergeRevision = $WinnerRevision
 }
+if ($Fallback) {
+    foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
+        if ($PSBoundParameters.ContainsKey($name)) { Write-Error "-Fallback is pinned to $FallbackBase@$FallbackRevision; do not pass -$name" }
+    }
+    $Base = $FallbackBase
+    $Revision = $FallbackRevision
+    $MergeSource = $FallbackBase
+    $MergeRevision = $FallbackRevision
+}
 if ($Steps -lt 1) { Write-Error '-Steps must be positive' }
+if ($PSBoundParameters.ContainsKey('ProbeRowsTotal') -and $ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
+if ($ProbeSeqLen -lt 1) { Write-Error '-ProbeSeqLen must be positive' }
 foreach ($r in $Revision, $MergeRevision) { if ($r -notmatch '^[0-9a-f]{40}$') { Write-Error "revision '$r' is not a full 40-hex commit" } }
 $Rows = [IO.Path]::GetFullPath($Rows)
 if ((Split-Path -Leaf $Rows) -ne 'accepted.jsonl') { Write-Error "trainer reads the validator's accepted.jsonl, not raw rows: $Rows" }
@@ -43,6 +64,41 @@ if ($Rows -match '\\secrets\\') { Write-Error "refusing to mount a rows path und
 
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
+if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m2-expected-qwen3-14b-v2.json'
+}
+if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-8b.json'
+}
+# The approved root has a different schema from ExpectedDigests. Authenticate
+# both byte sequences before GPU ownership or any model/cache access.
+# The trainer also requires approved digests for every snapshot file, including
+# tokenizer/config/index metadata; a weights-only list cannot authorize a load.
+$TrustedDigestRoot = ''
+$TrustedDigestRootSHA256 = 'd1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'
+if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase) {
+    $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v2.json'
+    $rootBytes = [IO.File]::ReadAllBytes($TrustedDigestRoot)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $rootHash = [Convert]::ToHexString($sha.ComputeHash($rootBytes)).ToLowerInvariant()
+        if ($rootHash -cne $TrustedDigestRootSHA256) { Write-Error 'trusted digest root does not match the approved SHA-256' }
+        $rootRecord = [Text.Encoding]::UTF8.GetString($rootBytes) | ConvertFrom-Json
+        $approved = @($rootRecord.models | Where-Object { $_.hf_repo -ceq $Base -and $_.hf_revision -ceq $Revision })
+        if ($approved.Count -ne 1) { Write-Error "trusted digest root has no unique approved entry for $Base@$Revision" }
+        $upstreamSHA = $approved[0].upstream_weight_digests_sha256
+        if ($upstreamSHA -cnotmatch '^[0-9a-f]{64}$') { Write-Error 'approved model entry has no valid upstream digest-list SHA-256' }
+        if ([string]::IsNullOrWhiteSpace($ExpectedDigests)) { Write-Error '-ExpectedDigests is required for pinned M2 models' }
+        $ExpectedDigests = [IO.Path]::GetFullPath($ExpectedDigests)
+        $listBytes = [IO.File]::ReadAllBytes($ExpectedDigests)
+        $listHash = [Convert]::ToHexString($sha.ComputeHash($listBytes)).ToLowerInvariant()
+        if ($listHash -cne $upstreamSHA) { Write-Error 'upstream digest list does not match the approved root' }
+    } finally { $sha.Dispose() }
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = [IO.Path]::GetFullPath($ExpectedDigests)
+    if (-not (Test-Path -LiteralPath $ExpectedDigests -PathType Leaf)) { Write-Error "expected digests file not found: $ExpectedDigests" }
+}
 foreach ($sub in '', 'hf', 'runs', 'models', 'models\m2', 'reports') {
     for ($p = Join-Path $HotRoot $sub; $p; $p = Split-Path $p -Parent) {
         if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -81,18 +137,40 @@ try {
     }
     $rowsDir = Split-Path $Rows -Parent
     $mounts += @('-v', "${rowsDir}:/workspace/rows:ro")
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $mounts += @('-v', "${ExpectedDigests}:/workspace/expected-digests.json:ro")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
+        $mounts += @('-v', "${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro")
+    }
     $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
     $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
         '-v', "${code}:/code:ro",
         '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision", '-e', "ADAPTER_STEPS=$Steps",
-        '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token',
+        '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $dockerArgs += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
+    }
+    $dockerArgs += @(
         '--entrypoint', 'python', $Image, '/code/train_adapter.py',
         '--rows', ("/workspace/rows/" + (Split-Path $Rows -Leaf)),
         '--base', $Base, '--revision', $Revision, '--steps', "$Steps",
         '--report', "/workspace/reports/$runId.json")
     if ($Winner) { $dockerArgs += '--winner' }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
+        $dockerArgs += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
+    }
+    if ($Probe) {
+        $dockerArgs += @('--probe', '--probe-seq-len', "$ProbeSeqLen")
+        if ($PSBoundParameters.ContainsKey('ProbeRowsTotal')) {
+            $dockerArgs += @('--probe-rows-total', "$ProbeRowsTotal")
+        }
+    }
     function Get-AdapterState {
         try {
             $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)

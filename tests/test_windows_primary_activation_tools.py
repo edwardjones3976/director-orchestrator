@@ -55,6 +55,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+from director_orchestrator.documentation import read_document
 from pathlib import Path
 
 
@@ -141,7 +143,7 @@ Write-Output 'tls-lifecycle-passed'
     def text(self, name: str) -> str:
         # read_text opens in text mode with newline=None, so a CRLF checkout
         # is already folded to LF before any assertion below sees it.
-        return (ROOT / "scripts" / name).read_text(encoding="utf-8")
+        return read_document(ROOT / "scripts" / name)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_control_requires_only_the_selected_acceptance_identity_configuration(self):
@@ -652,7 +654,7 @@ if ($node.Count -ne 1) { throw 'expected one production helper' }
             for case, (relative, content) in dirty.items():
                 with self.subTest(case=case):
                     path = repository / relative
-                    original = path.read_text(encoding="utf-8") if path.exists() else None
+                    original = read_document(path) if path.exists() else None
                     path.write_text(content, encoding="utf-8")
                     try:
                         result = check()
@@ -1229,8 +1231,8 @@ Write-Output 'slot-checks-passed'
         self.assertIn("-Parallel requires -Action Test and full discovery (no -TestNames).", text)
         self.assertIn("& $pythonPath scripts/run-tests-parallel.py --shards $Parallel", text)
         self.assertIn("else { & $pythonPath -m unittest discover -s tests -v }", text)
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        compose = read_document(ROOT / "docker-compose.yml")
+        workflow = read_document(ROOT / ".github" / "workflows" / "ci.yml")
         for action in ('"Start"', '"Stop"', '"Status"', '"Dsn"', '"Test"'):
             self.assertIn(action, text)
         pattern = re.compile(r"postgres:17-alpine@sha256:[0-9a-f]{64}")
@@ -1313,7 +1315,7 @@ Write-Output 'slot-checks-passed'
         script = self.text("windows-langgraph-primary-control.ps1")
         actions = re.findall(r'"(\w+)"', re.search(
             r"\[ValidateSet\(([^)]*)\)\]\s*\[string\]\$Action", script).group(1))
-        runbook = (ROOT / "docs" / "langgraph-primary-stage-a-runbook.md").read_text(encoding="utf-8")
+        runbook = read_document(ROOT / "docs" / "langgraph-primary-stage-a-runbook.html")
         listed = runbook.split("`-Action` set is", 1)[1].split("Confirm the ValidateSet", 1)[0]
         self.assertEqual(re.findall(r"`(\w+)`", listed), actions)
         # Stage A is the scripted ActivateOffline action; the hand edit is only a fallback.
@@ -1322,7 +1324,7 @@ Write-Output 'slot-checks-passed'
         self.assertIn("**Fallback only.**", execution)
 
     def test_postgres_test_lane_is_documented(self) -> None:
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme = read_document(ROOT / "README.html")
         section = readme.split("\n## Local validation", 1)[1].split("\n## LangGraph transition planning", 1)[0]
         self.assertIn("windows-postgres-test-lane.ps1 -Action Start", section)
         self.assertIn("windows-postgres-test-lane.ps1 -Action Stop", section)
@@ -1332,14 +1334,14 @@ Write-Output 'slot-checks-passed'
         self.assertIn("postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable", section)
         self.assertLess(section.index("-Action Start"), section.index("unittest discover"))
         self.assertLess(section.index("unittest discover"), section.index("-Action Stop"))
-        operations = (ROOT / "docs" / "langgraph-primary-operations.md").read_text(encoding="utf-8")
+        operations = read_document(ROOT / "docs" / "langgraph-primary-operations.html")
         tooling = operations.split("## Windows Docker activation tooling", 1)[1]
         self.assertIn("scripts/windows-postgres-test-lane.ps1", tooling)
         self.assertIn("not the primary database", tooling)
         self.assertIn("activation evidence", tooling)
 
     def test_postgres_test_lane_skill_is_discoverable_and_complete(self) -> None:
-        skill = (ROOT / ".agents" / "skills" / "postgres-test-lane" / "SKILL.md").read_text(encoding="utf-8")
+        skill = read_document(ROOT / ".agents" / "skills" / "postgres-test-lane" / "SKILL.md")
         self.assertTrue(skill.startswith("---\n"))
         frontmatter, body = skill.split("---", 2)[1:]
         self.assertIn("name: postgres-test-lane", frontmatter)
@@ -1391,12 +1393,12 @@ Write-Output 'slot-checks-passed'
             path.name
             for path in (ROOT / "tests").glob("test_*.py")
             if path.name != Path(__file__).name
-            and "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN" in path.read_text(encoding="utf-8")
+            and "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN" in read_document(path)
         }
         self.assertEqual(set(re.findall(r"`tests/(test_[a-z_]+\.py)`", body)), postgres_suites)
 
     def test_agents_rules_route_every_agent_to_the_postgres_test_lane(self) -> None:
-        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        agents = read_document(ROOT / "AGENTS.md")
         heading = "\n## Postgres-backed unit tests"
         cloud_heading = "\n## Cursor Cloud specific instructions"
         self.assertLess(agents.index(heading), agents.index(cloud_heading))
@@ -1424,11 +1426,16 @@ Write-Output 'slot-checks-passed'
         self.assertIn("report the gap", cloud)
 
     def test_claude_code_sessions_import_the_agent_operating_rules(self) -> None:
-        claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        claude = read_document(ROOT / "CLAUDE.md")
         visible = [line.strip() for line in claude.splitlines() if line.strip() and "[[" not in line]
         self.assertIn("@AGENTS.md", visible)
-        self.assertIn("no standing director role", claude.lower())
-        self.assertIn("docs/project-leadership.md", claude)
+        normalized = " ".join(claude.replace("**", "").split())
+        self.assertIn("Claude is administrator #2", normalized)
+        self.assertIn("Claude the Director for completing Director-Orchestrator", normalized)
+        self.assertIn("including while Codex is available", normalized)
+        self.assertIn("This appointment excludes Homemade LLM and every other project", normalized)
+        self.assertNotIn("no standing director role", normalized.lower())
+        self.assertIn("docs/project-leadership.html", claude)
 
 
 if __name__ == "__main__":

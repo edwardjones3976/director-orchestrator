@@ -27,6 +27,8 @@ import re
 import shutil
 import subprocess
 import unittest
+
+from director_orchestrator.documentation import read_document
 from pathlib import Path
 
 
@@ -36,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class DeploymentContractTests(unittest.TestCase):
     def _run_status_sequence(self, responses):
         workflow = json.loads(
-            (ROOT / "n8n/workflows/director-status.json").read_text(encoding="utf-8")
+            read_document(ROOT / "n8n/workflows/director-status.json")
         )
         code = next(node for node in workflow["nodes"] if node["name"] == "Diff Readiness")
         node = shutil.which("node")
@@ -156,7 +158,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
 
     def test_status_connects_schedule_health_diff_and_slack_without_other_routes(self):
         workflow = json.loads(
-            (ROOT / "n8n/workflows/director-status.json").read_text(encoding="utf-8")
+            read_document(ROOT / "n8n/workflows/director-status.json")
         )
         names = ["Every 5 minutes", "Read Health", "Diff Readiness", "Post Status"]
         self.assertEqual({node["name"] for node in workflow["nodes"]}, set(names))
@@ -170,8 +172,8 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertTrue(health["parameters"]["options"]["response"]["response"]["fullResponse"])
 
     def test_default_primary_postgres_is_dedicated_healthy_and_default_off(self):
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        compose = read_document(ROOT / "docker-compose.yml")
+        environment = read_document(ROOT / ".env.example")
         primary_db = compose.split("  langgraph-primary-db:\n", 1)[1].split(
             "\n  slackbot:", 1
         )[0]
@@ -220,7 +222,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
         )
 
     def test_default_primary_backup_and_restore_are_bounded_to_its_service(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme = read_document(ROOT / "README.html")
         section = readme.split(
             "### Default LangGraph-primary database (inactive by default)", 1
         )[1].split("\n## Slack app setup", 1)[0]
@@ -239,9 +241,9 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertIn("never commit them", section)
 
     def test_readme_local_postgres_exception_matches_shipped_compose(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+        readme = read_document(ROOT / "README.html")
+        compose = read_document(ROOT / "docker-compose.yml")
+        environment = read_document(ROOT / ".env.example")
         orchestrator = compose.split("  orchestrator:\n", 1)[1].split(
             "\n  langgraph-primary-db:", 1
         )[0]
@@ -272,7 +274,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
 
     def test_n8n_forwards_the_authenticated_caller_header(self):
         workflow = json.loads(
-            (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
+            read_document(ROOT / "n8n" / "workflows" / "director-intake.json")
         )
         self.assertEqual(workflow["id"], "directorIntake")
         request_node = next(node for node in workflow["nodes"] if node["name"] == "Create Director Task")
@@ -304,7 +306,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
 
     def test_n8n_intake_limits_completed_execution_retention(self):
         workflow = json.loads(
-            (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
+            read_document(ROOT / "n8n" / "workflows" / "director-intake.json")
         )
         # n8n can persist incoming headers/body initially and defer physical
         # pruning. These settings control completion cleanup, not zero storage.
@@ -316,7 +318,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
 
     def _intake_workflow(self):
         return json.loads(
-            (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
+            read_document(ROOT / "n8n" / "workflows" / "director-intake.json")
         )
 
     def _intake_node(self, name):
@@ -424,7 +426,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
             self.assertNotIn("headers", body)
 
     def test_compose_does_not_expose_the_orchestrator_secret_to_n8n(self):
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        compose = read_document(ROOT / "docker-compose.yml")
         n8n_section = compose.split("  n8n:\n", 1)[1].split("\nvolumes:", 1)[0]
 
         self.assertIn("env_file: ${DIRECTOR_ENV_FILE:-.env}", compose)
@@ -433,11 +435,11 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertIn("postgres:17-alpine@sha256:", compose)
         self.assertIn("n8n:latest@sha256:", compose)
 
-        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        dockerfile = read_document(ROOT / "Dockerfile")
         self.assertIn("FROM python:3.12-slim@sha256:", dockerfile)
 
     def test_gateway_runs_the_verified_runtime_image(self):
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        compose = read_document(ROOT / "docker-compose.yml")
         orchestrator = compose.split("  orchestrator:\n", 1)[1].split(
             "\n  langgraph-primary-db:", 1
         )[0]
@@ -453,7 +455,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
 
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
     def test_slack_bridge_keeps_provider_key_in_orchestrator_only(self):
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        compose = read_document(ROOT / "docker-compose.yml")
         slackbot_section = compose.split("  slackbot:\n", 1)[1].split(
             "\n  n8n-db:", 1
         )[0]
@@ -463,10 +465,8 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertNotIn("OPENAI_API_KEY", slackbot_section)
 
     def test_isolated_launcher_clears_every_slack_bridge_interpolation(self):
-        launcher = (
-            ROOT / "scripts" / "windows-isolated-live-validation.ps1"
-        ).read_text(encoding="utf-8")
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        launcher = read_document(ROOT / "scripts" / "windows-isolated-live-validation.ps1")
+        compose = read_document(ROOT / "docker-compose.yml")
         slackbot_section = compose.split("  slackbot:\n", 1)[1].split(
             "\n  n8n-db:", 1
         )[0]
@@ -490,10 +490,8 @@ process.stdout.write(JSON.stringify({outputs, store}));
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 
     def test_pull_requests_have_cross_platform_ci(self):
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        recovery = (ROOT / ".github" / "workflows" / "recovery-soak.yml").read_text(
-            encoding="utf-8"
-        )
+        workflow = read_document(ROOT / ".github" / "workflows" / "ci.yml")
+        recovery = read_document(ROOT / ".github" / "workflows" / "recovery-soak.yml")
 
         self.assertIn("pull_request:", workflow)
         self.assertEqual(
