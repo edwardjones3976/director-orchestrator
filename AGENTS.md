@@ -47,6 +47,10 @@ Foreman issues mandatory, direct repair instructions; providers follow the
 prescribed solution, sequence and boundaries. Recommend alternatives or skipped
 steps with evidence, but wait for a revised Foreman order before acting on them.
 An unknown cause requires an investigation-only order before repair authorization.
+Every Foreman repair case requires relevant Firecrawl or Perplexity research,
+normally at intake. The Foreman may allow bounded initial checks, but must record
+a mandatory research checkpoint before any repair limit is reached. Reuse needs
+an applicable tool receipt and source binding; it is not a research exemption.
 Outside Foreman-directed repairs, administrators and providers retain judgment
 and problem-solving freedom within their assignments.
 

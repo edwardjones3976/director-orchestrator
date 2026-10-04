@@ -27,6 +27,10 @@ acting Foreman, normally Codex. You retain completion priorities and delivery
 coordination. Only the acting Foreman prescribes mandatory repair steps and
 approves procedure changes or evidence-based omissions; do not substitute a fix
 before the revised order. Unknown causes receive investigation-only orders.
+Every Foreman repair case requires Firecrawl or Perplexity research, normally
+at intake, with a mandatory checkpoint before a repair limit is reached if the
+Foreman allows bounded initial checks. Supply applicable research receipts for
+reuse; the Foreman records completion and any delayed checkpoint.
 Ordinary non-repair assignments retain provider judgment. Follow the
 [Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
 templates; preserve existing writers, succession, review and spending gates.
