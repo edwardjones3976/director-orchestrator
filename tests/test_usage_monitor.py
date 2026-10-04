@@ -508,27 +508,30 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(daily["unreconciled_request_count"], 0)
                 self.assertIsNone(monitor._daily_accounting("openai", now)["unsettled_request_count"])
 
-    async def test_bounded_grok_and_unbounded_probes_are_not_unsettled_work(self):
+    async def test_only_unbounded_probes_with_unknown_charges_are_unsettled(self):
         from director_orchestrator.usage import _probe_key
-        with tempfile.TemporaryDirectory() as directory:
-            store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
-            ledger = ProviderDailySpendLedger(store.path)
-            now = datetime.now(timezone.utc)
-            ledger.reserve(provider=ProviderName.GROK, effect_key="b" * 64, estimated_cost_usd=0.01,
-                           request_limit=10, budget_usd=1.0, serialize=False, now=now)
-            monitor = UsageMonitor(BOUNDED_SETTINGS, store, adapters={ProviderName.GROK: object()})
-            self.assertEqual(ledger.unsettled_not_proven_bounded(ProviderName.GROK), [])
-            self.assertEqual(monitor._daily_accounting("grok", now)["unsettled_request_count"], 0)
-            record = UsageCheckRecord(cycle_id="USAGE-UNBOUNDED", provider="grok",
-                                      status=UsageCheckStatus.ERROR, checked_at=now)
-            store.add_usage_check(record)
-            key = _probe_key(record.cycle_id, "grok", 1)
-            ledger.reserve(provider=ProviderName.GROK, effect_key=key, estimated_cost_usd=0.01,
-                           request_limit=10, budget_usd=1.0, serialize=True, now=now)
-            self.assertEqual(ledger.unsettled_not_proven_bounded(ProviderName.GROK), [key])
-            daily = monitor._daily_accounting("grok", now)
-            self.assertEqual(daily["unsettled_request_count"], 0)
-            self.assertEqual(daily["provider_request_count"], 1)
+
+        for provider, serialized in ((ProviderName.GROK, False), (ProviderName.GEMINI, True),
+                                     (ProviderName.PERPLEXITY, True)):
+            for actual in (None, 0.0, 0.02):
+                with self.subTest(provider=provider, actual=actual), tempfile.TemporaryDirectory() as directory:
+                    store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
+                    ledger = ProviderDailySpendLedger(store.path)
+                    now = datetime.now(timezone.utc)
+                    record = UsageCheckRecord(cycle_id="USAGE-PROBE", provider=provider.value,
+                                              status=UsageCheckStatus.ERROR, checked_at=now)
+                    store.add_usage_check(record)
+                    key = _probe_key(record.cycle_id, provider.value, 1)
+                    ledger.reserve(provider=provider, effect_key=key, estimated_cost_usd=0.01,
+                                   request_limit=10, budget_usd=1.0, serialize=serialized, now=now)
+                    ledger.record_charge(provider=provider, effect_key=key, actual_cost_usd=actual, now=now)
+                    monitor = UsageMonitor(BOUNDED_SETTINGS, store, adapters={provider: object()})
+                    daily = monitor._daily_accounting(provider.value, now)
+                    unsettled = serialized and actual is None
+                    self.assertEqual(ledger.unsettled_not_proven_bounded(provider), [key] if unsettled else [])
+                    self.assertEqual(daily["unsettled_request_count"], int(unsettled))
+                    self.assertEqual(daily["unreconciled_request_count"], 0)
+                    self.assertEqual(daily["provider_request_count"], 0)
 
     async def test_outstanding_requests_reach_unsettled_count_across_timeout_and_day(self):
         import sqlite3

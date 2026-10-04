@@ -279,7 +279,7 @@ class UsageMonitor:
             provider_request_count = self._provider_request_count(provider, records, now, snapshot)
             unreconciled_request_count = self._unreconciled_request_count(provider, records, now, snapshot)
             exposure_usd = self._exposure_usd(provider, attempted, now, snapshot)
-            unsettled_request_count = self._unsettled_request_count(provider, records, snapshot)
+            unsettled_request_count = self._unsettled_request_count(provider, snapshot)
         return {
             "request_count": request_count,
             # Kept apart (review of check 15): the monitor's own USAGE_CHECK_PROMPT probes, and real provider
@@ -289,9 +289,11 @@ class UsageMonitor:
             # Settled real requests whose provider reported no cost (review 4112533824): they count at their
             # reservation, a lower bound, so check 15 cannot pass while any exists. None: not ledger-accounted.
             "unreconciled_request_count": unreconciled_request_count,
-            # Unreleased reservations without a valid actual charge, across all days,
+            # Monetary exposure count for all ledger requests, including probes, not just work.
+            # Unreleased reservations without a valid actual charge (zero is valid), across all days,
             # except current bounded reservations (serialized=0, legacy=0).
             # Legacy rows of any age are not proven bounded and count.
+            # Probes count here only while their charge is unknown and their cost not proven bounded.
             "unsettled_request_count": unsettled_request_count,
             "exposure_usd": exposure_usd,
             "retry_count": retry_count,
@@ -334,16 +336,14 @@ class UsageMonitor:
         stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
         return sum(key not in probes for key in snapshot.unreconciled(name, stale_after=stale_after, now=now))
 
-    def _unsettled_request_count(self, provider: str, records: list[UsageCheckRecord], snapshot: ProviderDailySpendSnapshot) -> int | None:
+    def _unsettled_request_count(self, provider: str, snapshot: ProviderDailySpendSnapshot) -> int | None:
         try:
             name = ProviderName(provider)
         except ValueError:
             return None
         if name not in ProviderDailySpendLedger._SUPPORTED:
             return None
-        probes = {_probe_key(record.cycle_id, provider, attempt)
-                  for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
-        return sum(key not in probes for key in snapshot.unsettled_not_proven_bounded(name))
+        return len(snapshot.unsettled_not_proven_bounded(name))
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime, snapshot: ProviderDailySpendSnapshot) -> float:
         """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts
