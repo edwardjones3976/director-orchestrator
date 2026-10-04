@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Local PostgreSQL test-lane concurrency · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#opt-in-verified-tls">Opt-in verified TLS</a></li><li class="top"><a href="#parallel-tests-within-one-lane">Parallel tests within one lane</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | BEGIN]] -->
+<h1 id="local-postgresql-test-lane-concurrency">Local PostgreSQL test-lane concurrency</h1>
+<h2 id="opt-in-verified-tls">Opt-in verified TLS</h2>
+<p>Use <code>-Tls</code> with <code>Start</code> or <code>Test</code> to generate a one-day throwaway CA and a
+server certificate covering <code>localhost</code> and <code>127.0.0.1</code>, using the selected
+venv Python's <code>cryptography</code> package. The CA signing key stays in memory.
+The certificate files and server key are created in a unique temporary
+directory and mounted read-only; the container copies its server files to
+a private directory, owned by postgres, with the key set to mode 0600.
+<code>LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN</code> uses <code>sslmode=verify-full</code> and the CA;
+<code>LANGGRAPH_RUNTIME_POSTGRES_TEST_CA</code> names that CA file. Connection values
+are not printed. <code>Dsn</code> recovers the TLS configuration from the owned lane.</p>
+<pre><code class="language-powershell">.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -ContainerName director-trusted-collect-test -HostPort 55434 -Python &lt;venv-python&gt; -TestNames tests.test_completion_scorecard.TrustedCollectionLaneTests
+</code></pre>
+<p>The existing ownership, port and slot refusals still apply. Stop, Test's
+finally block and failed startup remove the owned container and its temporary
+TLS files. Test restores the caller's connection and CA environment. If
+container removal fails, files remain for the retained container; rerun Stop.
+Without <code>-Tls</code>, the lane keeps its existing non-TLS transport. The non-TLS
+refusal regression and the TLS collection regression each skip clearly when
+run in the other mode. CI adoption of <code>-Tls</code> is a follow-up; this change does
+not modify <code>.github/workflows/ci.yml</code>.</p>
+<p>The TLS collection test currently asserts PASS for 07, 12 and 17 using real
+store reads and signed capture/adoption producers. It asserts UNKNOWN for
+08, 11, 15 and 20 because that combined fixture does not yet produce a signed
+approval/delivery lifecycle, paid attempts and correlated monetary settlement.
+It is not the completed seven-check production-shaped happy path.</p>
+<p>CLI captures with an executable attestation use <code>director-validation-capture/v2</code>.
+The digest and version are signed; legacy captures retain their original
+unversioned V1 bytes and remain verifiable. Missing executable evidence remains
+UNKNOWN for product attestation, while a verified digest conflicting with a
+valid pinned CLI release is a mismatch (FAIL). An absent or invalid descriptor
+does not grant attestation.</p>
+<p><code>scripts/windows-postgres-test-lane.ps1 -Action Start</code> and <code>-Action Test</code>
+default to a cap of two for local callers and four when
+<code>$env:GITHUB_ACTIONS -eq 'true'</code>. Set
+<code>DIRECTOR_TEST_LANE_MAX_CONCURRENCY</code> to a positive integer to override either
+default for that caller. Each caller compares the total occupied slots with its
+own cap; CI and local runs share the same inventory, not separate pools. Two
+local lanes therefore leave room for two CI lanes, while a local caller waits
+when two or more slots are occupied, including slots held by CI. A CI caller
+waits at four occupied slots. This gives CI extra admission capacity without
+preempting existing lanes or guaranteeing queue order. Concurrent lanes need
+distinct container names and host ports. Existing label and port refusals still
+apply.</p>
+<p>Admission waits up to 45 minutes, prints progress every 15 seconds, and fails
+clearly on timeout. <code>-SlotWaitSeconds &lt;seconds&gt;</code> changes this bound (1 through
+86400). <code>-TimeoutSeconds</code> still controls database readiness only. Waiting never
+reads stdin, including when stdin is redirected from an empty file.</p>
+<p>Admission uses never-started Docker containers named
+<code>director-test-lane-slot-&lt;N&gt;</code>, labelled with their owning lane container name.
+Docker name uniqueness coordinates Windows and WSL callers on the same daemon.
+Slot creation uses the lane's pinned image with <code>--pull=never</code>; no additional
+image is downloaded. Separate Docker daemons have independent caps.</p>
+<p>The lane container is created, but not started, before slot admission. Thus a
+pending caller already has an owner container and cannot be reclaimed as stale.
+All reservations (including higher numbered CI slots) and older labelled lanes
+count against the caller's cap. Managed containers waiting for admission do not
+run PostgreSQL or consume a slot. Contention can conservatively delay admission;
+there is no queue-order guarantee.</p>
+<p>Stop and Test cleanup remove the lane before releasing its reservation.
+A reservation is stale only when a successful daemon inventory shows its owner
+no longer exists. Removal uses immutable container IDs to avoid deleting a
+replacement slot. Listing or removal failures fail closed. If a process dies
+with its stopped owner container still present, use Stop for that lane; it is
+not reclaimed automatically. Existing same-name lanes require explicit Stop
+before a fresh Start, preventing replacement of another active caller.</p>
+<h2 id="parallel-tests-within-one-lane">Parallel tests within one lane</h2>
+<p>Run the full suite from the worktree in PowerShell:</p>
+<pre><code class="language-powershell">.\scripts\windows-postgres-test-lane.ps1 -Action Test -Parallel 8 -Python .\.venv\Scripts\python.exe
+</code></pre>
+<p>Without <code>-Parallel N</code>, local execution remains serial. Parallel mode requires
+<code>-Action Test</code> without <code>-TestNames</code>. All shards share the lane's single container
+and slot. Each gets a database <code>director_test_s&lt;i&gt;</code> created from <code>template0</code>,
+its own SQLite file and temp directory, and <code>DIRECTOR_TEST_SHARD=i</code>. Only
+successfully created databases are dropped, including after test failure or
+partial setup failure. Existing databases are refused, never reused or deleted.
+Do not run two parallel runners against the same lane simultaneously. Abrupt
+host termination still requires the lane's normal <code>-Action Stop</code> cleanup.</p>
+<p>The runner checks serial discovery counts and test-ID multisets, preserving
+the default <code>test*.py</code> pattern, implicit top-level <code>tests</code>, imported test classes
+and <code>load_tests</code> hooks. It balances whole modules by test count, or by the
+optional <code>tests/.durations.json</code>. <code>--record-durations</code> writes module totals
+from unittest's test method durations on success; fixture time is excluded.</p>
+<p><code>--shards N</code> overrides <code>DIRECTOR_TEST_SHARDS</code>; the standalone default is
+<code>max(1, min(8, cpu_count // 4))</code>. CI uses repository variable
+<code>DIRECTOR_TEST_SHARDS</code>, default eight. <code>--timeout SECONDS</code> sets the per-shard
+limit (default 1800). Timeouts terminate the shard process tree and fail the run.
+<code>--serial</code> runs the original <code>python -m unittest discover -s tests -v</code> command.
+Buffered logs report identifiers and counts, suppressing raw assertion values
+and tracebacks that could contain sensitive data. Use serial mode for diagnosis.</p>
+<p>No module is currently assigned a serial tail. Static inspection found no
+confirmed cross-module conflict after database/temp isolation; full-suite
+parallel compatibility and wall-time improvement still require CI validation.</p>
+<p>Compose/build and recovery-probe jobs succeed as explicit no-ops for docs-only
+PRs; only their expensive steps are skipped. The classifier
+uses the merge-base diff including both sides of renames: <code>docs/**</code> and Markdown
+qualify, except <code>AGENTS.md</code> and <code>CLAUDE.md</code>; <code>n8n/workflows/*.json</code> do not qualify.
+Unit tests, attribution and secret hygiene always run. Main pushes and
+classifier failures run the expensive jobs too.</p>
+<p>Local test state uses <code>LOCALAPPDATA</code>, then <code>XDG_STATE_HOME</code>, then
+<code>HOME/.local/state</code>, then <code>RUNNER_TEMP</code>, with <code>director-orchestrator/test-lanes</code>
+appended. These local files are not admission authority.</p>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-26 | 22:05 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 01:28 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:53 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

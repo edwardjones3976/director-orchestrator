@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Primary staging and generation controls · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#explicit-preparation">Explicit preparation</a></li><li class="top"><a href="#owner-provided-generation-manifest">Owner-provided generation manifest</a></li><li class="top"><a href="#evidence-only-service">Evidence-only service</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
+<h1 id="primary-staging-and-generation-controls">Primary staging and generation controls</h1>
+<p>These controls prepare a candidate for activation. Staged readiness does not
+mean LangGraph owns intake or that providers, effects, or legacy recovery run.
+The operator's protected environment file remains selection authority. Keep it
+and the owner-provided manifest outside writable provider workspaces.</p>
+<h2 id="explicit-preparation">Explicit preparation</h2>
+<p>Build the reviewed clean checkout explicitly before running runtime controls;
+the control script no longer builds images or starts Postgres as a side effect.
+Set the build-only <code>DIRECTOR_RUNTIME_IMAGE</code> process value to
+<code>&lt;compose-project&gt;-orchestrator</code> so building never retags a selected image ID.
+Use the same Compose project/environment as the deployment, with
+<code>--build-arg DIRECTOR_CANDIDATE_COMMIT=&lt;exact-commit&gt;</code> and
+<code>--build-arg DIRECTOR_CANDIDATE_TREE=&lt;exact-tree&gt;</code> on <code>docker compose build orchestrator</code>. These label values must match the control checkout and configured
+candidate pins. Building is not acceptance. When the registered project
+repository differs from the accepted Director service candidate, keep
+<code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> and <code>LANGGRAPH_PRIMARY_PINNED_TREE_SHA</code> on
+the Director candidate and set
+<code>LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA</code> and
+<code>LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA</code> to the clean allowlisted
+project snapshot, and set <code>LANGGRAPH_PRIMARY_SERVICE_REPOSITORY</code> to the
+owner-local adoption repository when that adoption names the Director service PR
+while <code>REPOSITORY_ALLOWLIST</code> names the execution project. Leave both project
+execution values empty to retain the legacy single-repository binding. The image must already exist for
+utility containers, which use <code>--no-deps --pull never</code>. The control tool inspects
+the actual content-addressed image ID and rejects an embedded entrypoint. It
+then sets the Compose image to that immutable ID. Candidate labels help identify
+the checkout but are not accepted as image-content identity.</p>
+<p>Start the intended Postgres service explicitly under the approved host setup.
+<code>BootstrapDatabaseIdentity</code> then creates only the schema container and
+<code>director_primary_control_plane</code> identity singleton, or verifies its existing
+version, storage digest, and UUID. It does not start services, construct a pool,
+create task/effect tables, or initialize checkpoint storage. Incompatible
+metadata fails closed instead of being repaired. <code>Migrate</code> requires the exact
+authenticated ACCEPTED state before application/checkpoint DDL; migration
+retains the identity UUID established by bootstrap.</p>
+<p><code>Health</code> observes only the existing health endpoint. <code>Preflight</code> records its
+evidence against an existing database identity; it does not build an image,
+start a service, or initialize application/checkpoint schemas. Challenge and
+acceptance actions deliberately write their bounded evidence journal.</p>
+<h2 id="owner-provided-generation-manifest">Owner-provided generation manifest</h2>
+<p>Provider-v2 controls require a fresh selected generation. The closed JSON
+contract is <code>director-primary-generation/v1</code>, with exactly these fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Bound value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td><code>director-primary-generation/v1</code></td>
+</tr>
+<tr>
+<td><code>activation</code></td>
+<td>Complete existing <code>ActivationIdentity</code> document</td>
+</tr>
+<tr>
+<td><code>journal_path</code></td>
+<td>Fresh direct <code>/data/&lt;name&gt;.sqlite3</code> path</td>
+</tr>
+<tr>
+<td><code>registry_path</code></td>
+<td>Effective container registry path</td>
+</tr>
+<tr>
+<td><code>registry_sha256</code></td>
+<td>Exact registry bytes and configured digest</td>
+</tr>
+<tr>
+<td><code>provider_bindings_sha256</code></td>
+<td>SHA256 of the complete UTF-8 <code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code> string</td>
+</tr>
+<tr>
+<td><code>deployment_configuration_sha256</code></td>
+<td><code>primary_generation.deployment_digest(Settings())</code> under the intended resolved container settings and new journal path</td>
+</tr>
+<tr>
+<td><code>image_id</code></td>
+<td>Actual <code>sha256:...</code> Docker image ID from host inspection, covering image configuration and root filesystem content</td>
+</tr>
+<tr>
+<td><code>resolved_compose_sha256</code></td>
+<td><code>primary_generation.resolved_deployment_digest</code> of the complete resolved Compose JSON with that immutable image selected for both the orchestrator and the Slack gateway (<code>slackbot</code>); a gateway on another image or a mutable name is refused</td>
+</tr>
+</tbody>
+</table>
+<p>The deployment digest covers all resolved Settings fields, including secrets
+only through the digest. Its documented exclusions are the operational switches
+for paid runs, primary enabled, new intake, live dispatch, offline simulation,
+and the parallel kill switch. Staging independently requires execution gates
+off; live activation uses the existing deterministic authority gates. All other
+settings changes require a fresh manifest. Manifest path/digest selection is
+outside Settings and therefore does not create a circular self-hash.</p>
+<p>The second deployment digest binds the entire resolved Compose graph: mounts,
+ports, networks, dependency configuration, environments, image ID, command and
+entrypoint. Only the explicit mode switches, checked main/staging command choice,
+and the manifest selection/digest self-references normalize. An arbitrary
+command or staged command with enabled execution switches is rejected instead
+of normalized. The control script computes this digest inside the exact image
+using a utility container with no network or host mounts; resolved configuration
+travels over stdin and only its digest is printed. When preparing a manifest,
+use <code>primary_generation compose-digest --image-id &lt;id&gt;</code> with that resolved JSON
+on stdin and the intended new journal path selected.</p>
+<p>Image and actual Compose verification are host control responsibilities. The
+isolated service checks their pinned launch metadata against the manifest; it
+does not claim to inspect Docker itself or receive a Docker socket. After start,
+the control also reads back the running container's actual image ID and command.</p>
+<p>Supply the independently controlled manifest file and its exact SHA256 to
+<code>SelectGeneration -GenerationManifestPath &lt;file&gt; -GenerationManifestSha256 &lt;hash&gt;</code>.
+The action stops Slack, n8n and the orchestrator, confirms every mutating surface
+is stopped, and verifies the complete manifest against the database identity and
+effective configuration. It exclusively persists the exact manifest bytes under
+<code>/data/generation-&lt;sha256&gt;.json</code> and exclusively reserves the new journal file.
+It binds the new journal to the manifest digest with a generation metadata row,
+and rejects a substituted journal on every verification. It checks stopped
+state again before atomically replacing the environment file
+with all three selection pointers. The owner-controlled digest authenticates
+the persisted bytes; merely editing the data-volume copy cannot select new bytes.</p>
+<p>No existing journal or manifest is overwritten. Interrupted selection can leave
+an unused manifest or initialized generation journal; preserve those artifacts and select a new
+generation rather than reusing or deleting them. This is a fail-closed sequence,
+not a transaction spanning Docker, the host filesystem and the data volume.
+Earlier selected generations remain available for audit. Compose honors the
+selected journal path and retains the historical path as its default for
+unselected legacy configurations.</p>
+<p>Run Preflight, Challenge, Accept, Migrate, Backup and RestoreDrill for the newly
+selected generation. The signed acceptance and restore proof must match its
+candidate, tree, database instance, schema, namespace, profile and project.</p>
+<h2 id="evidence-only-service">Evidence-only service</h2>
+<p><code>StageRuntime</code> verifies the selected generation and authenticated acceptance and
+restore proof before stopping and proving all mutating surfaces closed. It
+selects <code>director_orchestrator.primary_staging:app</code>, disables execution switches,
+and starts only the existing candidate orchestrator image. Startup independently
+rechecks generation, database identity and authenticated journal evidence using
+read-only access. Startup failure leaves mutating services stopped.</p>
+<p>The staged ASGI module has only GET <code>/health</code> and <code>/v1/staging/status</code>. It never
+imports the live application or creates task stores, graphs, provider adapters,
+writer leases, recovery tasks, expiry sweeps or reconciliation loops. Existing
+legacy tasks are not resumed. Task mutation, intake and effect endpoints are
+absent. Health explicitly reports <code>staged_ready</code> and <code>evidence_only</code>, with actual
+runtime, graph, router, dispatch, effects and writer readiness false. It does
+not infer ownership of another service from its own successful startup.</p>
+<p><code>PrepareOfflineHandoff</code> supplies the inventory prerequisite for a separately
+authorized Stage A run. Before selecting the initial generation, set explicit
+<code>ALLOW_PAID_RUNS=false</code>,
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=false</code> and
+<code>DIRECTOR_PROVIDER_VALIDATION_ENABLED=false</code> in its protected profile. The action
+rejects missing or enabled values rather than rewriting them. Validation mode
+is part of the resolved Compose digest, so adding it later requires a fresh
+generation. The action requires an explicitly selected signed-provider mode (<code>provider-v2</code> or the exact literal <code>provider-v3-two-party</code>) and the same clean candidate,
+image, database and selected-generation verification as the other controls.</p>
+<p>After authenticated acceptance and restore pass <code>require-staged</code>, the action
+stops and proves the selected project's Slack gateway, n8n and orchestrator
+closed, reads the real legacy database inventory, binds it immutably, calls
+<code>require-ready</code>, and proves those services remain stopped. An identical inventory
+can be retried; changed inventory is refused. It changes no switches, starts no
+services, transfers no intake ownership and records no <code>ACTIVATED</code> stage. It
+neither calls <code>Activate</code> nor relaxes acceptance or restore requirements.</p>
+<p>The stop proof covers only the selected Compose project. Before this action or
+Stage A, the operator must separately establish that Default Director (D) and
+any other deployment cannot admit the same intake or mutate the inventoried
+legacy database. Sibling services are not stopped by this action; this is not
+host-wide fencing. Keep that quarantine in force through the handoff.</p>
+<p><code>Activate</code> also captures and binds final inventory after stopping intake, then
+selects the normal application with its existing live provider, acceptance,
+ownership and effect gates. Normal startup under either signed-provider mode
+(<code>provider-v2</code> or <code>provider-v3-two-party</code>) verifies the selected immutable
+generation and runtime acceptance, including bound inventory, before offline
+provider doubles are selected. <code>PrepareOfflineHandoff</code> satisfies that
+inventory prerequisite without being live activation. <code>ActivateOffline</code> runs
+the same stop, inventory and <code>require-ready</code> steps, then selects the normal
+application with offline simulation on and paid runs and live dispatch off. It
+does not require provider readiness and records no <code>ACTIVATED</code> stage; a later
+paid <code>Activate</code> on the same generation passes only while the legacy inventory
+is unchanged. Rollback selects the normal application after its existing fenced
+proof and restores the orchestrator and gateway images recorded beside the
+profile before the first candidate recreate
+(<code>&lt;profile&gt;.prior-images.&lt;generation&gt;.&lt;image&gt;.json</code>, written once and never
+overwritten), reading each back before n8n and Slack start. A failed readback
+or health check closes all intake again. An invalid record refuses before
+anything stops; with no record the return to legacy runs on the candidate image
+and reports that no image was restored.</p>
+<p><code>ValidateProviders</code> requires the verified staged container and freshly checked
+generation/acceptance/restore evidence. It checks the validation manifest's
+candidate/tree and requires its <code>generation</code> to equal the primary manifest
+SHA256 before invoking the fixed <code>provider_validation_cli validate</code> entry point.
+No caller command or namespace is accepted, and validation storage is never
+bootstrapped implicitly. The separately authored provider-validation package
+must be adopted into the deployed candidate; it owns authenticated bridge
+access, durable admissions, bounded budgets and captured results. Without that
+package or its independently provisioned authority, validation cannot run.</p>
+<p><code>PublishProviderEvidence</code> completes the separate publication step after a
+successful native validation capture. It takes <code>-ProviderEvidencePath</code> naming a
+UTF-8 JSON file, at most 128 KiB, mounted read-only into one utility container.
+The container invokes <code>primary_generation publish-provider-evidence --evidence-file /run/director-provider-evidence.json</code>. It does not invoke a
+provider, start the normal application, run migrations or adopt intake. The
+staged ASGI service remains GET-only.</p>
+<p>Publication reads already captured validation records while
+<code>DIRECTOR_PROVIDER_VALIDATION_ENABLED=false</code> remains unchanged in the
+generation-bound offline-handoff profile. Only this staged reader opts out of
+the verifier loader's execution-switch check; it retains the configured
+validation DSN, capture key, candidate/tree/generation checks and read-only
+database connection. The normal runtime loader still requires validation to be
+enabled. Do not change the flag to publish evidence from an existing generation.</p>
+<p>The file is the closed object <code>{&quot;version&quot;:&quot;director-staged-provider-evidence/v1&quot;, &quot;generation&quot;:&quot;&lt;selected manifest SHA256&gt;&quot;,&quot;requests&quot;:[...]}</code>. Each item has
+<code>provider_id</code> and <code>request</code>; <code>request</code> is the existing signed
+<code>ProviderActivationAdvanceRequest</code> contract. Earlier stages also require
+<code>observation_base64</code>, containing the actual receipt or attributed attestation
+bytes, at most 8 KiB decoded. Its SHA256 must equal the signed <code>evidence_digest</code>.
+For <code>LIVE_OK</code>, that field is forbidden: the digest must identify the persisted
+native capture instead. Retain the submitted file with its source observations.
+These receipts establish supplied bytes and owner-authorized attribution;
+the publisher does <strong>not</strong> independently observe installation or authentication.</p>
+<p>A fresh binding needs separately signed <code>INSTALLED</code>, <code>AUTHENTICATED</code>,
+<code>WORKSPACE_BOUND</code>, <code>DRY_RUN_OK</code> and <code>LIVE_OK</code> requests, in that order on both
+surfaces (<code>app</code> and <code>runtime_adapter</code>), with expected revisions 0–4. Already
+current stored observations may supply earlier stages instead. The publisher
+never derives those four observations from a successful canary. The complete
+batch is checked against a snapshot before any append and must leave both
+surfaces LIVE-ready for every selected provider. Missing stages, expired or
+future observations, reordered stages and altered history are refused.
+There are 1–160 requests within the same 128 KiB file bound. The command checks
+a cooperative 120-second deadline between individual evidence-store and
+capture-verifier calls; it is not a hard process deadline. A database operation
+already in progress may finish after it. Statements and lock waits are bounded
+to ten seconds; pool startup and acquisition are also bounded to ten seconds.
+Read-only capture verification has a five-second connection timeout and a
+ten-second statement timeout. Cleanup/driver scheduling may add elapsed time.
+Expired time prevents further publication and prevents a success report.</p>
+<p>An authorized signer must set each request's <code>evidence_id</code> using
+<code>primary_provider_evidence.evidence_id(identity, generation, provider, surface, evidence_digest, stage=stage)</code> <strong>before</strong> creating its existing v1 advancement proof. This
+pure helper returns <code>staged-v1:</code> plus SHA256 of canonical JSON containing the
+publication version, complete activation identity, selected generation,
+provider, surface, stage and evidence digest. The existing proof signs that field and
+the provider endpoint. This is the authenticated generation binding; changing
+only the outer file generation cannot retarget a valid signature. The publisher
+never creates signatures. The existing owner identity check, distinct gateway
+key, five-minute proof lifetime, immutable binding and durable nonce checks
+still apply. General v1 HTTP advancement remains backward compatible.</p>
+<p>Before opening the bounded evidence write pool, publication verifies the exact
+selected generation, signed acceptance and completed restore, validation
+manifest, capture-verifier generation, runtime-off switches and every signed
+request. The existing <code>CaptureVerifier</code> then verifies persisted native input,
+output, successful terminal session, signature, binding, generation and expiry;
+caller assertions cannot replace these bytes. Both chains are read back after
+writing. Output reports only the selected providers' verified surfaces and
+<code>selected_provider_live_ready</code>. It does not scan unrelated providers or assert
+global/core readiness; the existing runtime health endpoint owns those claims.
+Publication alone grants no live routing or paid activation.</p>
+<p>An interruption can leave part of a chain committed. Reuse the identical signed
+input while its proof and capture remain current; durable exact replay does not
+append another row or dispatch another canary. Conflicting evidence is refused.
+Previously recorded stages are compared at their exact history index, even when
+later stages exist, and their original durable nonce claims must match. After
+the proof expires, inspect current stage readback and obtain fresh signed
+commands <strong>only for the remaining stages</strong>, using the same current native
+capture. Completed surfaces are verified from stored history and need no new
+command. Do not rerun native execution merely to recover publication or replace
+past evidence. A failed readback is not success, even if rows were committed.</p>
+<p>Issuer enrollment and real provider qualification remain separate authorized
+work. Developing these controls did not enroll a host, call any provider, create
+an acceptance signature or activate the runtime.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]] -->
+<p>The separately versioned, default-disabled two-party acceptance contract is
+documented in <a href="two-party-activation-v3.html">two-party activation v3</a>. Its explicit
+selection preserves this lifecycle and requires signed owner adoption and
+qualified native evidence; this document grants no adoption or activation.</p>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

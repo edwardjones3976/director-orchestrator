@@ -57,6 +57,8 @@ import json
 import re
 import tempfile
 import unittest
+
+from director_orchestrator.documentation import embedded_json, read_document
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -532,13 +534,9 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             authorizes_external_action=False)
         self.assertEqual(AdvisoryVoteTally.model_validate(historical).model_dump(), historical)
 
-    def test_machine_and_markdown_charter_manifest_are_exact(self):
-        document = (
-            Path(__file__).resolve().parents[1] / "docs" / "team-operating-charter.md"
-        ).read_text(encoding="utf-8")
-        marker = document.split("<!-- TEAM_CHARTER_MANIFEST_BEGIN -->", 1)[1]
-        fenced = marker.split("<!-- TEAM_CHARTER_MANIFEST_END -->", 1)[0]
-        documented = fenced.split("```json", 1)[1].split("```", 1)[0].strip()
+    def test_machine_and_html_charter_manifest_are_exact(self):
+        document = (Path(__file__).resolve().parents[1] / "docs" / "team-operating-charter.html").read_text(encoding="utf-8")
+        documented = embedded_json(document, "TEAM_CHARTER_MANIFEST")
 
         self.assertEqual(documented, canonical_team_charter_manifest_json())
 
@@ -563,14 +561,14 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         directive = team_operating_charter()["director_operating_directive"]
         expected = "OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority."
         self.assertIn("investigator", directive["duties"])
-        prompt = (root / "prompts/director-system.md").read_text(encoding="utf-8")
-        charter = (root / "docs/team-operating-charter.md").read_text(encoding="utf-8")
+        prompt = read_document(root / "prompts/director-system.md")
+        charter = read_document(root / "docs/team-operating-charter.html")
         section = charter.split("## OpenAI/Director — INVESTIGATOR", 1)[1].split("\n## ", 1)[0]
         import yaml
 
-        profile = yaml.safe_load((root / "docs/provider-profiles/openai.yaml").read_text(encoding="utf-8"))
-        contract = yaml.safe_load((root / "docs/templates/project-bootstrap/provider-roles-contract.yaml").read_text(encoding="utf-8"))
-        rendered = (root / "docs/provider-profiles/openai.profile.md").read_text(encoding="utf-8")
+        profile = yaml.safe_load(read_document(root / "docs/provider-profiles/openai.yaml"))
+        contract = yaml.safe_load(read_document(root / "docs/templates/project-bootstrap/provider-roles-contract.yaml"))
+        rendered = read_document(root / "docs/provider-profiles/openai.profile.html")
         for surface in (prompt, section, profile["roles"]["summary"],
                         contract["providers"]["openai"]["investigator_responsibility"], rendered):
             self.assertIn(expected, " ".join(surface.split()))
@@ -584,17 +582,18 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             f"{director_operating_directive_sha256()}"
         )
         surfaces = [
-            root / "docs" / "team-operating-charter.md",
+            root / "docs" / "team-operating-charter.html",
             root / "prompts" / "director-system.md",
-            root / "README.md",
+            root / "README.html",
             root
             / "docs"
             / "templates"
             / "project-bootstrap"
-            / "project-state-report.md",
+            / "project-state-report.html",
         ]
 
         for surface in surfaces:
+            # The directive fingerprint is a source comment, not visible prose.
             content = surface.read_text(encoding="utf-8")
             matching_lines = [
                 line
@@ -605,20 +604,14 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
     def test_openai_external_production_boundary_is_synchronized_across_surfaces(self):
         root = Path(__file__).resolve().parents[1]
-        charter = (root / "docs" / "team-operating-charter.md").read_text(
-            encoding="utf-8"
-        )
-        prompt = (root / "prompts" / "director-system.md").read_text(
-            encoding="utf-8"
-        )
-        readme = (root / "README.md").read_text(encoding="utf-8")
-        report = (
-            root
+        charter = read_document(root / "docs" / "team-operating-charter.html")
+        prompt = read_document(root / "prompts" / "director-system.md")
+        readme = read_document(root / "README.html")
+        report = read_document(root
             / "docs"
             / "templates"
             / "project-bootstrap"
-            / "project-state-report.md"
-        ).read_text(encoding="utf-8")
+            / "project-state-report.html")
 
         self.assertIn("OpenAI production may be separately assigned", " ".join(charter.split()))
         self.assertIn("OpenAI production may be separately assigned", prompt)
@@ -631,16 +624,16 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
     def test_balanced_allocation_selection_and_copilot_are_synchronized(self):
         root = Path(__file__).resolve().parents[1]
         surfaces = {
-            "charter": root / "docs" / "team-operating-charter.md",
+            "charter": root / "docs" / "team-operating-charter.html",
             "prompt": root / "prompts" / "director-system.md",
-            "readme": root / "README.md",
-            "setup": root / "docs" / "provider-setup.md",
-            "protocol": root / "docs" / "project-bootstrap-protocol.md",
+            "readme": root / "README.html",
+            "setup": root / "docs" / "provider-setup.html",
+            "protocol": root / "docs" / "project-bootstrap-protocol.html",
             "report": root
             / "docs"
             / "templates"
             / "project-bootstrap"
-            / "project-state-report.md",
+            / "project-state-report.html",
             "roles": root
             / "docs"
             / "templates"
@@ -648,7 +641,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             / "provider-roles-contract.yaml",
         }
         content = {
-            name: path.read_text(encoding="utf-8") for name, path in surfaces.items()
+            name: read_document(path) for name, path in surfaces.items()
         }
 
         for name, text in content.items():
@@ -685,30 +678,20 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
     def test_antigravity_work_and_debate_boundaries_are_synchronized(self):
         root = Path(__file__).resolve().parents[1]
-        charter = (root / "docs" / "team-operating-charter.md").read_text(
-            encoding="utf-8"
-        )
-        setup = (root / "docs" / "provider-setup.md").read_text(encoding="utf-8")
-        prompt = (root / "prompts" / "director-system.md").read_text(
-            encoding="utf-8"
-        )
-        protocol = (root / "docs" / "project-bootstrap-protocol.md").read_text(
-            encoding="utf-8"
-        )
-        profile = (
-            root
+        charter = read_document(root / "docs" / "team-operating-charter.html")
+        setup = read_document(root / "docs" / "provider-setup.html")
+        prompt = read_document(root / "prompts" / "director-system.md")
+        protocol = read_document(root / "docs" / "project-bootstrap-protocol.html")
+        profile = read_document(root
             / "docs"
             / "templates"
             / "project-bootstrap"
-            / "project-profile.yaml"
-        ).read_text(encoding="utf-8")
-        workstream = (
-            root
+            / "project-profile.yaml")
+        workstream = read_document(root
             / "docs"
             / "templates"
             / "project-bootstrap"
-            / "workstream-plan.md"
-        ).read_text(encoding="utf-8")
+            / "workstream-plan.html")
 
         for surface in (charter, setup, prompt, protocol, workstream):
             self.assertIn("cannot initiate", surface)
@@ -737,18 +720,16 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
     def test_minimal_fix_policy_is_present_across_authoritative_surfaces(self):
         root = Path(__file__).resolve().parents[1]
         surfaces = [
-            root / "docs" / "team-operating-charter.md",
-            root / "docs" / "project-bootstrap-protocol.md",
-            root / "docs" / "templates" / "project-bootstrap" / "workstream-plan.md",
-            root / "docs" / "templates" / "project-bootstrap" / "minimal-fix.md",
+            root / "docs" / "team-operating-charter.html",
+            root / "docs" / "project-bootstrap-protocol.html",
+            root / "docs" / "templates" / "project-bootstrap" / "workstream-plan.html",
+            root / "docs" / "templates" / "project-bootstrap" / "minimal-fix.html",
             root / "prompts" / "director-system.md",
         ]
         for surface in surfaces:
-            self.assertIn("MINIMAL_FIX", surface.read_text(encoding="utf-8"), surface)
+            self.assertIn("MINIMAL_FIX", read_document(surface), surface)
 
-        profile = (
-            root / "docs" / "templates" / "project-bootstrap" / "project-profile.yaml"
-        ).read_text(encoding="utf-8")
+        profile = read_document(root / "docs" / "templates" / "project-bootstrap" / "project-profile.yaml")
         self.assertIn("minimal_fix:", profile)
         self.assertIn("attempt_limit: 3", profile)
         self.assertIn("changed_candidate_invalidates_evidence: true", profile)
@@ -756,28 +737,26 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
     def test_pplx_cli_skill_is_installed_and_research_only_across_surfaces(self):
         root = Path(__file__).resolve().parents[1]
         skill = root / ".agents" / "skills" / "pplx-cli" / "SKILL.md"
-        skill_content = skill.read_text(encoding="utf-8")
+        skill_content = read_document(skill)
 
         self.assertIn("name: pplx-cli", skill_content)
         self.assertIn("pplx search web", skill_content)
         surfaces = [
-            root / "docs" / "team-operating-charter.md",
-            root / "docs" / "project-bootstrap-protocol.md",
-            root / "docs" / "templates" / "project-bootstrap" / "README.md",
-            root / "docs" / "templates" / "project-bootstrap" / "workstream-plan.md",
+            root / "docs" / "team-operating-charter.html",
+            root / "docs" / "project-bootstrap-protocol.html",
+            root / "docs" / "templates" / "project-bootstrap" / "README.html",
+            root / "docs" / "templates" / "project-bootstrap" / "workstream-plan.html",
             root / "prompts" / "director-system.md",
         ]
         for surface in surfaces:
-            content = surface.read_text(encoding="utf-8")
+            content = read_document(surface)
             matching_blocks = [
                 block
                 for block in content.split("\n\n")
                 if "`pplx-cli`" in block and "research-only" in block
             ]
             self.assertTrue(matching_blocks, surface)
-        protocol = (root / "docs" / "project-bootstrap-protocol.md").read_text(
-            encoding="utf-8"
-        )
+        protocol = read_document(root / "docs" / "project-bootstrap-protocol.html")
         self.assertIn("Linux-only `pplx-cli`", protocol)
         self.assertIn("project WSL", protocol)
 
@@ -957,15 +936,16 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
         """
         # Discover new documentation, including templates and both profile
         # sources and rendered sheets; do not freeze this to the known defects.
-        paths = set(self.ROOT.glob("*.md"))
+        paths = set(self.ROOT.glob("*.md")) | set(self.ROOT.glob("*.html"))
         for directory in ("docs", "prompts", ".agents", ".claude", ".github"):
             paths.update(
                 path for path in (self.ROOT / directory).rglob("*")
-                if path.suffix in {".md", ".yaml", ".yml", ".rst", ".txt"}
+                if path.suffix in {".html", ".md", ".yaml", ".yml", ".rst", ".txt"}
+                and path.relative_to(self.ROOT).parts[:2] != ("docs", "archive")
             )
         for path in sorted(paths):
             with self.subTest(path=path.relative_to(self.ROOT).as_posix()):
-                self.assertEqual(self.unconditional_claims(path.read_text(encoding="utf-8")), [])
+                self.assertEqual(self.unconditional_claims(read_document(path, structured=False)), [])
 
     def test_guard_rejects_historical_and_mandatory_variants(self):
         for claim in (
@@ -1180,9 +1160,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
     )
 
     def contract(self) -> str:
-        return (self.BOOTSTRAP / "provider-roles-contract.yaml").read_text(
-            encoding="utf-8"
-        )
+        return read_document(self.BOOTSTRAP / "provider-roles-contract.yaml")
 
     def test_contract_mirrors_the_charter_responsibility_areas(self):
         contract = self.contract()
@@ -1409,7 +1387,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
                 self.assertIn(f'- "{unchanged}"', contract)
 
     def test_intake_names_the_canonical_acting_director_functions(self):
-        intake = (self.BOOTSTRAP / "intake.md").read_text(encoding="utf-8")
+        intake = read_document(self.BOOTSTRAP / "intake.html")
 
         for name in ("Moderator", "Participant", "Director"):
             with self.subTest(name=name):
@@ -1426,8 +1404,8 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         )
 
     def test_readme_requires_the_contract_whenever_the_profile_is_used(self):
-        readme = (self.BOOTSTRAP / "README.md").read_text(encoding="utf-8")
-        profile = (self.BOOTSTRAP / "project-profile.yaml").read_text(encoding="utf-8")
+        readme = read_document(self.BOOTSTRAP / "README.html")
+        profile = read_document(self.BOOTSTRAP / "project-profile.yaml")
 
         # The profile sets the reference unconditionally, so the kit must not
         # let a single-provider project skip the companion file.
@@ -1440,14 +1418,14 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
     def test_bootstrap_surfaces_reference_the_roles_contract(self):
         for surface in (
             "project-profile.yaml",
-            "workstream-plan.md",
-            "intake.md",
-            "project-state-report.md",
+            "workstream-plan.html",
+            "intake.html",
+            "project-state-report.html",
         ):
             with self.subTest(surface=surface):
                 self.assertIn(
                     "provider-roles-contract.yaml",
-                    (self.BOOTSTRAP / surface).read_text(encoding="utf-8"),
+                    read_document(self.BOOTSTRAP / surface),
                 )
 
 
@@ -1458,29 +1436,29 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
     BOOTSTRAP = ROOT / "docs" / "templates" / "project-bootstrap"
 
     def read(self, path: Path) -> str:
-        return path.read_text(encoding="utf-8")
+        return read_document(path)
 
     def test_every_presented_project_gets_a_rollout_packet(self):
-        packet = self.BOOTSTRAP / "rollout-packet.md"
+        packet = self.BOOTSTRAP / "rollout-packet.html"
         self.assertTrue(packet.is_file())
         for surface in (
-            self.BOOTSTRAP / "README.md",
-            self.ROOT / "docs" / "project-bootstrap-protocol.md",
+            self.BOOTSTRAP / "README.html",
+            self.ROOT / "docs" / "project-bootstrap-protocol.html",
             self.ROOT / "prompts" / "director-system.md",
         ):
             with self.subTest(surface=surface):
                 content = self.read(surface)
-                self.assertIn("rollout-packet.md", content)
+                self.assertIn("rollout-packet.html", content)
                 self.assertIn("every project presented", content.lower())
 
-        readme = self.read(self.BOOTSTRAP / "README.md")
+        readme = self.read(self.BOOTSTRAP / "README.html")
         self.assertIn("rollout packet is mandatory", readme.lower())
         self.assertNotIn("may need only the intake", readme.lower())
 
     def test_profile_requires_concurrent_deployment_isolation(self):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
         for field in (
-            'rollout_packet: "rollout-packet.md"',
+            'rollout_packet: "rollout-packet.html"',
             "dedicated_app_per_active_deployment: true",
             "dedicated_channel_per_active_deployment: true",
             "distinct_profile_and_state_namespace: true",
@@ -1490,7 +1468,7 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
                 self.assertIn(field, profile)
 
     def test_packet_blocks_slack_activation_without_borrowing(self):
-        packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        packet = self.read(self.BOOTSTRAP / "rollout-packet.html")
         normalized = " ".join(packet.split()).lower()
         for requirement in (
             "distinct slack app",
@@ -1508,7 +1486,7 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
                 self.assertIn(requirement, normalized)
 
     def test_packet_records_references_not_token_values(self):
-        packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        packet = self.read(self.BOOTSTRAP / "rollout-packet.html")
         normalized = " ".join(packet.split())
         self.assertIn("secret reference", packet)
         self.assertIn("Never copy token values", packet)
@@ -1532,8 +1510,8 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
                 self.assertIn(field, profile)
 
         for surface in (
-            self.BOOTSTRAP / "rollout-packet.md",
-            self.ROOT / "docs" / "project-bootstrap-protocol.md",
+            self.BOOTSTRAP / "rollout-packet.html",
+            self.ROOT / "docs" / "project-bootstrap-protocol.html",
             self.ROOT / "prompts" / "director-system.md",
         ):
             normalized = " ".join(self.read(surface).split()).lower()
@@ -1551,7 +1529,7 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
 
     def test_packet_records_slack_identities_and_negative_activation_checks(self):
         profile = self.read(self.BOOTSTRAP / "project-profile.yaml")
-        packet = self.read(self.BOOTSTRAP / "rollout-packet.md")
+        packet = self.read(self.BOOTSTRAP / "rollout-packet.html")
         for field in (
             "owner_user_allowlist_reference:",
             "runtime_channel_allowlist:",
@@ -1575,14 +1553,14 @@ class ProjectRolloutPacketContractTests(unittest.TestCase):
                 self.assertIn(evidence, packet)
 
     def test_rollout_status_is_synchronized_across_bootstrap_surfaces(self):
-        for name in ("intake.md", "workstream-plan.md", "project-state-report.md"):
+        for name in ("intake.html", "workstream-plan.html", "project-state-report.html"):
             with self.subTest(name=name):
                 content = self.read(self.BOOTSTRAP / name)
                 self.assertIn("rollout", content.lower())
                 self.assertIn("Slack", content)
 
     def test_firecrawl_routing_fails_closed_without_authenticated_zdr(self):
-        protocol = self.read(self.ROOT / "docs" / "project-bootstrap-protocol.md")
+        protocol = self.read(self.ROOT / "docs" / "project-bootstrap-protocol.html")
         normalized = " ".join(protocol.split())
         for requirement in (
             "zeroDataRetention: true",

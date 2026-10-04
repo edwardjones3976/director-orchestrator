@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Stage A: LangGraph primary as intake owner, with simulated providers · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#which-control-version-this-describes">Which control version this describes</a></li><li class="top"><a href="#the-staged-evidence-rung-is-not-stage-a">The staged evidence rung is not Stage A</a></li><li class="top"><a href="#what-stage-a-is-and-is-not">What Stage A is, and is not</a></li><li class="top"><a href="#why-this-is-safe-to-run">Why this is safe to run</a></li><li class="top"><a href="#preconditions">Preconditions</a></li><li class="top"><a href="#the-switch-set">The switch set</a></li><li class="top"><a href="#execution">Execution</a></li><li class="top"><a href="#verification">Verification</a></li><li class="top"><a href="#rollback-what-it-requires-and-what-it-is-contingent-on">Rollback, what it requires, and what it is contingent on</a></li><li class="top"><a href="#distance-from-stage-a-to-live">Distance from Stage A to live</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:48 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:20 UTC | BEGIN]] -->
+<h1 id="stage-a-langgraph-primary-as-intake-owner-with-simulated-providers">Stage A: LangGraph primary as intake owner, with simulated providers</h1>
+<p><strong>Status:</strong> Runbook. Not executed by merging this document, and no command in it
+has been run. Every command below is contingent on which control-script version
+the deployment has adopted; see &quot;Which control version this describes&quot;.</p>
+<p>Stage A moves new-intake authority from the legacy Director engine to the
+LangGraph primary control plane, and runs the real primary graph, while every
+provider call is answered by an in-process double. No money is spent, no
+provider is contacted, and no acceptance gate is bypassed.</p>
+<p>It exists because <code>-Action Activate</code> is Stage A and Stage B together: it sets
+<code>ALLOW_PAID_RUNS=true</code> and
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=true</code> in the same switch write
+and then asserts <code>combined_live_ready</code>
+(<code>scripts/windows-langgraph-primary-control.ps1</code>). <code>PrepareOfflineHandoff</code>
+provides the missing immutable inventory prerequisite while leaving intake
+stopped and paid execution off. It does not transfer ownership or start Stage A;
+the separately authorized <code>-Action ActivateOffline</code> below does that.</p>
+<h2 id="which-control-version-this-describes">Which control version this describes</h2>
+<p>This runbook requires the control script with <code>PrepareOfflineHandoff</code> and
+<code>ActivateOffline</code> in this checkout. That version's <code>-Action</code> set is
+<code>PrepareAcceptance</code>, <code>BootstrapDatabaseIdentity</code>, <code>SelectGeneration</code>,
+<code>StageRuntime</code>, <code>PrepareOfflineHandoff</code>, <code>ValidateProviders</code>,
+<code>PublishProviderEvidence</code>, <code>Challenge</code>, <code>Preflight</code>, <code>Accept</code>, <code>Migrate</code>,
+<code>Backup</code>, <code>RestoreDrill</code>, <code>Health</code>, <code>Activate</code>, <code>ActivateOffline</code>, <code>Rollback</code>.
+Confirm the ValidateSet of the
+script the deployment actually holds before running anything here; an earlier
+version has neither the staged rungs nor the generation and image verification
+that everything below assumes.</p>
+<p>A correction to the rollback flag and lifecycle is pending in a separate OpenAI
+implementation at head <code>6fb8ec8cf09e5802a7db2c3c0a193a314185c3fc</code> (PR 115). It
+is not merged, is not present in this checkout, and was not reviewed for this
+document. The rollback section below therefore describes the version in this
+checkout only, and its commands stay contingent on the corrected control version
+actually being the adopted one.</p>
+<h2 id="the-staged-evidence-rung-is-not-stage-a">The staged evidence rung is not Stage A</h2>
+<p>The control script has a second, lower rung that this runbook is not about.
+<code>StageRuntime</code> starts <code>director_orchestrator.primary_staging:app</code> with
+<code>ALLOW_PAID_RUNS</code>, <code>LANGGRAPH_PRIMARY_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code> and
+<code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED</code> written false and
+<code>LANGGRAPH_PARALLEL_KILL_SWITCH</code> written true, then requires health to report
+<code>staged_ready</code> and <code>evidence_only</code> true with <code>primary_runtime_active</code> false.
+<code>ValidateProviders</code> runs only against exactly that service.</p>
+<p><strong>Stage A is not a prerequisite for <code>ValidateProviders</code>, and it is not a step
+towards it.</strong> The two rungs are incompatible by configuration: Stage A runs the
+ordinary application with <code>LANGGRAPH_PRIMARY_ENABLED=true</code> and offline
+simulation on, while the evidence path requires the staging ASGI app with every
+execution switch false — the resolved-deployment digest rejects a staged command
+that carries an enabled execution switch. Running Stage A first collects no
+activation evidence and brings the evidence run no closer: its provider doubles
+cannot produce a capture, and a capture is the only thing that advances
+<code>LIVE_OK</code>.</p>
+<h2 id="what-stage-a-is-and-is-not">What Stage A is, and is not</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Stage A</th>
+<th>Live activation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New intake owner</td>
+<td><strong>langgraph</strong></td>
+<td>langgraph</td>
+</tr>
+<tr>
+<td>Legacy new intake</td>
+<td><strong>disabled</strong></td>
+<td>disabled</td>
+</tr>
+<tr>
+<td>Primary graph, coordinator, checkpointer</td>
+<td><strong>real</strong></td>
+<td>real</td>
+</tr>
+<tr>
+<td>Provider calls</td>
+<td><strong>in-process doubles</strong></td>
+<td>real, paid</td>
+</tr>
+<tr>
+<td><code>ALLOW_PAID_RUNS</code></td>
+<td>false</td>
+<td>true</td>
+</tr>
+<tr>
+<td>Provider activation evidence</td>
+<td>not required</td>
+<td><code>combined_live_ready</code> required</td>
+</tr>
+<tr>
+<td>Acceptance gates</td>
+<td>none bypassed</td>
+<td>all nine required</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stage A does not do real work.</strong> <code>DefaultOfflineSimulationServices</code>
+substitutes <code>provider_doubles</code> that return a digest
+(<code>src/director_orchestrator/primary_default.py:1364</code>). Anything that looks like a
+provider result under Stage A was produced locally. Do not read Stage A output as
+evidence that a provider performed anything.</p>
+<h2 id="why-this-is-safe-to-run">Why this is safe to run</h2>
+<p><code>config.py:1465-1470</code> makes offline simulation and live provider dispatch
+<strong>mutually exclusive</strong> — the configuration refuses to start if both are set, so
+Stage A cannot silently become Stage B.</p>
+<p><code>config.py:1476-1485</code> places every provider-activation and paid-dispatch
+requirement inside <code>if self.langgraph_primary_live_provider_dispatch_enabled:</code>.
+With live dispatch off, none of them apply, and none are being skipped: they are
+not reached.</p>
+<p><code>primary_default.py:2538-2540</code> gates the authority handover on
+<code>langgraph_primary_new_intake_enabled</code> alone, so Stage A reaches the same
+compare-and-swap the live path uses. The ownership move is real, not simulated.</p>
+<h2 id="preconditions">Preconditions</h2>
+<p>Verify before touching switches; this document is not evidence of current
+deployment readiness.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Where</th>
+<th>Expected</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>configuration_valid</code></td>
+<td><code>/health</code> <code>langgraph_primary</code></td>
+<td>true</td>
+</tr>
+<tr>
+<td>Snapshot mounted and clean <strong>as the container sees it</strong></td>
+<td><code>git -c safe.directory=/repository status --porcelain=v2</code> inside the container</td>
+<td>empty</td>
+</tr>
+<tr>
+<td>Snapshot at the intended authority</td>
+<td>same, <code>rev-parse HEAD</code> and <code>HEAD^{tree}</code></td>
+<td>the pinned commit and tree</td>
+</tr>
+<tr>
+<td>No in-flight legacy work you are unwilling to strand</td>
+<td>legacy task inventory</td>
+<td>your call</td>
+</tr>
+</tbody>
+</table>
+<p>The snapshot check must be run <strong>inside the container</strong>, not on the host. A
+snapshot created on Windows can be clean to host git and entirely dirty to the
+container; see <code>docs/</code> history for the line-ending defect this caused.</p>
+<p><code>-Action ActivateOffline</code> performs Stage A's mode switch (see &quot;Execution&quot;). First
+use <code>PrepareOfflineHandoff</code> on a deployment that has reached, and is held at, the
+accepted lifecycle state:</p>
+<ul>
+<li>Authenticated acceptance, migration, backup and matching restore proof recorded
+through the sanctioned actions for the selected signed-provider mode (<code>provider-v2</code> or the exact literal <code>provider-v3-two-party</code>).
+Runtime acceptance checks the bound legacy inventory before selecting offline
+doubles; a successful staging health check alone cannot satisfy it.</li>
+<li>The initial generation-bound profile explicitly sets <code>ALLOW_PAID_RUNS=false</code>,
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=false</code> and
+<code>DIRECTOR_PROVIDER_VALIDATION_ENABLED=false</code>. Prepare these before generation
+selection; validation mode is not an operational digest exclusion.</li>
+<li>Default Director (D) and any other deployment separately quarantined from
+admitting the same intake or mutating the inventoried legacy database. The
+action stops and proves only the selected Compose project's intake services;
+it does not stop sibling services or establish host-wide fencing. Maintain
+this operator-established quarantine through the handoff.</li>
+<li><code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> and <code>LANGGRAPH_PRIMARY_PINNED_TREE_SHA</code>
+set to that accepted candidate, equal to the snapshot's commit and tree, and
+equal to the checkout the operator will run any later control action from.
+Blank or mismatched pins mean stop, not proceed.</li>
+<li>The primary plane quiescent: <code>ambiguous_effect_count</code> 0 and no active provider
+dispatch, assignment, writer claim, claim or reconciliation outstanding. This
+is the same state the fenced return path requires, and entering Stage A
+without it means entering a state you may not be able to leave.</li>
+<li>The operator holding the deployment, present for the whole pass, with the
+authority to stop it.</li>
+</ul>
+<p><code>PrepareOfflineHandoff</code> enforces the paid-off profile, exact candidate/image,
+database/generation, acceptance, restore and immutable inventory checks. It
+returns with selected-project intake stopped, without writing switches or an
+<code>ACTIVATED</code> stage. <code>ActivateOffline</code> does not repeat the signed-provider-mode and
+paid-off-profile checks, so run <code>PrepareOfflineHandoff</code> first on the same
+profile. The subsequent <code>ActivateOffline</code> run, cross-deployment quarantine and
+quiescence checks remain separately authorized operator responsibilities;
+preparation does not authorize runtime startup or paid execution.</p>
+<h2 id="the-switch-set">The switch set</h2>
+<pre><code>LANGGRAPH_PRIMARY_ENABLED=true
+LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=true
+LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true
+</code></pre>
+<p>Written false by <code>ActivateOffline</code> (the fallback edit leaves them untouched), and
+expected to stay false:</p>
+<pre><code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=false
+ALLOW_PAID_RUNS=false
+</code></pre>
+<p><code>ActivateOffline</code> also writes <code>DIRECTOR_ASGI_APP=director_orchestrator.main:app</code>
+and <code>LANGGRAPH_PARALLEL_KILL_SWITCH=true</code>.</p>
+<p><strong>The first two must move together.</strong> <code>LANGGRAPH_PRIMARY_ENABLED=true</code> with
+<code>NEW_INTAKE_ENABLED=false</code> does not fall back to legacy — <code>main.py:637-641</code>
+returns HTTP 503 on every intake. There is no per-request fallback and no
+in-process A/B: <code>main.py:157-163</code> reads the flag once at import and decides for
+the life of the process.</p>
+<h2 id="execution">Execution</h2>
+<p><code>-Action ActivateOffline</code> is the scripted Stage A path and the only control
+action that writes the Stage A switch set. <code>StageRuntime</code> and <code>Activate</code> write
+their own fixed sets, and neither of them ever writes
+<code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true</code>. The generation binding does
+not check the switch set: operational switches are deliberately normalised out
+of both the deployment-configuration digest and the resolved-Compose digest, so
+generation verification neither authorises nor detects it. <code>ActivateOffline</code>'s
+own health assertions are what check it.</p>
+<p>First run <code>scripts/windows-langgraph-primary-control.ps1 -Action PrepareOfflineHandoff -EnvironmentFile &lt;protected-profile&gt; -ComposeProject &lt;selected-project&gt; -HostPort &lt;selected-port&gt;</code> from the clean,
+accepted candidate. It requires staged prerequisites, stops and proves intake,
+captures and binds the real legacy inventory, requires readiness, and proves
+intake remains stopped. Stop on any failure. An identical inventory retry is
+allowed, but a changed inventory cannot replace the bound one. Leave intake
+closed until the separately authorized steps below; do not use <code>Activate</code> to
+prepare an offline run.</p>
+<ol>
+<li>Capture a <strong>protected configuration backup</strong>: for each switch name
+<code>ActivateOffline</code> writes (the five above, <code>DIRECTOR_ASGI_APP</code> and
+<code>LANGGRAPH_PARALLEL_KILL_SWITCH</code>), whether it was present and what its prior
+value was, written through
+the operator's protected-payload procedure for the deployment identity, in
+the same form the staging worksheet requires. Do not write a plaintext
+timestamped copy of the whole <code>.env</code>: that file holds the primary Postgres
+password, the owner token, the callback, evidence, reconciliation and host
+bridge secrets, and copying it spreads all of them to an unprotected path.
+Nothing in the repository implements this payload today; it is an
+operator-performed procedure.</li>
+<li>Run <code>scripts/windows-langgraph-primary-control.ps1 -Action ActivateOffline -EnvironmentFile &lt;protected-profile&gt; -ComposeProject &lt;selected-project&gt; -HostPort &lt;selected-port&gt;</code> from the same clean, accepted candidate. In order,
+it stops <code>slackbot</code>, <code>n8n</code> and <code>orchestrator</code> and proves each stopped;
+captures and binds the legacy inventory (an identical inventory is accepted
+again, a changed one is refused); runs <code>require-ready</code> (acceptance,
+migration and restore proof plus the bound inventory, but not provider
+readiness); records the prior orchestrator and gateway images once in
+<code>&lt;profile&gt;.prior-images.&lt;generation&gt;.&lt;image&gt;.json</code> for Rollback; writes the
+switch set above; recreates the orchestrator and reads back that it runs the
+verified candidate image and the live ASGI app; waits for health and
+requires the nine fields under &quot;Verification&quot;, <code>paid_off_primary_intake_active</code>
+true, <code>primary_runtime_active</code> false, <code>new_intake_owner</code> <code>langgraph</code> and
+<code>ambiguous_effect_count</code> 0; creates the Slack gateway stopped from the
+candidate image and reads its image ID back; and only then starts n8n and
+the gateway. It records <strong>no</strong> <code>ACTIVATED</code> stage.</li>
+<li>Verify as below. Note that step 2 ends by <strong>reopening authenticated n8n and
+Slack intake</strong> on the verified gateway image, where the fallback edit below
+recreates only the orchestrator.</li>
+</ol>
+<p>If anything fails from the switch write onwards, <code>ActivateOffline</code> stops and
+proves Slack, n8n and API intake closed, writes <code>ALLOW_PAID_RUNS</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>, live dispatch and offline simulation
+false and the kill switch true, and reports the failure. That unwind leaves
+<code>LANGGRAPH_PRIMARY_ENABLED</code> true, and it does not move the authority row back:
+if the orchestrator had already started, <code>intake_owner</code> may say <code>langgraph</code>, and
+only the fenced inverse compare-and-swap under &quot;Rollback&quot; returns it.</p>
+<p><code>Activate</code> and <code>ActivateOffline</code> both refuse unless the primary plane is
+quiescent (no unfinished dispatch, assignment, writer claim, reconciliation or
+claim), checked before they stop anything and again after the stop (waiting up
+to 75 seconds only for writer leases to lapse), so finish or reconcile the
+other mode's work first. A paid <code>Activate</code> that failed after recording
+<code>ACTIVATED</code> is resumed by running <code>Activate</code> again while its intake surfaces
+are still stopped: it re-runs only the start steps behind the same readbacks
+and health proof, refuses after a Rollback or beside a live writer lease, and
+refuses a running <code>ACTIVATED</code> deployment without stopping anything. A failed
+<code>ActivateOffline</code> is retried the same way: its marker lets the retry recover
+its own offline work, and only a live writer lease refuses it. <code>ActivateOffline</code> also applies the
+<code>PrepareOfflineHandoff</code> profile guard before anything stops. Live dispatch
+holds any task not labelled exactly <code>live</code>, and the offline dispatcher holds
+any task not labelled <code>offline_simulation</code> or <code>paid_off</code>.</p>
+<p>A later paid <code>Activate</code> on the same generation reuses this evidence chain only
+while the legacy inventory is unchanged: it binds the inventory again and
+refuses any difference. Legacy tasks stay live under primary, so a legacy
+status change during Stage A means paid activation needs a new generation.</p>
+<p><strong>Fallback only.</strong> The hand edit this runbook used to prescribe remains for a
+control script without <code>ActivateOffline</code>: write the three switches and nothing
+else, recreate the orchestrator <strong>with the compose file that matches the
+running deployment</strong> (a stale <code>docker-compose.yml</code> drops the primary DSN and the
+<code>/repository</code> bind without saying so beyond an orphan-container warning), wait
+for health, then verify. It skips the stop and inventory proof, the prior-image
+record, the gateway image readback and the fail-closed unwind above, and
+nothing in it checks the switch set.</p>
+<p>The step 1 backup restores <strong>configuration only</strong>. It is not a rollback of the
+authority move. Once Stage A has run, <code>intake_owner</code> is a fenced row in the
+primary database, and putting the three switches back does not touch it: it
+leaves the authority row saying <code>langgraph</code> while the process that was serving
+it is gone, which is a worse state than either end. Returning intake ownership
+to legacy is a separate durable database change — the fenced inverse
+compare-and-swap described under &quot;Rollback&quot; — with its own closed-intake, pin,
+ambiguity and quiescence requirements. Restoring a file is never a substitute
+for it, and neither one reverses an effect that already left the deployment.</p>
+<h2 id="verification">Verification</h2>
+<p>Nine fields must be true. The tenth, <code>primary_runtime_active</code>, must be <strong>false</strong>,
+and expecting otherwise is the easiest way to misread Stage A as a failure.</p>
+<pre><code>primary_graph_constructed      checkpoint_schema_current    writer_lease_ready
+primary_router_wired           claim_store_ready            reconciliation_worker_ready
+checkpoint_backend_postgres    effect_ledger_ready          legacy_new_intake_disabled
+</code></pre>
+<p><code>primary_runtime_active</code> takes
+<code>langgraph_primary_live_provider_dispatch_enabled</code> as its first conjunct
+(<code>primary_default.py:2634-2646</code>). Live dispatch is mutually exclusive with
+offline simulation, so under Stage A this field <em>cannot</em> be true. It is
+measuring the live path, not this one.</p>
+<p>The field that measures Stage A is <strong><code>paid_off_primary_intake_active</code></strong>
+(<code>primary_default.py:2623-2631</code>): the same component checks, plus
+<code>legacy_new_intake_disabled</code>, plus <code>not allow_paid_runs</code>. It exists precisely to
+describe primary owning intake with the money switched off. It must be <strong>true</strong>.</p>
+<p><code>-Action Activate</code> asserts a ten-field list that includes <code>primary_runtime_active</code>
+true, on the live path where dispatch is on. <code>-Action ActivateOffline</code> asserts
+the same list with <code>paid_off_primary_intake_active</code> in its place and refuses a
+true <code>primary_runtime_active</code>. Both also require <code>new_intake_owner</code> <code>langgraph</code>
+and <code>ambiguous_effect_count</code> 0. Neither asserts the fencing-generation increment
+or the three switch readouts below; those remain operator checks.</p>
+<p>Then the ownership proof:</p>
+<ul>
+<li><code>langgraph_primary.new_intake_owner</code> is <code>langgraph</code></li>
+<li><code>langgraph_primary.intake_fencing_generation</code> has incremented from its previous
+value</li>
+<li><code>langgraph_primary.ambiguous_effect_count</code> is <code>0</code></li>
+</ul>
+<p>And the switches that must <strong>not</strong> have moved:</p>
+<ul>
+<li><code>paid_runs_enabled</code> false</li>
+<li><code>langgraph_primary.live_provider_dispatch_requested</code> false</li>
+<li><code>langgraph_primary.offline_simulation_requested</code> <strong>true</strong> — this is how you
+confirm providers are doubled rather than live</li>
+</ul>
+<p><code>legacy_new_intake_disabled</code> is not an independent switch. It is a
+database-enforced mirror of <code>intake_owner = 'langgraph'</code>, held by a CHECK
+constraint (<code>langgraph_postgres.py:540-542</code>) and a trigger
+(<code>:1191-1195</code>). If it is true, the authority row genuinely moved.</p>
+<h2 id="rollback-what-it-requires-and-what-it-is-contingent-on">Rollback, what it requires, and what it is contingent on</h2>
+<p><code>-Action Rollback</code> performs the inverse fenced generation change. It is <strong>not
+unconditional</strong>, and it is <strong>not an undo</strong>. It requires all of the following.</p>
+<ul>
+<li><strong>A valid prior-image record, or none.</strong> It reads
+<code>&lt;profile&gt;.prior-images.&lt;generation&gt;.&lt;image&gt;.json</code>, written once before the
+first candidate recreate. An invalid record refuses rollback <strong>before</strong>
+intake is stopped. A missing record does not refuse: the fenced return to
+legacy runs on the candidate image and the tool reports that no image was
+restored. No record is written when the orchestrator or gateway container is
+absent (a fresh stack, or after <code>docker compose down</code>) or already runs the
+candidate image.</li>
+<li><strong>Closed intake, proved.</strong> It stops <code>slackbot</code>, <code>n8n</code> and <code>orchestrator</code>, then
+re-reads each service's running-container list and throws <em>&quot;Authenticated
+intake surface remains active&quot;</em> if any is still up. This is a hard stop, not a
+drain, and it happens before anything else changes.</li>
+<li><strong>The same accepted pins.</strong> Like every runtime action it verifies the snapshot
+against <code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> and
+<code>LANGGRAPH_PRIMARY_PINNED_TREE_SHA</code>, requires a clean checkout whose own
+commit and tree equal those pins, and requires an already-built
+exact-candidate image whose labels match. You cannot roll back from a
+different checkout, a dirty tree, or an image built from anything else. In
+provider-v2 acceptance mode it also re-verifies the selected generation.</li>
+<li><code>ambiguous_effect_count == 0</code>, or it raises <em>&quot;ambiguous effects block
+rollback&quot;</em>.</li>
+<li><code>primary_quiescence_metrics().rollback_safe</code>, or it raises <em>&quot;active provider
+dispatches, assignments, writer claims, reconciliation, or claims block
+rollback&quot;</em>.</li>
+</ul>
+<p>So rollback is available while primary is quiet and has produced no ambiguous
+effects, and is refused while it is mid-flight. Under Stage A, with providers
+doubled, ambiguous effects should not arise — but the refusal is real and
+rollback must not be planned as an always-available exit once live dispatch is
+on.</p>
+<p>The ambiguous-effect and quiescence refusals fire <strong>after</strong> intake has been
+stopped and after the switches have been written false. A refused rollback is
+therefore not a no-op: it leaves the
+deployment with intake stopped, <code>ALLOW_PAID_RUNS</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code> and
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code> false, the kill switch true,
+<code>LANGGRAPH_PRIMARY_ENABLED</code> still true, and the authority row still owned by
+primary. <strong>The pending PR 115 correction does not fix that.</strong> Per the
+independent review of it, PR 115 clears the simulation switch only <em>after</em> a
+successful inverse compare-and-swap; the refusal path is unchanged, so a refused
+rollback still leaves the deployment stopped with primary still owning the
+authority row under that version too. Adopting the corrected control script is
+not a reason to enter Stage A expecting an exit. The commands in this section
+stay contingent on which version is actually adopted, so re-read the rollback
+body of the script held before running any of them.</p>
+<p>The sequence it runs in this checkout: stop and prove all intake stopped, write
+the switches false, wait 65 seconds for the lease to lapse, run the guarded
+inverse compare-and-swap in a throwaway container, set
+<code>LANGGRAPH_PRIMARY_ENABLED=false</code> and restore the live ASGI app, recreate the
+orchestrator on the recorded prior orchestrator image and read its image ID
+back, wait for health, create slackbot stopped on the recorded prior gateway
+image and read it back, then start n8n and slackbot. If a readback or the
+health wait fails after the compare-and-swap, it stops and proves Slack, n8n
+and API intake closed again and reports the failure.</p>
+<p><strong>What rollback does not do.</strong> It changes who owns <em>new</em> intake and nothing
+else. It never transfers ownership of tasks that already exist
+(<code>langgraph_postgres.py:1825-1827</code>); work created under primary stays with
+primary. It does not undo, reverse or compensate any external effect primary
+already executed: a merge, a Slack message, a GitHub write, a provider
+invocation and any charge it incurred all survive it untouched. It does not
+clear <code>ambiguous_effect_count</code> — it refuses while that count is nonzero, so the
+one situation in which an undo would be most wanted is the situation in which
+rollback will not run at all. Do not describe it, or rely on it, as a safety
+net.</p>
+<h2 id="distance-from-stage-a-to-live">Distance from Stage A to live</h2>
+<p>Stage A leaves these outstanding, and none are configuration:</p>
+<ul>
+<li><strong>Provider activation evidence.</strong> <code>combined_live_ready</code> requires LIVE_OK
+evidence across the bound providers on two surfaces. <code>-Action Activate</code>
+asserts it. That evidence is produced on the staged evidence-only rung
+(<code>StageRuntime</code> then <code>ValidateProviders</code>), which is a separate path from this
+one and does not run through Stage A. Each capture is a real native provider
+invocation, so it may be billable or consume subscription allowance even
+though it must complete with an empty effects list.</li>
+<li><strong><code>ALLOW_PAID_RUNS</code>.</strong> Coupled bidirectionally with live dispatch
+(<code>config.py:1476-1480</code>, <code>primary_default.py:1979-1983</code>); the two move as one
+unit and the check is a startup refusal.</li>
+<li><strong>Eight of the nine acceptance gates.</strong> Only Gate 3 (distinct namespaces) is
+satisfied. The operations document states these require owner acceptance of
+evidence, and that merged code or documentation satisfies none of them.</li>
+</ul>
+<p>Stage A is a rung, not a shortcut. It proves the primary plane owns intake and
+runs its own lifecycle, with the money and the authorisation questions still
+closed.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:48 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

@@ -5374,11 +5374,13 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         the verbatim label a simulated wave reads like real provider evidence.
         """
 
-        charter = (
+        from director_orchestrator.documentation import read_document
+
+        charter = read_document(
             Path(__file__).resolve().parents[1]
             / "docs"
-            / "team-operating-charter.md"
-        ).read_text(encoding="utf-8")
+            / "team-operating-charter.html"
+        )
         self.assertIn(_SIMULATION_LABEL, charter)
 
         _services, _coordinator, _application, _pending, completed = (

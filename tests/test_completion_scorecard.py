@@ -107,6 +107,8 @@ import re
 import tempfile
 import time
 import unittest
+
+from director_orchestrator.documentation import read_document
 from contextlib import ExitStack, closing, nullcontext, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -3451,8 +3453,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(check=key):
                 self.assertIsNone(found[key].passed)
                 self.assertEqual(found[key].explanation, "collector not yet trusted")
-        document = (Path(__file__).resolve().parents[1] / "docs/twenty-check-completion-scorecard.md").read_text(
-            encoding="utf-8")
+        document = read_document(Path(__file__).resolve().parents[1] / "docs/twenty-check-completion-scorecard.html")
         audited = dict(re.findall(r"^\| (\d{2}) \| .* \| (Yes|No) \|$", document, re.MULTILINE))
         self.assertEqual(audited, {key: "Yes" if key in contained else "No" for key in sc.COLLECTOR_INPUTS})
 

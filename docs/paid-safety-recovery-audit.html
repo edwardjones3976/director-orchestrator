@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>PR #326 recovery audit · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#a-durable-dispatch-records">A: durable dispatch records</a></li><li class="top"><a href="#b-every-spend-table-reader">B: every spend-table reader</a></li><li class="top"><a href="#c-raw-payload-trust-audit">C: raw payload trust audit</a></li><li class="top"><a href="#round-7-atomic-acknowledgement-and-limits">Round 7: atomic acknowledgement and limits</a></li><li class="top"><a href="#round-8-shared-store-refusal-and-initial-unknown-settlement">Round 8: shared-store refusal and initial unknown settlement</a></li><li class="top"><a href="#checks-prepared">Checks prepared</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
+<h1 id="pr-326-recovery-audit">PR #326 recovery audit</h1>
+<p>Round 7 starts at <code>8c11d64137ce57aefb966c9afc7797ca5b06a097</code>.
+This is an implementation audit, not a test pass or independent review.</p>
+<h2 id="a-durable-dispatch-records">A: durable dispatch records</h2>
+<table>
+<thead>
+<tr>
+<th>Site / record</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Legacy dispatch and revision: provider run, interaction acknowledgement, task effect observation</td>
+<td>Persisted before spend settlement; retained on a spend pause.</td>
+</tr>
+<tr>
+<td>Legacy dispatch and revision: workload reservation</td>
+<td>Finalized even when settlement returns false. Restart repairs existing pending rows from exact task effect observations without reserving or submitting again.</td>
+</tr>
+<tr>
+<td>Ambiguous legacy dispatch/revision</td>
+<td>Workload, interaction, effect and contact evidence are recorded before the spend pause; no retry authority is created.</td>
+</tr>
+<tr>
+<td>Single packet dispatch: workload</td>
+<td>Classified from the runtime outcome before returning a spend pause; normal resumed consumption retains existing finalization checks.</td>
+</tr>
+<tr>
+<td>Packet task effects</td>
+<td>Settlement hold records submitted evidence; resumed normal consumption records completed evidence and validates the result packet.</td>
+</tr>
+<tr>
+<td>Parallel packet batch members and workload</td>
+<td>The existing observed-results loop finalizes workload and member states before its spend-hold return. Recovery consumes the retained packet; it does not resend.</td>
+</tr>
+<tr>
+<td>Delegation / collaboration ledger</td>
+<td>Published before provider I/O. Resume uses the existing per-assignment publication receipt. Acceptance/collaboration outcomes remain after verified result consumption.</td>
+</tr>
+<tr>
+<td>Daily task budget and provider spend reservation</td>
+<td>Reserved before submission and retained, not reacquired for a bound packet.</td>
+</tr>
+<tr>
+<td>Engine settlement journal versus task CAS</td>
+<td>One SQLite transaction saves the task run, interaction/effect evidence, and bounded content-free journal. Restart reads the run from the task and settles accounting from the journal. Charge and hold-clear replay are idempotent.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="b-every-spend-table-reader">B: every spend-table reader</h2>
+<p>There is no <code>usage_monitor.py</code> in this checkout; <code>UsageMonitor</code> lives in <code>usage.py</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Site</th>
+<th>Released rows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>providers.py</code>: schema introspection / migration</td>
+<td>Includes schema and preserves all audit rows; zero alone is not proof of not-created.</td>
+</tr>
+<tr>
+<td><code>ProviderDailySpendLedger._exposure</code>, <code>exposure</code>, reserve admission total</td>
+<td>Excluded from count and reconciled monetary exposure.</td>
+</tr>
+<tr>
+<td><code>reserve</code>: existing-effect identity lookup</td>
+<td>Included, to reject reuse of a released key.</td>
+</tr>
+<tr>
+<td><code>reserve</code>: serialized pending lookup</td>
+<td>Excluded; a confirmed absent request does not block new work.</td>
+</tr>
+<tr>
+<td><code>release_not_created</code>: exact-row zero-charge check</td>
+<td>Included, for idempotent release and contradiction detection.</td>
+</tr>
+<tr>
+<td><code>record_charge</code>: existing-row update</td>
+<td>Included. Every authenticated charge readback reinstates the row, including zero. Unknown-cost readback also clears the released row's old no-request zero, restoring estimated exposure and unreconciled status. Known charges on active rows remain monotonic.</td>
+</tr>
+<tr>
+<td><code>unreconciled</code></td>
+<td>Excluded. Reinstated unknown-cost rows are included immediately.</td>
+</tr>
+<tr>
+<td><code>totals</code></td>
+<td>Excluded from count and estimated total.</td>
+</tr>
+<tr>
+<td><code>reservations</code></td>
+<td>Excluded; this is now explicitly the active-reservations view. Physical rows remain for audit.</td>
+</tr>
+<tr>
+<td><code>usage.py</code>: <code>_daily_accounting</code></td>
+<td>Uses active <code>totals</code> plus the following readers.</td>
+</tr>
+<tr>
+<td><code>usage.py</code>: <code>_provider_request_count</code></td>
+<td>Uses active <code>reservations</code>, excluding monitor probes as before.</td>
+</tr>
+<tr>
+<td><code>usage.py</code>: <code>_unreconciled_request_count</code></td>
+<td>Uses active <code>unreconciled</code>.</td>
+</tr>
+<tr>
+<td><code>usage.py</code>: <code>_exposure_usd</code></td>
+<td>Uses active <code>reservations</code> and <code>exposure</code>; unreserved probe charges retain their existing accounting.</td>
+</tr>
+<tr>
+<td><code>completion_scorecard.py</code>: monetary check 15</td>
+<td>No SQL reader; consumes monitor accounting, including active request count/exposure and unreconciled count. Health/completion projections inherit the same monitor view.</td>
+</tr>
+<tr>
+<td><code>engine.py</code>: <code>_settle_not_created_dispatches</code></td>
+<td>Exact task evidence repairs old zero-charge rows whose failed-pre-submit receipt predates <code>released_at</code>. Repeats release idempotently, without adding another observation or charging unrelated effects. Acknowledgement/assignment contradiction checks run first.</td>
+</tr>
+<tr>
+<td><code>engine.py</code>: reserve/charge/retry callers</td>
+<td>No direct spend SQL reader; use the ledger methods above. The separate settlement journal is engine recovery evidence, not spend exposure.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="c-raw-payload-trust-audit">C: raw payload trust audit</h2>
+<table>
+<thead>
+<tr>
+<th>Site / raw key</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>spend_settlements</code></td>
+<td>Never read for recovery, reconciliation, CAS merge, packet routing or charge deduplication. New holds live in <code>engine_spend_settlements</code>.</td>
+</tr>
+<tr>
+<td><code>settlement_result_packet</code></td>
+<td>Never read. Only the runtime outcome digest is journaled; result content stays in the task or authenticated runtime. Old raw packets are not migrated as authority; runtime readback remains necessary.</td>
+</tr>
+<tr>
+<td><code>settlement_packet_only</code></td>
+<td>Never read. The engine explicitly records whether it created the temporary run in its own journal.</td>
+</tr>
+<tr>
+<td>Old holds without a journal</td>
+<td>Reconstruct only the exact effect's acknowledged run and ordinary authoritative usage. No raw settlement map or raw packet is promoted.</td>
+</tr>
+<tr>
+<td><code>usage</code> via <code>authoritative_reported_cost</code></td>
+<td>Provider-reported telemetry, intentionally allowed through existing provider-specific numeric validation. It cannot choose the effect key or pending/run binding.</td>
+</tr>
+<tr>
+<td><code>packet_result_digest</code></td>
+<td>Still read by packet-routing control flow and <code>packet_results.py</code>. The consumer validates packet identity/digest, but the earlier routing tests use raw marker presence. This is a separate unresolved trust-boundary finding; this change does not claim it safe. Suggested follow-up: persist consumer provenance outside raw and make routing use that receipt.</td>
+</tr>
+<tr>
+<td>Grok <code>transport</code> in <code>_run_transport</code></td>
+<td>Still selects the communication evidence transport from raw. The CLI adapter adds its own marker, but other payloads are copied as raw. Separate unresolved finding: bind transport to the reserved interaction/adapter instead.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="round-7-atomic-acknowledgement-and-limits">Round 7: atomic acknowledgement and limits</h2>
+<p><code>TaskStore.save(..., spend_settlement=(effect_key, evidence))</code> writes the full
+acknowledged run (including result and interaction ID), effect and interaction
+ledgers, and compact settlement row under the same SQLite transaction and CAS.
+It checks that the task contains the journal's matching run. The caller's CAS
+version advances only after commit. Provider content never enters the journal.
+Dispatch and revision use this transaction before charging spend. Initial
+acknowledgement settles with an unknown charge; reported synchronous cost stays
+pending in the journal until terminal settlement or restart recovery.</p>
+<p>Persistence has one primary attempt and one recovery attempt, a two-second
+monotonic retry-admission deadline, 250 ms SQLite and process-lock waits, and
+100 ms backoff for temporary lock/I/O errors. Stale CAS reloads and merges the
+acknowledged run, interaction/effect evidence and revision count into the current
+record; newer fields survive. An owner plan/generation reset refuses restoration.
+The deadline prevents starting another attempt; it cannot interrupt an operating
+system I/O call already in progress. This is not a hard wall-clock I/O guarantee.</p>
+<p>If persistence remains unavailable, <code>AcknowledgementPersistencePending</code> stops
+the outer engine without saving FAILED. The durable pre-submit intent remains
+AMBIGUOUS (an intent with no acknowledgement observation), and its spend
+reservation remains exposed. No paid request is retried. The response is retained
+in memory through the bounded attempts; after process loss its content cannot be
+guaranteed. Existing intent reconciliation is required before further dispatch.
+This is the explicit durability bound when storage cannot accept a write.</p>
+<p>Restart uses the complete task run, so synchronous Grok and Perplexity results
+never require polling. For pre-atomic journal-only records, Gemini can use its
+existing provider readback only with a unique durable interaction binding for
+the same effect, provider, assignment, phase and generation. Grok, Perplexity,
+and unbound Gemini stop at OWNER_DECISION_REQUIRED without polling or sending.
+Packet-only evidence continues through authenticated runtime readback.</p>
+<p>Atomicity scope is the local SQLite task database only. <code>main.py</code> constructs
+<code>TaskStore(settings.sqlite_path)</code> and the engine constructs its spend ledger
+from that store's path. <code>langgraph_postgres.py</code> supplies a separate Postgres
+control plane, not a Postgres implementation of TaskStore. This change claims no
+transaction across those databases. A non-SQLite task store or different spend
+database refuses metered admission, and acknowledgement persistence also fails
+closed. Supporting another backend requires a backend-native atomic write first.</p>
+<p>The adversarial corpus covers all three providers, dispatch/revision, recovery
+with complete results and verified interaction bindings, transient failure,
+transaction rollback, stale CAS merge, persistent exhaustion without FAILED or
+redispatch, legacy journal-only owner holds, Gemini readback, and backend refusal.
+Python and Docker were not run. The dispatcher owns test execution, site-board
+verification, contribution checks after its commit, and exact-head review.</p>
+<h2 id="round-8-shared-store-refusal-and-initial-unknown-settlement">Round 8: shared-store refusal and initial unknown settlement</h2>
+<p>The admission guard now obtains the store with <code>getattr</code>: a missing or mismatched
+store raises <code>ProviderDailyLimitExceeded</code> before reservation. Four bounds-test
+fixtures constructed with <code>object.__new__</code> now supply a real shared-path
+<code>TaskStore</code>. A regression covers missing/mismatched stores for all three providers.
+Production construction remains <code>main.py</code>'s <code>TaskStore(settings.sqlite_path)</code>
+passed to the engine, which creates <code>ProviderDailySpendLedger(store.path)</code>.
+This verifies the source wiring, not a live deployment.</p>
+<p>Round 7 replaced the initial <code>None</code> charge with reported usage before workload
+finalization. That populated <code>actual_cost_usd</code> and removed the request from
+<code>unreconciled()</code> if finalization stopped execution. Dispatch and revision again
+record <code>None</code> initially. The atomic journal still retains reported cost and stays
+pending when it differs from that initial charge, so restart recovers the known
+cost without resubmitting. The existing four failing subtests retain their
+immediate-unreconciled assertion and now also check SQL NULL, settled timestamp,
+restart visibility, and recovery of the retained charge.</p>
+<p>The failure-injection corpus is retained. Its revision charge-failure counter now
+accounts for initial unknown settlement followed by terminal known settlement;
+acknowledgement failure expects <code>None</code>, while terminal failure expects known cost.
+Atomic rollback, retry limits, stale CAS, privacy reset, persistent exhaustion and
+no-redispatch assertions are unchanged. These checks were inspected but not run:
+Python and Docker execution remain dispatcher-owned for this work order.</p>
+<h2 id="checks-prepared">Checks prepared</h2>
+<ul>
+<li>New adversarial cases: real enforced workload finalization on acknowledged and ambiguous spend failure; preexisting pending workload recovery; forged/malformed raw recovery entries and packet markers; combined-write rollback, transient retry, persistent failure and legacy journal-only readback.</li>
+<li>Released-row cases cover all three metered providers, unknown/zero/positive readback, restart, active telemetry, count/budget rejection, and old no-effect receipt repair.</li>
+<li>Existing dispatch/revision, stale-CAS, partial recovery, single-packet, reconciled-readback and parallel-member tests now inspect the engine journal.</li>
+<li>Python and Docker were not executed under the work-order restriction. Dispatcher must run the focused suites, syntax check, contribution-tag validation and independent exact-head review. The Python site-board check also remains dispatcher-owned.</li>
+</ul>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 19:29 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 20:49 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

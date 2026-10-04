@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Primary provider budget production: unsigned preparation and already-signed import · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#scope">Scope</a></li><li class="top"><a href="#unsigned-preparation">Unsigned preparation</a></li><li class="top"><a href="#already-signed-import">Already-signed import</a></li><li class="top"><a href="#cli-scriptsprepare_primary_provider_budgetpy">CLI: scripts/prepare_primary_provider_budget.py</a></li><li class="top"><a href="#tests">Tests</a></li><li class="top"><a href="#corrections-applied-in-this-revision">Corrections applied in this revision</a></li><li class="top"><a href="#known-limitation">Known limitation</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]] -->
+<h1 id="primary-provider-budget-production-unsigned-preparation-and-already-signed-import">Primary provider budget production: unsigned preparation and already-signed import</h1>
+<p>This document covers <code>src/director_orchestrator/primary_budget_producer.py</code>,
+<code>scripts/prepare_primary_provider_budget.py</code>, and
+<code>tests/test_primary_budget_producer.py</code>. It does not change any existing
+source: the closed <code>ProviderBudget</code> model, its <code>verify()</code> HMAC contract, and
+<code>PrimaryProviderBudgetAuthority.register()</code> in <code>antigravity_team.py</code> stay
+exactly as they are.</p>
+<h2 id="scope">Scope</h2>
+<p>Two operations, kept as separate as the work order that requested them:</p>
+<ol>
+<li><strong>Unsigned preparation</strong> (<code>prepare_unsigned_budget_intent</code>, and the
+default <code>prepare</code> action of the CLI script). Pure function of its
+explicit arguments. No secret is read, no database connection is opened,
+no provider is called, and no limit, identity, grant, approval, or
+account entitlement is inferred. Produces a canonical
+<code>UnsignedProviderBudgetIntent</code> document and its digest.</li>
+<li><strong>Already-signed import</strong> (<code>verify_signed_budget</code>, <code>import_signed_budget</code>,
+and the <code>inspect</code> action of the CLI script for structural-only, unverified
+checking). Accepts an externally supplied, complete <code>ProviderBudget</code>,
+verifies it with the secret already held by a caller-injected
+<code>PrimaryProviderBudgetAuthority</code>, and registers it on a connection and
+transaction the caller owns.</li>
+</ol>
+<p>Neither the module nor the script signs anything, loads a secret, bootstraps
+a database, or exposes a new HTTP surface. Live operator wiring (an actual
+service that constructs a <code>PrimaryProviderBudgetAuthority</code> from settings and
+calls <code>import_signed_budget</code> on a real connection) is a separate, later
+authorization, exactly as scoped.</p>
+<h2 id="unsigned-preparation">Unsigned preparation</h2>
+<p><code>UnsignedProviderBudgetIntent</code> has the same required field names as
+<code>ProviderBudget</code> minus <code>owner_signature</code>, which it does not have at all --
+not a zero-filled or placeholder one. Its <code>canonical_document()</code> is exactly
+<code>self.model_dump(mode=&quot;json&quot;)</code>, which equals <code>ProviderBudget.signing_document()</code>
+for the same field values, so an owner-controlled signer can turn a prepared
+intent into a real <code>ProviderBudget</code> by computing
+<code>hmac.new(secret, canonical_json_bytes(intent.canonical_document()), hashlib.sha256).hexdigest()</code>
+and attaching that as <code>owner_signature</code>. No such signer exists in this
+change: constructing one requires a real owner authority secret and is out
+of scope here, and this task does not invent one.</p>
+<p>Validation beyond <code>ProviderBudget</code>'s own field patterns:</p>
+<ul>
+<li><code>day</code> must be an actual UTC calendar date (<code>date.fromisoformat</code> succeeds),
+not merely four-two-two digit-shaped text, enforced by a <code>field_validator</code>
+on <code>day</code> (not a whole-model validator, so a safe CLI error summary can
+name the field without ever including the value). <code>2026-02-30</code> matches
+<code>ProviderBudget</code>'s own regex but is rejected here.</li>
+<li>All monetary and token fields must be positive integers (already true of
+<code>ProviderBudget</code>; restated here so preparation fails the same way before
+anything is signed).</li>
+</ul>
+<p>Because the intent has no <code>owner_signature</code> field, <code>ProviderBudget.model_validate</code>
+on its <code>canonical_document()</code> always fails with a missing-field error. A
+zero-filled or otherwise fabricated <code>owner_signature</code> attached by hand still
+fails <code>ProviderBudget.verify()</code> against any real secret, since <code>verify()</code>
+recomputes the HMAC over the same canonical document and compares in
+constant time. Unsigned output cannot pass as signed authority either way.</p>
+<h2 id="already-signed-import">Already-signed import</h2>
+<p><code>verify_signed_budget(budget, *, authority)</code> is <strong>signature-and-structure
+only</strong>. It first forces full revalidation on a plain <code>dict</code> of <code>budget</code>'s
+raw field values -- never on the instance itself, since passing an
+already-typed <code>ProviderBudget</code> to <code>ProviderBudget.model_validate</code>
+short-circuits and hands back the same, possibly <code>model_construct</code>-built or
+<code>model_copy</code>-tampered object unrevalidated, and never through a
+<code>model_dump()</code>/reparse round trip, since serializing a wrong-typed value (a
+<code>bool</code> into its declared <code>int</code> field) can coerce it into something that
+silently re-validates. It also enforces the same real-calendar-day rule as
+<code>UnsignedProviderBudgetIntent</code>, since <code>ProviderBudget</code>'s own <code>day</code> field is
+only a regex pattern. Only then does it verify the HMAC. A structurally
+valid but <em>expired</em> (not today's UTC day) document can still return
+<code>VERIFIED</code>: import eligibility is a separate, later check.</p>
+<p><code>import_signed_budget(*, authority, connection, budget)</code>:</p>
+<ol>
+<li>Requires a typed <code>PrimaryProviderBudgetAuthority</code> (never constructs one).</li>
+<li>Calls <code>verify_signed_budget</code> (signature and structure, as above).</li>
+<li>Takes the same per-project advisory lock <code>PrimaryProviderBudgetAuthority.register</code>
+itself takes (<code>pg_advisory_xact_lock</code> is reentrant within one transaction,
+so taking it twice in the same transaction does not self-block).</li>
+<li><strong>After</strong> the lock, rechecks current eligibility: the budget's <code>day</code> must
+equal today's UTC day (mirroring <code>PrimaryProviderBudgetAuthority.reserve</code>'s
+own rollover check), and the project's current, non-superseded
+registration must still exist with a ceiling at or above this budget's
+(mirroring <code>register</code>'s own ceiling check against the same latest active
+row, never a pinned <code>registration_generation</code>). This recheck runs before
+<em>every</em> successful outcome below, including an idempotent repeat: signature
+verification is never equated with current eligibility.</li>
+<li>Looks up every row matching this budget's exact consumer key
+(<code>task_id</code>/<code>provider_id</code>/<code>project_id</code>/<code>day</code>) and, separately, any row for
+this exact <code>grant_digest</code>.</li>
+<li>If a row for this <code>grant_digest</code> exists, its content must match exactly or
+the import is rejected as a conflict; if it matches, any <em>other</em> digest
+also matching the consumer key is rejected next, before an
+<code>ALREADY_REGISTERED</code> receipt is ever returned -- ambiguity is always
+checked before idempotency is reported, never after.</li>
+<li>Otherwise (a fresh <code>grant_digest</code>), any existing row at all under this
+consumer key is a conflict, checked before insertion. Only then does the
+existing <code>PrimaryProviderBudgetAuthority.register</code> perform the actual
+insert, together with its own signature, registered-project ceiling, and
+per-task/day ceiling-drift checks.</li>
+</ol>
+<p>No row is ever updated or deleted by this producer; only <code>SELECT</code> and the
+existing <code>register</code>'s own <code>INSERT</code> run.</p>
+<p>Import never reserves an attempt, marks a budget ACTIVE, dispatches, creates
+usage/spend, grants approval, or releases a reservation. Those remain the
+unchanged responsibility of <code>PrimaryProviderBudgetAuthority.reserve</code>,
+<code>PrimaryProviderBudgetRouting</code>, and the primary admission path. Atomic
+admission and midnight (UTC) revalidation are untouched by this change.</p>
+<p><code>BudgetProducerStatus</code> keeps <code>PREPARED</code>, <code>VERIFIED</code>, <code>REGISTERED</code>, and
+<code>ALREADY_REGISTERED</code> as distinct values; none of them is a primary attempt
+lifecycle status (<code>PENDING</code>/<code>ACTIVE</code>/etc.), and none of the receipts here
+ever carries <code>owner_signature</code> or other secret material.</p>
+<h2 id="cli-scriptsprepare_primary_provider_budgetpy">CLI: <code>scripts/prepare_primary_provider_budget.py</code></h2>
+<pre><code>PYTHONPATH=src python scripts/prepare_primary_provider_budget.py \
+    --grant-digest &lt;64-hex&gt; --provider-id openai --project-id uppercut \
+    --task-id task-one --day 2026-01-01 --task-limit-microusd 500000 \
+    --daily-limit-microusd 1000000 --attempt-reservation-microusd 100000 \
+    --token-limit 1000
+</code></pre>
+<p>Prints the unsigned canonical document and its digest as JSON and exits 0.
+Reads no secret, opens no connection, calls no provider.</p>
+<pre><code>PYTHONPATH=src python scripts/prepare_primary_provider_budget.py \
+    --action inspect --input signed-budget.json
+</code></pre>
+<p>Structurally validates a supplied document against the <code>ProviderBudget</code>
+shape and reports its non-secret fields and a digest of its signing
+document. Does <strong>not</strong> verify the signature (no secret is available here)
+and does <strong>not</strong> register anything; the output says so explicitly. This is
+the &quot;CLI may prepare/inspect documents&quot; affordance; it is not a live import
+path.</p>
+<p>For a <code>ValidationError</code> -- the case that can carry attacker-supplied
+structure, such as an inspect document's fields or an unexpected top-level
+property -- every reported detail comes only from
+<code>ValidationError.errors(include_url=False, include_context=False, include_input=False)</code>: a known model field's location and error type, or,
+for an unknown top-level property (<code>extra_forbidden</code>), the generic
+<code>&lt;extra_field&gt;</code> location instead of the actual key. Neither branch ever
+includes the offending value. This is the CLI's redaction boundary
+specifically for <code>ValidationError</code>; the other exception types this CLI
+catches (<code>ValueError</code>, <code>TeamAuthorizationError</code>, <code>OSError</code>,
+<code>json.JSONDecodeError</code>) are reported as <code>str(exc)</code>, unredacted, and are not
+run through this categorical redaction: for example, an <code>OSError</code> from a
+missing or unreadable <code>--input</code> file can include the caller-supplied path.</p>
+<h2 id="tests">Tests</h2>
+<p><code>tests/test_primary_budget_producer.py</code> covers, in <code>unittest</code>:</p>
+<ul>
+<li>Pure unit tests for <code>UnsignedProviderBudgetIntent</code> / <code>prepare_unsigned_budget_intent</code>
+and for <code>verify_signed_budget</code> against a lightweight fake authority,
+including that a structurally valid but expired document still verifies
+while an impossible calendar day does not.</li>
+<li><code>StrictSignedInputValidationTests</code>: six <code>ProviderBudget.model_construct</code>
+variants (zero/boolean/fractional <code>token_limit</code>, a negative
+<code>task_limit_microusd</code>, an invalid provider identifier, an invalid schema
+literal) each fail <code>verify_signed_budget</code> and never reach
+<code>import_signed_budget</code>'s first SQL call.</li>
+<li>CLI tests, including stdout/stderr redaction: a synthetic marker in a
+forged <code>owner_signature</code> never appears on either stream, and a rejected
+<code>prepare</code> call names only the offending field, never the value.</li>
+<li>A Postgres-backed suite, <code>ProviderBudgetImportPostgresTests</code>, reusing
+<code>tests.test_entitlement_control_plane.EntitlementControlPlanePostgresTests</code>
+for setup/teardown (fails rather than skips without
+<code>LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN</code>, matching every other Postgres-backed
+suite here): new registration, exact-repeat idempotency, conflicting
+content under one digest, a second digest for one consumer key, a wrong
+signature, a missing/exceeded project ceiling, an impossible calendar day,
+an expired (non-today) day, a repeat that must reject once a second
+consumer match, a superseded registration, or a tightened ceiling exists,
+no attempt/spend/usage row ever created, a funded <code>check_budget_setup</code>
+preflight after import with those tables still empty, concurrent identical
+imports (exactly one row), concurrent conflicting imports (exactly one
+authoritative row), and a genuine advisory-lock-contention case where a
+second import is provably blocked and then, once unblocked under a
+simulated UTC-midnight rollover, correctly rejected.</li>
+</ul>
+<h2 id="corrections-applied-in-this-revision">Corrections applied in this revision</h2>
+<p>Three real-PostgreSQL defects and one CLI echo defect, reported in
+<code>HOST-QA-FINDINGS.md</code> against the prior candidate, are fixed here:</p>
+<ol>
+<li>Signed import previously accepted an impossible calendar day and an
+expired (non-today) day. <code>import_signed_budget</code> now rechecks both, after
+the project lock, before any successful outcome.</li>
+<li>An exact-repeat import previously returned <code>ALREADY_REGISTERED</code> even when
+a second, distinct <code>grant_digest</code> already matched the same consumer key.
+Ambiguity is now checked before idempotency is ever reported.</li>
+<li>The CLI previously printed the raw <code>ValidationError</code> text, including a
+rejected field's actual value, to stderr. It now prints only the error
+type and field location.</li>
+<li>That CLI fix still echoed an unknown top-level property's own name: since
+Pydantic's <code>extra_forbidden</code> location IS the offending key, joining <code>loc</code>
+reflected exactly the untrusted input being withheld. <code>_safe_error_message</code>
+now reports that case under the generic <code>&lt;extra_field&gt;</code> location instead.</li>
+</ol>
+<p>An independently reported, offline (fake-connection, no database) structural
+gap is also closed: <code>verify_signed_budget</code>/<code>import_signed_budget</code> previously
+trusted the <code>ProviderBudget</code> type annotation, so a <code>model_construct</code>-built
+object bypassing field validation (a zero/boolean/fractional <code>token_limit</code>,
+a negative limit, an invalid identifier, an invalid schema literal) still
+verified and reached the insert. Every signed object is now revalidated from
+its raw field values before use.</p>
+<h2 id="known-limitation">Known limitation</h2>
+<p><code>tests/test_primary_budget_producer.py</code> is not yet listed in
+<code>.agents/skills/postgres-test-lane/SKILL.md</code>'s explicit suite list. That file
+is outside this change's four permitted paths (<code>tests/test_antigravity_team.py</code>,
+which has the same fail-without-DSN Postgres-backed pattern, is not listed
+there either), so this proposal does not edit it. A future change in scope
+to touch that file should add this module to the list.</p>
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

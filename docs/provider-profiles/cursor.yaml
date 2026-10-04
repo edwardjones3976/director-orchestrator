@@ -15,7 +15,7 @@ display_name: "Cursor"
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -172,9 +172,9 @@ authority:
 
 platform_limitations:
   - limitation: "Cursor cannot use an implicit dashboard repository; every run needs an allowlisted project, repository, and starting ref, and model output or owner approval cannot widen those lists."
-    source: "docs/provider-setup.md"
+    source: "docs/provider-setup.html"
   - limitation: "Auto-generated cursor/... working branches are not durable starting points; they are deleted after merge, and a follow-up starts a new agent from the durable ref."
-    source: "docs/provider-setup.md"
+    source: "docs/provider-setup.html"
   - limitation: "Cursor Cloud Agents cannot see the Windows deployment environment; secrets needed by a cloud agent must be injected as Cursor Cloud secrets."
     source: "AGENTS.md, Cursor Cloud specific instructions"
   - limitation: "Cursor is an unsupported Windows host-bridge lane by design; it stays a direct cloud API contact."
@@ -261,13 +261,13 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex."
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "Cursor records the"
-  - document: "docs/provider-setup.md"
+  - document: "docs/provider-setup.html"
     anchor: "Cursor Cloud Agents API v1"
-  - document: "docs/native-acceptance-issuers.md"
+  - document: "docs/native-acceptance-issuers.html"
     anchor: "Claude owns the security role; Cursor owns independent"
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
     anchor: "Route Cursor at full task-capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs."

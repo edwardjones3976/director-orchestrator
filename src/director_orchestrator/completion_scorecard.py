@@ -1444,7 +1444,7 @@ def _trusted_collection(runtime: _Runtime, tasks, *, qualification_only=False, t
 # Input trust is transitive, including prerequisites shared by collectors. T is
 # owner configuration, independent transport/store facts or pinned computation;
 # C is candidate-controlled data, even when fetched over authenticated transport.
-# Keep the expanded audit in docs/twenty-check-completion-scorecard.md in sync.
+# Keep the expanded audit in docs/twenty-check-completion-scorecard.html in sync.
 _DEPLOYMENT_INPUTS = (
     ("owner selections; Docker inventory, configuration, networks and lifecycle", "T"),
 )
@@ -3968,7 +3968,7 @@ def _file_references(folder: Path | None) -> list[dict[str, str]]:
     # Explicit directory only, no recursion, no hidden files or credential stores.
     result = []
     for path in sorted(folder.iterdir())[:100]:
-        if path.is_symlink() or path.name.startswith(".") or path.suffix.lower() not in {".json", ".md"}:
+        if path.is_symlink() or path.name.startswith(".") or path.suffix.lower() not in {".json", ".html", ".md"}:
             continue
         if not path.is_file() or path.stat().st_size > MAX_BYTES:
             continue

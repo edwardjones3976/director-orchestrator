@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Director Intake ↔ n8n — integration validation, 2026-09-09 · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#correction-2155-utc--the-measurements-below-were-taken-against-the-wrong-instance">Correction, 21:55 UTC — the measurements below were taken against the wrong instance</a></li><li class="top"><a href="#what-was-measured">What was measured</a></li><li class="top"><a href="#why-that-is-a-failure-and-not-a-curiosity">Why that is a failure and not a curiosity</a></li><li class="top"><a href="#cause">Cause</a></li><li class="top"><a href="#what-the-deployed-workflow-gets-right">What the deployed workflow gets right</a></li><li class="top"><a href="#superseded-question--resolved-by-v-01-and-v-02">Superseded question — resolved by V-01 and V-02</a></li><li class="top"><a href="#readiness-observed-at-the-same-time">Readiness observed at the same time</a></li><li class="top"><a href="#what-is-not-claimed">What is not claimed</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | BEGIN]] -->
+<h1 id="director-intake--n8n--integration-validation-2026-09-09">Director Intake ↔ n8n — integration validation, 2026-09-09</h1>
+<blockquote>
+<h2 id="correction-2155-utc--the-measurements-below-were-taken-against-the-wrong-instance">Correction, 21:55 UTC — the measurements below were taken against the wrong instance</h2>
+<p>Every probe row in &quot;What was measured&quot; that names port <strong>45678</strong> measured
+<code>edge-engine-director-n8n-1</code> on the <code>edge-engine-director_default</code> network,
+whose backend is the <strong>Edge Engine</strong> Director at host port 18082. Confirmed
+independently: <code>http://127.0.0.1:18082/health</code> reports <code>&quot;environment&quot;: &quot;edge-engine&quot;</code> with every provider false, where the Director-Orchestrator
+stack on 8080 reports <code>&quot;environment&quot;: &quot;local&quot;</code> with all seven true.</p>
+<p><strong>The Director's own n8n is port 5678</strong>, on <code>director-orchestrator_default</code>,
+resolving the orchestrator at 8080. That is the instance the gateway uses and
+the editor to open.</p>
+<p>This was established by Codex under V-01 — the host measurement this document
+flagged as the one fact it could not establish. The process worked: the gap was
+named as unproven, assigned, and closed.</p>
+<p><strong>The defect itself reproduces on the correct instance.</strong> Codex's V-02, run at
+5678 with a valid bearer, recorded 422 <code>extra_forbidden</code> direct from the
+orchestrator and <strong>200 with zero bytes</strong> through the relay, with that same
+upstream 422 present in the n8n container logs. So the diagnosis holds and the
+backend is reachable; what does not hold is that this document's numbers were
+evidence for it. They were evidence about a different project's relay.</p>
+<p>Retained rather than deleted, because the mistake is the instructive part: an
+owner-supplied URL was treated as identifying the right service, and the port
+not matching any documented namespace was recorded as a curiosity instead of
+being resolved before measuring.</p>
+</blockquote>
+<p>Historical status at the time of the probes: the relay did not satisfy the
+Slack bot's contract. The instance identity question below was subsequently
+resolved by V-01, and V-02 reproduced the contract failure on the Director
+instance. The cause of the specific 200/empty response remains unresolved; this
+record does not establish the current deployed revision or current health.</p>
+<h2 id="what-was-measured">What was measured</h2>
+<p>All observations are from the running deployment, not from documentation.</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET http://127.0.0.1:8080/health</code></td>
+<td>200, full readiness payload</td>
+</tr>
+<tr>
+<td><code>POST http://127.0.0.1:8080/v1/intake</code>, no <code>Authorization</code></td>
+<td><strong>401</strong> <code>{&quot;detail&quot;:&quot;Unauthorized&quot;}</code>, 31 ms</td>
+</tr>
+<tr>
+<td><code>POST http://127.0.0.1:8080/v1/intake</code>, invalid bearer</td>
+<td><strong>401</strong>, 7 ms</td>
+</tr>
+<tr>
+<td><code>POST http://127.0.0.1:45678/webhook/director-intake</code>, no <code>Authorization</code></td>
+<td><strong>200, empty body</strong>, 57 ms</td>
+</tr>
+<tr>
+<td><code>POST http://127.0.0.1:45678/webhook/director-intake</code>, invalid bearer</td>
+<td><strong>200, empty body</strong>, 85 ms</td>
+</tr>
+<tr>
+<td>Same, with one field the model forbids</td>
+<td><strong>200, empty body</strong>, 79 ms</td>
+</tr>
+</tbody>
+</table>
+<p>The orchestrator behaves correctly. The relay does not: every request, valid or
+not, returns 200 with no body.</p>
+<h2 id="why-that-is-a-failure-and-not-a-curiosity">Why that is a failure and not a curiosity</h2>
+<p><code>slack_bot._forward</code> calls <code>response.raise_for_status()</code>, then requires
+<code>status_code == 202</code>, then requires <code>_intake_receipt_task_id</code> to find one
+<code>task_id</code> matching <code>DIR-(?:LG-)?[A-F0-9]+</code>.</p>
+<p>A 200 passes <code>raise_for_status</code>. It then fails the 202 check, so the bot posts
+<strong><code>DIRECTOR — BLOCKED</code></strong> — and the empty body means neither the bot's log nor the
+Slack thread carries any indication of why. The failure mode is the worst
+available one: it looks like a reachable, responding endpoint from the outside.</p>
+<h2 id="cause">Cause</h2>
+<p>The deployed workflow has three nodes and no error branch:</p>
+<pre><code>Slack Gateway Webhook  →  Create Director Task  →  Accepted (202)
+</code></pre>
+<p><code>Create Director Task</code> uses the default <code>onError</code>, so when <code>/v1/intake</code> answers
+non-2xx the execution ends before reaching any <code>Respond to Webhook</code> node.
+<code>Accepted</code> is only reached on success.</p>
+<p>This is documented n8n behaviour, not an inference from the observation. The
+Respond to Webhook node reference states that when &quot;the workflow finishes without
+executing the Respond to Webhook node&quot;, it &quot;returns a standard message with a 200
+status&quot;.</p>
+<p><strong>Corrected 2026-09-10 — the fit is not exact, and the original wording
+overstated it.</strong> That reference also states that a workflow which <em>errors</em>
+before the first Respond node returns <strong>500</strong>. The pre-fix workflow used
+<code>onError: stopWorkflow</code>, so the error path would predict 500, yet 200 was
+measured. The measured status matches the completion path; the measured
+zero-byte body matches neither path's documented output.</p>
+<p><strong>This is an unresolved discrepancy and is recorded as one.</strong> Why the deployed
+instance answered 200 rather than 500 is <em>not</em> established by these
+observations — whether n8n classified the stopped execution as finished, whether
+the installed version behaves differently from the current documentation, or
+something else, was never determined. Do not infer a cause from the status.
+Both observations stand as measured. Neither is the contract, and the corrected design must not assert a
+body shape.</p>
+<p>The workflow sets <code>saveDataErrorExecution: &quot;none&quot;</code>. This requests cleanup of
+completed error-execution data; it does not prove that execution data was never
+persisted or that container logs contain no evidence. V-02 found the upstream
+422 in the n8n logs. The corrected intake candidate retains completed-execution
+cleanup rather than adding durable records of forwarded authorization headers.</p>
+<h2 id="what-the-deployed-workflow-gets-right">What the deployed workflow gets right</h2>
+<p>Worth stating plainly, because the repository candidate had it backwards: the
+deployed workflow is a <strong>pass-through relay</strong>. It forwards
+<code>{{ JSON.stringify($json.body ?? $json) }}</code> unchanged, forwards the caller's
+<code>Authorization</code> header and the three <code>X-Director-Intake-*</code> attestation headers,
+and returns the orchestrator's body verbatim with a 202. That is the correct
+architecture. It does not configure an orchestrator credential of its own, but
+forwarded bearer headers pass through n8n and may be stored initially. Completion
+cleanup is not a guarantee of zero storage.</p>
+<p>The repository candidate on <code>claude/n8n-v2</code> rebuilt the body from a raw Slack
+event envelope that never arrives. It has been corrected to the deployed design,
+plus the error branch. Completed execution retention remains disabled.</p>
+<h2 id="superseded-question--resolved-by-v-01-and-v-02">Superseded question — resolved by V-01 and V-02</h2>
+<p>The following question and proposed probes are retained as historical context.
+They are no longer pending operator instructions: port 45678 belongs to Edge
+Engine; Director n8n is 5678, and its backend reachability was demonstrated.</p>
+<p><strong>Is the n8n on port 45678 on the Director Compose network?</strong> The relay resolves
+<code>orchestrator:8080</code> by Docker DNS. A 401 from the orchestrator and a DNS failure
+inside n8n produce the same 200-empty response from outside, so the probes above
+cannot separate them.</p>
+<p>Port 45678 appears nowhere in this repository: the primary namespace defaults to
+5678, Uppercut uses 15678, Edge Oracle 25678. The instance also reports n8n
+<strong>2.34.5</strong>, whereas <code>docker-compose.yml</code> pins an image by digest. Both point to
+an instance created outside the documented bootstrap. It could still be the right
+container on the right network — the host port is only how the editor is reached
+— but that has not been established.</p>
+<p>The originally proposed host probes were:</p>
+<pre><code>docker ps --format &quot;{{.Names}}\t{{.Ports}}&quot;
+docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' &lt;n8n container&gt; &lt;orchestrator container&gt;
+</code></pre>
+<p>The proposed inference above was too strong: a network mismatch alone would
+not prove the workflow correct. V-02 instead established backend reachability
+and a relay contract failure on the correct Director instance.</p>
+<h2 id="readiness-observed-at-the-same-time">Readiness observed at the same time</h2>
+<p>From <code>/health</code>, recorded because it changes earlier findings:</p>
+<ul>
+<li><strong>All seven providers now report ready</strong>, <code>grok</code> included. The provider audit
+earlier today recorded <code>grok</code> as NOT READY; that finding is superseded.</li>
+<li><code>paid_runs_enabled: false</code>. The intake attestation headers are therefore not
+yet verified — <code>intake_authentication</code> falls back to <code>BEARER_DRY_RUN</code>. They
+become mandatory the moment paid runs are enabled.</li>
+<li><code>new_intake_owner: &quot;langgraph&quot;</code>, <code>legacy_new_intake_disabled: true</code>,
+<code>intake_fencing_generation: 77</code>. New intake is routed to the LangGraph primary
+application; the legacy path is fenced.</li>
+<li><code>primary_runtime_active: false</code>, <code>effect_executor_ready: false</code>,
+<code>reconciliation_worker_ready: false</code>, with
+<code>reconciliation_hold_reason: &quot;historical_parallel_plan_requires_reconciliation&quot;</code>
+and one held historical parallel plan. <strong>If <code>create_intake</code> raises under those
+conditions, <code>/v1/intake</code> returns 503.</strong> The prediction first written here —
+that the corrected relay would surface that as 502 — was <strong>wrong</strong>, and is
+corrected on 2026-09-10: intake is reserved before later operations can fail,
+so a task may exist behind a 503. The corrected relay routes 5xx to the
+ambiguity branch for reconciliation, not to 502. This has not been observed,
+because observing it requires a valid bearer.</li>
+<li><code>parallel_dispatch.kill_switch_open: false</code> — the kill switch is <strong>engaged</strong>.
+The corrected status workflow alarms on this; the previous revision watched a
+key <code>/health</code> does not return and would have stayed silent.
+<em>(Correction 2026-09-12: The rule changed in #197; it speaks when the kill switch is engaged while parallel dispatch is enabled.)</em></li>
+<li><code>ambiguous_effect_count: 0</code>. Rollback is not blocked.</li>
+<li><code>provider_activation.combined_live_ready: false</code>. Live activation remains shut.</li>
+</ul>
+<h2 id="what-is-not-claimed">What is not claimed</h2>
+<p>No provider ran. No task was created: every probe was rejected at the
+orchestrator's authentication boundary by design, so nothing was written. A
+relay that returns 202 would prove the request was accepted for planning — not
+that any work occurred.</p>
+<p>Producer of the corrected candidate is Claude, which is therefore ineligible to
+review or accept it. The probes above are testing, not review.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

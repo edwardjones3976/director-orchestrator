@@ -1,0 +1,2042 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Twenty checks for a completed Director · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#trusted-tls-collector-fixture-issue-313-round-3">Trusted TLS collector fixture: issue #313, round 3</a></li><li class="sub"><a href="#legacy-supplemental-spend-reservations">Legacy supplemental spend reservations</a></li><li class="sub"><a href="#collector-containment-2026-09-27">Collector containment (2026-09-27)</a></li><li class="sub"><a href="#all-twenty-collector-inputs-trust-audit">All twenty collector inputs: trust audit</a></li><li class="sub"><a href="#reviewed-image-admission-owner-ruling-2026-10-02-313">Reviewed-image admission (owner ruling 2026-10-02, #313)</a></li><li class="sub"><a href="#trusted-collection-2026-09-27">Trusted collection (2026-09-27)</a></li><li class="top"><a href="#run-it">Run it</a></li><li class="sub"><a href="#install-the-launcher">Install the launcher</a></li><li class="sub"><a href="#deployment-profile">Deployment profile</a></li><li class="sub"><a href="#per-check-sources">Per-check sources</a></li><li class="sub"><a href="#drill-thread-kinds">Drill-thread kinds</a></li><li class="sub"><a href="#retained-producer-commands-not-invoked-by-the-scorecard">Retained producer commands (not invoked by the scorecard)</a></li><li class="sub"><a href="#paid-answer-rubric-format">Paid answer rubric format</a></li><li class="sub"><a href="#local-replica-receipt-format">Local-replica receipt format</a></li><li class="sub"><a href="#status-execution-retention">Status execution retention</a></li><li class="sub"><a href="#execution-binding-limits">Execution-binding limits</a></li><li class="top"><a href="#evidence-and-limits">Evidence and limits</a></li><li class="top"><a href="#offline-trial-records">Offline trial records</a></li><li class="top"><a href="#qualification-verdicts-with-explicit-unknown-cost">Qualification verdicts with explicit UNKNOWN cost</a></li><li class="top"><a href="#validation">Validation</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]] -->
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]] -->
+<h1 id="twenty-checks-for-a-completed-director">Twenty checks for a completed Director</h1>
+<h2 id="trusted-tls-collector-fixture-issue-313-round-3">Trusted TLS collector fixture: issue #313, round 3</h2>
+<p>The full audit below contains 01–12, 15, 17, 19 and 20. Neither an unavailable
+nor a successful trusted report removes another candidate-served input,
+including health-dependent assertions and candidate-writable task records used by 06 and 10. Checks 02 and 17 retain explicit pending-proof holds.</p>
+<p><code>TrustedCollectionLaneTests</code> uses the sanctioned <code>-Tls</code> lane. Its Claude capture
+runs a local native-result fixture through the bridge, parser, admission,
+execution claim, signed capture and settlement. Invocation usage and cumulative
+<code>modelUsage</code> are both present; resumed session totals replace invocation totals.
+The parser is unchanged. All provider responses and authority are test fixtures.</p>
+<p>The extended fixture creates ten offline trials through the production application
+and ledger, reconstructs the coordinator at an approval interrupt, and records
+approval-resume receipts. HTTP and subprocess boundaries are forbidden during
+those trials. A separate attempt uses the actual Responses transport with a mock
+HTTP response, signed enrollment, receive-time native meter and attempt/assignment
+settlement. The evaluator reads the resulting rows through <code>_trusted_collection</code>
+over verified TLS; no candidate report supplies these assertions.</p>
+<p>These are expected direct-predicate fixture verdicts, pending execution by the
+dispatcher. Live collection contains all of these checks, including 07, 12 and
+17. They are not deployment acceptance or evidence that CI ran for this revision.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Expected reachability</th>
+<th>Evidence or missing input</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>06</td>
+<td>UNKNOWN</td>
+<td>Coordinator recovery and approval receipts exist; a trusted complete task readback, process-start chronology and correlated delivered final reply are missing.</td>
+</tr>
+<tr>
+<td>07</td>
+<td>PASS in the quiescent baseline</td>
+<td>Real generation reservation and direct consistency snapshot. Subsequent in-flight work must not retain PASS.</td>
+</tr>
+<tr>
+<td>08</td>
+<td>UNKNOWN</td>
+<td>Local approval-resume receipts exist; authenticated gateway command authorization and delivered, scoped Slack prompts are missing.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>UNKNOWN</td>
+<td>Ten real offline ledger runs with zero network/native calls exist; ten consecutive authenticated owner threads, trusted complete task readbacks, canonical final deliveries and the rubric are missing.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>UNKNOWN</td>
+<td>Signed Claude executable capture is pinned; paid-attempt readback joined to captures for every used provider is missing.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>PASS</td>
+<td>Real signed capture and both validated activation chains, collected directly from their stores.</td>
+</tr>
+<tr>
+<td>15</td>
+<td>UNKNOWN</td>
+<td>Native metering and signed spend/budget settlement exist; complete current usage-monitor accounting and the bound paid-task evidence are missing.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>PASS</td>
+<td>Owner-local adoption, including its fixture CI evidence, is validated by the real generation producer and journal reader at the candidate binding.</td>
+</tr>
+<tr>
+<td>20</td>
+<td>UNKNOWN</td>
+<td>Metered attempt and assignment settle; the complete paid task, persisted result artifact, authenticated owner thread, canonical delivery and rubric are missing.</td>
+</tr>
+</tbody>
+</table>
+<p>The fixture deliberately does not manufacture Slack observations or task
+readbacks to promote these UNKNOWN results. Complete trusted task-readback
+collection and the missing lifecycle evidence remain open.</p>
+<p>This scorecard turns the owner's good-run contract into twenty fixed outcomes.
+It is a progress report, not an approval mechanism. The required outcome remains
+an actual owner request through Slack, a correct result in the same thread,
+with consistent measured timing and attributable actual charges reported. Simulated
+runs qualify orchestration only; the project is not complete until paid primary
+execution is active and a real run meets that outcome.</p>
+<p>Every check is mandatory. A verified PASS contributes one point; FAIL and
+UNKNOWN contribute zero. Thus <code>points = sum(PASS)</code> and <code>percent = 5 * points</code>.
+Twenty points would establish only this diagnostic contract. Existing exact-SHA,
+independence, authorization, security, budget and activation gates still decide
+whether any operation is permitted. The report always says
+<code>activation_authorized: false</code>; no runtime setting is changed by rendering it.</p>
+<h3 id="legacy-supplemental-spend-reservations">Legacy supplemental spend reservations</h3>
+<p>Opening a pre-settlement ledger migrates its existing reservations atomically to
+<code>legacy = 1, serialized = 0</code>. Unknown charges continue to count at the reserved
+amount on their original UTC day. Serialized, non-legacy rows from any UTC day
+with unknown charges block admission until authoritative cost settlement or
+reconciliation. Legacy rows never block admission; day rollover neither releases
+a non-legacy hold nor erases historical exposure.</p>
+<p>For an authoritative legacy charge, an operator can use the existing local
+<code>ProviderDailySpendLedger.record_charge(provider=..., effect_key=..., actual_cost_usd=..., now=...)</code> maintenance API against the intended ledger.
+Use the exact existing provider and canonical effect key, after verifying the
+provider's charge. This preserves the original day and legacy marker and never
+lowers an already recorded actual charge. Passing <code>None</code> records settlement
+without inventing a cost and retains reserved exposure. Do not fabricate a task
+effect or use <code>/dispatch-reconciliation</code> for a legacy probe without one.</p>
+<h3 id="collector-containment-2026-09-27">Collector containment (2026-09-27)</h3>
+<p>Trusted consistency and capture collection is available, but the remaining candidate inputs keep live checks
+<strong>01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20</strong> as <strong>UNKNOWN</strong>, with the reason
+&quot;collector not yet trusted&quot; and a source naming the trusted-collection follow-up.
+It computes consistency and activation-capture reports with pinned code and never executes
+candidate Python through docker exec. Health, Slack, later observations and
+final collection merging cannot promote these sixteen checks to PASS. Checks 03,
+06, 09 and 10 retain Slack-side collection. Candidate drill readbacks from
+<code>/v1/slack-thread-bindings</code>, <code>/v1/tasks</code> and <code>/deliveries</code> cannot prove
+reserved-5xx, duplicate-input or ambiguous-post outcomes. Candidate <code>/v1/tasks</code> readback cannot
+establish trusted checkpoint timing, provider attempts, assignment outcomes or
+zero-call offline execution. Trusted collection moves to #313 / PR #327.</p>
+<h3 id="all-twenty-collector-inputs-trust-audit">All twenty collector inputs: trust audit</h3>
+<p><code>COLLECTOR_INPUTS</code> in <code>completion_scorecard.py</code> records this classification and
+derives <code>_CONTAINED_RUNTIME</code>; the capture and candidate containment groups are derived separately and remain
+separate. Report limitations use those same groups. The classification test checks
+all twenty entries, the documented containment column and live suppression even
+when collectors return PASS. Rule-path fixture tests remain separate from live
+trust tests; a correct predicate over candidate assertions is not trusted evidence.</p>
+<p><strong>T</strong> means owner-controlled configuration/descriptor, Docker daemon facts,
+GitHub or Slack API facts, or the pinned evaluator's computation over trusted
+store transport. <strong>C</strong> means candidate-controlled HTTP, code, files or reports.
+Authenticated HTTP and a Git blob hash establish transport/bytes, not independent
+authority. Every row below includes transitive prerequisites, not just the final
+predicate. Shared inputs are expanded here once:</p>
+<ul>
+<li><strong>Deployment (T):</strong> explicit deployment/gateway/channel/owner selections;
+Docker Compose and full running inventories, image/commit/tree labels,
+environment comparisons in memory, ports, networks/aliases, launch signatures,
+creation/start/running state of Director, primary database, gateway, n8n and
+n8n database, and final deployment reinspection. No configuration values are
+reproduced here.</li>
+<li><strong>Health (C):</strong> candidate <code>/health</code> supplies only health-dependent assertions.
+Missing or malformed health does not prevent daemon identity collection, gateway
+inventory (02) or the independent consistency path (17). Those two checks remain
+explicitly held until transitive authority and sanctioned validation are proved.</li>
+<li><strong>Route (T/C):</strong> Docker route/credential/store bindings and active workflows are
+read by fixed SQL from deployment-owned n8n-db (<strong>T</strong>). The expected intake and
+status workflows come from the owner-pinned evaluator archive. Candidate workflow
+bytes must equal that contract before active nodes/connections/settings/pin data
+are compared. Candidate and active agreement cannot redefine expectation together;
+a changed response code is valid only when independently selected in the pin.
+Candidate workflow inputs remain conservatively classified <strong>C</strong> pending proof.
+Database commands execute <code>psql</code> in the separate database service.</li>
+<li><strong>Slack (T):</strong> owner configuration, <code>auth.test</code>, complete <code>conversations.replies</code>
+pages and their message identities, timestamps, text, blocks and edit metadata.</li>
+<li><strong>Task (T/C):</strong> owner-bound verified-TLS qualification snapshots supply the task,
+projection digest, history and delivery rows (<strong>T</strong> transport and pinned
+computation). Task and delivery consumers share one snapshot per task; an
+unavailable, incomplete, stale or foreign snapshot has no HTTP fallback.
+Candidate-writable records still require independent authority/correlation
+(<strong>C</strong>); moving a read to the database alone cannot authenticate a claim.</li>
+<li><strong>Renderer (C):</strong> candidate renderer blobs; the evaluator compares their bytes
+to its pinned renderer before local rendering. This equality does not
+authenticate the candidate-writable application record being rendered.</li>
+<li><strong>Consistency (T):</strong> pinned evaluator computation over owner-bound verified-TLS
+stores, generation and a WAL-aware read-only journal snapshot; signed budget
+and meter verification use owner-injected authority. Missing sources are UNKNOWN.</li>
+<li><strong>Captures (T):</strong> pinned activation-chain verification over the owner-bound
+verified-TLS stores. Signed v2 captures carry the executable digest through
+<code>CaptureVerifier</code> and <code>classify_attested</code> to the pinned release descriptor.
+Legacy or unattested CLI captures cannot prove a CLI product.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Inputs (including shared inputs above)</th>
+<th>T/C</th>
+<th>Contained?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01</td>
+<td>Deployment; route; n8n upstream GET <code>/health</code> environment</td>
+<td>T: deployment, route store. C: candidate workflow, upstream HTTP</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>02</td>
+<td>Deployment; Windows <code>Win32_Process</code> known gateway inventory</td>
+<td>T: daemon and host inventory; pending independent proof</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>03</td>
+<td>Deployment; route; Slack; task; bounded read-only thread binding for rejection and ambiguity drills</td>
+<td>T: deployment, route store, Slack. C: workflow, task, thread binding</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>04</td>
+<td>Deployment; Slack; bound n8n-db active status workflow/version, latest and posting executions, saved Slack response and credential update time; candidate <code>director-status.json</code></td>
+<td>T: deployment, n8n store, Slack. C: candidate workflow contract pending proof</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>05</td>
+<td>Deployment; consistency; persisted intake-authority row (owner, legacy disablement, fence, live lease and its absolute expiry) read in the same verified-TLS snapshot, lease token compared with the owner-supplied setting and never exported</td>
+<td>T: deployment, consistency, authority row. C: the row is Director-written but not yet independent of the candidate process that authored its generation, pending A3</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>06</td>
+<td>Deployment; route; Slack; task; renderer; consistency approval/checkpoint/resume evidence</td>
+<td>T: deployment, route store, Slack, consistency. C: workflow, task, renderer</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>07</td>
+<td>Deployment; <code>/health</code> holds, ambiguous counts and fence; consistency generation/counts</td>
+<td>T: deployment, consistency. C: health</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>08</td>
+<td>Deployment; route; Slack; task; renderer; consistency approval authorizations, command receipts, application and effect bindings</td>
+<td>T: deployment, route store, Slack, consistency. C: workflow, task, renderer</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>09</td>
+<td>Deployment; route; Slack; task; renderer; bounded read-only thread binding for duplicate/ambiguous-post drills</td>
+<td>T: deployment, route store, Slack. C: workflow, task, renderer, binding</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Deployment; route; Slack and <code>conversations.history</code>; task; renderer; owner structural rubric and digest</td>
+<td>T: deployment, route store, Slack, rubric. C: workflow, task, renderer</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Deployment; Slack; paid task and renderer; captures including products/transports and attempt-time validity</td>
+<td>T: deployment, Slack, captures. C: task, renderer</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Deployment; <code>/health</code> activation readiness; captures and chain expiry</td>
+<td>T: deployment, captures. C: health</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Owner-controlled assignment journal, policy/cutover and twenty admissions; pinned ledger recomputation of integrity, completeness and reported usage bounds</td>
+<td>T: independent local journal read and evaluator computation; operator attestations remain labelled</td>
+<td>No</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Same journal/window; declared timeout/call/turn/output/USD bounds, cap attestation, evidence reference and digest</td>
+<td>T: independent local journal read and evaluator computation; cap signatures are not claimed verified</td>
+<td>No</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Deployment; Slack; paid task and renderer; <code>/health</code> usage-monitor readiness, day, providers, counts, budgets and exposure; consistency signed-budget and spend/meter claims</td>
+<td>T: deployment, Slack, consistency. C: health accounting, task, renderer</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>16</td>
+<td>GitHub exact-head runs/jobs/executed steps and workflow blobs; owner workflow hash or evaluator revision; fallback owner-signed replica, installed signer key, lane counts/failures/command digests and GitHub ancestry</td>
+<td>T: GitHub facts and workflow equality to owner authority, owner-authenticated replica</td>
+<td>No</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Deployment; consistency generation/adoption repository, reviewed commit/tree, author/reviewer identities and acceptance mode</td>
+<td>T: deployment, consistency/adoption; pending independent proof</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>18</td>
+<td>Owner native Security index and sealed manifest, canonical coverage/findings and preserved-source hashes; descriptor security base, optional CLI equality, GitHub ancestry and evaluator git changed-path computation</td>
+<td>T: owner-controlled scan store/descriptor, GitHub and pinned computation; CLI alone grants no authority</td>
+<td>No</td>
+</tr>
+<tr>
+<td>19</td>
+<td>Deployment; <code>/health</code> paid switch, primary runtime, effect executor, reconciliation worker and combined provider readiness</td>
+<td>T: deployment. C: health activation assertions</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>20</td>
+<td>Deployment; route; Slack; paid task; renderer; owner predeclared answer rubric/digest; consistency artifacts and settled request-correlated meter claims</td>
+<td>T: deployment, route store, Slack, rubric, consistency. C: workflow, task, renderer</td>
+<td>Yes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Newly contained for #313 / PR #327: 01, 02, 04, 05 and 19.</strong> In particular,
+02 and 17 now collect independently of candidate health but retain explicit
+pending-proof holds; source decoupling alone does not admit either check. The full contained set is
+01–12, 15, 17, 19 and 20. Checks 13/14 assume the selected journal is maintained
+outside candidate control; they prove consistency of reported admissions, not
+external usage authenticity. The native Security store and installed owner keys
+likewise belong outside candidate control. Consistency and capture inputs are now T. Fourteen checks retain C inputs;
+02 and 17 retain pending-proof holds. Sixteen remain contained.</p>
+<p><strong>Round 5 increment, check 05 (2026-10-02).</strong> Check 05 is graded from the
+<code>director_primary_intake_authority</code> row that <code>consistency_report</code> reads inside its
+one read-only REPEATABLE READ snapshot over the owner-bound verified-TLS store. It passes only
+when LangGraph owns intake, legacy intake is disabled, the fence is positive, the lease's absolute
+expiry (read alongside the live-lease flag, never the token) is in the future and will still be in
+the future when the collection finalizes — revalidated through the same FRESH_FOR/<code>valid_until</code>
+finalization path used elsewhere, failing closed on any missing, malformed or timezone-naive expiry —
+and the row's lease token equals the owner-supplied <code>langgraph_primary_owner_token</code>
+(constant-time comparison inside the evaluator; the token is never in the report). The snapshot must
+be bound to the running generation pin and read inside the collection window. Candidate <code>/health</code>
+is not read to promote 05. Check 05 remains candidate-dependent and contained unless the reviewed-image
+admission gate below admits it: a direct read of a Director-written row is not independent of the
+candidate process that authored its generation. The process/store agreement the old health predicate
+compared is now a cross-check inside the observation: when the store shows the fence owned, the
+Director's own health must say this process holds that same fence (<code>writer_lease_ready</code> with an equal
+<code>intake_fencing_generation</code>). A process that denies it is a FAIL, a silent one is UNKNOWN, and health alone
+never promotes 05 (reviews 4168286426, 4168299362). The lease must still be live at the collection's final
+cutoff (<code>valid_until</code> and the scored expiry are the lease expiry), so a collection that outlasts one
+60-second lease period reports UNKNOWN: keep the final-window collection short, or run it again. Check 07 is unchanged and stays contained: its
+in-memory historical-plan and reconciliation-hold counters have no independent source yet.</p>
+<h3 id="reviewed-image-admission-owner-ruling-2026-10-02-313">Reviewed-image admission (owner ruling 2026-10-02, #313)</h3>
+<p>Several contained checks rest on facts only the Director holds (task rows, delivery recovery, offline
+outcomes, usage-monitor accounting), written by the same image that runs the gateway and shares its signing
+secrets. They cannot be made independent of it, so the owner ruled that Director-written evidence counts only for
+a runtime that is exactly the release the owner reviewed. The owner release descriptor carries it:</p>
+<pre><code class="language-json">&quot;reviewed_release&quot;: {&quot;candidate_commit&quot;: &quot;&lt;40 hex&gt;&quot;, &quot;candidate_tree&quot;: &quot;&lt;40 hex&gt;&quot;,
+                     &quot;director_image_id&quot;: &quot;sha256:&lt;64 hex&gt;&quot;}
+</code></pre>
+<p>Exactly those three fields, each fully matching, or there is no pin. Evidence is admitted only when, in the same
+collection, <strong>all</strong> of these hold: the running Director image digest equals <code>director_image_id</code>; the candidate, the
+running commit label and <code>candidate_commit</code> are one commit; the running image's tree label equals
+<code>candidate_tree</code>; the gateway was bound to the Director's image (<code>--gateway</code>, <code>_gateway_bound</code>); and checks
+<strong>16</strong> (exact-head CI), <strong>17</strong> (independent adoption) and <strong>18</strong> (Security scan) pass for this candidate.</p>
+<ul>
+<li><strong>Admitted:</strong> the real graded observations of the contained checks replace the containment UNKNOWNs and are
+labelled &quot;Admitted under reviewed-image trust&quot; in their explanation and in <code>facts.reviewed_image_trust</code> (the
+pin, what is running and the 16/17/18 states). The report limitations then name the admitted checks
+separately and say this is evidence about the reviewed image's behaviour, not independent proof. They
+still go through the restart re-inspection and the usual freshness rules.</li>
+<li><strong>Contradiction:</strong> a cross-check that disagrees (for example the process denying the fence the store
+shows) is FAIL and stays FAIL. An UNKNOWN keeps its own reason, and a check with no collected source is UNKNOWN,
+never admitted as trusted.</li>
+<li><strong>Not met, or no runtime discovered:</strong> containment is exactly as before, with the first unmet condition in
+<code>facts.reviewed_image_admission</code> of each contained check.</li>
+<li><strong>17 is both an input and an admitted result.</strong> Its own validation (the pinned owner-local adoption and the
+real journal reader) is unchanged; the gate reads its graded original.</li>
+<li><strong>Not checked here:</strong> that the commit label and tree label belong together (#287 item 19). The image digest
+covers the labels it carries, so the pin binds them to the reviewed image.</li>
+<li><strong>The audit table's &quot;Contained?&quot; column</strong> means contained unless this gate admits the check.</li>
+</ul>
+<p>Round 5 remains <strong>NOT CLOSED</strong> for task history, deliveries and health. The
+existing <code>read_primary_qualification_evidence</code> is bounded and read-only. The
+qualification-only <code>read_postgres_qualification_evidence</code> factory now opens an
+existing, identity-bound database over verified TLS with read-only defaults,
+reuses that reader and returns only its snapshot. It performs no DDL and exposes
+no writer, graph or checkpoint handle. Task/header/delivery consumers now derive
+their views from that same typed snapshot, using the pinned application projection
+code. A collection caches at most seventeen tasks (ten trials, five drills,
+approval and paid task), including failed reads, so it does not retry or fall back
+to HTTP. This source change remains unqualified until real-store testing and the
+remaining candidate-writable authority/correlation gaps are closed. Health also includes live process/worker/provider and
+usage-monitor state; a store snapshot alone cannot attest those facts. Route,
+renderer and candidate-writable thread-binding inputs remain C. Thread binding now
+uses the same identity-bound, verified-TLS read-only factory and existing store
+query, bounded to two matches and one shared deadline. The collector caches at
+most five thread selections, including failures, without HTTP fallback. This
+proves neither native Slack correlation nor independent key custody; replacing
+HTTP alone does not close those checks. No raw parallel-batch rows are exported.</p>
+<h3 id="trusted-collection-2026-09-27">Trusted collection (2026-09-27)</h3>
+<p>The pinned evaluator computes consistency and activation-capture reports using
+its own code, interpreter and dependencies. No candidate Python is executed.
+Live collection may inspect candidate-served readbacks, but the audit's final
+containment prevents every check with any C input from earning points. Direct
+rule tests can pass 07, 12 and 17 using trusted reports; that is not a live PASS.
+Unavailable or invalid owner inputs, stores, signatures or snapshots never earn
+a PASS. Image, candidate, generation, collection-window and final deployment-state
+gates still apply. Check 07 also counts OWNER_DECISION_REQUIRED assignments on
+settled tasks as open, including when their pending dependents are correctly blocked.</p>
+<p>The owner-installed <code>~/.director-scorecard/release-descriptor.json</code> selects
+<code>trusted_collection_inputs_env</code>: the name of an evaluator environment variable
+injected by the owner. Its JSON value is an in-memory input bundle, never a CLI
+argument, report, receipt or generated file. It contains:</p>
+<ul>
+<li><code>settings</code>: all fields of the deployment's <code>Settings</code>, explicitly supplied
+without ambient defaults. Preserve original deployment paths and values.</li>
+<li><code>environment</code>: the complete expected Docker environment, compared exactly
+with inspect. This independently selects both database endpoints, the
+generation pin, candidate/tree, provider bindings and configuration digest.</li>
+<li><code>mounts</code>: owner-approved bind mounts, each with <code>destination</code> and <code>source</code>,
+compared with Docker inspect. The source must be accessible to the evaluator.</li>
+<li><code>ca</code>: an absolute evaluator-local <code>path</code> and its owner-pinned <code>sha256</code>.</li>
+<li><code>capture_key</code>, <code>route_verifier_secret</code>, <code>owner_authority_secret</code>: owner-injected
+verification material held only in memory. Optional Responses/team verifier
+configuration comes from the owner's evaluator environment, never the
+candidate environment. Existing route configuration and capture signatures
+must still match; absent route verification cannot attest those captures.</li>
+</ul>
+<p>Both Postgres endpoints require explicit host, port, database and user, and TLS
+<code>verify-full</code> with the pinned CA. No endpoint is rewritten to a convenient host
+alias. The existing <code>database_binding()</code> checks the primary storage identity and
+instance against the pinned generation. Queries use read-only transactions and
+timeouts; consistency uses a repeatable-read snapshot. The capture store uses
+the existing bounded read-only reader and CaptureVerifier. Driver errors are
+replaced with a fixed message without their text.</p>
+<p>SQLite is read from the verified host mount with <code>mode=ro</code> and backed up using
+sqlite3's backup API into memory. This includes committed WAL pages. The backup
+has a time/size limit, is checked with <code>quick_check</code>, and is made query-only.
+Neither a live database file nor its WAL is copied with docker cp. Unavailable
+Docker Desktop mounts, links, invalid journals, inconsistent snapshots and
+backup timeouts leave collection UNKNOWN. Generation verification checks original
+manifest paths and configuration digests separately from local artifact access;
+it never rewrites a manifest to host paths or reserves a journal.</p>
+<p><strong>Limit:</strong> rows and HMAC keys the candidate can write are not independent proof
+of execution or authorship. This collector proves that evaluator-owned validators
+accepted the observed, owner-bound stores and signed artifacts. It does not prove
+that a candidate with signing authority could not fabricate them. Existing CLI
+captures also lack executable digests; their product attestation remains UNKNOWN
+until the capture producer records that evidence. Collection alone does not lift
+that separate gate or authorize activation.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Required outcome</th>
+<th>Evidence needed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01</td>
+<td>Correct project route and channel</td>
+<td>Selected deployment's loopback Director and n8n ports, --channel, correlated route</td>
+</tr>
+<tr>
+<td>02</td>
+<td>One active Slack gateway</td>
+<td>All containers and host listeners using the same app identity</td>
+</tr>
+<tr>
+<td>03</td>
+<td>Correct active intake</td>
+<td>Separate 4xx refusal, 5xx-after-reservation and relay transport-failure drills</td>
+</tr>
+<tr>
+<td>04</td>
+<td>Status really delivered</td>
+<td>Saved successful director-status execution correlated with Slack readback</td>
+</tr>
+<tr>
+<td>05</td>
+<td>Primary owns intake</td>
+<td>Database-derived ownership, disabled legacy intake, positive fencing generation</td>
+</tr>
+<tr>
+<td>06</td>
+<td>Durable restart</td>
+<td>Approval task resumed across the current process start without redispatch</td>
+</tr>
+<tr>
+<td>07</td>
+<td>Reconciliation clear</td>
+<td>Trusted independent consistency evidence (collector pending)</td>
+</tr>
+<tr>
+<td>08</td>
+<td>Authenticated owner approval</td>
+<td>Original scoped instruction, delivered prompt and signed decision; the owner's approval command receipt re-read and matched</td>
+</tr>
+<tr>
+<td>09</td>
+<td>Durable final reply</td>
+<td>duplicate-input and ambiguous-post drills plus one final result</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Ten offline Slack runs</td>
+<td>Ten consecutive actual-owner --trial threads (the only top-level owner posts from the first to the last), the committed structural rubric (pipeline proof, not answer correctness) and measured time, zero operational provider calls from task evidence</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Every runtime lane used is its real product</td>
+<td>Every lane the paid run actually used is attested as its real product (OpenAI/Codex Responses, xAI Grok, Claude) with no substitution (amended by owner decision 2026-09-23; Grok Bot and Antigravity team mode are follow-ups)</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Fresh activation captures</td>
+<td>Unexpired verified captures bound to provider_bindings_sha256</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Rolling twenty admissions</td>
+<td>Authoritative assignment history and recomputed reported resource-bound compliance</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Bounded execution</td>
+<td>Workload-ledger window: bounds set and a hard USD cap the operator attests (operator-attested, not cryptographically verified; owner ruling 2026-09-25)</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Monetary control and usage</td>
+<td>Enrolled signed daily cap and holds, usage-monitor accounting, settled request-correlated meter rows</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Executed exact-head CI</td>
+<td>The six <code>ci.yml</code> jobs executed at the exact head on hosted or registered self-hosted runners; only when none executed, a signed local-replica receipt against a main ancestor (amended by owner decision 2026-09-23). A focused PR base-merge rerun also requires the CI scope job to verify a green full run on the previous head and run the mapped tests; the unchanged container and recovery areas are recorded as carried forward. Push runs use the full suite.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Independent ACCEPT</td>
+<td>Adopted owner-local acceptance for the candidate with reviewer ≠ author</td>
+</tr>
+<tr>
+<td>18</td>
+<td>Complete Security scan</td>
+<td>Sealed complete coverage and disposition bound to exact candidate</td>
+</tr>
+<tr>
+<td>19</td>
+<td>Paid primary active</td>
+<td>Paid enabled, primary runtime, effect executor and reconciliation worker active</td>
+</tr>
+<tr>
+<td>20</td>
+<td>Real paid result</td>
+<td>Actual-owner Slack input, independent correctness, one reply, reported wall/machine time and actual charges from settled meter rows correlated by request id</td>
+</tr>
+</tbody>
+</table>
+<h2 id="run-it">Run it</h2>
+<p>Through the owner-installed launcher, from a working directory outside the
+checkout (see &quot;Install the launcher&quot; below). The launcher takes the repository
+path first; every other argument goes to the scorecard unchanged:</p>
+<pre><code class="language-powershell">python -I $HOME\.director-scorecard\launcher.py &lt;repository&gt; --candidate-sha &lt;full-40-character-sha&gt; --evidence-dir &lt;explicit-evidence-folder&gt; --output-dir &lt;report-folder&gt;
+</code></pre>
+<p>An ordinary direct run refuses the checkout checks. Forging the environment
+claims cannot produce a relied-on score: without a valid launcher receipt,
+the report says <strong>UNATTESTED: not produced by the owner-installed launcher;
+no check may be relied on</strong>, and its counts are <code>UNATTESTED</code>.</p>
+<h3 id="install-the-launcher">Install the launcher</h3>
+<p>One-time, and again whenever the owner moves the pin. Take the launcher from the
+reviewed evaluator commit, never from a working tree, and pin that commit:</p>
+<pre><code class="language-powershell">New-Item -ItemType Directory -Force $HOME\.director-scorecard
+git -C &lt;repository&gt; show &lt;evaluator_sha&gt;:scripts/scorecard-launcher.py &gt; $HOME\.director-scorecard\launcher.py
+# then set &quot;evaluator_sha&quot;: &quot;&lt;evaluator_sha&gt;&quot; in $HOME\.director-scorecard\release-descriptor.json
+</code></pre>
+<p>The installed copy is what runs; <code>scripts/scorecard-launcher.py</code> in the
+repository is only its reviewed source.</p>
+<p><strong>Owner root (#287 item 34, 2026-10-02).</strong> The launcher finds <code>.director-scorecard</code>
+under the account's profile folder as the operating system records it (Windows
+known folder <code>FOLDERID_Profile</code>; POSIX <code>pwd</code>), never through <code>HOME</code>,
+<code>USERPROFILE</code> or <code>HOMEDRIVE</code>/<code>HOMEPATH</code>. A launcher, descriptor or attestation
+directory copied under a caller-chosen home is not the installed launcher and
+refuses. The launcher hands the resolved account home to the evaluator it
+starts (<code>DIRECTOR_SCORECARD_OWNER_HOME</code>); each consumer independently resolves
+the OS account root and checks any forwarded claim against it. The evaluator
+reads owner files (descriptor, CI replica key, Security index) only from that
+OS-resolved root. A run the
+launcher did not start reads no owner files and is unattested. Check the installed file's bytes against
+that commit (<code>git hash-object</code>) before trusting it.</p>
+<p>The launcher writes a per-run receipt in the owner-controlled
+<code>~/.director-scorecard/attestations/</code> directory, outside the evaluator tree.
+It contains the pinned <code>evaluator_sha</code>, archived <code>tree_id</code>, installed
+<code>launcher_sha256</code> and a fresh random <code>nonce</code>. No signing key is introduced.
+The child reads that receipt through the fixed owner-directory location;
+environment variables only select a nonce, not a trusted file path. After the
+child succeeds, the launcher binds the receipt to the canonical JSON report's
+SHA-256. Failed or incomplete launches have no valid completed receipt.</p>
+<p>Every activation, acceptance and issue #81 evidence path must require
+<code>attested: true</code> <strong>and</strong> successful verification through the installed launcher:</p>
+<pre><code class="language-powershell">python -I $HOME\.director-scorecard\launcher.py --verify-report &lt;report-folder&gt;\completion-scorecard.json
+</code></pre>
+<p>Exit 0 verifies origin and unchanged report content; exit 2 means UNATTESTED.
+The Markdown renderer also checks the completed receipt when consuming a
+saved report. A missing field, copied boolean, changed report, malformed
+receipt, changed evaluator pin or changed installed launcher fails closed.
+Do not use a candidate checkout's verifier as evidence. No executable
+activation/acceptance importer currently consumes these saved reports;
+the evidence handoff must include this verification. Markdown alone is not
+verified evidence. Verification does not replace freshness, exact-head review,
+CI or any activation gate; <code>activation_authorized</code> stays false.</p>
+<p>This is an owner-local file attestation, not a portable signature or protection
+against an actor who can rewrite the owner's installation, descriptor or
+receipt directory. Keep those files under the same owner control as the
+existing descriptor. Copying a report to another host without its trusted
+receipt does not transfer verification. Installing this change and moving the
+owner's pin remain separate owner actions.</p>
+<p>The default is offline. It produces <code>completion-scorecard.json</code> and
+<code>completion-scorecard.html</code>, with UNKNOWN for facts it has not observed. The human report displays no pass total until the completed launcher receipt verifies. JSON remains the authoritative machine-readable artifact; historical Markdown receipts are preserved.</p>
+<p>A full live collection names every source explicitly:</p>
+<pre><code class="language-powershell">python -I $HOME\.director-scorecard\launcher.py &lt;repository&gt; --candidate-sha &lt;sha&gt; --output-dir &lt;report-folder&gt; `
+  --live --deployment edge-engine-director --channel &lt;C…&gt; --gateway &lt;gateway-container-name&gt; `
+  --github --ledger &lt;journal-path&gt; --security-scan &lt;scan-uuid&gt; `
+  --drill-thread refusal-4xx=&lt;thread-ts&gt; --drill-thread reserved-5xx=&lt;thread-ts&gt; `
+  --drill-thread transport-failure=&lt;thread-ts&gt; `
+  --drill-thread duplicate-input=&lt;thread-ts&gt; --drill-thread ambiguous-post=&lt;thread-ts&gt; `
+  --approval-task DIR-LG-&lt;task&gt; `
+  --trial &lt;thread-ts&gt; (ten consecutive owner posts) --rubric &lt;structural-rubric.json&gt; `
+  --paid-thread &lt;thread-ts&gt; --paid-rubric &lt;paid-rubric.json&gt; `
+  [--ci-replica-receipt &lt;signed-receipt.json&gt;]
+</code></pre>
+<p><code>--live</code> requires <code>--deployment &lt;compose project&gt;</code>. There is no default stack:
+without <code>--deployment</code> nothing is inspected and check 19 reads UNKNOWN. The
+expected Slack channel comes only from <code>--channel</code>; no channel ID is committed
+to the repository, and a deployment whose configured channel differs is not
+read at all. Every other collector flag requires <code>--live</code>;
+<code>--ci-replica-receipt</code> also requires <code>--github</code>, <code>--rubric</code> requires <code>--trial</code>
+and <code>--paid-rubric</code> requires <code>--paid-thread</code>. A missing selection leaves its
+checks UNKNOWN. The Python API accepts the same selections as keyword
+arguments of <code>collect()</code>; its <code>topology=False</code> option still disables topology
+collection.</p>
+<p>There are no provider calls, Slack writes, retries, deployments or imported
+credentials. Slack and Director reads are bounded GETs through the offline trial
+collector's <code>Collector</code>, plus the thread-binding reads and one paginated
+<code>conversations.history</code> read of <code>--channel</code> under the same deadline and byte
+bound, using credentials read in memory from the selected Director container.</p>
+<p>The candidate SHA and observed runtime image/commit are separate. A merged
+candidate's CI cannot prove a different running image passed that CI. Runtime
+facts are tied to the inspected image's immutable ID and commit label, within
+the time bindings described under <a href="#execution-binding-limits">Execution-binding limits</a>.</p>
+<h3 id="deployment-profile">Deployment profile</h3>
+<p><code>--deployment</code> names a Compose project such as <code>edge-engine-director</code>. The
+Director is the one running container carrying the labels
+<code>com.docker.compose.project=&lt;project&gt;</code> and
+<code>com.docker.compose.service=orchestrator</code>; zero or several matches stay
+UNKNOWN. The inspected container must be running, carry the
+<code>org.director.candidate.commit</code> label and an immutable image ID, and publish
+<code>8080/tcp</code> on exactly one <code>127.0.0.1</code> binding. Its host port (for example
+18082) becomes the health and API base; <code>APP_ENV</code> (default <code>local</code>) is the
+environment <code>/health</code> must report. n8n and its database are the project's
+<code>n8n</code> and <code>n8n-db</code> services, found the same way, and every <code>docker exec</code> targets
+a container ID, never a name.</p>
+<h3 id="per-check-sources">Per-check sources</h3>
+<ul>
+<li>01, 02: Docker running inventory for <code>--gateway</code>, the gateway's channel and
+relay, the published n8n intake version and the n8n upstream <code>/health</code>. 01 is
+UNKNOWN without <code>--channel</code>, FAIL when the gateway belongs to another Compose
+project, and UNKNOWN when the gateway has no Compose labels. 01 also requires,
+from <code>docker inspect</code> alone, that the gateway and n8n share a Docker network
+(same network ID) on which n8n's aliases or DNS names include the relay
+host (on every network the source is attached to, no other container may
+answer to that name; an <code>ExtraHosts</code> entry for the name on the source FAILs
+the hop, and host networking, custom <code>Dns</code>/<code>DnsSearch</code> or a mounted
+<code>/etc/hosts</code> or <code>/etc/resolv.conf</code> leave it unproven), that the active intake <code>Create Director Task</code> node
+forwards exactly as <code>n8n/workflows/director-intake.json</code> (the whole active
+workflow is compared with that file: every node's type, typeVersion,
+parameters, disabled flag and credential types, the node set and the
+connection graph; only node ids, positions, <code>webhookId</code> and credential ids
+may differ; the gateway must
+hold the Director's bot token, owner, channel, bearer and intake signing
+secret <code>SLACK_GATEWAY_SECRET</code>, compared in constant time, since n8n forwards
+its Authorization and signature headers unchanged; a test derives the
+gateway's secret reads from <code>slack_bot.py</code> so a new one cannot be missed;
+no node of the reference workflow may be disabled; Authorization and
+the three <code>X-Director-Intake-*</code> headers, the signed body, timeout, no
+redirects, full response, and the same connections), and that n8n's own <code>DB_*</code> settings name the queried
+<code>n8n-db</code> (PostgreSQL, database and user <code>n8n</code>, port 5432, a host only that
+container answers to, and the server's <code>POSTGRES_USER</code>, <code>POSTGRES_DB</code> and
+<code>POSTGRES_PASSWORD</code> equal to n8n's, the password compared in memory in
+constant time) before its workflows or executions are read; setting
+values are never reported, and likewise that n8n and the selected Director share a network on
+which the Director answers to <code>orchestrator</code> (the host n8n's health probe and
+intake request use). On that network no other container may answer to the
+same name. FAIL when a hop has no such network or the name has another
+owner, UNKNOWN when a container shows no network attachments. No probe runs
+inside the gateway.</li>
+<li>03, 09: <code>--drill-thread</code> Slack threads, the bot's replies, the bounded
+identity-bound read-only thread resolver and task snapshot (see below). A receipt
+or <code>BLOCKED</code> notice counts only as a reply's leading header (after the
+gateway's contribution BEGIN tag), at most one receipt per reply; the words
+quoted in a body count as neither, and the 4xx, 5xx and transport drills need
+exactly one <code>*DIRECTOR — BLOCKED*</code> reply. A drill
+whose thread holds a bot reply Slack reports as edited or with a subtype is
+UNKNOWN before anything in it is graded, and such a reply's text is never
+parsed: the bot never edits, so its receipts and <code>BLOCKED</code> text are no longer
+what was posted.</li>
+<li>04: the newest scheduled <code>Director Status</code> run of any outcome is graded
+first (a failed one FAILs 04, an unfinished one leaves it UNKNOWN); then,
+only when, from <code>docker inspect</code>, the deployment's n8n reaches the
+selected Director (and no other container) as <code>orchestrator</code>, the newest
+saved successful scheduled <code>Director Status</code> execution of a workflow that is
+active now, whose active version is the <code>Read Health</code> GET of
+<code>http://orchestrator:8080/health</code> -&gt; <code>Diff Readiness</code> -&gt; one Slack
+<code>Post Status</code> route, the whole active version equal to
+<code>n8n/workflows/director-status.json</code> under the same rule (the Post Status
+channel is bound to <code>--channel</code>), whose <code>Diff Readiness</code> code is exactly the repository's
+and whose <code>Post Status</code> sends <code>$json.text</code> to the project channel through a
+Slack API credential, with no node of that workflow disabled, which ran its active version (the execution's recorded version
+where n8n stores one, otherwise a start after both that version's history
+entry and the workflow's last update; UNKNOWN when neither shows it), in the
+last 72 hours, read in a read-only n8n database transaction, correlated with
+the Slack readback of the message it posted to <code>--channel</code>. An execution that
+started before the running Director container was created is UNKNOWN, and so
+is a posted message Slack reports as edited or with a subtype. The status
+message must be posted by the authenticated Director bot user.</li>
+<li>02: the Slack app ID each running container's app-level token names
+(<code>xapp-&lt;n&gt;-&lt;APP_ID&gt;-...</code>), so a rotated or second token of the same app is
+still a duplicate gateway; a token whose app cannot be read is unclassified
+and leaves 02 UNKNOWN.</li>
+<li>05, 19: the Director's <code>/health</code>; 05 also requires <code>writer_lease_ready</code>, the
+database-derived live writer lease, not only the persisted owner row.</li>
+<li>06, 08: the <code>--approval-task</code> readback, its deliveries and its Slack thread;
+08 also the task's <code>approval_resume</code> command receipts from <code>consistency</code>.
+08 needs a complete thread readback, each prompt's complete blocks (every
+field, accessory, element, confirm dialog, URL, value and style; only Slack's
+own <code>block_id</code> and plain-text <code>emoji</code> flag ignored) equal to the
+Director's own rendering (<code>primary_slack_delivery.render_notification</code>) of
+the persisted application record <code>consistency</code> returns (task record,
+execution mode, effect grant) for that approval's kind, request and
+projection digests (the complete proposed scope and button value), each <code>approval_resume</code> receipt joined to
+its durable command authorization (same command digest and writer fence,
+gateway proof version <code>v1</code>, the owner as actor), and each prompt's approve button must
+carry exactly this task, projection, request digest and kind while its
+visible text names that kind and decision scope (and the plan outcome when
+the task has a plan). An
+approval prompt Slack reports as edited or with a subtype is not the native
+prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.</li>
+<li>07, 17, 15 (budget and meter rows): the evaluator-owned <code>consistency_report()</code> function. Its
+verified generation commit and tree must equal the runtime image's commit
+and tree labels, and the tree must be the labelled commit's tree on GitHub
+(GET only); when any of these is unverified or differs, 07, 08, 11, 12, 15,
+17 and 20 are UNKNOWN, because the evaluator-owned evidence belongs to that
+generation, not to the labelled image. 17
+is UNKNOWN unless the adoption's repository is exactly this repository.</li>
+<li>10: Owner ruling (2026-09-24), option chosen: &quot;Offline = pipeline proof&quot;. Check 10 proves the pipeline works end to end offline (delivery, simulation labels, ten consecutive, committed structural rubric); answer correctness is check 20's job (the real paid run). Check 10 therefore does
+not verify answers: its PASS rests on the committed structural rubric and
+every binding, freshness, route and consecutiveness predicate, and its run
+records report <code>structural_rubric_passed</code>, never answer correctness. Check 20
+verifies answers.</li>
+<li>10: ten <code>--trial</code> threads evaluated in-process with <code>evaluate_run_records(mode=&quot;offline&quot;)</code>,
+then one bounded <code>conversations.history</code> read of <code>--channel</code> from the first
+trial to the last. A trial whose terminal reply Slack reports as edited, or
+with any subtype, shows neither the simulation label nor the cost text, so it
+is neither offline nor rubric-correct.</li>
+<li>11, 12: the evaluator-owned <code>activation_capture_report()</code> function; 11 also reads the paid run's lanes.
+The reference workflows for 01 and 04 are read from the running candidate
+commit (<code>git show &lt;runtime sha&gt;:n8n/workflows/...</code>), never the working tree;
+unavailable is UNKNOWN. The in-process renderer 08 and 20 use must be the
+candidate's own files (<code>primary_slack_delivery.py</code>, <code>contribution_tags.py</code>,
+<code>models.py</code>, compared with that commit's blobs); otherwise 08 and 20 are
+UNKNOWN. n8n must use the default <code>public</code> schema (<code>DB_POSTGRESDB_SCHEMA</code>
+absent or <code>public</code>), and both n8n queries pin <code>search_path</code> to it.
+11 requires both the app and the runtime-adapter capture of each lane used
+(<code>provider_ready</code> needs both) to have verified, been observed and persisted
+before the paid attempts and stayed unexpired through them. 04 requires the
+posting execution to postdate the Post Status credential's latest update
+(only <code>credentials_entity.updatedAt</code> is read, never credential data). 10 and
+20 take a run's kind only when the persisted <code>execution_mode</code> agrees
+(<code>offline_simulation</code> or <code>paid_off</code> for offline, <code>live</code> for paid);
+inconsistent readback is UNKNOWN. 20 grades an outcome only when its
+<code>provider_result_digest</code> and assignment sequence join a SUCCEEDED assignment
+and its latest SUCCEEDED attempt with the same result digest. 18 requires the
+indexed <code>target_revision</code>, not only the diff head, to be the candidate.
+12 requires the captured lanes to equal the generation's required providers
+exactly. 03 and 09 treat an edited or subtyped owner post in a drill thread
+like an altered bot reply (UNKNOWN), and 04 requires the read-back status
+text to equal the text the execution's Slack response says it posted.</li>
+<li>13, 14: the workload journal from <code>--ledger</code>.</li>
+<li>15 (daily accounting): <code>/health</code> <code>usage_monitor.daily_accounting</code>, only when
+the monitor is enabled with its paid gate open (<code>gate_state</code> <code>open</code>) and no
+configured provider is unsupported, missing or stale. A provider with spend
+today (<code>reported_cost_usd</code> or <code>reserved_cost_usd</code> above zero; <code>request_count</code>
+counts the monitor's own usage-check probes) and neither a numeric
+<code>daily_budget_usd</code> (only gemini, grok and perplexity have one) nor an
+owner-signed enrolled budget for that provider leaves 15 UNKNOWN.</li>
+<li>19 also requires <code>provider_activation.combined_live_ready</code>.</li>
+<li>16: GitHub <code>ci.yml</code> runs and jobs at the exact head, or <code>--ci-replica-receipt</code>.
+Runs are read page by page (100 per page, at most 10 pages) until GitHub's
+<code>total_count</code> is reached, and each run's jobs must match its <code>total_count</code>;
+an incomplete listing is UNKNOWN, so the receipt is never admitted on a
+partial read.</li>
+<li>18: the native Security index for <code>--security-scan</code>. The sealed scan's base
+must equal the pinned reviewed base: the owner release descriptor's
+<code>security_base_sha</code> (the check-11 descriptor shape). An optional <code>--security-base</code>
+must match that value exactly; it cannot supply authority when the descriptor
+omits the base. A missing descriptor base or differing CLI base is UNKNOWN,
+&quot;security base not owner-authenticated&quot;.
+The pin must be a strict ancestor of the candidate (GitHub compare, GET only)
+and the <code>base..candidate</code> diff non-empty. The merge base is not used: it moves with the candidate (once
+the candidate is on <code>main</code> it is the candidate itself and the diff would be
+empty). The completion plan pins the release acceptance scan to the
+cumulative diff from <code>5394e64</code>. Check 16's replica base test (a <code>main</code>
+ancestor the candidate descends from) is unaffected.</li>
+<li>20: the <code>--paid-thread</code> readback, <code>--paid-rubric</code> and settled meter rows.</li>
+</ul>
+<h3 id="drill-thread-kinds">Drill-thread kinds</h3>
+<p>Each <code>--drill-thread KIND=THREAD_TS</code> names one owner message the operator
+posted to exercise one path. A drill that was not exercised stays UNKNOWN.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>PASS</th>
+<th>FAIL</th>
+<th>UNKNOWN</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>refusal-4xx</code></td>
+<td>complete thread, one owner input, a <code>DIRECTOR — BLOCKED</code> reply, no receipt, binding 404</td>
+<td>a bound task (200) or ambiguous binding (409), or any receipt</td>
+<td>otherwise</td>
+</tr>
+<tr>
+<td><code>reserved-5xx</code></td>
+<td>complete thread, one owner input, a <code>BLOCKED</code> reply, no receipt, binding 200 and the task's readback shows one task for the thread</td>
+<td>binding 409 or more than one thread task</td>
+<td>binding 404 (the reservation was not exercised), a receipt (the gateway answered 202, so the 5xx was not exercised), or otherwise</td>
+</tr>
+<tr>
+<td><code>transport-failure</code></td>
+<td>complete thread, one owner input, a <code>BLOCKED</code> reply, no receipt, and binding 404 or binding 200 with one thread task</td>
+<td>binding 409 or more than one thread task</td>
+<td>a receipt (the relay answered 202, so the failure was not exercised), or otherwise</td>
+</tr>
+<tr>
+<td><code>duplicate-input</code></td>
+<td>one owner input, two or more receipts (distinct replies) naming the bound task, the single terminal delivery <code>DELIVERED</code> with its Slack ts and matching the native final message, one thread task and one final reply</td>
+<td>binding 409, receipts naming several tasks, several thread tasks or final replies</td>
+<td>fewer than two receipts</td>
+</tr>
+<tr>
+<td><code>ambiguous-post</code></td>
+<td>a complete thread with one owner input, the bound task's single terminal delivery is <code>DELIVERED</code> with <code>acknowledged_at</code> null, <code>delivered_at</code> and <code>slack_ts</code> set, one thread task, one final reply matching the native message</td>
+<td>the terminal delivery is <code>AMBIGUOUS</code> after two readbacks, several thread tasks, or several final replies</td>
+<td><code>acknowledged_at</code> is set (the ambiguity was not exercised)</td>
+</tr>
+</tbody>
+</table>
+<p>Check 03 combines <code>refusal-4xx</code>, <code>reserved-5xx</code> and <code>transport-failure</code>; check
+09 combines <code>duplicate-input</code> and <code>ambiguous-post</code>. Any FAIL fails the check,
+all PASS passes it, anything else (including a kind that was not supplied) is
+UNKNOWN. A transport failure (the relay pointed at a closed port, step 7b of
+<a href="n8n-operations.html">n8n operations</a>) reaches the same n8n ambiguity branch as a
+5xx but usually without a reservation, so it reads binding 404, which
+<code>reserved-5xx</code> cannot score; it is therefore its own drill. Observable outcomes
+overlap between kinds (a 4xx refusal and a transport failure both read 404 and
+<code>BLOCKED</code>), so each kind names a distinct operator-labelled thread and the
+scorecard scores the observable outcome. The scorecard cannot tell a transport
+failure from a refusal or a reserved 5xx, so 03's PASS says the transport
+failure itself is operator-attested, not observed. The drill procedures
+themselves are operator actions and are not automated here.</p>
+<h3 id="retained-producer-commands-not-invoked-by-the-scorecard">Retained producer commands (not invoked by the scorecard)</h3>
+<pre><code class="language-text">python -m director_orchestrator.primary_generation consistency [--task DIR-LG-… (up to twelve)]
+python -m director_orchestrator.primary_generation activation-captures
+</code></pre>
+<p>The scorecard does not invoke either command. The retained producer code first
+verifies the running generation exactly as
+<code>verify</code> does (<code>require_generation</code>, never reserving) and prints one JSON
+document. They never call <code>require_runtime_off</code>: they run beside an active
+runtime and write nothing.</p>
+<ul>
+<li><code>consistency</code> opens one <code>REPEATABLE READ</code>, <code>READ ONLY</code> transaction with
+<code>default_transaction_read_only</code> set and counts unresolved reconciliation
+claims, ambiguous assignments, tasks requiring reconciliation, terminal
+tasks with open assignments or effects, projection/batch plan-digest
+conflicts, projections ahead of the intake fence, <code>SUCCEEDED</code> projections
+with any assignment not <code>SUCCEEDED</code>, projections naming a plan digest with
+no batch row, batch rows with no projection, and in-flight work (open
+effect reservations, active assignments, live writer claims, batches pending
+projection binding, and <code>OWNER_DECISION_REQUIRED</code> holds with a pending
+approval, which are in flight even with no open assignment or lease). For each <code>--task</code> it adds the spend rows with their
+settled usage and request correlation, and the enrolled budget rows with the
+day's held amount, their provider and storage grant and whether the full
+budget document passes the owner-signed <code>ProviderBudget</code> contract (closed
+schema, HMAC owner signature re-verified with the entitlement owner-authority
+secret, and a grant digest equal to the grant it is stored under). Each spend
+row carries its grant and whether its usage receipt passes the
+<code>ProviderUsageReceipt</code> HMAC with the entitlement route-verifier secret and
+binds that attempt, grant, provider, cost and tokens; an unverified receipt
+is no actual cost. Without either secret nothing it signs verifies, and the
+report says which secrets were available, and its <code>approval_resume</code> command receipts (SHA-256 of
+the command ID, command and resulting projection digests, recorded time). In
+<code>owner-local-evidence-v1</code> mode it also returns the pinned adoption's
+repository, pull request, author, reviewers, reviewed source and adoption
+digest. A task is terminal here when its terminal classification is set,
+unless it is <code>OWNER_DECISION_REQUIRED</code> with a pending approval request (the
+predicate Slack delivery enqueues approvals by): that hold is resumable, so
+its open assignments, effects and unbound batch count as in flight. An
+<code>OWNER_DECISION_REQUIRED</code> hold with no pending approval cannot resume and is
+terminal. A terminal task whose batch never bound to its projection counts as
+<code>terminal_batches_unbound</code>. A <code>PENDING</code> assignment whose prerequisites
+include a <code>FAILED</code> or owner-held assignment, directly or through another such
+assignment, is the aggregator's <code>BLOCKED</code> projection and is counted neither
+as open nor as active. Check 07 fails on any unresolved, ambiguous,
+conflicting or terminal-residue count, is UNKNOWN unless the snapshot names
+the running generation pin and intake fence, and is UNKNOWN while work is in
+flight.</li>
+<li><code>activation-captures</code> reads the activation store through a load-only view and
+the validation store through its read-only capture reader. For every lane it
+reports the binding digest and, per surface, the latest stage, evidence
+digest, observation time, expiry and whether the capture verifier accepts it,
+plus the product that produced the verified runtime-adapter capture and the
+LIVE_OK row's persisted <code>recorded_at</code>. Check 11 requires both that row's
+<code>observed_at</code> and its <code>recorded_at</code> to precede the paid attempts, because
+<code>observed_at</code> is supplied by whoever published the capture. The
+product comes from the capture's own dialect and model: an OpenAI Responses
+envelope needs an OpenAI model (<code>gpt-</code>, <code>o&lt;digit&gt;</code>, <code>codex</code>, <code>chatgpt-</code>), a
+Codex capture needs a native Codex JSONL turn (and check 11 maps each OpenAI
+attempt's transport by allowlist: <code>responses-api</code> to the Responses product,
+<code>native-cli</code> and <code>authenticated-windows-host-bridge</code> to Codex; any other
+transport is unattested), a Grok capture a Responses envelope with a <code>grok</code>
+model or a CLI envelope with <code>stopReason</code>, an integer <code>num_turns</code> and a Grok
+model, and a Claude result envelope a non-empty <code>modelUsage</code> whose keys are
+all <code>claude</code> models. An envelope that names another vendor's model, or none,
+has no product: the lane name alone attests nothing. A matching dialect and
+model are necessary, never sufficient: a CLI capture is labelled
+<code>&lt;product&gt;-unattested</code> unless a pinned release attests it (see &quot;CLI release
+attestation&quot; below). Anything else has no product. These are not part of
+<code>/health</code>, which stays readiness booleans only.</li>
+</ul>
+<p>Against an image built before these commands existed, <code>docker exec</code> exits
+non-zero and the dependent checks read UNKNOWN.</p>
+<h3 id="paid-answer-rubric-format">Paid answer rubric format</h3>
+<p><code>--paid-rubric</code> is a JSON file of at most 2 MiB with exactly these keys:</p>
+<pre><code class="language-json">{&quot;schema&quot;: &quot;director-paid-answer-rubric/v1&quot;, &quot;rubric_id&quot;: &quot;lowercase-id&quot;,
+ &quot;declared_at&quot;: &quot;2026-09-23T07:00:00+00:00&quot;, &quot;expected_answer_substrings&quot;: [&quot;one to five non-empty strings&quot;]}
+</code></pre>
+<p>The owner's paid Slack input must carry <code>rubric-sha256:&lt;sha256 of the file's bytes&gt;</code>, <code>declared_at</code> must not follow the input, the task must be <code>DONE</code> with
+exactly one final reply, and every substring must appear in the persisted
+provider results and in the reply as the Director's renderer produced it
+(the reply must equal that rendering, truncation included, so text cut from
+it is never graded), and none in the owner's question or in
+the Director's fixed terminal wrapper (header, completion and cost lines,
+contribution tags), which would otherwise satisfy it. A
+paid thread with any bot reply Slack reports as edited, or with any subtype,
+is UNKNOWN (the task receipt lookup refuses it), and such a final reply is
+never graded correct: Slack keeps its original timestamp, which the wall time
+uses, but returns the new text. Every Slack text read as evidence goes through
+the collector's one <code>unedited</code> rule.</p>
+<h3 id="local-replica-receipt-format">Local-replica receipt format</h3>
+<p>When no required job executed at the exact head, <code>--ci-replica-receipt</code> may
+supply an owner-signed receipt:</p>
+<pre><code class="language-text">{&quot;document&quot;:{&quot;schema&quot;:&quot;director-ci-local-replica/v1&quot;,&quot;repository&quot;:&quot;edwardjones3976/director-orchestrator&quot;,
+  &quot;candidate_sha&quot;:&lt;40 hex&gt;,&quot;base_sha&quot;:&lt;40 hex&gt;,&quot;produced_at&quot;:&lt;timezone-aware ISO time, not in the future&gt;,
+  &quot;lanes&quot;:[{&quot;lane&quot;:&quot;windows-postgres-lane&quot;|&quot;ubuntu-replica&quot;,&quot;head_tests_run&quot;:&lt;int &gt; 0&gt;,&quot;base_tests_run&quot;:&lt;int &gt; 0&gt;,
+    &quot;head_failures&quot;:[&lt;unique test ids, each at most 512 characters, at most 10000&gt;],&quot;base_failures&quot;:[...],
+    &quot;command_sha256&quot;:&lt;64 hex&gt;} x exactly these two lanes]},
+ &quot;signature&quot;:&lt;128 hex Ed25519 signature over
+   json.dumps(document, sort_keys=True, separators=(&quot;,&quot;,&quot;:&quot;), ensure_ascii=True, allow_nan=False)&gt;}
+</code></pre>
+<p>The verification key is the 64-hex raw public key at
+<code>~/.director-scorecard/ci-replica-signer.ed25519.pub</code>, which must be a regular
+file, not a link; there is no option to name another key. The signer must be
+owner-held and never an author of the candidate's pull request. <code>base_sha</code>
+must be a commit on <code>main</code> that the candidate descends from (GitHub compare:
+<code>base...candidate</code> is <code>ahead</code> and <code>base...main</code> is <code>ahead</code> or <code>identical</code>), and
+every lane's <code>head_tests_run</code> must be at least its <code>base_tests_run</code>; otherwise
+the receipt is UNKNOWN. The receipt passes when neither lane's head failures
+include a test absent from its base failures, fails on any such new failure,
+and stays UNKNOWN when the key is missing or the receipt is malformed, unsigned
+or signed by another key. It is bound to its own <code>candidate_sha</code>, so a receipt
+for another candidate is UNKNOWN. A receipt is considered only when none of
+the six required jobs executed; when some executed and others did not, check 16
+fails. An executed job that did not succeed fails check 16 regardless of any
+receipt. Hosted billing stubs (zero steps) never count; an executed job with a
+required name counts the same on hosted and registered self-hosted runners, but
+only from a <code>.github/workflows/ci.yml</code> run. That path is fixed in the
+scorecard, not read from the candidate. A same-named job of any other workflow,
+including one the candidate adds, can fail check 16 but never fills a required
+job. The contents of <code>ci.yml</code> at the candidate are still the candidate's, so a
+change to that file is left to review (17) and the Security scan (18).</p>
+<h3 id="status-execution-retention">Status execution retention</h3>
+<p><code>n8n/workflows/director-status.json</code> saves successful executions so check 04
+can correlate the posted message (default D13 of the owner-approved
+2026-09-23 completion plan: save successful <code>director-status</code> executions and
+prune them after 72 hours). The workflow file alone changes nothing on a
+running n8n: re-import it. Every five-minute run is saved, not only runs that
+post. Each saved execution keeps the full <code>Read Health</code> response (the
+Director's <code>/health</code> body, which carries readiness booleans and counts but no
+secrets, plus its response headers), the diff node's output and, when it
+posted, the Slack post response. It carries no credentials.</p>
+<p>The 72-hour pruning is an operator action and is not in this repository's
+<code>docker-compose.yml</code>: set <code>EXECUTIONS_DATA_PRUNE=true</code> and
+<code>EXECUTIONS_DATA_MAX_AGE=72</code> on the n8n service. Those settings apply to every
+workflow on that instance, the intake relay included. Without them n8n keeps
+saved executions for its own default age. The scorecard reads only the last
+72 hours either way.</p>
+<h3 id="execution-binding-limits">Execution-binding limits</h3>
+<p>The consistency snapshot also returns the manifest-verified
+<code>DIRECTOR_RUNTIME_IMAGE_ID</code>, which must equal Docker's inspected image
+(otherwise 07, 08, 11, 12, 15, 17 and 20 are UNKNOWN), and the selected gateway
+must run the Director's image (01 FAILs; Slack-derived 03, 08, 09, 10 and 20
+are UNKNOWN). The consistency and activation reads re-verify, inside their own
+read-only transaction, the accepted control plane's storage identity and
+database instance, and refuse any other database. Each observation is stamped
+when it was actually made (after every read it rests on, never later than the
+collection's end), so a PASS read before slower sources is not carried forward
+to the end; a time-limited PASS (12's capture expiries) is revalidated against
+its stamp, and a fixed-clock collection stamps at its frozen end. Upper bounds
+applied while grading use the time of that grading read. Just before the end the Director, gateway
+and n8n containers are re-inspected (ID, image, creation, start time and
+running state); if any differs from the deployment probe, or cannot be read,
+every runtime-derived PASS or FAIL becomes UNKNOWN. That reinspection covers
+every container whose state backs evidence: the Director, its
+<code>langgraph-primary-db</code>, n8n, <code>n8n-db</code> and the named gateway. Check 04 bounds a
+saved status run by the later creation of n8n and <code>n8n-db</code>, so a run saved
+before the execution store was recreated grades nothing. The primary database
+is not a freshness bound: its evidence is bound per read to the accepted
+database instance. <code>score()</code> scores runtime checks for exactly one runtime
+binding: the supplied one, or else the single binding all runtime observations
+carry (reported at the top level); observations from mixed deployments or
+images leave every runtime check UNKNOWN. Credential comparisons never match
+two empty values, and the gateway's credentials count only when each is set,
+the intake signing secret is at least 32 characters (slack_bot's startup rule)
+and differs from the bearer. Check 08 also requires the owner's authorization
+to be claimed no earlier than the prompt's Slack timestamp. Offline doubles
+persist no result packet, so check 10 binds each offline outcome to its
+assignment's durable ledger row: run_id <code>offline-double:&lt;reservation digest&gt;</code>,
+the fixed simulation label as its result and the row's result digest; any
+other outcome FAILs and a row without its reservation digest is UNKNOWN.
+Every observation is stamped when its source phase (deployment, GitHub, ledger,
+Security) began reading, so a composite built from several reads (15 joins
+<code>/health</code> with the consistency snapshot) is never stamped after its earliest
+dependency read. Each assignment's <code>reserved_at</code> and <code>completed_at</code> are
+settlement evidence: both must be present, in order and inside the freshness
+window. The ambiguous-post drill (09) needs a DELIVERED terminal row that was
+never acknowledged and was settled by one or two readback attempts, as
+<code>PrimarySlackDelivery.readback</code> does. Check 07 counts every nonterminal
+projection as in flight (<code>nonterminal_projections</code>), even with no subordinate
+row. Check 04's newest run needs both its start and stop time, in order and
+inside the window. Settlement (06, 10, 20) needs every attempt's events and every
+effect's lifecycle (reserved, started, bound, terminal) in chronological order.
+Every budget, cost, limit and run measurement read must be a finite, non-negative
+number. Every task-backed drill verdict (reserved-5xx, task-backed
+transport-failure, duplicate-input, ambiguous-post) needs the same correlation:
+<code>task_record_bound</code> and <code>task_api_gateway_attested</code>. One ordering helper serves
+every lifecycle (Slack delivery, effect, attempt, assignment, n8n execution): a
+DELIVERED row counts only as <code>PrimarySlackDelivery</code> produces it, created, claimed,
+acknowledged when Slack answered (null on the ambiguous recovery path) and then
+delivered by one or two readback attempts, in that order. One read-time rule
+serves every snapshot: the consistency snapshot, the captures report and each
+qualification readback carry their own read time, which must lie inside this
+collection. Check 10 also requires each offline final reply's text and blocks to
+be the candidate renderer's canonical rendering, and check 15 requires
+<code>daily_accounting</code> to cover exactly the monitor's configured <code>providers</code> (unique,
+valid names). A DELIVERED row's Slack timestamp lies inside its lifecycle
+(claimed, then posted, then acknowledged or read back); every attempt event lies
+between its assignment's reservation and completion (the product's write order);
+and check 07 counts a SUCCEEDED projection without a bound batch or a SUCCEEDED
+assignment as a conflict (<code>succeeded_projections_without_plan</code>). The one
+lifecycle rule takes the moments the product always writes for each row type
+and state and fails when one is missing: a DELIVERED row needs its creation,
+claim, Slack post and delivery; a SUCCEEDED or FAILED assignment its reservation
+(unless cancelled before dispatch) and completion; a terminal external effect
+its reservation, execution start and terminal record. Only moments the product
+may leave unset (the acknowledgement on the ambiguous path, a remote binding)
+are optional. Check 15 grades only the enrolled caps and charges of the
+collection's UTC budget day, the day <code>/health</code> accounting covers. Every
+subprocess the scorecard runs streams both stdout and stderr, each capped at
+<code>MAX_BYTES</code>; an overflow kills the child at once and the source reads as
+unavailable, never partially parsed.</p>
+<p>Gateway attestation (03, 08, 09, 10, 20) is never the task projection's
+mutable <code>intake_authentication</code> label alone. The qualification readback
+carries the append-only <code>director_primary_intake_auth_claim</code> row that
+<code>claim_authenticated_primary_intake</code> wrote before the graph existed (digests and
+class only, no nonce), and <code>task_api_gateway_attested</code> holds only when a
+complete readback has exactly one <code>slack_gateway_attested</code> claim for the task
+whose payload digest is <code>verify_slack_intake_attestation</code>'s digest of the
+served intake and whose idempotency digest is <code>primary_default._request</code>'s over
+its source event, channel and thread; a missing, duplicated or mismatched
+claim is not attested. Check 06's restart predicate grades its terminal
+delivery with the same <code>_delivery_settled</code> rule as every other final reply.
+Attempt ordinals count as dispatch evidence (06, 20) only when each
+assignment's run 1..n without a gap; an assignment showing only attempt 2, or 1
+and 3, is missing rows and is UNKNOWN. The settlement join (10, 20) also
+requires each outcome's provider to be its assignment's: the ledger row's lane
+mapped to its agent (<code>antigravity</code> carries a <code>gemini</code> outcome), as
+<code>primary_default</code> records both. For 20 the revalidated result packet's
+<code>provider</code> must equal the outcome's, and the packets' assignment IDs must equal
+the durable assignments' in both directions: an orphan packet FAILs, a missing
+one is UNKNOWN. Check 07 counts every persisted result packet that names no
+durable assignment of its task as a conflict
+(counted within <code>result_artifacts_invalid</code>); the table has no such foreign key.</p>
+<p>Every durable timestamp an evidence row carries, and every store the
+evidence lives in, is bounded. The intake claim's own <code>created_at</code> must be
+timezone-aware, no earlier than the correlated owner post and no later than the
+task's creation and the readback's capture; it, every status receipt and every
+reconciliation event join the freshness moments with the rest of the readback.
+The freshness bound is the latest creation of every container whose state the
+evidence rests on: the Director and the <code>langgraph-primary-db</code> its
+<code>LANGGRAPH_PRIMARY_POSTGRES_DSN</code> host resolves to (the same hop rule as n8n's
+store; otherwise the Director is unverified), plus, for Slack intake, the
+gateway, n8n and <code>n8n-db</code>. Activation captures (11, 12) are read through
+<code>ProviderActivationRegistry._validated_records</code>, never the store's last row:
+a surface whose chain does not validate reports <code>chain_valid: false</code>, a
+surface lapses with its earliest-expiring stage (<code>chain_expires_at</code>), and its
+persisted <code>recorded_at</code> must follow its <code>observed_at</code> and precede the
+collection's end (for 11, the attempts). Each result packet's <code>recorded_at</code> lies
+between its assignment's reservation and completion. A paid attempt's spend row
+counts only when its <code>budget_day</code> lies between the UTC days of its assignment's
+reservation and its attempt's first event. A native Security seal must follow
+the scan's completion.</p>
+<p>Every join between two evidence sets is bidirectional and identity-bound.
+The readback's terminal row names the native final's <code>client_msg_id</code> and
+Slack ts, and the <code>/deliveries</code> receipts equal the readback's delivery rows as
+a set of (key, client_msg_id, state, ts) (06, 09, 10, 20). Check 08 pairs each
+approved delivery with exactly one <code>approval_resume</code> receipt and each receipt
+with exactly one approved delivery (a leftover or doubled receipt FAILs), and
+every approval prompt the bot posted (<code>render_notification</code>'s pending header)
+must be an approval delivery. Outcomes and ledger assignments form a bijection
+by sequence (10, 20). Only a notification the producer keys <code>terminal</code> can be a
+final reply: <code>hold:</code> notifications (OWNER_DECISION_REQUIRED,
+RECONCILIATION_REQUIRED) and <code>approval:</code> prompts never count, so a task that
+paused and then finished has one final. The usage monitor names its
+<code>accounting_day</code>, and check 15 grades budgets and charges of that day only; a
+snapshot without it is not monitored accounting. <code>conversations.history</code> ends
+only on an explicit <code>has_more: false</code> without a cursor; a missing flag or a
+missing, repeated or malformed cursor is incomplete.</p>
+<p>A collection is bounded in wall clock: <code>collect</code> sets a deadline
+<code>COLLECTION_SECONDS</code> (600) from its start, and every subprocess (<code>_run_bytes</code>:
+docker, gh, git, psql, PowerShell), the <code>/health</code> read and the Security index's
+SQLite connection take their own cap clamped to what remains (<code>_remaining</code>); a
+spent deadline reads as unavailable. Every Slack and Director HTTP read goes
+through the collector's one <code>drain</code>: HTTPX gets a timeout clamped to the
+earlier of its 10-second cap and the deadline, and the clock is checked after
+every chunk as it arrives, so a slow trickle cannot outlast it. Check 02
+exempts only the already-identified Director container, by ID, from the
+same-app gateway inventory. The Slack-intake freshness bound (03, 08, 09, 10,
+20) adds the active intake workflow's moment: the later of its active
+version's <code>workflow_history.createdAt</code> and the workflow row's <code>updatedAt</code>
+(import, edit, activation); unknown times leave those checks UNKNOWN. Check 04
+already requires the execution's recorded version to be the active one (or,
+where n8n records none, a start after both times). Check 07 counts every
+result packet attached to a durable assignment that fails revalidation, names
+another provider than the assignment's agent, or differs from a SUCCEEDED
+assignment's result digest (<code>result_artifacts_invalid</code>), validated globally
+up to 2000 rows; over the cap the count is unknown and 07 is UNKNOWN.</p>
+<p>Each global count shares its rule with the per-task check for the same rows.
+<code>artifact_assignment_conflict</code> (07's <code>result_artifacts_invalid</code>, 20's packet
+join) accepts a packet only as its SUCCEEDED assignment's result: revalidated,
+the assignment's agent, recorded between reservation and completion, the same
+result digest. primary_default persists a packet while its assignment is still
+ACTIVE, before primary_parallel settles it, so a packet on an ACTIVE or
+AMBIGUOUS assignment counts as in flight (<code>result_artifacts_in_flight</code>, 07
+UNKNOWN), and one on any other status (FAILED, PENDING, owner-held) or with
+another digest is a conflict. <code>validate_attempt_history</code> (the collector's
+attempt rule, now in the package) also counts every task's attempts in the
+consistency command (<code>provider_attempts_invalid</code>): first event STARTED, one
+identity per attempt, contiguous ordinals, times in order; over 5000 rows the
+count is unknown. Review actors (check 17, the adoption loader and the
+acceptance evidence) go through one <code>canonical_actor</code> rule: a padded, empty or
+control-character actor is rejected, never normalized; canonical actors are
+compared casefolded and must all be distinct.</p>
+<p>One per-task validation, <code>task_evidence_errors</code> in
+<code>primary_scorecard_evidence</code>, serves both readers. The collector's typed
+readback and the evaluator-owned consistency command run it on the same sections
+(<code>langgraph_postgres.qualification_section_sql</code>: one task, or every task in
+the snapshot): attempt histories, usage, external effects (terminal evidence
+joined by claim and task), deliveries and receipts, lifecycle order (every
+attempt event inside its assignment's reservation and completion, every
+assignment, effect and DELIVERED delivery carrying the moments its state
+requires) and settlement (each assignment's status and result digest agree
+with its last attempt's final event; a SUCCEEDED assignment with no attempt
+only in an offline mode). Check 07 counts failing tasks per category
+(<code>provider_attempts_invalid</code>, <code>provider_usage_invalid</code>, <code>effects_invalid</code>,
+<code>slack_deliveries_invalid</code>, <code>lifecycle_invalid</code>, <code>settlement_invalid</code>) and
+packets through <code>artifact_assignment_conflict</code> (<code>result_artifacts_invalid</code>,
+which now includes orphans, and <code>result_artifacts_in_flight</code>); over 20000
+rows in any read every count is unknown. The global counts' terminal-evidence
+joins match on task as well as claim. <code>/health</code> is read through the same
+<code>bounded_get</code> as every other HTTP source. A Codex CLI capture names no product
+or model, so it is labelled <code>openai-codex-unattested</code> and check 11 is UNKNOWN
+for that lane; it is credited as Codex only through a pinned release.</p>
+<p>Every row the shared validation reads settles, is in flight, conflicts, or is
+an error; none is ignored. Slack deliveries follow PrimarySlackDelivery:
+DELIVERED, REFUSED, SUPPRESSED and SUPERSEDED are settled; PENDING and POSTING,
+and ACKNOWLEDGED or AMBIGUOUS with fewer than two readback attempts, are in
+flight (<code>slack_deliveries_in_flight</code>, 07 UNKNOWN); ACKNOWLEDGED or AMBIGUOUS
+after two readbacks can never settle and are conflicts. Settlement follows a
+matrix from the producers: PENDING has no attempt and no digest; ACTIVE and
+AMBIGUOUS may have any last attempt and no digest; OWNER_DECISION_REQUIRED may
+end on no attempt, a STARTED one (a hold raised inside an attempt) or a FAILED
+one, with no digest; FAILED ends on no attempt (a pre-dispatch failure) or a
+FAILED one, with no digest or one of its failed attempts' digests; SUCCEEDED
+ends on a SUCCEEDED attempt with that attempt's digest (offline: no attempt,
+a digest). Spend is outer-joined to usage and held the way
+<code>PrimaryProviderBudgetAuthority.reserve</code> holds it: an attempt with no spend
+reservation, or observed tokens over the reservation's limit, conflict; a
+reservation with no recorded attempt, or a settled attempt whose usage is not
+recorded yet, is in flight (<code>provider_usage_in_flight</code>); usage recorded for no
+recorded attempt is an orphan conflict (usage cannot exist without its spend
+row, which it references). Each settling attempt
+event's <code>outcome_evidence_digest</code> is recomputed from the event as
+<code>primary_parallel</code> computes it for event 2 and for a callback's event 3. The
+readback recomputes the projection's canonical digest and refuses a projection
+whose content does not match its stored digest (the version guard alone
+allows it); check 07 counts such projections (<code>projection_digest_mismatches</code>).
+A readback whose metadata alone exceeds its byte limit is refused, never
+served over it. Checks 10 and 20 require the terminal classification
+SUCCEEDED and the served task status the product derives from it
+(<code>DefaultPrimaryApplication._record_from_projection</code>).</p>
+<p>Bindings and producer contracts. The collector refuses a readback whose
+snapshot does not cover the served task record (<code>covers_task_record</code> exactly
+true) or is not the LangGraph engine's. The consistency document must match the
+running container's commit, tree, image and generation manifest and have been
+read during this collection before checks 07, 08, 15, 17 or 20 see it; the
+captures report must carry the same manifest. Each attempt event keeps its
+producer's field contract: event 1 (<code>reserve_provider_attempt</code>) no result,
+outcome evidence or run id; event 2 (<code>record_provider_attempt</code>) outcome evidence
+and never a run id, AMBIGUOUS without a result; event 3
+(<code>record_callback_result</code>) outcome evidence and the provider run id. Work
+packets (<code>director_primary_work_packet_artifact</code>) are read and revalidated on
+both paths through one rule, <code>work_packet_error</code>: every dispatched assignment
+has exactly one, recorded before its first attempt, under its result packet's
+authority snapshot (<code>work_packets_invalid</code> for 07; 20 FAILs, and is UNKNOWN when
+they were not read). Check 08 requires an execution approval's authorization
+before the task's first provider attempt, and an external-effect approval's
+before the execution start of the effect the graph bound to it
+(<code>director_primary_effect_approval_binding</code>); an unbound effect approval is
+unproven. Activation captures are classified from the exact bytes
+<code>CaptureVerifier.verified_output</code> read and verified, never a second read.</p>
+<p>Independent wall clocks. <code>bounded_get</code> runs the whole request (resolve,
+connect, TLS, status line, headers and body) in a worker thread and waits for
+it only until its absolute end: HTTPX's timeouts bound each read's inactivity,
+so trickled headers could otherwise hold <code>client.stream()</code> open indefinitely;
+a worker still running at the end is abandoned as a daemon. <code>_run_bytes</code>
+launches its command through <code>process_isolation</code> (a kill-on-close Job Object on
+Windows, a new session on POSIX), ends the whole tree with
+<code>stop_contained_process</code> under its own 5-second grace, reads the raw pipe fds
+(never the buffered streams, whose lock a descendant holding the pipe could
+keep a close waiting on), joins its readers only until its end and abandons any
+still blocked; the offline collector's commands (<code>whoami</code>, <code>icacls</code>,
+<code>docker inspect</code>) go through it too. The Security index's SQLite read aborts
+any statement past its wall clock through a progress handler (sqlite3's
+<code>timeout</code> bounds only lock waits). The evaluator-owned consistency and captures commands open Postgres
+with <code>connect_timeout</code> and <code>statement_timeout</code>, and their <code>docker exec</code> runs
+under <code>_run_bytes</code>. A Responses capture names <code>openai-responses</code> only when the
+verifier's Responses route, whose signed configuration digest pins its endpoint
+and must equal the capture's, targets exactly
+<code>https://api.openai.com/v1/responses</code>; otherwise it is
+<code>openai-responses-unattested</code> and check 11 is UNKNOWN for a Responses-transport
+lane. A grok Responses-shaped envelope is grok CLI output like any other: a
+grok validation capture is its pinned native command's output, whose
+configuration pin names no endpoint, so <code>xai-grok-responses</code> is no longer a
+product. A work packet must be recorded no earlier than its assignment's
+<code>reserved_at</code> and no later than its first attempt.
+Judged safe: spend, usage and budget rows carry no timestamp but <code>budget_day</code>
+(bounded above, and by check 15's accounting day); the n8n status query reads the
+newest run on purpose (it is graded first) and <code>_activation_recorded_at</code> reads
+the newest row only to match the validated chain's terminal LIVE_OK digest;
+<code>/health</code>'s <code>_live_captures_valid</code> reads the last row only after
+<code>readiness()</code> validated the chain; CI runs, the replica receipt and the
+Security scan are bound to the candidate SHA, not to a runtime.</p>
+<p>Documented limit (check 04): the check binds the status post to the
+authenticated Director bot identity (the posted message's user is the bot
+<code>auth.test</code> names), to a run after the Slack credential's last update in n8n,
+and to the currently active workflow version. It does not authenticate the
+token n8n holds: that would need n8n's encryption key to decrypt its credential
+store and a Slack call with that token, which is new credential access reserved
+for the owner. A token revoked outside n8n, with its credential row unchanged,
+is therefore not detected until a later run fails. A drill's (09) or the paid
+run's (20) correlated final reply counts only when its fallback text and its
+complete normalized blocks (compared as check 08 compares prompts) are the
+Director's canonical terminal rendering; 20 grades the answer on the blocks'
+content too. An approval prompt (08) must match the canonical rendering in its
+fallback text (newlines possibly flattened, as the Director's own readback
+allows) as well as its blocks. An owner input binds to its task only through
+the gateway's own <code>source_event_id</code> (<code>&lt;channel&gt;:&lt;ts&gt;</code>, computed by the one
+<code>models.canonical_slack_source_event_id</code> both use), and every Director terminal
+classification counts as a final reply. The n8n status query casts its
+timestamps to <code>timestamptz</code> under a UTC session, so they always carry an offset. Check 20 also requires every settled assignment's persisted
+provider result packet (read by the evaluator-owned report and revalidated against
+its stored digest) to be the one its result digest names, with outcome text
+equal to the graded outcome's result: a mismatch FAILs, an unread or missing
+artifact is UNKNOWN.
+Every upper bound and expiry reference uses the collection's end: check 12's
+capture observation and <code>FRESH_FOR</code> validity, and the CI replica, workload
+journal and Security seal times. Check 04 dates the newest scheduled run inside
+the current n8n's life and the collection before using its status. One
+settlement join serves checks 10 and 20 (every readback assignment SUCCEEDED
+with exactly one outcome of its sequence and the same result digest; for paid
+runs the latest attempt too), and one settlement rule (every latest attempt and
+started effect terminal) serves checks 06 and 20. Activation insertion times
+are read for the current binding's latest row (every binding field), never by
+digest alone.
+A collection runs from its start to its end, which is known only once the live
+reads finish. Evidence is bounded by the end; each source's own read time (the
+consistency snapshot's <code>captured_at</code>, the captures report's <code>observed_at</code>)
+must lie between the start and the end; and every observation is stamped when
+it was made, after its reads, so nothing read during the collection is backdated. Drill verdicts
+bound every post they read (root, owner inputs, receipts, <code>BLOCKED</code> notices,
+final replies), and run records bound each external effect's reservation,
+start, binding and terminal times. Check 16 credits a job only if at least one
+of its steps completed without being skipped, and counts only those steps.
+One freshness rule (<code>_is_current</code>) runs before any grading in every runtime
+collector (03, 04, 06, 08, 09, 10, 11, 20): evidence whose moments (a Slack
+post, a task's creation or update, an execution's start or stop) are not all
+between the latest creation of the containers that handled it and the
+collection time grades nothing, so its outcome is UNKNOWN, never PASS and
+never FAIL. The same upper bound applies to the consistency snapshot's
+<code>captured_at</code> (07), each capture's <code>observed_at</code> (12), the paid attempts (11)
+and the approval decision (08), whose command authorization must also have
+been claimed before its receipt and inside its signed-proof window. Both
+workflow contracts also compare the workflow-level <code>settings</code> with the file
+and require no pinned node data; tags and static data change nothing at run
+time and are not compared. For 04 that is the Director and n8n; for Slack
+intake evidence the Director, the <code>--gateway</code> and n8n, where the gateway must
+also hold the Director's Slack bot token, owner, channel and bearer secret
+(compared in constant time, never reported).</p>
+<p>No producer records which image or process executed a task. Checks 10, 11 and
+20 bind a run to the running image only when the container was created before
+the task was. Checks 03 and 09 do the same for each drill (the drill post and,
+when a task is bound, its creation), and check 08 for the approval task. Check
+06 requires the current process start to fall between the task's creation and
+its terminal delivery, a durable processing step (an approval prompt
+enqueued or a provider attempt recorded) before it, and a durable graph step
+after it (a provider attempt recorded or the task projection updated), since a
+terminal notification enqueued after a restart is not the graph resuming; a task that was only
+created or queued before the restart is UNKNOWN. A later container recreation, such as an activation that
+force-recreates the Director, therefore makes those checks UNKNOWN until the
+runs and drills are repeated. The writer generation does not prove a restart,
+because the same owner token renews a live lease. This is an ordering check,
+not an execution record: a task created after the container but handled by a
+process the scorecard cannot see is still credited to the running image.
+03, 08, 09, 10 and 20 are graded only while the current intake route is
+verified with check 01's predicates (the gateway's relay URL and credentials,
+both hops, n8n's store and the active intake workflow equal to the candidate's
+file); otherwise they are UNKNOWN. Every Slack and readback moment a verdict
+uses (task creation and update, each delivery's times, provider attempts, the
+owner input and the terminal replies) must lie inside the freshness bound. A
+paid run's ambiguous-effect count is zero only once every attempt is terminal;
+an unsettled or unknown effect state leaves it unknown. Task receipts count
+only as a reply's leading header, in the collector as in the drill parser.
+Slack intake passes through the gateway and n8n, so 03, 08, 09, 10 and 20 also
+bind to the <code>--gateway</code> container and the deployment's single n8n: their
+freshness bound is the latest creation of the Director, the gateway and n8n,
+and without a running <code>--gateway</code> and one running n8n of the deployment they
+are UNKNOWN. <code>--channel</code> accepts <code>C</code> and <code>G</code> Slack IDs.
+Check 10 reads only what Slack still shows: a deleted post leaves a tombstone,
+which 10 treats as a break, but a deleted post with no replies leaves nothing.</p>
+<h2 id="evidence-and-limits">Evidence and limits</h2>
+<p>Secrets and digests (the app-token fingerprint, generation and binding pins,
+command-ID digests, seal and artifact hashes, rubric digests) are compared in
+constant time with <code>hmac.compare_digest</code>.</p>
+<p>Only observations produced by the module's fixed read-only collectors in the
+current process can earn points. JSON containing <code>verified: true</code>, a copied
+scorecard, model prose, a declared provider name or an unverified signature
+never becomes authoritative. Files in the explicitly selected evidence folder
+are linked with SHA256 as <strong>unverified references</strong>. The scan is non-recursive,
+limited to 100 entries and 2 MiB per JSON/Markdown file, and skips symlinks and
+hidden files. A hash establishes byte identity, not truth or author identity.</p>
+<p>Evidence includes source, observed time, expiry, digest and applicable immutable
+bindings. Observations expire after five minutes. Missing, stale, future-dated,
+wrong-head and wrong-image evidence yields UNKNOWN, never PASS, as far as the
+bindings above can see it. The diagnostic
+trusts the named local host and service; its in-process marker is not a security
+sandbox against arbitrary Python code, and it does not attest an uncompromised
+host or validate image-label supply-chain provenance.</p>
+<p>In the retained evaluators, health counters alone can only fail 07 and 12: a reported historical hold, hold
+reason or ambiguous effect fails 07 even when other health fields are missing,
+and a false <code>combined_live_ready</code> fails 12. Zero counters and a true readiness
+flag prove nothing. Live collection overrides these evaluator results with
+UNKNOWN until trusted collection is available. Worker readiness is separate
+in 19. CI reuses <code>state_witness.gh_checks_green</code>,
+including its actual-step and required-job checks. Its temporary ledger is
+diagnostic and does not imply that production merge/approval composition has
+injected the Witness Ledger.</p>
+<p>Check 01 observes localhost port bindings, the gateway's channel and
+n8n relay configuration, and reads the actual published intake version through
+the native workflow-history table in a read-only database transaction. It requires
+the supported webhook-to-request connection and the exact static Director intake
+URL before performing a health request to that URL's upstream from the
+deployment's n8n. A healthy generic alias cannot pass for a workflow pointing
+elsewhere. Missing version history or an unsupported/dynamic workflow cannot
+pass. This is configuration/routing evidence; behavioral intake and final
+delivery remain separate checks. Collection reads environments in memory but
+emits only selected booleans/counts and the public upstream environment name,
+never tokens, channel IDs or the full environment.</p>
+<p>Check 02 inventories all running Docker containers, not only Compose labels,
+and compares app-token fingerprints in memory. It distinguishes the gateway
+launch command from the known API launch command, which also inherits the token
+without starting Socket Mode. An unclassified same-token container yields
+UNKNOWN. A bounded Windows process inventory examines known Python/Node/shell
+gateway launch signatures without exporting command lines. Unreadable process
+details or a host gateway requiring app-identity reconciliation yield UNKNOWN,
+with the verified Docker count retained. Multiple matching Docker gateways
+yield FAIL. This health inventory does not attest maliciously disguised processes,
+other machines or remote socket sessions. Container inventory is capped at 128;
+a changing or oversized inventory stays UNKNOWN rather than claiming completeness.</p>
+<p>Check 18 resolves only a UUID through the native workbench database at
+<code>~/.codex/state/plugins/codex-security/workbench.sqlite3</code>. A custom native state
+location is not supported. There is no CLI option to designate a copied JSON file
+or an arbitrary index as trusted. The collector verifies the index's stored
+manifest digest, original canonical artifact and preserved-source hashes,
+completed scan/head/base binding, seal time and every changed Git path's coverage.
+It requires complete coverage, no exclusions/deferred surfaces and no canonical
+findings. Native operational limitations remain in the source manifest and the
+report's evidence facts. It trusts the local native index, not a cryptographic
+attestation of an uncompromised workstation. It reads SQLite with <code>mode=ro</code>,
+closes the handle and never calls native scan finalization.
+Canonical artifact hashes cover raw bytes. Preserved checkpoint hashes follow
+the native producer's sorted compact JSON digest; formatting changes alone do
+not alter that semantic digest.</p>
+<p>Check 13 recomputes the current journal through <code>EngineeringWorkloadLedger.status</code>.
+It needs twenty actual admissions after the prospective cutover and reads the
+ledger's own authoritative tri-state <code>reported_resource_bounds_ok</code>: PASS only
+when every admission's reported usage is fully known and within its declared
+bounds; FAIL as soon as any admission has a known reported bound violation,
+even while other admissions' usage is still unknown; and UNKNOWN whenever
+usage is unknown, incomplete, or the value is malformed — unknown usage is
+never treated as compliant and never yields PASS. The owner retired the
+rolling-twenty allocation hard ceiling on 2026-09-21; normal allocation bands
+remain an advisory routing preference and this check does not gate on either.
+Imported historical attestations do not count as authenticated proof.
+Before twenty prospective admissions exist, UNKNOWN honestly describes the
+incomplete window. This observation does not authorize the journal's policy,
+authenticate declared provider identities or confer dispatch/production credit.
+Check 14 uses the same complete window: it passes when every admission
+declares positive timeout, call, turn and output bounds and an operator-attested
+hard USD cap with an evidence reference and SHA-256, and fails when any
+admission lacks a USD limit or that attestation. Owner ruling (2026-09-25),
+verbatim: option chosen: &quot;Attestation, labelled&quot;. Check 14 keeps grading the
+operator's per-admission hard-cap attestation from the engineering workload
+ledger and says so plainly: its description, PASS explanation and facts
+(<code>cap_evidence: &quot;operator_attestation&quot;</code>, plus the ledger's own
+<code>operator_attestations_are_not_cryptographic_proof</code> flag) call the caps
+operator-attested, not cryptographically verified. The product has no
+authoritative source for these caps: the ledger stores the operator's boolean
+and evidence reference without checking them
+(<code>engineering_workload_ledger.py</code> <code>_bounds</code>), and only Director-runtime paid
+tasks carry owner-signed <code>ProviderBudget</code> caps (<code>antigravity_team.py</code>,
+enforced on every paid attempt by <code>PrimaryProviderBudgetAuthority.reserve</code>),
+which check 15 already grades. Team-journal admissions have no signed budget
+row and no join key to one.</p>
+<p>Row contracts and task lifetime. Every row <code>task_evidence_errors</code> reads is held
+to three rules on both the per-task and the global path: its state's field
+contract from the producer, every timestamp inside its parent's lifecycle, and
+no later row hidden by an earlier settled one. No child row (assignment,
+attempt, effect, reconciliation event, delivery, status receipt, result or
+work packet) may predate the task's creation (<code>task_created_at</code>, the
+projection's <code>created_at</code>, now also read on the global path). Each Slack
+delivery state carries exactly <code>PrimarySlackDelivery</code>'s fields
+(<code>DELIVERY_CONTRACT</code>): PENDING, SUPPRESSED and SUPERSEDED were never claimed,
+posted, acknowledged or read back; POSTING and REFUSED are claimed with no
+acknowledgement or Slack ts; AMBIGUOUS likewise, with up to two readbacks;
+ACKNOWLEDGED carries its acknowledgement and ts but no delivery; DELIVERED is
+the settled lifecycle. A PENDING assignment carries no reservation or
+completion time, an ACTIVE or AMBIGUOUS one no completion time. A
+reconciliation event recorded after its claim's terminal evidence (or before
+its effect's reservation) is an effects conflict, and the global
+<code>unresolved_reconciliation</code> counts a claim whose terminal row predates any of
+its events.</p>
+<p>Retries, decisions, bindings and projection digests. A later attempt ordinal
+is valid only as <code>primary_parallel</code> admits it: the previous attempt's latest
+event when the new one started is a FAILED
+<code>provider_transient_transport_failure</code> that <code>authorize_provider_retry</code>
+accepts for the new transport; any attempt after a SUCCEEDED one is a
+conflict (<code>_execute_three_attempt_roster</code> stops on authenticated success).
+An owner decision, its time and its command are written together
+(<code>record_owner_decision</code>, on an approval row in any state), so all or none.
+A remote binding needs the execution claim before it (the effect executor,
+<code>primary_effects</code>, claims execution before any I/O and binds afterwards;
+only the uncalled <code>DefaultPrimaryApplication.bind_external_effect_remote</code>
+could bind without one), and <code>_ambiguous_effects</code> treats a bound effect
+without terminal evidence as unsettled. Every delivery's <code>projection_digest</code>
+is a sha256 digest; an approval key names its row's projection digest; the
+terminal delivery must name the task record's current projection (a stale
+one is a conflict, and <code>_final_correlated</code> requires it for 06, 09, 10 and
+20); and on the global path, where the schema is known, <code>client_msg_id</code> must
+be enqueue's <code>uuid5(URL, &quot;&lt;schema&gt;:&lt;task&gt;:&lt;key&gt;&quot;)</code>. Effect terminal
+dispositions are COMPLETED or FAILED, and reconciliation events carry a
+digest and a <code>RECONCILIATION_STATES</code> state.</p>
+<p>Companion rows and per-state columns. A reconciliation event must name an
+external-effect reservation of its task (both producers record one only for a
+reservation they hold). A live SUCCEEDED assignment settled by the roster
+(final event 2) must have its result packet (<code>missing_result_packets</code>,
+counted in <code>result_artifacts_invalid</code> and failing 20); callback-settled
+(event 3) and offline successes persist none. An owner decision on a posted
+prompt is recorded no earlier than the prompt's Slack ts
+(<code>decision_follows_prompt</code>, shared by check 08 and the delivery rule). An
+assignment carries a reservation digest exactly in the states that require
+<code>reserved_at</code> (never PENDING or cancelled before dispatch), no reason code
+while ACTIVE, none or <code>paid_setup_required</code> while PENDING, and one in every
+settled state; OWNER_DECISION_REQUIRED carries both <code>reserved_at</code> and
+<code>completed_at</code>; <code>deployment_id</code> is required. A batch with no assignment is
+counted (<code>batches_without_assignments</code>) for every classification. An
+OWNER_DECISION_REQUIRED assignment on a settled task is not counted open:
+the workload hold is a terminal aggregate state that
+<code>record_parallel_workload_hold</code> classifies OWNER_DECISION_REQUIRED without a
+pending approval (settled), and cancellation leaves held rows as they are.</p>
+<p>Trusted evidence producers. Check 16's jobs prove anything only under a
+trusted workflow: the <code>.github/workflows/ci.yml</code> blob at the candidate head
+(read through the GitHub contents API and bound to its git blob id) must equal
+current <code>main</code>'s, or its SHA-256 must equal the owner's <code>ci_workflow_sha256</code>
+in the release descriptor (the check-11 shape). Otherwise 16 is UNKNOWN,
+&quot;workflow changed by candidate; owner pin required&quot;, whatever the jobs
+concluded. The local-replica receipt names no workflow; its trust is the
+owner's Ed25519 signature over its lanes and command digests. Check 10's
+structural rubric binds each trial's task to its thread root
+(<code>input_message_ts</code> equals the selected thread ts): an owner reply that
+triggered a task inside the thread is not a trial. The qualification readback
+fills <code>elapsed_seconds</code> (and every other served value) before its single size
+measurement; nothing served changes afterwards.</p>
+<p>Operating rule: the pinned evaluator revision (added by the author of this
+change). The evaluator must never be code the candidate controls. The owner's
+release descriptor (the check-11 shape, <code>director-cli-release-descriptor/v1</code>)
+carries <code>evaluator_sha</code>, <code>ci_workflow_sha256</code>, <code>security_base_sha</code>, <code>reviewed_release</code> and the
+CLI releases. The scorecard grades only from the tree of <code>evaluator_sha</code>
+that the owner-installed launcher extracted, where <code>evaluator_sha</code> is a commit
+on <code>github/main</code> and an ancestor of (or equal to) the candidate
+(<code>completion_scorecard.untrusted_checkout</code>). The candidate is graded as data
+through <code>--candidate</code>; the scorecard, the offline collector it loads, the
+rubric requirements and every predicate come from the evaluator checkout.
+With no <code>evaluator_sha</code> pinned every check is UNKNOWN, &quot;evaluator revision
+not pinned&quot;; any other failure is UNKNOWN, &quot;scorecard not run from the
+pinned evaluator checkout&quot;. The live collection is skipped when the checkout
+fails the rule. The descriptor is the owner-installed file
+<code>~/.director-scorecard/release-descriptor.json</code> (no override; absent, a link,
+over 1 MB, malformed or another version means none). The owner root both hops
+resolve to find it is the operating system's own account-profile directory
+(<code>SHGetKnownFolderPath(FOLDERID_Profile)</code> on Windows, the password-database
+entry on POSIX) — never the <code>HOME</code>/<code>USERPROFILE</code> environment variables or
+<code>Path.home()</code>, and never a value the launcher merely forwards. The launcher
+passes its own OS-resolved root to the archived CLI as
+<code>DIRECTOR_SCORECARD_OWNER_HOME</code>, plus a <code>DIRECTOR_SCORECARD_DESCRIPTOR_SHA256</code>
+digest of the descriptor bytes it pinned; the archived CLI (and
+<code>primary_scorecard_evidence.owner_home</code>, used by <code>cli_release_descriptor</code>)
+independently re-resolves that same OS account and only cross-checks the
+forwarded claim for agreement, refusing the run on any mismatch. Neither
+function ever selects its root from the forwarded claim merely because the
+digest variable is present (#287 item 34): a caller-controlled environment
+cannot relocate the owner trust root. A candidate can run its own
+code, but only launcher-attested reports count: a checkout cannot be trusted
+to check itself (review 4112412081). The
+owner-installed launcher (<code>~/.director-scorecard/launcher.py</code>, reviewed source
+<code>scripts/scorecard-launcher.py</code>, standard library only, run with <code>python -I</code>)
+reads <code>evaluator_sha</code> from the descriptor (missing: refused), requires it to be
+an ancestor of <code>github/main</code> in the named repository (<code>git merge-base --is-ancestor</code>; an unknown or unreachable commit is refused), refuses a working
+directory inside the checkout, extracts exactly that commit's tree with
+<code>git archive</code> into a fresh temporary directory, and runs the archived
+<code>scripts/director-scorecard.py</code> with <code>PYTHONPATH</code> set to the archived <code>src</code>,
+every other <code>PYTHON*</code> variable removed, and <code>DIRECTOR_SCORECARD_TREE</code> /
+<code>DIRECTOR_SCORECARD_REPO</code> / <code>DIRECTOR_SCORECARD_EVALUATOR_SHA</code> naming the tree,
+the repository and the exact pin the tree was extracted from. git itself is
+trusted and reads every commit from the repository. A modified tracked
+<code>scripts/director-scorecard.py</code> or module in the checkout, committed or not,
+therefore never runs through this launcher. These environment and ancestry
+checks are consistency checks, not proof of launcher origin. As a second line,
+the archived CLI refuses (standard
+library only, before importing the evaluator) unless it is running from the
+tree the launcher named, the descriptor still pins the revision the launcher
+extracted, and that pin is on <code>github/main</code>; <code>untrusted_checkout</code> repeats that
+and requires the pin to be an ancestor of the candidate. The CLI runs
+<code>untrusted_checkout</code> again after the collection, so a descriptor rotated to
+another <code>evaluator_sha</code> mid-run turns every check UNKNOWN (review 4112533825).
+<strong>Whole-descriptor binding (#287 item 33, 2026-10-02):</strong> the launcher hashes the
+exact descriptor bytes at launch, records that digest in the attestation and
+hands it to the evaluator (<code>DIRECTOR_SCORECARD_DESCRIPTOR_SHA256</code>). The
+evaluator refuses descriptor bytes with another digest, and the launcher
+rereads the descriptor before sealing. Any change during the run (security
+base, workflow pin, releases or evaluator pin) leaves the report unattested.
+<code>--verify-report</code> also requires the receipt's digest to match the descriptor
+installed now.
+The report limitations derive the contained check IDs from the same tuples
+used to suppress their collector results, derived from the input classification:
+01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 15, 17, 19 and 20,
+pending the trusted-collection follow-up in #313 / PR #327.</p>
+<p>Durable plan and effect bindings. The registered plan digest is recomputed
+evaluator-owned from the batch's assignment rows (assignment_id, sequence,
+provider_id, deployment_id, dependencies, write_surfaces, retry_limit,
+allocation_profile) and the task record's DirectorPlan with register_plan's
+own hashing (<code>primary_parallel.registered_plan_digest</code>); it must equal the
+batch's plan digest and the projection's bound parallel plan digest
+(<code>registered_plan_mismatches</code> fails 07; the per-task entry fails 20). The
+collector's readback does not serve dependencies, write_surfaces,
+retry_limit or allocation_profile, so this recomputation runs only evaluator-owned.
+An effect's execution, remote binding and terminal rows join by reservation
+(or claim) alone and carry their own task id; another task's is an effects
+conflict, and <code>effect_children_cross_task</code> counts them globally. In check 15
+a real provider request is an attempt before the cap and price tests, and the
+usage monitor's own probes never are. <code>usage.py</code> reports them apart in each
+provider's <code>daily_accounting</code>: <code>usage_check_count</code> (its USAGE_CHECK_PROMPT
+probes) and <code>provider_request_count</code> (the spend ledger's reservations for
+the day, excluding the monitor's probe keys <code>sha256(&quot;usage:&lt;cycle&gt;:&lt;provider&gt;&quot;)</code>;
+None for providers the ledger does not account, whose real requests the
+monitor cannot see). <code>request_count</code> keeps its old meaning for the monitor's
+own limits. An accounting entry without <code>provider_request_count</code> is not
+monitored accounting, nor is one without <code>unreconciled_request_count</code>.</p>
+<p>Ordinary work settles through the same <code>record_charge</code> path as the probes
+(review 4112533824). Every place that reserves in the daily spend ledger
+(<code>ProviderDailySpendLedger.reserve</code>): the usage monitor's probes
+(<code>usage.py</code> <code>_probe_reserver</code>, settled in <code>run_once</code>), and the engine's
+<code>_reserve_provider_daily_spend</code>, reached from single packet dispatch
+(<code>_route_live_dispatch</code>) and parallel packet batches
+(<code>_dispatch_parallel_packet_batch</code>), each settled by <code>_settle_packet_spend</code> in a
+<code>finally</code> around the packet run, and legacy dispatch and legacy revision
+(<code>_execute_assignment</code>), settled without a charge the moment the request
+exists and raised to its reported cost by <code>_settle_provider_spend</code> once the run
+is terminal. Every exit after dispatch (terminal, unavailable, timeout,
+cancellation, any exception) therefore leaves the request either charged or
+unreconciled, never invisible (review 4112697677); only a provable pre-submit
+refusal (<code>PreSubmitProviderError</code>, a packet runtime key closed pre-submit)
+settles at $0, and its reservation still counts. A reservation still unsettled
+after <code>PROVIDER_TIMEOUT_SECONDS</code> is unreconciled too, so a crash between
+dispatch and settlement cannot hide one. Wherever an outcome is replaced after its first
+settlement it settles again from the final one before it is consumed
+(<code>record_charge</code> only raises a charge; review 4112821088): the single packet's
+authenticated readback (<code>reconcile_result</code>), parallel members and resumed
+packets (each <code>run_packet</code> call, a replay included, settles in its own
+<code>finally</code>), legacy dispatch and revision runs polled to a terminal state
+(including a resumed run), and an owner-reconciled &quot;created&quot; run, which settles
+the reservation of the ambiguous dispatch it resolves. Callback-delivered
+results come only from Claude, which the daily ledger does not account. Gemini,
+Grok and Perplexity packet transports record native envelope metering against
+the exact dispatch intent before normalizing ordinary, parallel or authenticated
+late-readback results. The same idempotent <code>record_charge</code> update retains that
+charge through subsequent packet settlement. Packet <code>usage.cost_usd</code> is never
+charge authority; only <code>authoritative_reported_cost</code> reads native metering.
+With no native reported cost
+the request is settled without a charge, keeps counting at its reservation, and
+is reported as <code>unreconciled_request_count</code>, which makes check 15 UNKNOWN. A bounded
+Grok API request reserves the maximum of its proven bound, legacy floor, and
+assignment estimate. Other metered routes serialize and reserve all remaining
+daily capacity, including managed Gemini even with configured token prices.
+The other spend authorities are
+separate ledgers with their own settlement: the primary Postgres
+<code>director_primary_provider_spend</code> (<code>antigravity_team</code> budget authority, settled
+by <code>record_usage</code> receipts), the OpenAI Responses admission
+(<code>openai_responses_validation</code>, settled by <code>response_meter.settle</code>), and the
+Z.ai trial ledger (<code>zai_lane</code>, settled by <code>record_outcome</code>). The host provider
+bridge reserves nothing.</p>
+<p>The runtime admission gates use the same reconciliation
+(<code>ProviderDailySpendLedger._exposure</code>, inside <code>reserve()</code>'s <code>BEGIN IMMEDIATE</code>
+write lock, and the monitor's own probe gate): each reservation counts at its
+recorded actual charge when known (<code>record_charge</code>, never lowered; a probe
+the ledger did not reserve is recorded as its own row at a zero reservation)
+or its reservation otherwise, so a probe that cost more than its floor leaves no room
+for more work under the cap. Every usage-check probe attempt of a ledger
+provider (gemini, grok, perplexity) is reserved through <code>reserve()</code>
+immediately before its request is sent, never ahead (gemini reserves each
+retry inside its own retry loop), each under its own effect key, so probes count against the caps
+before they run; a refused reservation dispatches nothing, and a failed probe
+keeps its reservations. A finite monetary bound requires transport enforcement;
+legacy probe ceilings
+and token prices alone cannot supply one. Unbounded requests hold all remaining
+daily capacity and block further admission across UTC days until authoritative
+cost settlement or reconciliation. Known charges replace reserved exposure;
+unknown charges retain it, and repeated actual charges cannot lower a recorded
+charge. Each reservation and
+its matching charge take their accounting timestamp immediately before they
+are written, so a cycle that crosses UTC midnight counts each request on its
+own day. Check 16's trusted
+workflow is the owner's <code>ci_workflow_sha256</code> if pinned, otherwise the
+<code>ci.yml</code> at the pinned <code>evaluator_sha</code>; never the candidate's own history.
+Check 11 credits a lane only when both activation surfaces (app and
+runtime_adapter) classify as the same attested product. Check 15 is UNKNOWN
+when the collection crosses a UTC midnight or its accounting day is not the
+UTC day at the final cutoff, and its PASS is capped at the next rollover.
+Command cleanup spends only what remains of the command deadline. The
+qualification readback checks its deadline again after the final
+serialization, and <code>elapsed_seconds</code> includes serialization. Effect
+reservations carry their claim's task, owner and fence (compared in SQL,
+served as booleans only). Review actors compare as
+<code>unicodedata.normalize(&quot;NFKC&quot;, s).casefold()</code>, and an actor that is not
+already NFC is rejected.</p>
+<p>Check 15 compares each monitor cap with <code>exposure_usd</code>, which <code>usage.py</code>
+reconciles per reservation: each spend-ledger reservation at the larger of
+its actual charge (a probe's reported cost) and its reservation, work
+reservations with no actual charge at their reservation, and unreserved
+probes at their reported cost (a $0.50 probe at a $0.01 floor beside $0.75
+of work is $1.25). An effect's execution marker must carry its claim's owner
+and fence and the reservation's owner, compared in SQL and served only as
+<code>execution_owner_matches</code> and <code>execution_fencing_matches</code> (the token is never
+served). Terminal evidence for a claim no effect reservation holds is
+counted (<code>terminal_evidence_without_reservation</code>, 07) and in the task's
+consistency entry (20).</p>
+<p>A delivery's <code>last_error</code> follows <code>PrimarySlackDelivery</code> per state
+(<code>delivery_error_contract</code>): none before a claim (PENDING, SUPPRESSED,
+SUPERSEDED, POSTING) and none once DELIVERED; REFUSED always <code>slack_refused</code>
+or <code>slack_rate_limited:retry_after=&lt;seconds&gt;</code>; AMBIGUOUS always
+<code>post_ack_missing</code> or <code>post_ack_invalid</code>, or after a readback attempt
+<code>readback_unverified</code> or the rate-limit value; ACKNOWLEDGED none until a
+readback attempt fails with one of those.</p>
+<p>Authority and source bindings. Every child or evidence row's authority is
+compared in SQL and served only as booleans (never a token): an effect's
+reservation, execution marker and remote binding against its claim (task,
+owner and fence); its terminal row and every reconciliation event against the
+claim or an authorized successor (a strictly newer generation carrying the
+task writer's token, no newer than the writer's current generation, as
+<code>_SUCCESSOR_RECONCILIATION_JOIN</code> admits it); a parallel batch against its
+task writer (<code>batch_authority_mismatches</code>); a result or work packet's writer
+generation bounded by the task writer's. A status receipt's id is recomputed
+with <code>create_status_receipt</code>'s derivation, its channel and thread must be its
+task's own intake, and its user the owner the evaluator is configured with
+(<code>--owner</code>, which the deployment must use); the evaluator-owned global count checks
+the id, channel and thread only, because it has no evaluator configuration.</p>
+<p>CLI release attestation (A2 prerequisite for check 11). Owner ruling
+2026-09-26, &quot;Bind to pinned release&quot;: the Codex, grok and Claude CLIs are held
+to one standard. The model a CLI reports about itself is never enough; a CLI
+capture counts as its lane's real product (<code>openai-codex</code>, <code>xai-grok-cli</code>,
+<code>anthropic-claude</code>) only through <code>primary_scorecard_evidence.cli_release_product</code>,
+the one path for all three: the capture must carry the digest of the executable
+that ran, recorded at execution, and exactly one entry of the owner-pinned
+release descriptor must map that digest to this provider and product. The
+descriptor's exact shape:</p>
+<pre><code class="language-json">{&quot;version&quot;: &quot;director-cli-release-descriptor/v1&quot;,
+ &quot;releases&quot;: [{&quot;provider&quot;: &quot;claude&quot;, &quot;product&quot;: &quot;anthropic-claude&quot;,
+               &quot;executable_sha256&quot;: &quot;&lt;64 lowercase hex&gt;&quot;}]}
+</code></pre>
+<p>Each entry has exactly those three keys; a digest pinned twice, pinned to
+another provider or product, a malformed entry, another version, or a capture
+without the digest attests nothing. The owner must install the release descriptor. The v2 capture producer now signs
+an executable digest; the verifier carries that signed digest to the activation
+report classifier. Missing descriptors, legacy captures and unmatched executable
+digests remain unattested. This closes the digest plumbing, not check 11's task,
+renderer or candidate-writable evidence dependencies.</p>
+<p>Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
+paid task's collected attempts and fails when any lane is not one of the real
+products above or its verified capture names another product; a verified,
+bound capture with no product counts as a substitution. On every lane the product must also match the
+attempts' transport: <code>responses-api</code> runs <code>openai-responses</code>; the CLI
+transports (<code>native-cli</code>, <code>authenticated-windows-host-bridge</code>) run the lane's
+CLI product (<code>openai-codex</code>, <code>xai-grok-cli</code>, <code>anthropic-claude</code>). A
+<code>&lt;product&gt;-unattested</code> capture leaves the lane UNKNOWN on that product's
+transport and is a substitution on another product's; a transport no product
+is known to run is UNKNOWN. 11 is UNKNOWN when the running container was created
+after the paid task, the captures are not bound to the running generation pin
+and provider bindings, or a lane's runtime-adapter capture does not verify now,
+was observed after its first paid attempt or expired before its last one. 20 builds its run record from task-level evidence:
+the mode is paid only when the readback records at least one provider attempt,
+never from the runtime's paid switch, and actual cost is the sum of settled
+usage rows whose metering evidence carries request and response IDs, correlated
+by attempt digest to every attempt the task made. Check 15 fails when an
+enrolled signed daily budget's held amount exceeds its limit or a usage-monitor
+provider exceeds its daily budget, and passes only when the paid task's budget
+rows, the usage-monitor accounting and a settled cost are all present. A
+budget row that fails that signed contract, or a charged attempt whose task,
+project, budget day, provider and grant do not all match one signed budget, leaves 15 UNKNOWN, and an
+unverified usage receipt leaves 15 and 20 without actual cost (UNKNOWN). It is
+UNKNOWN when a budgeted usage-monitor provider has attempts today (a
+<code>request_count</code> that is not exactly zero), incomplete cost visibility and no
+reserved cost, because <code>reported_cost_usd</code> sums known costs only. Unbudgeted
+providers (claude, openai) are capped by their signed enrolled budgets; their
+<code>request_count</code> counts usage-check probes, not paid attempts.
+Usage-monitor accounting covers only its configured providers; the signed
+budget rows carry the enforced cap. The reusable run-fact validator enforces
+count, unique IDs, actual owner origin, runtime/image binding, correct mode,
+wall time, owner-pause arithmetic, final-message count, ambiguity, zero offline
+calls and the basis of actual cost. The CLI does not award points for a
+user-authored run JSON file.</p>
+<p>An estimate or reservation is not actual cost. Unknown cost is not zero.
+Wall time and machine time excluding owner pauses are reported metrics, not
+60-second acceptance gates. Cost has no USD 1 acceptance ceiling; separate
+campaign and daily spending caps remain enforced. Actual Grok Bot is distinct from
+direct xAI Grok and Cursor Grok, regardless of shared branding or quota labels.</p>
+<h2 id="offline-trial-records">Offline trial records</h2>
+<p><a href="collect-offline-slack-trials.html">Offline trial tooling</a> checks a rubric declared
+in the original source message. Its JSONL recorder uses exactly
+<code>OFFLINE_RUN_RECORD_FIELDS</code> (<code>RUN_RECORD_FIELDS</code> plus <code>simulation_label</code>) and
+shares <code>evaluate_run_record</code>. The ten-run evaluator keeps its count, distinct-ID,
+wall-time, origin, image, cost, ambiguity and zero-call requirements.</p>
+<p>A zero-call-verified offline run maps to <code>actual_cost_usd: 0</code> with
+<code>cost_basis: simulation_zero_calls</code>; incomplete operational-attempt authority
+stays null. The recorder retains a non-qualifying row and stops further appends.
+Saved receipts do not become scored observations. Check 10 loads the same
+collector in-process for the ten <code>--trial</code> threads and scores them with
+<code>evaluate_run_records(mode=&quot;offline&quot;)</code>; offline means the task's own evidence
+(offline-double outcomes, zero exposed and recorded provider attempts and a
+simulation-labelled final reply), not the runtime's current mode switch. The
+ten must also be consecutive: one bounded <code>conversations.history</code> read of
+<code>--channel</code> from the first trial to the last must show no other top-level owner
+post the gateway could forward (only bot posts and <code>bot_message</code>,
+<code>message_changed</code> and <code>message_deleted</code> subtypes are ignored) and no deleted
+(<code>tombstone</code>) or hidden message. Otherwise 10 is UNKNOWN. Replies inside other threads are not read. Check 10 is FAIL, not
+UNKNOWN, when a selected run fails the standard.</p>
+<h2 id="qualification-verdicts-with-explicit-unknown-cost">Qualification verdicts with explicit UNKNOWN cost</h2>
+<p><code>evaluate_qualification_record</code> classifies one canary's <strong>asserted</strong> lineage
+row (source event digest, task, assignment/attempt/effect identities, provider
+route, exact runtime SHA, image and configuration digest, effect state,
+delivery/readback, status-receipt counts, duplicate-effect and policy-violation
+counters) into <code>QUALIFIED_COST_MEASURED</code>, <code>QUALIFIED_COST_UNKNOWN</code>,
+<code>NOT_QUALIFIED</code> or <code>UNKNOWN</code>. The row is untrusted caller input: the function
+checks that the asserted links are complete, well-formed, unique and bound to
+the exact revision; it cannot verify that any link is real, and its reasons
+say &quot;asserted links only&quot;. Authenticated collector correlation remains a
+separate requirement that no verdict here claims. It is deliberately separate
+from the check 10/20 criterion: <code>evaluate_run_record</code> still returns <code>None</code> for
+an unknown cost and never accepts a <code>QUALIFIED_COST_UNKNOWN</code> row as a
+measured-cost PASS.</p>
+<p>Strict inputs: identities must match the compact identifier form and be unique
+within each lineage list; <code>provider_route</code> must be one of the canonical
+<code>allocation_profiles.LANES</code> (aliases such as <code>external_openai</code> are not
+accepted); counters must be exact non-negative integers (booleans and floats
+are rejected); a cost must be a finite non-negative number (<code>inf</code>/<code>nan</code> are
+not measured costs). A <code>ZERO_PROVIDER_EFFECT</code> simulation is <code>NOT_QUALIFIED</code>
+for a live provider round trip, as are ambiguity, duplicates, violations,
+unverified readback and foreign revision or configuration bindings. Missing or
+malformed links and absent status-receipt counts (the Issue #230 dependency)
+stay <code>UNKNOWN</code>. No verdict from this function contributes points.</p>
+<h2 id="validation">Validation</h2>
+<p><code>TrustedCollectionLaneTests</code> uses the sanctioned Postgres endpoint for both
+owner expectations and inspected deployment bindings. Its TLS case exercises
+real generation/adoption, the journal snapshot, signed v2 executable captures,
+activation chains, coordinator task producers and metered settlement. Direct
+predicate PASS assertions for 07, 12 and 17 do not bypass live containment:
+collection still returns UNKNOWN because shared candidate health remains C.
+The non-TLS case separately proves transport refusal and ignored candidate PASS
+reports. The TLS fixture also exercises the qualification factory and task/delivery
+consumer against real local graph and Slack-ledger producers, with Director
+HTTP forbidden. This does not prove independent authority over candidate-writable
+records or process-health collection. The all-sixteen trusted live path is <strong>NOT CLOSED</strong>.</p>
+<p><code>-Tls</code> and <code>-Parallel N</code> compose: the lane exports its verified-TLS connection
+and CA before invoking the runner; <code>shard_dsn</code> changes only <code>dbname</code>, and workers
+inherit the CA environment. The runner regression covers retention of both
+<code>sslmode=verify-full</code> and <code>sslrootcert</code> for every generated shard. This is a
+static/code-path finding pending dispatcher execution.</p>
+<p>Commands for the dispatcher (not run in this sandbox):</p>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+.\.venv\Scripts\python.exe -m unittest tests.test_run_tests_parallel -v
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -TestNames tests.test_completion_scorecard,tests.test_primary_scorecard_evidence,tests.test_provider_validation
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -TestNames tests.test_completion_scorecard.TrustedCollectionLaneTests
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -Tls -Parallel 2
+</code></pre>
+<p>Every collector has a positive case, a negative control and an UNKNOWN case for
+a missing or unavailable source, and one test supplies every selection while
+every source fails to show that collection never raises and never emits a
+credential, channel or owner identity. Tests also cover stale/future evidence,
+forged self-claims, candidate/image mismatch, missing fields, executed steps
+versus billing stubs, UNKNOWN cost, incorrect cost basis, simulations presented
+as paid runs, duplicate results, measured wall time, unlabelled duplicate
+gateways, wrong project routes, unavailable host visibility, altered native
+seals and incomplete changed-path coverage. The read-only consistency counts
+and settlement rows run against the disposable PostgreSQL lane
+(<code>ScorecardEvidencePostgresTests</code>); no live provider, Slack or deployment is
+touched.</p>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 02:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:49 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 15:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 17:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 17:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 18:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:17 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 00:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-28 | 01:28 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

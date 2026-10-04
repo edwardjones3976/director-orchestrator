@@ -8,7 +8,7 @@
 """Focused active-documentation authority guard; not a runtime attestation.
 
 The pointer/drift check keeps allocation, dispatch, and merge rules in their
-canonical homes (AGENTS.md and docs/team-operating-charter.md). Named
+canonical homes (AGENTS.md and docs/team-operating-charter.html). Named
 instruction surfaces must point there instead of carrying copies that drift.
 Owner-local agent files are checked only when passed explicitly with
 --local-agent-file; the repository check never reads a home directory.
@@ -16,6 +16,11 @@ Owner-local agent files are checked only when passed explicitly with
 import argparse
 from pathlib import Path
 import re
+import sys
+
+# This guard also runs directly, outside the runtime's PYTHONPATH setup.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from director_orchestrator.documentation import html_text, read_document
 
 RULES = {
     "obsolete-allocation": re.compile(r"\b25\s*[/,]\s*25\s*[/,]\s*20\s*[/,]\s*15\s*[/,]\s*11\s*[/,]\s*4\b", re.I),
@@ -62,7 +67,7 @@ DRIFT_RULES = {
         re.I,
     ),
 }
-POINTER = re.compile(r"\bAGENTS\.md\b|team-operating-charter\.md")
+POINTER = re.compile(r"\bAGENTS\.md\b|team-operating-charter\.(?:html|md)\b")
 # Git commands and plumbing names (git merge, merge-base, merge-tree) are
 # technical instructions, not merge governance.
 GOVERNANCE_TOPIC = re.compile(r"\b(?:allocation|dispatch|(?<!git )merge(?!-)|review-lock)\b", re.I)
@@ -109,7 +114,9 @@ def _active_paragraphs(text: str) -> tuple[list[str], list[str]]:
     return errors, paragraphs
 
 
-def check_text(text: str) -> list[str]:
+def check_text(text: str, *, html: bool = False) -> list[str]:
+    if html:
+        text = html_text(text, structured=False, require_main=False)
     errors, paragraphs = _active_paragraphs(text)
     for normalized in paragraphs:
         for rule, pattern in RULES.items():
@@ -150,7 +157,7 @@ def check_instruction_text(text: str, *, pointer: str = "never") -> list[str]:
     active = "\n".join(paragraphs)
     needs_pointer = pointer == "always" or (pointer == "topic" and GOVERNANCE_TOPIC.search(active))
     if needs_pointer and not POINTER.search(active):
-        errors.append("missing-canonical-pointer: reference AGENTS.md or docs/team-operating-charter.md")
+        errors.append("missing-canonical-pointer: reference AGENTS.md or docs/team-operating-charter.html")
     return errors
 
 
@@ -169,9 +176,9 @@ def check_tree(root: Path) -> list[str]:
         if not _inside_repo(base, root):
             errors.append(f"{directory}: symlink or path outside repository")
             continue
-        for extension in ("*.md", "*.yaml", "*.yml"):
+        for extension in ("*.html", "*.md", "*.yaml", "*.yml"):
             paths.update(base.rglob(extension))
-    paths.update(root / name for name in ("README.md", "AGENTS.md", "CLAUDE.md"))
+    paths.update(root / name for name in ("README.html", "README.md", "AGENTS.md", "CLAUDE.md"))
     for path in sorted(paths):
         relative = path.relative_to(root)
         if relative.parts[:2] == ("docs", "archive"):
@@ -181,7 +188,12 @@ def check_tree(root: Path) -> list[str]:
             continue
         if not path.is_file():
             continue
-        errors.extend(f"{relative.as_posix()}: {error}" for error in check_text(path.read_text(encoding="utf-8")))
+        try:
+            content = read_document(path, structured=False)
+        except (OSError, UnicodeDecodeError, ValueError) as error:
+            errors.append(f"{relative.as_posix()}: unreadable documentation ({type(error).__name__})")
+            continue
+        errors.extend(f"{relative.as_posix()}: {error}" for error in check_text(content))
     return errors
 
 

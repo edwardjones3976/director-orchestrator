@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Standing-authorization execution predicate · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#the-predicate">The predicate</a></li><li class="top"><a href="#the-tier-check-runs-first">The tier check runs first</a></li><li class="top"><a href="#the-pre-execution-class">The pre-execution class</a></li><li class="top"><a href="#a-hold-is-not-a-permission-question">A hold is not a permission question</a></li><li class="top"><a href="#measuring-it">Measuring it</a></li><li class="top"><a href="#the-provider-evidence-expiry-window-measured">The provider-evidence expiry window, measured</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
+<h1 id="standing-authorization-execution-predicate">Standing-authorization execution predicate</h1>
+<p>This describes the executable form of the delegation rules. It adds nothing to
+them; the pre-execution class below is the governing document's own stated
+carve-out, not an addition made here. <a href="human-out-of-the-loop-operation.html"><code>human-out-of-the-loop-operation.md</code></a>
+remains authoritative. Where the two could ever disagree, the
+governing document wins and this one is wrong.</p>
+<p>This integrates the evaluated predicate. The tier lists stay closed; their one
+owner-signed addition, <code>execute_small_read_only_task</code>, is decided by
+<code>decide_pre_execution</code>, described below, and never by <code>H(a)</code>.
+The current owner protocol requires one non-author reviewer, who carries the merge.
+Tests pin a local copy of the tier authority so checkout depth and remote names
+cannot silently disable the gate comparison.</p>
+<h2 id="the-predicate">The predicate</h2>
+<p>A proposed candidate-bound action runs without returning to the owner only
+when every term holds (the one pre-execution class is decided instead by
+<code>decide_pre_execution</code>, under <a href="#the-pre-execution-class">The pre-execution class</a>):</p>
+<pre><code>H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
+</code></pre>
+<p>The right-hand column names the numbered item of the governing document's
+evidence bar that each term carries. That mapping is the load-bearing part: a
+bar item reaching no term is not a relaxed requirement, it is an unevaluated
+one, and the predicate returns <code>execute</code> without ever reading it.</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Required condition</th>
+<th>Bar</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>A</code> authorization</td>
+<td>A grant is live, unexpired, unrevoked, and scoped to this repository, branch, decision class and assignment.</td>
+<td>9</td>
+</tr>
+<tr>
+<td><code>G</code> gates</td>
+<td>Every required CI check is green at the exact candidate head, independent security evidence exists at that same head, and no tier-0 class is implicated directly or as a consequence.</td>
+<td>1, 2, 7</td>
+</tr>
+<tr>
+<td><code>B</code> bounds</td>
+<td>Budget, attempt and hop ledgers are all within their configured bounds.</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>V</code> verification</td>
+<td>Evidence is current and bound to the exact candidate; any earlier ambiguous attempt is reconciled.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>I</code> independence</td>
+<td>One exact-SHA <code>ACCEPT</code> from a non-author reviewer; author and reviewer are distinct identities, and that reviewer performs the merge.</td>
+<td>3, 4, 5</td>
+</tr>
+<tr>
+<td><code>S</code> safe stopping</td>
+<td>Failure handling, cancellation and any required recovery are defined and authorized.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>P</code> path scope</td>
+<td>The change touches only paths inside the assignment's <code>owned_paths</code> and none of its <code>prohibited_paths</code>.</td>
+<td>6</td>
+</tr>
+<tr>
+<td><code>D</code> durable audit</td>
+<td>The audit record for the decision is durably written <strong>before</strong> the decision executes.</td>
+<td>10</td>
+</tr>
+</tbody>
+</table>
+<p><code>P</code> and <code>D</code> are recent. The predicate was first implemented as the six-letter
+form from the owner's approved analysis, taken literally, and that form is short
+by two: items 6 and 10 mapped to nothing, so a change reaching prohibited paths
+with no audit record satisfied <code>H(a)</code>. An independent review of #146 found it.
+Adding the two terms adds approval requirements, which AGENTS.md rule 4 permits;
+removing one is what it forbids.</p>
+<p><code>I</code> follows the owner's September 12 single-reviewer protocol. It does not
+require a second verdict or a third executing identity.</p>
+<p>It is a conjunction, not a score. One unmet term is decisive, and
+<code>test_any_single_unmet_term_blocks</code> exercises that for each of the eight. A term
+this predicate does not recognise is refused rather than ignored, because
+silently dropping one is exactly how items 6 and 10 went missing.</p>
+<h2 id="the-tier-check-runs-first">The tier check runs first</h2>
+<p><code>classify()</code> is evaluated <strong>before</strong> any term, and fails closed. Tier 1 is the
+closed four-class list in the governing document; anything not literally in it
+is tier 0 and can never run autonomously, however many terms pass. A grant that
+names an unlisted class does not create one.</p>
+<p>This ordering is the load-bearing part. Evaluating the conjunction first and the
+tier afterwards would let eight satisfied terms carry a production deployment,
+which is why <code>test_a_tier_zero_action_never_executes_even_with_every_term_met</code>
+asserts the negative directly.</p>
+<h2 id="the-pre-execution-class">The pre-execution class</h2>
+<p><code>execute_small_read_only_task</code> is tier 1, but <code>H(a)</code> never decides it. It is
+decided before any candidate or verdict exists, so <code>G</code> (items 1, 2, 7) and <code>I</code>
+(items 3, 4, 5) have nothing to read, and recording them as satisfied would be
+exactly the unevaluated-term failure above. <code>decide()</code> therefore holds it, and
+<code>decide_pre_execution()</code> decides it over its own closed list,
+<code>PRE_EXECUTION_TERMS</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Required condition</th>
+<th>Bar</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>authorization</code></td>
+<td>A grant is live, unexpired, unrevoked, unexhausted and untripped, and covers this class, repository, branch and both lanes; the intake is an attested owner message.</td>
+<td>9</td>
+</tr>
+<tr>
+<td><code>eligibility</code></td>
+<td><code>policy.small_read_only_eligible()</code> admits the task: no deterministic approval reason matches (a keyword scan), and the request is read-shaped. This is lexical, not evidence that no tier-0 class is implicated, so item 7 is not evaluated before execution.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>bounds</code></td>
+<td>Hop and revision limits are within their configured bounds.</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>verification</code></td>
+<td>The exact starting commit and snapshot digest are bound.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>lane_independence</code></td>
+<td>Two distinct lanes from different provider families. Structural only; it is not a verdict.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>safe_stopping</code></td>
+<td>A positive provider timeout is configured.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>owned_paths_declared</code></td>
+<td>Owned paths are declared and no write surface is granted, before any change exists.</td>
+<td>6</td>
+</tr>
+<tr>
+<td><code>audit</code></td>
+<td>The <code>PRE_AUTHORIZED</code> record is durably written <strong>before</strong> execution.</td>
+<td>10</td>
+</tr>
+</tbody>
+</table>
+<p>Items 1 to 5 are carried by the task's own <code>exact_sha_review</code> and
+<code>ci_security_completion</code> graph gates, which run unchanged. Item 7 is not
+evaluated before execution; whether this class's lexical eligibility is enough
+to replace the per-task button is part of the owner's sign-off. Every term is
+required, none recovers, and an unlisted or missing term is refused.</p>
+<h2 id="a-hold-is-not-a-permission-question">A hold is not a permission question</h2>
+<p>For every candidate-bound class (the pre-execution class uses
+<code>decide_pre_execution</code>, where every term is required and none recovers):</p>
+<pre><code>Decision(a) = execute        if H(a)
+              recover        if EVERY unmet term authorizes its own recovery,
+                             and none of them is owner-routed
+              hold(blocker)  otherwise
+</code></pre>
+<p>That quantifier is the whole rule. &quot;If <strong>an</strong> unmet term authorizes a recovery&quot;
+is existential, and it lets one term's remedy carry every other unmet term:
+a red <code>gates</code> paired with a recoverable <code>verification</code> recovers, advancing a
+decision whose CI is failing on the strength of a re-verification that has
+nothing to do with it. The code was corrected first and this page was left
+behind, still specifying the rejected form — the same mistake, in the same
+shape, as the governing document keeping the six-term <code>H(a)</code>. This page is the
+only place <code>Decision(a)</code> is written down, so leaving it would have restored the
+bug in the next implementation to read it.</p>
+<p>Owner-routed terms are <code>NON_RECOVERABLE_TERMS</code>: <code>authorization</code>, <code>gates</code>,
+<code>independence</code>, <code>scope</code> and <code>audit</code>. A recovery string attached to any of them
+changes nothing, because each is a trip condition or an explicit refusal in the
+governing document.</p>
+<p>A hold names the blocking term and what is missing. It does not re-ask the
+owner. Missing or stale evidence routes to verification; a temporary failure
+routes to its authorized recovery; only a blocker needing authority outside the
+standing grant reaches a person. <code>test_a_blocker_is_never_phrased_as_a_ permission_question</code> rejects blocker text containing a question mark or asking
+language, because a system that renames an interruption has not removed one.</p>
+<p>Only the first available recovery is offered. Recoveries re-enter this function
+from the top, so chaining them internally would skip a fresh reading of every
+term.</p>
+<h2 id="measuring-it">Measuring it</h2>
+<pre><code>autonomous completion rate =
+    eligible workflows completed correctly within bounds, without new human
+    intervention
+    ------------------------------------------------------------------
+    all eligible workflows whose deadline has passed
+</code></pre>
+<p>Eligibility and deadline are fixed before execution, so blocked or failed work
+cannot leave the denominator by later reclassification. An empty population
+reports no rate rather than 100 percent, which
+<code>test_an_empty_population_has_no_rate_rather_than_a_flattering_one</code> pins.</p>
+<h2 id="the-provider-evidence-expiry-window-measured">The provider-evidence expiry window, measured</h2>
+<p>There is no expiry-window constant. <code>expires_at</code> is supplied per record, and the
+only shape rules are that it is UTC, later than <code>observed_at</code>, and in the future
+when recorded.</p>
+<p>The operational constraint is stronger than a deadline on activation.
+<code>_surface_readiness</code> scans <strong>every</strong> record in the five-stage chain and reports
+the surface not ready if <strong>any</strong> one has expired:</p>
+<pre><code class="language-python">for record in records:
+    if record.expires_at &lt;= now:
+        return ActivationSurfaceReadiness(surface, None, False, False,
+                                          f&quot;{record.stage.value} evidence expired&quot;, ...)
+</code></pre>
+<p>Two consequences follow, and both differ from the intuitive reading:</p>
+<ul>
+<li><code>LIVE_OK</code> does not settle the question. The earliest record, <code>INSTALLED</code>,
+keeps the surface live only while it is unexpired. When it lapses,
+<code>live_ready</code> goes false and live dispatch stops, however recent <code>LIVE_OK</code> is.
+The condition is continuing, not a race to activation.</li>
+<li>Letting the prior stage lapse mid-chain does not merely cost a retry:
+advancing then raises <em>the prior activation stage expired; use a new binding
+version</em>, discarding the whole chain for that binding.</li>
+</ul>
+<p>So advances belong immediately before activation, and the expiry chosen at
+advance time must cover the intended operating life of the lane, not just the
+gap to <code>Activate</code>.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

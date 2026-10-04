@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>OpenAI Responses validation route · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#explicit-route">Explicit route</a></li><li class="top"><a href="#corrections-2026-09-20--0601-utc-claude-opus-5-codex-director-request_changes-at-2fbcb6a">Corrections (2026-09-20 | 06:01 UTC, Claude Opus 5, Codex Director REQUEST_CHANGES at 2fbcb6a)</a></li><li class="top"><a href="#corrections-2026-09-14-claude-sonnet-5-high">Corrections (2026-09-14, Claude Sonnet 5 high)</a></li><li class="top"><a href="#correction-2026-09-14-2126-utc-claude-sonnet-5-high-real-postgresql-evidence">Correction (2026-09-14 21:26 UTC, Claude Sonnet 5 high), real PostgreSQL evidence</a></li><li class="top"><a href="#repaired-validation-behavior-2026-09-14-1852-correction-proposal-host-validation-pending">Repaired validation behavior (2026-09-14 18:52 correction proposal; host validation pending)</a></li><li class="top"><a href="#remaining-limitations">Remaining limitations</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]] -->
+<!-- [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]] -->
+<h1 id="openai-responses-validation-route">OpenAI Responses validation route</h1>
+<p>Provider validation for <code>openai</code> previously always constructed
+<code>WindowsHostProviderExecutor</code>, which routes OpenAI to <code>NativeCodexPacketTransport</code>.
+That native path intentionally refuses before launch because the verified Codex CLI
+cannot enforce a signed <code>total_token_limit</code>, so configuration could not mint
+Responses LIVE_OK evidence.</p>
+<h2 id="explicit-route">Explicit route</h2>
+<p><code>ValidationBridgeService(..., openai_responses_route=OpenAIResponsesValidationRoute(...))</code>
+selects the Responses API path for <code>provider=openai</code> only when that argument is
+supplied. The default remains the native host bridge.</p>
+<p>The route requires:</p>
+<ul>
+<li>an enrolled <code>response_meter</code> on <code>OpenAIResponsesPacketTransport</code> (unmetered
+results cannot become LIVE_OK)</li>
+<li>a positive signed <code>total_token_limit</code></li>
+<li>a <code>configuration_digest</code> from <code>responses_validation_configuration_digest</code> that
+binds model, API URL, credential digest, enrollment organization/project ids,
+meter enrollment digest, token limit, and the transport's
+<code>maximum_timeout_seconds</code> ceiling (changing the ceiling changes the identity),
+plus <code>responses_runtime_binding</code>: the executing package directory (an
+installed bridge copy's content address), the runtime content address
+(every file Install copies, including <code>docs/schemas</code>, so a schema-only change
+counts), the proxies urllib resolves (registry fallback included), the
+content of the <code>SSL_CERT_FILE</code> bundle or of every file in <code>SSL_CERT_DIR</code>
+(absolute paths only), and the
+proxy/CA/key-log names httpx and <code>ssl</code> honour (<code>SSLKEYLOGFILE</code> too) (<code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>,
+<code>ALL_PROXY</code>, <code>NO_PROXY</code>, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
+<code>REQUESTS_CA_BUNDLE</code>, <code>CURL_CA_BUNDLE</code>, any case), so replacing the runtime
+or its proxy/CA environment refuses an older pin as drift</li>
+<li>signed admission and fence verification before any HTTP request</li>
+<li>provider-returned account headers and usage at meter settlement (missing headers
+refuse; they are never invented)</li>
+<li>fully pinned canary identity (task, assignment, attempt digest, packet digest)
+and authenticated monetary funding before dispatch; missing pins or funding
+refuse exactly like mismatched ones</li>
+</ul>
+<p>Capture verification accepts Responses envelopes (<code>object=response</code>) while Codex
+JSONL remains the native-host dialect. <code>CaptureVerifier</code> compares the signed
+capture's candidate, generation <strong>and expected runtime tree</strong> against its pins
+(the tree is read from <code>DIRECTOR_PROVIDER_VALIDATION_TREE</code>; a valid capture
+minted for another tree never qualifies), and for the Responses lane it also
+requires the capture's <code>configuration_digest</code> to equal the bound route's
+<em>current</em> digest, so a rotated credential, endpoint, meter enrollment or
+timeout ceiling refuses qualification even though the retained response
+re-normalises identically.</p>
+<h2 id="corrections-2026-09-20--0601-utc-claude-opus-5-codex-director-request_changes-at-2fbcb6a">Corrections (2026-09-20 | 06:01 UTC, Claude Opus 5, Codex Director REQUEST_CHANGES at <code>2fbcb6a</code>)</h2>
+<ul>
+<li><strong>Tree binding (High).</strong> <code>CaptureVerifier</code> takes <code>tree=</code> and refuses a
+capture whose <code>tree</code> differs; <code>capture_verifier_from_environment</code> passes
+the environment pin through. Regression: a wrong-tree verifier refuses a
+capture the right-tree verifier accepts.</li>
+<li><strong>Current-configuration comparison (High).</strong> The verifier compares the
+capture's <code>configuration_digest</code> with the route's current
+<code>configuration_digest</code> for every lane whose route it holds: the Responses
+route (<code>configuration_digest</code> property) and the Antigravity team route
+(<code>configuration_digest()</code> fingerprint). Regression: rotating the transport
+credential, API URL or timeout ceiling, or the team worker fingerprint,
+flips a passing verification to refusal. Native command lanes carry no
+recomputable identity in the verifier (the executor and account files
+exist only in the bridge service), so their configuration pin is enforced
+at execution time by <code>production_configuration_digest</code> before and after
+the run; a later native rotation is visible only through re-execution.</li>
+<li><strong>Connection acquisition deadline (Medium).</strong> libpq honours only
+whole-second <code>connect_timeout</code> values of at least two seconds, so
+<code>_connect_bounded</code> no longer rounds a sub-second budget upward: when the
+remaining budget is smaller than what the driver would wait, the connect
+runs on a worker thread and is awaited for exactly the remaining budget
+(a late connection is closed on arrival), and every acquisition re-reads
+the shared deadline after the connection returns. Regression: a slow
+connect against a 0.4 s budget fails closed within the budget.</li>
+<li><strong>Timeout ceiling in the identity.</strong> <code>maximum_timeout_seconds</code> is part of
+the configuration digest (see above); 180 and 180.0 are one identity.</li>
+<li><strong>Funding COMMIT refresh.</strong> <code>reserve_monetary_admission</code> re-derives the
+transaction-local statement/lock timeouts from the time actually left
+immediately before the transaction block exits, so the funding COMMIT
+waits under the real remainder. Covered by an ordering test and by real
+funding-schema contention against the configured authority and pool (an
+advisory budget-lock holder aborts the reservation under <code>lock_timeout</code>
+with no spend row persisted).</li>
+<li><strong>Capture size reconciliation.</strong> The native Responses body is read under
+<code>MAX_CAPTURE_BYTES - 4096</code> and the retained bundle
+(<code>{&quot;response&quot;, &quot;response_headers&quot;}</code>, header values bounded at 512 bytes)
+is encoded and size-checked <em>before</em> the meter settles, so a metered
+response can never be uncapturable. Regression: the encoded boundary case
+(a body exactly at the native bound) is captured within the validation
+bound; one byte over is refused mid-stream with nothing settled.</li>
+</ul>
+<h2 id="corrections-2026-09-14-claude-sonnet-5-high">Corrections (2026-09-14, Claude Sonnet 5 high)</h2>
+<p>Three correction passes were made against the 2026-09-14 18:52 candidate
+below (<code>3fb24bb</code>) and its descendants, in
+<code>src/director_orchestrator/provider_validation.py</code>,
+<code>tests/test_provider_validation.py</code>, <code>tests/test_response_meter.py</code> and this
+file. The first two passes (20:41 and 20:52 UTC) were source-level and had no
+PostgreSQL available to test against (Docker was stopped); their timing and
+&quot;six-case coverage&quot; claims were <strong>not</strong> independently confirmed and one of
+them turned out to be wrong, per the third pass below. The 21:26 UTC pass had
+access to a real, host-controlled disposable PostgreSQL 17.11 instance and to
+independent real Linux CI results, and is what the &quot;Final status&quot; section
+below reports.</p>
+<ul>
+<li><strong>20:41 UTC</strong>: fixed <code>claim_execution</code> dropping <code>.fetchone()</code> on its
+locked-row read (it indexed the live cursor instead of the fetched row);
+added <code>test_claim_execution_reads_back_running_state_and_checkpoint</code>.
+Reduced the failure-cleanup allowance (<code>CLEANUP_ALLOWANCE_SECONDS</code>) from a
+fixed two seconds -- reapplied in full even after the primary deadline was
+already spent -- to one second, and moved the Responses route's
+packet-ceiling deadline-tightening to immediately after admission instead
+of after the first claim and fence check, so claim/fence contention is
+bounded by the packet ceiling rather than the much looser transport
+ceiling. Fixed the configured-factory meter fixture to actually create its
+isolated primary schema and run <code>antigravity_team.team_ddl</code> against it
+before the attempt-ledger table and <code>register()</code> (the authority's
+constructor only validates the schema identifier; it performs no DDL).
+Removed a dead <code>(admission[&quot;reservation&quot;,]).fetchone() if False else</code>
+expression from the deferred-COMMIT test's query. Added an uncontended
+control-case test. <strong>This pass believed, incorrectly, that <code>2.0+1.0</code>
+seconds was now a safe margin</strong> -- see 21:26 UTC below.</li>
+<li><strong>20:52 UTC</strong> (host findings F1-F6): qualified an ambiguous <code>state</code> column
+in a joined query; fixed a test assertion (<code>release.is_set()</code>) that could
+never actually observe a <code>threading.Event</code> timing out on its own, since
+<code>Event.wait</code> does not set the event on timeout -- replaced with an
+explicit <code>watchdog_fired</code> flag recorded by the blocker itself; added the
+two missing full-service C3 cases (admission-timeout and
+deferred-COMMIT-under-contention) to reach six total service-level cases
+(control, admission, claim, fence, settle, deferred COMMIT); corrected the
+rolling-control wording (see below) and distinguished two different test
+selections that both happened to total 37 passing tests; made the meter
+fixture's cleanup resilient to a raising <code>meter_pool.close()</code>.</li>
+</ul>
+<p>The rolling control referenced elsewhere in this repository is a window over
+the <strong>last 20 assignments</strong>, not a day count and not a cost-allocation
+mechanism; actual OpenAI charges are UNKNOWN from this repository and no
+canonical admission record or live-activation inference is available here to
+inspect, independently of any of the above.</p>
+<h2 id="correction-2026-09-14-2126-utc-claude-sonnet-5-high-real-postgresql-evidence">Correction (2026-09-14 21:26 UTC, Claude Sonnet 5 high), real PostgreSQL evidence</h2>
+<p>Real independent Linux CI (2928 tests, 3 failures, 1 error, 15 skips) and a
+real, host-controlled disposable PostgreSQL 17.11 instance in this
+environment both showed the 20:52 UTC pass's claim/fence/settle timing fix
+was insufficient, and found a genuine test bug and a real connection leak.
+All three are root-cause fixed here, confirmed against the real PostgreSQL
+17.11 instance (not simulated):</p>
+<ul>
+<li><strong>Cleanup margin (the CI timing failures)</strong>: <code>claim</code>/<code>fence</code>/<code>settle</code>
+landed at 3.0003s/3.0009s/3.0004s on Linux CI and 3.000s/3.016s/3.016s
+locally -- consistently at or just past the strict-<code>&lt;3s</code> boundary, not
+comfortably under it. The 20:52 UTC design computed the cleanup marker's
+SQL-level <code>lock_timeout</code> to fill the <em>entire</em> remaining
+deadline-plus-one-second-grace window, leaving no margin for the
+connection handshake before that timeout starts or the implicit <code>ROLLBACK</code>
+round trip after it fires -- neither of which <code>lock_timeout</code> itself
+bounds. Rather than further shrinking the one-second grace constant (a
+numeric tweak that would not address the missing margin itself and would
+only shift where the same problem resurfaces), a new
+<code>CLEANUP_OVERHEAD_MARGIN_SECONDS</code> (0.25s, comfortably above the observed
+0.3-16ms overshoot) is now reserved out of the grace <em>before</em> it is handed
+to <code>lock_timeout</code>, applied uniformly in <code>PostgresValidationStore._cleanup_remaining</code>
+for both the Responses lane's absolute-deadline-anchored allowance and the
+native lane's fresh-anchored one. No watchdog, completion, state or
+capture assertion was weakened; the 3-second test watchdogs are unchanged.</li>
+<li><strong>Meter canonicalization mismatch</strong>: <code>test_responses_validation_bridge_runs_configured_factory_reservation_and_capture</code>
+raised <code>ValidationError('Responses validation canary work_packet_digest mismatch')</code>. <code>PostgresValidationStore.admit</code> builds <code>admission[&quot;packet&quot;]</code>
+with <code>packet_contracts.canonical_json_bytes</code> (RFC 8785), but the test
+independently computed its own work-packet digest -- which seeds the
+enrollment's <code>work_packet_digest</code> and therefore the route's canary pin --
+with this module's <code>entitlement_contracts.canonical_json_bytes</code>, used
+correctly elsewhere in the same file for entitlement/receipt signing. The
+two canonicalizers disagree on number formatting (<code>budget_usd</code> as <code>1.0</code>
+vs <code>1</code>), so the digests never matched. Fixed by computing that one digest
+with <code>packet_contracts.canonical_json_bytes</code> instead, matching what
+admission actually produces; entitlement signing elsewhere in the file is
+untouched, and no canary digest check or production metering control was
+weakened.</li>
+<li><strong>Connection leak (ResourceWarning)</strong>: <code>psycopg.Connection.__exit__</code>
+commits on a clean exit but does not guard that commit the way it guards a
+rollback on the exception path -- so when <code>settle()</code>'s implicit COMMIT
+itself blocks on the <code>qa_settle_commit_gate</code> deferred trigger and then
+times out, the resulting exception propagates out of <code>__exit__</code> <em>before</em>
+reaching its own <code>close()</code> call, leaking the connection until garbage
+collection warned about it. Confirmed by reading the installed psycopg
+source (<code>connection.py</code>), not by suppressing the warning. Fixed by making
+<code>PostgresValidationStore._connect_bounded</code> return a small guarded context
+manager that still closes the connection in a <code>finally</code> even when the
+wrapped <code>with</code> block's own exit (its commit or rollback) raises; this is
+the single call site every store method already uses, so the fix applies
+uniformly without changing any method body.</li>
+</ul>
+<p><strong>Final status</strong>: with all of the above applied, the host-controlled
+disposable PostgreSQL 17.11 wrapper ran the full committed PostgreSQL suite
+(26 tests in <code>PostgresValidationTests</code>, including all six full-service C3
+cases) plus the previously-failing configured-factory meter test plus the 37
+non-database tests -- <strong>64 tests, 0 failures, 0 errors, 0 resource
+warnings</strong>, all strictly under the 2s-budget-plus-1s-grace boundary. This is
+real evidence from an actual server, not a claim -- but it is still this
+correction's own author-run evidence in a task-local, disposable cluster, not
+the independent, unchanged C3 harness or the project's real CI, and it does
+not constitute self-acceptance or independent review.</p>
+<h2 id="repaired-validation-behavior-2026-09-14-1852-correction-proposal-host-validation-pending">Repaired validation behavior (2026-09-14 18:52 correction proposal; host validation pending)</h2>
+<ul>
+<li>Activation binding fixtures use the actual seven-field
+<code>ProviderActivationBinding</code> contract; the earlier <code>model</code>/<code>account_id</code> keys
+were never binding fields. Hexadecimal generation/tree fixtures and the
+native Codex hard-cap refusal regression are preserved.</li>
+<li>One whole-operation deadline, measured from the Responses request entry
+before its mandatory byte-integrity hash, bounds store connection acquisition,
+admission, monetary reservation, claim, fence, transport, capture, settlement
+and COMMIT alike.
+The canary packet's own ceiling tightens that same deadline from the shared
+start; a post-admission reading never extends it. Store calls receive the
+shared deadline, and statement/lock timeouts are re-derived before later
+statements and again immediately before the implicit COMMIT, so
+commit-time deferred-trigger lock waits are bounded by the time actually
+left rather than an earlier, larger figure: a blocked settlement or COMMIT
+aborts and rolls back instead of persisting eligible evidence after expiry,
+while real provider results, usage and charges are never treated as reversed
+and remain reconcilable facts.</li>
+<li>The Responses request-local scope carries its original pre-hash start into
+the lane; direct lane calls and legacy digest-only scopes retain their own
+start. Every existing byte-integrity security point remains. Hashing consumes
+the known transport budget before admission; the packet ceiling discovered
+through admission tightens from that same origin before claim, funding or
+send. Native and Antigravity timing, the service contention oracles, watchdog
+and fixed cleanup allowance/margin are unchanged.</li>
+<li>Anchored failure cleanup: <code>PostgresValidationStore.fail</code> writes its
+best-effort ambiguity marker under one allowance anchored at the first
+reading -- the smaller of the shared operation deadline's remaining time
+and a fixed <strong>one</strong>-second grace, minus a reserved <code>CLEANUP_OVERHEAD_MARGIN_SECONDS</code>
+(0.25s) that is never handed to the SQL-level statement/lock timeout itself
+(see the 21:26 UTC correction above: without that margin, real PostgreSQL
+evidence showed completion landing at or just past the documented
+boundary, not strictly before it). The anchored cleanup deadline then only
+decreases, so per-statement refreshes inside the cleanup, including the
+refresh immediately before the implicit COMMIT, can never restart or
+extend the grace after the primary deadline has raised or expired. Both
+service call sites are bounded: the native lane uses the fixed anchored
+grace, and the Responses lane tightens it to the shared deadline's
+remainder. If the bounded marker cannot be written, the attempt stays
+exactly as the aborted operation left it (admitted or running), remains
+ineligible for redispatch, and stays reconcilable; no second dispatch is
+funded and no rollback is treated as reversing provider work.</li>
+<li>Meter persistence versus capture retention: a successful meter commit
+durably stores the signed usage/charge summary and response/request
+identifiers in <code>director_primary_provider_usage</code>. The raw provider response
+bytes and the validation capture remain in process only and can be lost if
+validation settlement fails. When the meter transaction itself cannot
+complete, no retention is established by this path: the reservation stays
+held and actual usage remains a provider-side reconcilable fact.
+<code>record_usage</code> internals were not independently inspected by this proposal.</li>
+<li>Actual-factory fixture topology: the configured-factory regression builds
+its own entitlement-only control-plane schema, so the factory's strict
+inventory validation sees exactly the entitlement manifest tables, plus a
+separate primary schema holding the team spend/usage tables and the attempt
+ledger. The fixture creates that isolated primary schema and runs
+<code>team_ddl</code> against it before creating the attempt table and calling
+<code>register()</code> (the authority's constructor only validates the schema
+identifier and performs no DDL of its own), and computes its work-packet
+digest with the same <code>packet_contracts.canonical_json_bytes</code> admission
+actually uses rather than this module's <code>entitlement_contracts</code> one (see
+the 21:26 UTC correction above). Production inventory guards, funding
+checks and daily caps are unchanged; the bridge performs the single
+authoritative reservation (one spend row at the signed amount) and exactly
+one usage row is asserted, now confirmed against a real PostgreSQL 17.11
+instance.</li>
+<li>Timing boundary: the six full-service PostgreSQL deadline cases keep the
+original acceptance boundary -- a two-second packet budget plus one second
+of scheduler grace, with completion strictly before each test's own
+3-second blocker watchdog. The anchored cleanup allowance is that same
+one-second grace minus the reserved overhead margin above, not a second,
+additional window stacked on top of it. Confirmed against a real
+PostgreSQL 17.11 instance as of the 21:26 UTC correction above; see that
+section for the exact counts.</li>
+<li>Settling enters its deadline before capture serialization: an exhausted
+budget refuses as a deadline, and a malformed capture fails independently
+as a TypeError, so neither can masquerade as the other.</li>
+</ul>
+<p>See the &quot;Final status&quot; paragraph in the 21:26 UTC correction above for the
+exact, real-PostgreSQL-confirmed test counts as of this revision, and the
+&quot;Remaining limitations&quot; section below for what is still outstanding.</p>
+<h2 id="remaining-limitations">Remaining limitations</h2>
+<ul>
+<li>Host/application builders must inject <code>openai_responses_route</code> with a real
+enrolled meter registry; this patch does not change production host
+configuration or enable paid runtime switches.</li>
+<li>Publication of already-captured evidence still uses the staged
+<code>PublishProviderEvidence</code> path from prior work; this patch only adds the
+capture/validation route that can produce qualifying Responses evidence.</li>
+<li>The anchored cleanup fix and the reordered claim/fence deadline tightening
+are source-level corrections confirmed, in this correction's own
+host-controlled disposable PostgreSQL 17.11 run, against a real server:
+the six full-service C3 cases (control, admission, claim, fence, settle,
+deferred COMMIT) plus the configured-factory meter test plus the 37
+non-database tests all pass with 0 resource warnings. This is real
+evidence, not a claim -- but it remains this correction's own author-run
+evidence in a task-local, disposable cluster, not the project's real CI
+and not the independent, unchanged C3 harness.</li>
+<li>Failed-meter retention is not established: if the meter transaction cannot
+finish, only provider-side facts remain for reconciliation.</li>
+<li>Actual OpenAI charges are unknown from this repository; no authoritative
+billing or admission history is available here to inspect. The rolling
+control referenced elsewhere in this repository is over the last 20
+assignments, not a day count or a cost allocation mechanism, and this
+correction makes no claim about either.</li>
+<li>Full CI, the independent unchanged C3 harness on the project's own
+infrastructure, and a distinct non-author reviewer remain required; this
+correction does not accept itself and is not an independent review.</li>
+</ul>
+<!-- [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

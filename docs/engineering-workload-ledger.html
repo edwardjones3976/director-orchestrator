@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>External engineering assignment ledger · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#what-the-twenty-means">What the twenty means</a></li><li class="top"><a href="#product-identity-and-allocation-policy">Product identity and allocation policy</a></li><li class="top"><a href="#establish-history-once-without-inventing-it">Establish history once, without inventing it</a></li><li class="top"><a href="#reserve-attempt-record-settle">Reserve, attempt, record, settle</a></li><li class="top"><a href="#historical-identity-readable-never-new-authority">Historical identity: readable, never new authority</a></li><li class="top"><a href="#resource-bound-result-is-tri-state-not-a-share-gate">Resource-bound result is tri-state, not a share gate</a></li><li class="top"><a href="#diagnostics-and-limits">Diagnostics and limits</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
+<h1 id="external-engineering-assignment-ledger">External engineering assignment ledger</h1>
+<p><code>scripts/engineering-workload.py</code> provides a durable local journal for engineering
+assignments made outside the operational LangGraph task ledger. It never calls a
+provider, spends money, grants repository access, accepts a review, merges, or
+deploys. The existing <code>TaskStore</code> remains the operational runtime journal; an empty
+runtime table does not establish an empty external engineering history.</p>
+<p>&quot;External engineering&quot; includes real coding and review assigned to Codex
+subagents, Claude, Gemini/Antigravity, actual Grok Bot and other enrolled products.
+It does not mean only a third-party vendor or an external command-line process.
+Use one journal and one stable assignment ID for each bounded work packet across
+tools and sessions. Include <code>parent_assignment_id</code> for delegated work. A parent
+that only coordinates child coding assignments is <code>coordination</code>; do not credit
+the same implementation again as parent production. Multiple substantive child
+assignments have their own distinct packet IDs and each consumes an admission.</p>
+<p>The smallest viable implementation uses SQLite transactions and the existing
+allocation/retry policy. No service, dependency, parallel dispatcher or dashboard
+is introduced. The journal is an operator control: restrict its directory to the
+trusted coordinator, keep it outside Git, and back it up with the source receipts.
+A user able to edit this database or its enrollment inputs remains trusted. The
+module validates evidence structure and consistency; it does <strong>not</strong> authenticate
+the contents of referenced evidence or attest complete historical coverage.</p>
+<h2 id="what-the-twenty-means">What the twenty means</h2>
+<p>Let <code>W</code> be the most recent nineteen recorded, non-coordination assignments plus
+the proposed new assignment, and <code>c(p)</code> the number attributed to allocation bucket
+<code>p</code> in <code>W</code>. Admission uses the same twenty-slot startup denominator as the charter:</p>
+<pre><code>prospective_share(p) = 100 * c(p) / 20
+normal band(p) = target(p) ± 3 percentage points   (advisory routing preference)
+admission condition(p) = target(p) &gt; 0
+</code></pre>
+<p>Only real reservations fill slots. Unfilled startup slots are reported as unfilled,
+not assigned to fictitious providers. The normal band supplies the under-target
+routing preference only; it never refuses admission. The owner retired the
+former target+5 hard admission ceiling on 2026-09-21 as outdated. <code>historical_maximum_slots</code>
+and <code>historical_hard_caps_ok</code> in the status payload retain that retired number for
+reference; they are explicitly non-enforcing and never block or refuse a
+reservation. <code>next_eligible_routes</code> ranks admitted-capacity candidates by their
+prospective distance below target. The caller must still apply capability, exact
+scope, quota, reviewer independence, security and budget gates.</p>
+<p>Every real reservation consumes one assignment once. Reserved, failed, rejected,
+cancelled and ambiguous rows remain in admission history. Settlement never refunds
+capacity. The twenty-first assignment removes the oldest from the current window,
+not from storage. A retry remains a child attempt of its original assignment; it
+does not create another productive credit. Coordination is record-only:
+<code>begin-attempt</code> refuses it before inserting an attempt or issuing a permit. It can
+settle with evidence of completed coordination, but cannot launch provider work or
+inflate this window. Coding, review or other provider work must use its actual
+counted assignment kind. This implementation issues <strong>no authenticated
+productive-work credit</strong>; success and cost fields remain correlated operator
+reports pending their independent verification.</p>
+<p>SQLite <code>BEGIN IMMEDIATE</code> serializes the read/check/reserve operation across
+processes. The assignment ID and product/kind/packet-digest uniqueness checks stop
+replays. Calling <code>reserve</code> again returns the prior reservation with
+<code>dispatch_permitted: false</code>; only a new <code>begin-attempt</code> yields a one-time workload
+permit. Immutable database triggers prevent normal SQL updates/deletions of the
+journal. These are consistency controls, not protection against its trusted owner.</p>
+<h2 id="product-identity-and-allocation-policy">Product identity and allocation policy</h2>
+<p>The owner selected <strong>the existing five-provider allocation</strong>: OpenAI 40%, Claude
+25%, Cursor 15%, direct Grok 10% and Antigravity 10%. The canonical engineering
+profile remains unchanged. It has <strong>no actual Grok Bot allocation binding</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Product ID</th>
+<th>Canonical allocation bucket</th>
+<th>Identity constraint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openai-codex</code></td>
+<td><code>openai</code></td>
+<td>Includes actual OpenAI implementation subagents</td>
+</tr>
+<tr>
+<td><code>claude-code</code></td>
+<td><code>claude</code></td>
+<td>Actual Claude-authored work</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td><code>cursor</code></td>
+<td>Cursor product, including its managed model usage</td>
+</tr>
+<tr>
+<td><code>xai-grok</code></td>
+<td><code>grok</code></td>
+<td>Direct xAI Grok, never actual Grok Bot</td>
+</tr>
+<tr>
+<td><code>gemini-antigravity</code></td>
+<td><code>antigravity</code></td>
+<td>Actual Gemini/Antigravity work</td>
+</tr>
+<tr>
+<td><code>grok-bot</code></td>
+<td>Missing</td>
+<td>Requires an explicit owner policy decision</td>
+</tr>
+</tbody>
+</table>
+<p>Use this canonical policy in the prospective bootstrap manifest:</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;canonical&quot;,
+  &quot;profile&quot;: &quot;engineering&quot;
+}
+</code></pre>
+<p><code>policy-preview --input canonical-policy.json</code> reads the existing allocation
+authority and reports these numbers without creating a database:</p>
+<table>
+<thead>
+<tr>
+<th>Allocation bucket</th>
+<th>Target</th>
+<th>Normal full-window count</th>
+<th>Retired hard ceiling (reference only)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI</td>
+<td>40%</td>
+<td>8</td>
+<td>9</td>
+</tr>
+<tr>
+<td>Claude</td>
+<td>25%</td>
+<td>5</td>
+<td>6</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>15%</td>
+<td>3</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Direct Grok</td>
+<td>10%</td>
+<td>2</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Antigravity</td>
+<td>10%</td>
+<td>2</td>
+<td>3</td>
+</tr>
+</tbody>
+</table>
+<p>The retired-ceiling column is historical reference only; the owner retired this
+target+5 admission gate on 2026-09-21 and it no longer blocks a reservation.</p>
+<p>For actual Grok Bot, diagnostics report <code>allocation_binding_missing</code>; enrolling
+it without a binding fails with that reason. It does not borrow the direct Grok
+or Cursor allocation, and their credentials, quota and actors remain separate.</p>
+<p>Generic custom-product policy support remains available for a future explicit
+owner decision. Its targets must total 100, and zero-target products are ineligible.
+Any custom weights or new Grok Bot bucket binding require separate recorded
+<code>policy_authorization</code>. None is selected by this owner decision. No policy changes
+revive a quota-limited route or attest an underlying managed model family.</p>
+<p>Each enrolled route fixes <code>route_id</code>, <code>product_id</code>, <code>actor_id</code>, <code>provider_identity</code>,
+<code>model_family</code>, <code>eligible</code>, allowed <code>roles</code>, and <code>enrollment_evidence</code>. A route not
+enrolled or explicitly ineligible cannot be used. Product/model labels submitted
+in an assignment do not replace this operator enrollment. The same route binding
+cannot be overwritten. A missing product can be enrolled later with <code>enroll-route</code>.</p>
+<p>Several distinct actors may have separate route IDs within the same product; they
+share its allocation bucket and do not obtain separate quota. An enrolled identity
+is never overwritten or renamed into another actor.</p>
+<p>Review admission requires an exact 40-character <code>candidate_sha</code>, material-author
+identities, <code>authorship_evidence</code>, and an explicit <code>review_policy</code>:</p>
+<ul>
+<li><code>ordinary_pr</code> applies the current per-acting-identity rule: the reviewer must not
+be any material-author actor, including a material-author parent. Two distinct
+Codex actors may share a product or family. Unknown Grok Bot model-family metadata
+does not prohibit a distinct Codex actor reviewing Grok Bot's source work.</li>
+<li><code>native_acceptance</code> additionally requires known, distinct product, provider and
+model-family identities because that acceptance surface requires those checks.</li>
+</ul>
+<p>Unknown author/actor provenance remains unknown; a model label cannot fill it in.
+These checks compare <strong>operator-attested identities</strong>, not authenticated native
+receipts, and do not determine whether the caller omitted a material author. The
+downstream review consumer still must authenticate provenance and select the
+correct review-policy scope. This ledger creates neither a canonical <code>ACCEPT</code>
+verdict nor merge eligibility.</p>
+<h2 id="establish-history-once-without-inventing-it">Establish history once, without inventing it</h2>
+<p>All CLI examples are run from the repository with <code>PYTHONPATH=src</code> and the existing
+Windows virtualenv Python. Replace the example paths with a single selected
+operator-controlled journal; do not create a separate quota journal per session.
+Do not point this tool at the runtime SQLite database.</p>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+&amp; .venv-win\Scripts\python.exe scripts/engineering-workload.py --db &lt;journal.sqlite3&gt; --human status
+&amp; .venv-win\Scripts\python.exe scripts/engineering-workload.py policy-preview --input &lt;canonical-policy.json&gt;
+</code></pre>
+<p><code>status</code> on a missing path reports <code>history_unknown_bootstrap_required</code> and creates
+nothing. To initialize, prepare one JSON manifest with these fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>operator</code></td>
+<td>Actual operator making the attestation</td>
+</tr>
+<tr>
+<td><code>authorization</code></td>
+<td>Owner-authorized establishment: <code>{ &quot;reference&quot;: &quot;...&quot;, &quot;sha256&quot;: &quot;64 lowercase hex&quot; }</code></td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>Selected policy: <code>{&quot;kind&quot;:&quot;canonical&quot;,&quot;profile&quot;:&quot;engineering&quot;}</code></td>
+</tr>
+<tr>
+<td><code>policy_authorization</code></td>
+<td>Separate owner decision evidence for custom weights/binding</td>
+</tr>
+<tr>
+<td><code>cutover_at</code></td>
+<td>Actual past or present UTC boundary, with timezone</td>
+</tr>
+<tr>
+<td><code>history_mode</code></td>
+<td><code>verified_last20</code> or <code>prospective</code></td>
+</tr>
+<tr>
+<td><code>history_evidence</code></td>
+<td>Source inventory/completeness evidence or quiescent-cutover evidence</td>
+</tr>
+<tr>
+<td><code>routes</code></td>
+<td>Operator-enrolled actual product identities, roles, eligibility and evidence</td>
+</tr>
+</tbody>
+</table>
+<p>The selected canonical prospective manifest has the following structure. Its
+placeholders deliberately fail validation; replace them with actual verified
+operator, authorization, cutoff and quiescence evidence <strong>after integration
+acceptance and quiescent cutover</strong>, not with invented receipts. Empty <code>routes</code>
+keeps every provider unavailable until actual actor enrollment is supplied.</p>
+<pre><code class="language-json">{
+  &quot;operator&quot;: &quot;&lt;actual operator&gt;&quot;,
+  &quot;authorization&quot;: {
+    &quot;reference&quot;: &quot;&lt;owner-authorized ledger establishment evidence&gt;&quot;,
+    &quot;sha256&quot;: &quot;&lt;actual 64-character evidence digest&gt;&quot;
+  },
+  &quot;policy&quot;: {&quot;kind&quot;: &quot;canonical&quot;, &quot;profile&quot;: &quot;engineering&quot;},
+  &quot;cutover_at&quot;: &quot;&lt;actual UTC cutover timestamp&gt;&quot;,
+  &quot;history_mode&quot;: &quot;prospective&quot;,
+  &quot;history&quot;: [],
+  &quot;history_evidence&quot;: {
+    &quot;reference&quot;: &quot;&lt;verified quiescent cutover inventory&gt;&quot;,
+    &quot;sha256&quot;: &quot;&lt;actual 64-character inventory digest&gt;&quot;
+  },
+  &quot;prior_history_unknown&quot;: true,
+  &quot;quiescent_cutover_verified&quot;: true,
+  &quot;all_future_assignments_required&quot;: true,
+  &quot;routes&quot;: []
+}
+</code></pre>
+<p>For <strong><code>verified_last20</code></strong>, include <code>complete_last20_attested: true</code> and <code>history</code>
+containing exactly twenty actual assignments in admission order. Each entry has
+<code>request</code> (the same immutable reservation payload described below), <code>admitted_at</code>,
+terminal <code>outcome</code> and <code>evidence</code>. Every timestamp must precede or equal cutover.
+Every entry needs its own source evidence. A partially reconstructed list is not
+a complete prior window and must not be padded with fabricated assignments.
+Imported over-allocation is preserved and visibly fails current-window checks;
+it is not rewritten into a compliant history. Imported evidence remains attested,
+not cryptographically authenticated by this CLI.</p>
+<p>For <strong><code>prospective</code></strong>, use an empty <code>history</code>, and all three explicit declarations:</p>
+<pre><code class="language-json">{
+  &quot;prior_history_unknown&quot;: true,
+  &quot;quiescent_cutover_verified&quot;: true,
+  &quot;all_future_assignments_required&quot;: true
+}
+</code></pre>
+<p>The trusted operator must actually inventory/quiesce in-flight provider work at
+the boundary and ensure every future assignment enters this journal. A running
+provider with an unknown result cannot be treated as quiescent. Creating a fresh
+ledger because an existing one reached its ceiling is prohibited. Prospective
+startup proves nothing about preceding compliance; status retains that limitation
+even after twenty future admissions. This code does not perform or authorize the
+quiescence operation itself.</p>
+<pre><code class="language-powershell">&amp; .venv-win\Scripts\python.exe scripts/engineering-workload.py --db &lt;journal.sqlite3&gt; bootstrap --input &lt;manifest.json&gt;
+</code></pre>
+<p>Bootstrap is atomic and refuses <strong>any existing initialized database</strong>, including
+an empty ledger or a foreign database. An invalid historical item rolls back the
+whole import. Existing data is never reset, truncated or silently migrated. Keep
+policy changes and recovery as explicit reviewed migrations preserving the same
+history; this initial version deliberately provides no reset/force command.</p>
+<h2 id="reserve-attempt-record-settle">Reserve, attempt, record, settle</h2>
+<p>A reservation JSON object contains:</p>
+<ul>
+<li><code>assignment_id</code>: globally stable bounded-assignment ID; optional
+<code>parent_assignment_id</code> records its coordination/delegation parent.</li>
+<li><code>task_id</code>, <code>scope</code>, <code>kind</code> (<code>implementation</code>, <code>review</code>, <code>validation</code>, <code>research</code>,
+or <code>coordination</code>), and actual <code>route_id</code> and matching <code>product_id</code>.</li>
+<li><code>packet_evidence</code>: immutable packet reference and SHA256; the packet itself
+carries scope, candidate, tests, stopping conditions and owner authorization.</li>
+<li><code>transport</code>: one existing policy value: <code>local_cli</code>, <code>director_adapter</code>,
+<code>github_slack</code>, <code>provider_api</code>, or <code>browser</code>.</li>
+<li><code>bounds</code>: positive total <code>timeout_seconds</code>, <code>turn_limit</code>, <code>output_bytes_limit</code>,
+<code>call_limit</code> between 1 and 3; <code>usd_limit</code> is a positive number or <code>null</code>;
+<code>hard_usd_cap_verified</code> is a required boolean. A verified cap requires
+<code>usd_cap_evidence</code>. Otherwise an <code>unverified_billing_authorization</code> evidence
+reference is mandatory. Unknown billing must never be written as zero.</li>
+<li>For review: <code>review_policy</code>, <code>candidate_sha</code>, <code>authorship_evidence</code>, and nonempty
+<code>material_authors</code>, each with its actual <code>actor_id</code>. The <code>native_acceptance</code>
+scope also requires each author's <code>product_id</code>, <code>provider_identity</code> and
+<code>model_family</code>.</li>
+</ul>
+<pre><code class="language-powershell">&amp; .venv-win\Scripts\python.exe scripts/engineering-workload.py --db &lt;journal.sqlite3&gt; reserve --input &lt;assignment.json&gt;
+&amp; .venv-win\Scripts\python.exe scripts/engineering-workload.py --db &lt;journal.sqlite3&gt; begin-attempt &lt;assignment-id&gt; --transport local_cli
+</code></pre>
+<p>The second command grants a <strong>workload/retry-only permit</strong>. The trusted launcher
+must also check all other gates and enforce the returned remaining resource
+bounds, including the immutable <code>deadline_at</code>, then make at most <strong>one</strong> native
+invocation. <code>assignment_calls_remaining</code> includes possible later conditional
+attempts; it is not a permit for multiple calls now. This ledger is not yet
+automatically wired into provider launchers. A process crash after <code>begin-attempt</code>
+leaves an unknown outcome and cannot be retried as if no dispatch happened.</p>
+<p>Record each actual attempt once with <code>record-outcome &lt;assignment-id&gt; --attempt 1 --input &lt;outcome.json&gt;</code>. An outcome has <code>outcome</code> equal to <code>succeeded</code>, <code>transient</code>,
+<code>failed</code> or <code>ambiguous</code>, a source <code>evidence</code>, and <code>usage</code> with exactly <code>usd</code>,
+<code>turns</code>, and <code>output_bytes</code>. Each usage value can be <code>null</code> when unknown. Retain
+the actual observation even when it exceeds the bound; status flags overages.
+The outcome cannot subsequently be rewritten to a different result.</p>
+<p>One primary attempt is allowed. The second requires a recorded transient failure.
+The third requires a materially different transport or <code>--new-information &lt;evidence.json&gt;</code>. Total time, calls, turns, output and any declared dollar budget
+are checked before each attempt. Unknown remaining metered cost or unknown output/
+turn usage blocks retry. An ambiguous dispatch never automatically retries, even
+with new information. Three recorded consecutive non-success outcomes make that
+enrolled route unavailable; select an eligible fallback, preserving the failed rows.
+Restoring that route requires a separately reviewed recovery migration; creating
+a new journal or changing the product's name is not a recovery.</p>
+<p>Finally use <code>settle &lt;assignment-id&gt; --outcome succeeded --evidence &lt;completion-evidence.json&gt;</code> (or <code>failed</code>, <code>rejected</code>, <code>cancelled</code>, <code>ambiguous</code>).
+Provider-work success requires a recorded successful native outcome. Pure
+coordination is settled directly with its coordination evidence and still cannot
+receive a provider-launch permit or productive credit. An unresolved invocation
+can only settle as ambiguous, and ambiguity cannot be relabeled as a clean failure.
+Settlement is immutable and retains the admission. If later evidence resolves an
+ambiguous outcome, preserve it for an explicit reconciliation change; do not run
+the assignment again.</p>
+<h2 id="historical-identity-readable-never-new-authority">Historical identity: readable, never new authority</h2>
+<p>A canonical policy's <code>canonical_digest</code> is recorded once, at bootstrap, and is
+never rewritten. <code>status</code>, <code>record_outcome</code>, and <code>settle</code> recognize the current
+identity, the current-at-base retired hard-tolerance identity, and any listed
+pre-retirement identity, so a ledger bootstrapped under an older identity stays
+fully readable: its existing rows, an exact idempotent <code>reserve</code> replay of an
+already-recorded request, and late outcome or settlement reporting for an
+already-attempted assignment all continue to work without rewriting metadata.
+This is compatibility for reading and reporting prior work, never a second
+source of current authority. <code>reserve</code> and <code>begin_attempt</code> additionally require
+the ledger's recorded <code>canonical_digest</code> to equal the real current identity
+before creating a NEW assignment row or issuing a NEW attempt permit; once the
+current identity has moved past a ledger's recorded one,
+<code>canonical_policy_superseded_new_authority_required</code> refuses new admission or
+dispatch for that ledger without touching its immutable history. A ledger
+recorded under a superseded identity stays readable and reportable indefinitely.
+New admission requires a separately authorized bootstrap under the current
+identity. Bootstrap refuses an existing journal; no automatic migration, reset,
+or history rewrite is provided.</p>
+<h2 id="resource-bound-result-is-tri-state-not-a-share-gate">Resource-bound result is tri-state, not a share gate</h2>
+<p><code>current_window_checks.reported_resource_bounds_ok</code> is <code>true</code> only when every
+admission in the current window has fully known reported usage that stays
+within its declared bounds; <code>false</code> as soon as any admission has a known
+reported bound violation, even while other admissions' usage is still
+unknown; and <code>null</code> when required reported usage is missing. An unsettled
+assignment alone does not force <code>false</code> or <code>null</code>: known required usage within
+bounds can yield <code>true</code> before settlement. Unknown required usage is never
+treated as compliant, and a known violation is never
+hidden by other unknown rows. This result is independent of the retired
+allocation hard-cap reference and of the normal-band advisory preference.</p>
+<h2 id="diagnostics-and-limits">Diagnostics and limits</h2>
+<p><code>status</code> defaults to JSON; <code>--human status</code> renders the current twenty records and
+the allocation table. It reports the immutable policy digest, historical evidence,
+cutover, targets, shares, deltas, reserved counts, role/identity limitations,
+unknown costs, reported bound violations and next allocation-eligible routes.
+It reopens the database read-only and checks SQLite integrity, foreign keys and
+policy digest; a changed canonical allocation digest fails closed. It recomputes
+the current window's retired-hard-cap reference, normal-band checks, and the
+tri-state resource-bound result from actual journal rows; none of these are an
+admission or completion gate by themselves.
+These checks cannot detect work omitted from the journal or authenticate an
+operator's imported/native receipts. The completion scorecard must preserve those
+limits; an exported <code>compliant: true</code> is not evidence.</p>
+<p>Validation:</p>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+&amp; .venv-win\Scripts\python.exe -m unittest tests.test_engineering_workload_ledger -v
+</code></pre>
+<p>Tests use disposable local SQLite journals, including two separate processes
+concurrently reserving OpenAI assignments above the retired hard ceiling. No
+provider, live database, Docker container, billing setting or deployment is involved.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>
