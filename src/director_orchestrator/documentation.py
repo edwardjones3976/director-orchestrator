@@ -99,12 +99,15 @@ def _render(element: _Element, *, structured: bool) -> str:
             number += 1
         return "\n\n" + "\n".join(rows) + "\n\n"
     if tag == "table":
+        captions = [_render(child, structured=structured).strip()
+                    for child in element.children if isinstance(child, _Element) and child.tag == "caption"]
         rows = []
         for row in _elements(element, "tr"):
             cells = [" ".join(_render(cell, structured=structured).split())
                      for cell in row.children if isinstance(cell, _Element) and cell.tag in {"th", "td"}]
             rows.append("| " + " | ".join(cells) + " |")
-        return "\n\n" + "\n".join(rows) + "\n\n"
+        caption_text = "\n\n".join(value for value in captions if value)
+        return "\n\n" + (caption_text + "\n\n" if caption_text else "") + "\n".join(rows) + "\n\n"
     body = children()
     if re.fullmatch(r"h[1-6]", tag):
         prefix = "#" * int(tag[1]) + " " if structured else ""

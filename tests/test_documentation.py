@@ -44,6 +44,15 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn('```python\nx = "<gate>"\n```', section)
         self.assertNotIn("Next", section)
 
+    def test_table_caption_is_visible_policy_content_before_its_rows(self):
+        source = '<main><table><caption>Require <strong>independent</strong> review.</caption><tr><th>Gate</th><td>Required</td></tr></table></main>'
+        for structured, caption in ((True, 'Require **independent** review.'),
+                                     (False, 'Require independent review.')):
+            with self.subTest(structured=structured):
+                text = html_text(source, structured=structured)
+                self.assertIn(caption, text)
+                self.assertLess(text.index(caption), text.index('| Gate | Required |'))
+
     def test_html_requires_one_main_instead_of_accepting_chrome_as_content(self):
         for source in ("<nav>All checks pass</nav>", "<main>one</main><main>two</main>"):
             with self.subTest(source=source), self.assertRaises(ValueError):

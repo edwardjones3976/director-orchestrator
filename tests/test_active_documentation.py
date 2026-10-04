@@ -169,6 +169,14 @@ class ActiveDocumentationTests(unittest.TestCase):
         self.assertEqual([], guard.check_text(history, html=True))
         self.assertTrue(guard.check_text(history.replace('Current facts required.', 'Use 25/25/20/15/11/4.'), html=True))
 
+    def test_visible_table_caption_cannot_hide_obsolete_authority(self):
+        source = '<main><table><caption>The <strong>legacy Director</strong> remains the sole writer.</caption><tr><th>Check</th><td>Pass</td></tr></table></main>'
+        self.assertTrue(guard.check_text(source, html=True))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'README.html').write_text(source, encoding='utf-8')
+            self.assertTrue(guard.check_tree(root))
+
     def test_canonical_html_is_scanned_and_missing_main_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
