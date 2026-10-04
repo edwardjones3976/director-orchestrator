@@ -14,6 +14,7 @@ import argparse
 import base64
 from contextlib import contextmanager
 import hashlib
+import hmac
 import json
 import os
 import pathlib
@@ -41,6 +42,9 @@ COMPOSE_SERVICE_FIELDS = {
     "image", "build", "command", "entrypoint", "restart", "environment", "ports", "volumes",
     "depends_on", "healthcheck", "networks", "pull_policy", "deploy", "scale", "working_dir", "logging",
 }
+HOST_ENVIRONMENT_KEYS = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP",
+    "TMPDIR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432"}
 
 
 class ReleaseError(RuntimeError):
@@ -192,6 +196,10 @@ def compose_input_check(pins, runtime_pin):
             raise ReleaseError("compose_yaml_unsupported") from None
         require(isinstance(model, dict) and set(model) <= {"name", "version", "services", "networks", "volumes"},
                 "compose_external_input_unsupported")
+        try:
+            compose_interpolation_check(model)
+        except ValueError as error:
+            raise ReleaseError(str(error)) from None
         services = model.get("services", {})
         require(isinstance(services, dict), "compose_yaml_unsupported")
         for service in services.values():
@@ -219,10 +227,7 @@ def compose_input_check(pins, runtime_pin):
 def child_environment():
     # Never let an inherited COMPOSE_FILE, DOCKER_HOST, PYTHONPATH, provider key,
     # or Git override silently redirect a release check.
-    keep = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP",
-            "TMPDIR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "PROGRAMDATA",
-            "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432"}
-    env = {key: value for key, value in os.environ.items() if key.upper() in keep}
+    env = {key: value for key, value in os.environ.items() if key.upper() in HOST_ENVIRONMENT_KEYS}
     env.update(PYTHONPATH=str(ROOT / "src"), PYTHONDONTWRITEBYTECODE="1",
                GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull,
                GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
@@ -230,6 +235,42 @@ def child_environment():
                GIT_CONFIG_KEY_1="core.hooksPath", GIT_CONFIG_VALUE_1=os.devnull,
                GIT_CONFIG_KEY_2="core.untrackedCache", GIT_CONFIG_VALUE_2="false")
     return env
+
+
+# The same small constructor runs in planning and the emitted launcher. Only the
+# exact selectors copied by primary-control enter a Compose host environment;
+# Docker parses every other value from the bound --env-file on both paths.
+COMPOSE_ENVIRONMENT = r"""
+CONTROL_SELECTORS = (
+    'DIRECTOR_ASGI_APP','LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH',
+    'LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH','LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256',
+    'DIRECTOR_RUNTIME_IMAGE','DIRECTOR_RUNTIME_IMAGE_ID','DIRECTOR_RESOLVED_DEPLOYMENT_SHA256',
+    'ALLOW_PAID_RUNS','LANGGRAPH_PRIMARY_ENABLED','LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED',
+    'LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED','LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED',
+    'LANGGRAPH_PARALLEL_KILL_SWITCH')
+def compose_interpolation_check(value):
+    if isinstance(value,dict):
+        for key,item in value.items():
+            if str(key).upper()=='PSMODULEPATH': raise ValueError('compose_startup_interpolation_unsupported')
+            compose_interpolation_check(key); compose_interpolation_check(item)
+    elif isinstance(value,list):
+        for item in value: compose_interpolation_check(item)
+    elif isinstance(value,str) and re.search(r'\$\{?PSModulePath\b',value,re.I):
+        # Include escaped/default forms: PowerShell adds this machine-specific
+        # variable at startup, so it cannot select any supported input path.
+        raise ValueError('compose_startup_interpolation_unsupported')
+def compose_environment(base,runtime):
+    compose_interpolation_check(runtime)
+    env=dict(base)
+    for key in CONTROL_SELECTORS:
+        env.pop(key,None)
+        value=runtime.get(key,'')
+        if not isinstance(value,str) or value and not re.fullmatch(r'[A-Za-z0-9_./:@+-]+',value):
+            raise ValueError('compose_control_selector_unsupported')
+        if value: env[key]=value
+    return env
+"""
+exec(COMPOSE_ENVIRONMENT)
 
 
 def command(argv, *, cwd, env, deadline, input_bytes=None, executable=None, containment=None):
@@ -347,25 +388,48 @@ RUNTIME_CHANGES = {
 }
 
 # One fixed helper is shared by planning and the emitted launcher so their
-# inventory digests have the same meaning. No container environment is retained.
+# inventory digests have the same meaning. Only keyed Slack identity digests are
+# retained; raw container environment values stay inside the inspection call.
 RESOURCE_INVENTORY = r"""
+SLACK_IDENTITY_KEYS=('SLACK_APP_TOKEN','SLACK_BOT_TOKEN','SLACK_DIRECTOR_CHANNEL_ID')
+def inspected_environment(config):
+    entries=config.get('Env')
+    if not isinstance(entries,list): raise ValueError('inspected_environment_unavailable')
+    values={}
+    for entry in entries:
+        if not isinstance(entry,str) or '=' not in entry: raise ValueError('inspected_environment_unavailable')
+        key,value=entry.split('=',1)
+        if not key or key in values: raise ValueError('inspected_environment_unavailable')
+        values[key]=value
+    return values
+def slack_identity_digest(key,name,value):
+    return hmac.new(bytes.fromhex(key),(name+'\0'+value).encode(),hashlib.sha256).hexdigest()
 def volume_identity(row):
     return {key:row.get(key) for key in ('Name','Driver','Options','Labels','Mountpoint','CreatedAt','Scope')}
-def resource_inventory(read,project):
-    ids=sorted(read(['docker','ps','-a','--filter','label=com.docker.compose.project='+project,'--format','{{.ID}}']).decode().splitlines())
+def resource_inventory(read,project,identity_key):
+    ids=sorted(read(['docker','ps','-a','--no-trunc','--filter','label=com.docker.compose.project='+project,'--format','{{.ID}}']).decode().splitlines())
     result={'containers':ids,'binds':[],'volumes':[],'networks':[],'ports':[]}
+    identities={name:[] for name in SLACK_IDENTITY_KEYS}
+    result['slack_identities']=identities
     if not ids: return result
     rows=json.loads(read(['docker','inspect',*ids]))
-    if len(rows)!=len(ids) or any(row.get('Config',{}).get('Labels',{}).get('com.docker.compose.project')!=project for row in rows):
+    if not isinstance(rows,list) or len(rows)!=len(ids) or len(ids)!=len(set(ids)) or any(not isinstance(row,dict) for row in rows):
+        raise ValueError('final resource inventory unavailable')
+    if {row.get('Id') for row in rows}!=set(ids) or any(not isinstance(row.get('Config'),dict) or
+            row['Config'].get('Labels',{}).get('com.docker.compose.project')!=project for row in rows):
         raise ValueError('final resource inventory unavailable')
     for row in rows:
+        values=inspected_environment(row['Config'])
+        for name in SLACK_IDENTITY_KEYS:
+            if values.get(name): identities[name].append(slack_identity_digest(identity_key,name,values[name]))
         for mount in row['Mounts']:
             if mount['Type']=='bind': result['binds'].append(mount['Source'])
             elif mount['Type']=='volume': result['volumes'].append(mount['Name'])
         result['networks'].extend(row['NetworkSettings']['Networks'])
         for bindings in (row['HostConfig'].get('PortBindings') or {}).values():
             result['ports'].extend(item['HostPort'] for item in (bindings or []))
-    return {key:sorted(set(value)) for key,value in result.items()}
+    return {key:({name:sorted(set(hashes)) for name,hashes in value.items()} if key=='slack_identities' else
+                 sorted(set(value))) for key,value in result.items()}
 """
 exec(RESOURCE_INVENTORY)
 
@@ -430,7 +494,7 @@ exec(SOURCE_PROOF)
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
 REHEARSAL_LAUNCH = r"""
-import base64,hashlib,json,os,pathlib,re,socket,stat,subprocess,sys,tempfile,time,uuid
+import base64,hashlib,hmac,json,os,pathlib,re,socket,stat,subprocess,sys,tempfile,time,uuid
 v=json.loads(base64.b64decode(sys.argv[1]))
 env=v['environment']
 def read(args,**kwargs):
@@ -458,6 +522,7 @@ def dotenv(raw):
         result[name]=value
     return result
 def input_check():
+    global env
     if set(v['executables'])!={'python','powershell','git','docker','gh'}: raise SystemExit('trusted executable changed')
     for path in v['executables'].values():
         p=pathlib.Path(path)
@@ -476,6 +541,8 @@ def input_check():
         if digest(raw)!=pin['sha256']: raise SystemExit('initial runtime profile changed')
     elif digest(encoded(dotenv(raw)))!=pin['values_sha256']:
         raise SystemExit('runtime profile differs from expected control transition')
+    try: env=compose_environment(v['environment'],dotenv(raw))
+    except ValueError as error: raise SystemExit(str(error)) from None
 
 def offline_attempt_check():
     if (v['first_step'] or v['action']=='ActivateOffline') and os.path.lexists(v['prior_images'].replace('.prior-images.','.offline-attempt.')):
@@ -616,7 +683,9 @@ sys.path.insert(0,str(pathlib.Path(v['cwd'])/'src'))
 from director_orchestrator.process_isolation import launch_contained_process,stop_contained_process
 if read(['docker','info','--format','{{.ID}}']).decode().strip()!=v['daemon_id']:
     raise SystemExit('verified Docker daemon changed')
-if digest(encoded(resource_inventory(read,v['final_project'])))!=v['final_resources_sha256']:
+try: final_resources=resource_inventory(read,v['final_project'],v['slack_identity_key'])
+except (ValueError,KeyError,TypeError,AttributeError): raise SystemExit('final project resources changed') from None
+if digest(encoded(final_resources))!=v['final_resources_sha256']:
     raise SystemExit('final project resources changed')
 for reference,expected in v['images'].items():
     actual=json.loads(read(['docker','image','inspect',reference]))
@@ -686,7 +755,7 @@ if v['action']=='Stop':
                 raise SystemExit('sibling intake not proved stopped')
 """
 REHEARSAL_LAUNCH = ("LOCAL_DATABASE_PROBE=" + repr(LOCAL_DATABASE_PROBE) + "\nVALIDATION_PROBE=" +
-                   repr(VALIDATION_PROBE) + "\n" + RESOURCE_INVENTORY + SOURCE_PROOF + REHEARSAL_LAUNCH)
+                   repr(VALIDATION_PROBE) + "\n" + COMPOSE_ENVIRONMENT + RESOURCE_INVENTORY + SOURCE_PROOF + REHEARSAL_LAUNCH)
 REHEARSAL_BOOTSTRAP = ("import base64,zlib;exec(zlib.decompress(base64.b64decode(" +
                        repr(base64.b64encode(zlib.compress(REHEARSAL_LAUNCH.encode())).decode("ascii")) + ")))")
 
@@ -715,6 +784,14 @@ class Release:
             unlinked(Path(path))
             require(Path(path).is_file() and not paths_overlap(path, self.source) and
                     not paths_overlap(path, self.spec["snapshot"]["path"]), "trusted_executable_path_invalid")
+        self.host_environment = child_environment()
+        # PowerShell prepends its own directory when absent. Normalize it once
+        # for direct Docker and control children alike; no profile PATH is used.
+        path_key = next((key for key in self.host_environment if key.upper() == "PATH"), "PATH")
+        directories = self.host_environment.get(path_key, "").split(os.pathsep)
+        powershell_directory = str(Path(self.executables["powershell"]).parent)
+        self.host_environment[path_key] = os.pathsep.join([powershell_directory, *[
+            item for item in directories if item and os.path.normcase(item) != os.path.normcase(powershell_directory)]])
         # No checkout locator runs. Candidate helpers are imported only after
         # the installed reader has bound this exact input and Git has verified it.
         self.source_check()
@@ -733,6 +810,10 @@ class Release:
             require(Path(self.spec["executables"][name]).is_absolute() and
                     Path(self.spec["executables"][name]).is_file(), "executable_unavailable")
         self.runtime = dotenv(pinned_file(self.spec["runtime_env"]))
+        try:
+            compose_environment(self.host_environment, self.runtime)
+        except ValueError as error:
+            raise ReleaseError(str(error)) from None
         self.bridge = dotenv(pinned_file(self.spec["bridge_env"]))
         self.manifest = document(pinned_file(self.spec["generation_manifest"]))
         self.validation = document(pinned_file(self.spec["validation_manifest"]))
@@ -753,10 +834,10 @@ class Release:
 
     def run(self, arguments, *, input_bytes=None, env=None):
         if arguments[0] == "docker" and getattr(self, "docker_environment", None):
-            env = dict(env or child_environment())
+            env = dict(env or self.host_environment)
             env = {key: value for key, value in env.items() if not key.upper().startswith("DOCKER_")}
             env.update(self.docker_environment)
-        return command(arguments, cwd=self.source, env=env or child_environment(),
+        return command(arguments, cwd=self.source, env=env or self.host_environment,
                        deadline=self.deadline, input_bytes=input_bytes,
                        executable=self.executables.get(arguments[0], arguments[0]), containment=getattr(self, "containment", None))
 
@@ -845,12 +926,23 @@ class Release:
                     "validation_configuration_pin_invalid")
         # This is a selector comparison, not acceptance or full manifest verification.
 
+    def compose_base_environment(self):
+        env = dict(self.host_environment)
+        env.update(self.docker_environment or {})
+        env.update(COMPOSE_FILE=os.pathsep.join(pin["path"] for pin in self.spec["compose_files"]),
+                   DIRECTOR_ENV_FILE=self.spec["runtime_env"]["path"], COMPOSE_PATH_SEPARATOR=os.pathsep,
+                   DIRECTOR_COMPOSE_PROJECT_NAME=self.spec["compose_project"],
+                   DIRECTOR_HOST_PORT=self.runtime.get("DIRECTOR_HOST_PORT", "8080"),
+                   ALLOW_PAID_RUNS="false", LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false",
+                   LANGGRAPH_PARALLEL_KILL_SWITCH="true")
+        return env
+
     def compose_document(self, runtime):
         compose_input_check(self.spec["compose_files"], self.spec["runtime_env"])
-        env = child_environment()
-        env.update(runtime)
-        env.update(DIRECTOR_ENV_FILE=self.spec["runtime_env"]["path"],
-                   DIRECTOR_COMPOSE_PROJECT_NAME=self.spec["compose_project"])
+        try:
+            env = compose_environment(self.compose_base_environment(), runtime)
+        except ValueError as error:
+            raise ReleaseError(str(error)) from None
         args = ["docker", "compose", "--project-name", self.spec["compose_project"],
                 "--env-file", self.spec["runtime_env"]["path"]]
         for pin in self.spec["compose_files"]:
@@ -936,7 +1028,13 @@ class Release:
     def live_config_check(self):
         # Existing read-only validator deliberately tests the paid target configuration
         # without constructing its activation or opening providers/control-plane stores.
-        env = child_environment()
+        reserved = HOST_ENVIRONMENT_KEYS | {"BASH_ENV", "ENV", "GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH",
+            "OPENSSL_CONF", "OPENSSL_MODULES", "SSL_CERT_FILE", "SSL_CERT_DIR", "PSMODULEPATH", "PSEXECUTIONPOLICYPREFERENCE",
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "GITHUB_HOST", "GITHUB_ENTERPRISE_HOST"}
+        require(not any(key.upper() in reserved or key.upper().startswith(
+            ("PYTHON", "LD_", "DYLD_", "GIT_", "GH_", "DOCKER_", "COMPOSE_"))
+            for key in self.runtime), "runtime_host_environment_unsupported")
+        env = dict(self.host_environment)
         env.update(self.runtime)
         # Only this read-only child's hypothetical target enables the switches.
         # Neither the protected profile nor any Compose/control child receives it.
@@ -1108,6 +1206,10 @@ class Release:
         require(not health.get("disable") and
                 health.get("test") == ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"],
                 "sibling_primary_database_readiness_required")
+        dependency = sibling_graph["services"]["orchestrator"].get("depends_on", {}).get("langgraph-primary-db", {})
+        require(isinstance(dependency, dict) and set(dependency) <= {"condition", "required", "restart"} and
+                dependency.get("condition") == "service_healthy" and dependency.get("required", True) is True and
+                dependency.get("restart", False) is False, "sibling_primary_database_dependency_required")
         from urllib.parse import urlsplit
         database_service = sibling_graph["services"]["langgraph-primary-db"].get("environment", {})
         database_url = urlsplit(sibling_graph["services"]["orchestrator"].get("environment", {}).get(
@@ -1116,15 +1218,23 @@ class Release:
                 database_url.scheme in ("postgres", "postgresql") and database_url.hostname == "langgraph-primary-db" and
                 (database_url.port or 5432) == 5432 and database_url.username == "director_primary" and
                 database_url.path == "/director_primary", "sibling_backup_database_route_unsupported")
-        final_resources = resource_inventory(self.run, self.spec["compose_project"])
+        identity_key = os.urandom(32).hex()
+        try:
+            final_resources = resource_inventory(self.run, self.spec["compose_project"], identity_key)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise ReleaseError("final_resource_inventory_unavailable") from None
         isolated_sibling(final_graph, sibling_graph, plan["host_port"],
                          n8n_host_port=sibling.runtime.get("N8N_HOST_PORT", "5678"),
                          protected_paths=self.protected_paths() + sibling.protected_paths(),
                          final_resources=final_resources, docker_host=self.docker_environment["DOCKER_HOST"],
-                         registry_path=sibling.runtime.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY"))
+                         registry_path=sibling.runtime.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY"),
+                         identity_key=identity_key)
         require(self.daemon_id == sibling.daemon_id and self.docker_environment == sibling.docker_environment,
                 "sibling_docker_target_mismatch")
         images = sibling.rehearsal_images(sibling_graph)
+        require(sibling.application_environments["orchestrator"].get("LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES") == "true",
+                "sibling_primary_database_transport_unsupported")
+        isolated_slack_identities(final_graph, sibling.application_environments, final_resources, identity_key)
         sibling.rehearsal_modes()
         intake = {"path": str(sibling.intake_receipt_path()), "binding": {
             "nonce": os.urandom(16).hex(), "candidate": sibling.spec["candidate"],
@@ -1139,13 +1249,7 @@ class Release:
             "--label", "com.docker.compose.volume=" + key,
             "--label", "org.director.release.intake=" + intake["binding"]["nonce"], name]
             for name, key in sorted(intake["binding"]["names"].items())]
-        environment = child_environment()
-        environment.update(sibling.docker_environment)
-        environment.update(COMPOSE_FILE=os.pathsep.join(pin["path"] for pin in sibling.spec["compose_files"]),
-                           DIRECTOR_ENV_FILE=sibling.spec["runtime_env"]["path"],
-                           COMPOSE_PATH_SEPARATOR=os.pathsep, DIRECTOR_HOST_PORT=str(plan["host_port"]),
-                           ALLOW_PAID_RUNS="false", LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false",
-                           LANGGRAPH_PARALLEL_KILL_SWITCH="true")
+        environment = sibling.compose_base_environment()
         base = [sibling.spec["executables"]["powershell"], "-NoProfile", "-NonInteractive", "-File",
                 str(sibling.source / "scripts/windows-langgraph-primary-control.ps1")]
         common = ["-EnvironmentFile", sibling.spec["runtime_env"]["path"], "-ComposeProject",
@@ -1190,6 +1294,7 @@ class Release:
                                         "values_sha256": sha(encoded(expected_runtime))}
                                        if runtime_changed else sibling.spec["runtime_env"]),
                        "final_project": self.spec["compose_project"],
+                       "slack_identity_key": identity_key,
                        "final_resources_sha256": sha(encoded(final_resources)),
                        # Activation can wait 75s for leases; rollback drains for
                        # 65s. Preserve their full 120s health wait plus overhead.
@@ -1267,6 +1372,7 @@ class Release:
         require(not networks.intersection(item["name"] for item in graph["networks"].values()),
                 "sibling_network_not_fresh")
         images = {}
+        self.application_environments = {}
         for name, service in graph["services"].items():
             reference = service["image"]
             inspected = document(self.run(["docker", "image", "inspect", reference]))
@@ -1282,7 +1388,7 @@ class Release:
                 healthcheck = override
             reviewed_healthcheck(name, healthcheck)
             if name in ("orchestrator", "slackbot"):
-                reviewed_application_environment(service, inspected[0].get("Config", {}))
+                self.application_environments[name] = reviewed_application_environment(service, inspected[0].get("Config", {}))
             if name == "orchestrator":
                 # The control's direct digest probe runs this image without
                 # Compose overrides; masking unsafe image defaults is insufficient.
@@ -1400,13 +1506,18 @@ def reviewed_application_environment(service, image=None):
     expected = {"PYTHONPATH": "/app/src", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
     values = {}
     if image is not None:
-        for entry in image.get("Env", []):
-            key, separator, value = entry.partition("=")
-            require(separator and key not in values, "sibling_loader_environment_unsupported")
-            values[key] = value
-    values.update(service.get("environment", {}))
+        try:
+            values = inspected_environment(image)
+        except (ValueError, TypeError, AttributeError):
+            raise ReleaseError("sibling_loader_environment_unsupported") from None
+    override = service.get("environment", {})
+    require(isinstance(override, dict) and all(isinstance(key, str) and key and
+            (value is None or isinstance(value, str)) for key, value in override.items()), "sibling_loader_environment_unsupported")
+    values.update(override)
     values = {key: value for key, value in values.items() if value is not None}
     for key, value in values.items():
+        require(key.upper() not in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} or not value,
+                "sibling_proxy_environment_unsupported")
         require(not key.startswith(("LD_", "DYLD_")) and key not in
                 {"GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH", "BASH_ENV", "ENV"}, "sibling_loader_environment_unsupported")
         if key.startswith("PYTHON"):
@@ -1423,6 +1534,7 @@ def reviewed_application_environment(service, image=None):
     if image is not None:
         require(all(values.get(key) == value for key, value in expected.items()) and "PATH" in values,
                 "sibling_loader_environment_unsupported")
+    return values
 
 
 STOCK_MOUNTS = {
@@ -1461,8 +1573,18 @@ def stock_mounts(graph, *, registry_path=None):
         require({target for target, key in STOCK_MOUNTS[name].items() if key} <= seen, "sibling_mount_unsupported")
 
 
+def isolated_slack_identities(final, environments, final_resources, identity_key):
+    for key in SLACK_IDENTITY_KEYS:
+        final_values = {service.get("environment", {}).get(key) for service in final["services"].values()} - {None, ""}
+        sibling_values = {values.get(key) for values in environments.values()} - {None, ""}
+        require(not final_values.intersection(sibling_values), "sibling_slack_identity_not_isolated")
+        if identity_key:
+            require(not set(final_resources["slack_identities"][key]).intersection(
+                slack_identity_digest(identity_key, key, value) for value in sibling_values), "sibling_slack_identity_not_isolated")
+
+
 def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host="", registry_path=None,
-                     n8n_host_port="5678"):
+                     n8n_host_port="5678", identity_key=None):
     """Check resolved Compose resources, not just a different project name."""
     project = sibling["name"]
     allowed_dependencies = {"orchestrator": {"langgraph-primary-db"}, "slackbot": {"orchestrator", "n8n"},
@@ -1558,10 +1680,8 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
         engine_sockets.append(docker_host[len("unix://"):])
     # Compose overrides and env_file expansion can replace profile identities.
     # Compare the values the resolved services will actually receive.
-    for key in ("SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID"):
-        final_values = {service.get("environment", {}).get(key) for service in final["services"].values()} - {None, ""}
-        sibling_values = {service.get("environment", {}).get(key) for service in sibling["services"].values()} - {None, ""}
-        require(not final_values.intersection(sibling_values), "sibling_slack_identity_not_isolated")
+    isolated_slack_identities(final, {name: service.get("environment", {}) for name, service in sibling["services"].items()},
+                             final_resources, identity_key)
     for name in ("orchestrator", "slackbot"):
         effective = sibling["services"][name].get("environment", {})
         require(all(effective.get(key) == value for key, value in

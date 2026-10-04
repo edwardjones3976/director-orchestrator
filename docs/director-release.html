@@ -366,8 +366,15 @@ orchestrator HTTP check and stock Postgres readiness checks, or disabled/absent
 checks where permitted. PostgreSQL-backed n8n requires a nonoptional
 <code>n8n-db</code> dependency with <code>condition: service_healthy</code> and the
 enabled stock <code>pg_isready -U n8n -d n8n</code> check; a missing dependency,
-start-only condition or disabled readiness check is refused. Dependency restart
-propagation is unsupported. Image-inherited health commands are checked too, including when Compose
+start-only condition or disabled readiness check is refused. The orchestrator also
+requires a nonoptional <code>langgraph-primary-db</code> dependency with
+<code>condition: service_healthy</code>; missing, start-only and
+<code>service_completed_successfully</code> conditions are unsupported for this
+long-running database. Dependency restart propagation is unsupported. The stock
+local database route requires the effective
+<code>LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=true</code> setting before
+planning; the runtime transport validator and subsequent read-only identity
+probe still apply. Image-inherited health commands are checked too, including when Compose
 overrides only their timing. Arbitrary healthcheck commands are refused.
 Only the reviewed service fields and network/deployment shapes are supported;
 additional execution settings such as capabilities, security options, devices
@@ -387,6 +394,9 @@ retain <code>PYTHONPATH=/app/src</code>, <code>PYTHONDONTWRITEBYTECODE=1</code>,
 <code>PYTHONUNBUFFERED=1</code>, stock executable search directories and
 <code>/app</code> as the effective working directory. Alternate Python startup
 controls and native-loader overrides are refused, including inherited image values.
+Nonempty <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code> and <code>ALL_PROXY</code>
+are refused regardless of case, so an HTTP client cannot redirect the internal
+gateway request and bearer header through an environment-selected proxy.
 The orchestrator image's defaults must independently satisfy these same checks:
 the control script's direct digest probe does not apply Compose overrides, so
 Compose cannot mask an unsafe image environment or working directory.</p>
@@ -459,7 +469,14 @@ The effective n8n settings must also retain the stock values:
 <code>N8N_PERSONALIZATION_ENABLED=false</code> and
 <code>N8N_BLOCK_ENV_ACCESS_IN_NODE=true</code>. Missing or altered values are refused.</p>
 <p>Complete rehearsal also requires nonempty isolated effective Slack bot token,
-app token and channel settings. After offline activation and rollback start the
+app token and channel settings. The comparison includes both resolved final
+configuration and every actual final-project container, running or stopped.
+The sibling comparison uses each application's combined image and Compose values.
+Only per-plan keyed digests of these three fields enter the resource binding;
+raw inspected environment values are not retained in plans or receipts. Missing
+or malformed environment representations and duplicate entries fail closed.
+The existing final-resource check detects identity changes before later actions.
+After offline activation and rollback start the
 gateway, bounded inspection must prove exactly one intended sibling gateway
 running on the pinned image, without a paused or restarting state. This proves
 process liveness only; it does not prove Slack authentication or message delivery.
@@ -480,7 +497,23 @@ Each executable <code>argv</code> invokes a fixed Python launcher which actually
 the control child's environment with the emitted allowlist. The result declares
 <code>environment_mode: replace</code>; it is not an overlay or a promise that JSON null
 unsets a variable. This binds <code>cwd</code>, the local <code>DOCKER_HOST</code>, <code>COMPOSE_FILE</code>, <code>DIRECTOR_ENV_FILE</code>,
-<code>COMPOSE_PATH_SEPARATOR</code>, <code>DIRECTOR_HOST_PORT</code> and unpaid switches. Ambient
+<code>COMPOSE_PATH_SEPARATOR</code>, <code>DIRECTOR_HOST_PORT</code> and unpaid switches.
+Planning, direct Compose actions and the control-script path share a frozen
+sanitized host environment. Its executable search path includes the pinned
+PowerShell directory, matching PowerShell's startup normalization. Only the exact
+selectors copied by the control script are loaded from the verified runtime file
+into the launcher environment, in memory. The complete runtime map and its secrets
+are never serialized into the plan. All other interpolation values come from the
+bound <code>--env-file</code>, using Compose's quoting, expansion and comment rules
+on both paths. Raw control selectors support only unquoted literal values;
+quoting, variable expansion and inline comments in those selectors are refused.
+<code>PSModulePath</code> assignments and interpolation references, including
+escaped and default forms, are unsupported because PowerShell creates that host
+setting at startup. The separate host configuration preflight refuses runtime
+assignments to host paths, loader controls and Git/Docker/Compose redirection
+settings before launching its child. Intended application configuration and
+credentials, including GitHub application tokens, remain supported. Errors use
+fixed reason codes and do not include values. Ambient
 <code>DOCKER_CONTEXT</code>, TLS/certificate/config selectors and provider keys cannot reach
 the control child. Before each action the launcher rechecks exact bytes for both
 descriptors, the owner descriptor and installed launcher, both sets of immutable

@@ -771,18 +771,21 @@ class ReleasePreparationTests(unittest.TestCase):
             LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED="true", LANGGRAPH_PARALLEL_KILL_SWITCH="true",
             LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET="fixture-bridge-secret-" + "h" * 32)
         # A canonical Linux venv executable resolves outside its venv. Keep that
-        # exact non-symlink executable and explicitly pin the existing dependency
-        # location in this fixture; do not swap interpreters or bypass unlinked().
-        tool.runtime["PYTHONPATH"] = os.pathsep.join((str(ROOT / "src"), sysconfig.get_paths()["purelib"]))
+        # exact non-symlink executable and provide the existing dependency paths
+        # through this test's trusted host adapter, never its runtime profile.
+        # Do not swap interpreters or bypass unlinked().
+        fixture_dependencies = {"PYTHONPATH": os.pathsep.join((str(ROOT / "src"), sysconfig.get_paths()["purelib"]))}
         # Relocated Linux tool-cache Python also needs its matching libpython;
         # child_environment deliberately excludes the parent's loader override.
-        # Bind the existing library through the same protected fixture profile.
+        # The same explicit host adapter supplies that existing library.
         library = Path(sys.base_prefix) / "lib" / str(sysconfig.get_config_var("LDLIBRARY"))
         if sys.platform == "linux" and library.is_file():
-            tool.runtime["LD_LIBRARY_PATH"] = str(library.parent.resolve(strict=True))
+            fixture_dependencies["LD_LIBRARY_PATH"] = str(library.parent.resolve(strict=True))
         self.spec["runtime_env"] = self.pin_env("runtime.env", tool.runtime)
         self.save()
         tool = release.Release(self.descriptor)
+        tool.host_environment.update(fixture_dependencies)
+        self.assertTrue(set(fixture_dependencies).isdisjoint(tool.runtime))
         real_script = self.source / "scripts/live-dispatch-preflight.py"
         real_script.write_bytes((ROOT / "scripts/live-dispatch-preflight.py").read_bytes())
         config = self.source / "src/director_orchestrator/config.py"
@@ -794,8 +797,8 @@ class ReleasePreparationTests(unittest.TestCase):
                 release.unlinked(Path(sys.executable))
         before_runtime = dict(tool.runtime)
         before_profile = Path(self.spec["runtime_env"]["path"]).read_bytes()
-        env = release.child_environment()
-        self.assertNotIn("LD_LIBRARY_PATH", env)
+        self.assertNotIn("LD_LIBRARY_PATH", release.child_environment())
+        env = dict(tool.host_environment)
         env.update(tool.runtime)
         expected_argv = [self.spec["executables"]["python"], "-B", str(real_script)]
         unpaid = subprocess.run(expected_argv, env=env, cwd=self.source,
@@ -807,8 +810,8 @@ class ReleasePreparationTests(unittest.TestCase):
                 return self.platform(argv, **kwargs)
             self.assertEqual(argv, expected_argv)
             self.assertEqual(kwargs["cwd"], self.source)
-            self.assertEqual(kwargs["env"]["PYTHONPATH"], tool.runtime["PYTHONPATH"])
-            self.assertEqual(kwargs["env"].get("LD_LIBRARY_PATH"), tool.runtime.get("LD_LIBRARY_PATH"))
+            self.assertEqual(kwargs["env"]["PYTHONPATH"], fixture_dependencies["PYTHONPATH"])
+            self.assertEqual(kwargs["env"].get("LD_LIBRARY_PATH"), fixture_dependencies.get("LD_LIBRARY_PATH"))
             result = subprocess.run(argv, env=kwargs["env"], cwd=kwargs["cwd"],
                                     capture_output=True, timeout=20)
             if result.returncode:
@@ -989,7 +992,20 @@ class ReleasePreparationTests(unittest.TestCase):
             for key in ambient.keys() - {"DOCKER_HOST", "COMPOSE_FILE"}:
                 self.assertNotIn(key, observed)
             self.assertEqual(observed["COMPOSE_FILE"], payload["environment"]["COMPOSE_FILE"])
-            self.assertTrue(all(item[1]["env"] == payload["environment"] for item in observed_calls))
+            # Derive the expected additions/removals from the independent
+            # unchanged PowerShell consumer and the pinned synthetic file.
+            control = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
+            block = control[control.index("$env:DIRECTOR_ENV_FILE = $environmentPath"):control.index("Invoke-Compose config --quiet")]
+            selectors = re.findall(r'"([A-Z][A-Z0-9_]*)"', block)
+            runtime = dict(line.split("=", 1) for line in Path(payload["runtime_pin"]["path"]).read_text().splitlines()
+                           if line and not line.startswith("#"))
+            expected = dict(payload["environment"])
+            for key in selectors:
+                expected.pop(key, None)
+                if runtime.get(key):
+                    expected[key] = runtime[key]
+            self.assertTrue(all(item[1]["env"] == expected for item in observed_calls))
+            self.assertEqual({key: observed[key] for key in expected}, expected)
             for change in ("daemon", "image", "rollback"):
                 with self.subTest(change=change):
                     def drift(argv, **kwargs):
@@ -1028,6 +1044,7 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertTrue(marker.exists(), "fixture must demonstrate executable fsmonitor before testing its suppression")
         marker.unlink()
         tool = release.Release.__new__(release.Release)
+        tool.host_environment = release.child_environment()
         tool.executables = {"git": str(Path(shutil.which("git")).resolve())}
         tool.source, tool.deadline = self.source, time.monotonic() + 30
         tool.spec = {"candidate": {"commit": git("rev-parse", "HEAD").decode().strip(),
@@ -1592,7 +1609,7 @@ class ReleasePreparationTests(unittest.TestCase):
                         return b"final-container"
                     if argv[:2] == ["docker", "inspect"]:
                         return release.encoded([{"Id": "final-container", "State": {"Running": running},
-                            "Config": {"Labels": {"com.docker.compose.project": "fixture-director"}},
+                            "Config": {"Env": [], "Labels": {"com.docker.compose.project": "fixture-director"}},
                             "Mounts": [{"Type": "bind", "Source": str(actual), "Destination": "/old-data"}],
                             "NetworkSettings": {"Networks": {}}, "HostConfig": {"PortBindings": {}}}])
                     return self.platform(argv, **kwargs)
@@ -1648,7 +1665,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 return b"new-final-container"
             if argv[:2] == ["docker", "inspect"]:
                 return release.encoded([{"Id": "new-final-container", "Mounts": [],
-                    "Config": {"Labels": {"com.docker.compose.project": "fixture-director"}},
+                    "Config": {"Env": [], "Labels": {"com.docker.compose.project": "fixture-director"}},
                     "NetworkSettings": {"Networks": {}}, "HostConfig": {"PortBindings": {}}}])
             return None
         for step in plan["steps"][:7]:
@@ -1659,6 +1676,11 @@ class ReleasePreparationTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required for actual profile transitions")
     def test_launcher_accepts_only_actual_control_runtime_transitions(self):
         sibling = self.sibling()
+        runtime = release.dotenv(Path(sibling["runtime_env"]["path"]).read_bytes())
+        runtime["FIXTURE_PRIVATE_VALUE"] = "synthetic-secret-only-in-bound-file"
+        sibling["runtime_env"] = self.pin_env("sibling-runtime.env", runtime)
+        self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+        self.save()
         plan = release.Release(self.descriptor).rehearsal()
         path = Path(sibling["runtime_env"]["path"])
         source = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
@@ -1673,7 +1695,12 @@ class ReleasePreparationTests(unittest.TestCase):
             tail = source[source.index(marker):]
             switch_blocks[action] = re.findall(r"Write-Switches @\{.*?\}", tail, re.S)[:count]
         for step in plan["steps"]:
+            self.assertNotIn(b"synthetic-secret-only-in-bound-file", base64.b64decode(step["argv"][-1]))
             def effect(argv, **kwargs):
+                current = release.dotenv(path.read_bytes())
+                self.assertEqual(kwargs["env"], release.compose_environment(plan["environment"], current))
+                self.assertNotIn("FIXTURE_PRIVATE_VALUE", kwargs["env"])
+                self.assertEqual(kwargs["env"]["DIRECTOR_RUNTIME_IMAGE"], self.image)
                 if step["action"] in switch_blocks:
                     harness = self.root / "profile-writer-only.ps1"
                     harness.write_text(writer + '\n$script:environmentPath=$args[0]; $script:values=@{}\n' +
@@ -1912,6 +1939,135 @@ class ReleasePreparationTests(unittest.TestCase):
             with self.subTest(health=health), self.assertRaises(release.ReleaseError):
                 release.Release(self.descriptor).rehearsal()
 
+    def test_primary_database_requires_healthy_dependency_and_explicit_local_transport(self):
+        spec = self.sibling()
+        service = self.sibling_compose["services"]["orchestrator"]
+        for dependency in (None, {"condition": "service_completed_successfully"}, {"condition": "service_started"},
+                           {"condition": "service_healthy", "required": False},
+                           {"condition": "service_healthy", "restart": True}):
+            with self.subTest(dependency=dependency):
+                service["depends_on"] = {} if dependency is None else {"langgraph-primary-db": dependency}
+                self.repin_graph(spec, self.sibling_compose)
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_primary_database_dependency_required"):
+                    release.Release(self.descriptor).rehearsal()
+        service["depends_on"] = {"langgraph-primary-db": {"condition": "service_healthy", "required": True, "restart": False}}
+        for value in (None, "false"):
+            with self.subTest(allow_insecure=value):
+                if value is None:
+                    service["environment"].pop("LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES")
+                else:
+                    service["environment"]["LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES"] = value
+                self.repin_graph(spec, self.sibling_compose)
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_primary_database_transport_unsupported"):
+                    release.Release(self.descriptor).rehearsal()
+        service["environment"]["LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES"] = "true"
+        self.repin_graph(spec, self.sibling_compose)
+        self.assertEqual(release.Release(self.descriptor).rehearsal()["status"], "PLANNED")
+
+    def test_rehearsal_refuses_effective_proxy_environment_including_image_probe(self):
+        spec = self.sibling()
+        for origin, key in (("compose", "HTTP_PROXY"), ("compose", "http_proxy"),
+                            ("image", "ALL_PROXY"), ("masked-image", "HTTPS_PROXY")):
+            with self.subTest(origin=origin, key=key):
+                service = self.sibling_compose["services"]["slackbot"]
+                if origin == "compose":
+                    service["environment"][key] = "http://synthetic.invalid:18777"
+                elif origin == "masked-image":
+                    for name in ("orchestrator", "slackbot"):
+                        self.sibling_compose["services"][name]["environment"][key] = ""
+                self.repin_graph(spec, self.sibling_compose)
+                def observe(argv, **kwargs):
+                    raw = self.platform(argv, **kwargs)
+                    if origin != "compose" and argv[:3] == ["docker", "image", "inspect"]:
+                        image = json.loads(raw)
+                        image[0]["Config"]["Env"].append(key + "=http://synthetic.invalid:18777")
+                        return release.encoded(image)
+                    return raw
+                with patch.object(release, "command", side_effect=observe), self.assertRaisesRegex(
+                        release.ReleaseError, "sibling_proxy_environment_unsupported"):
+                    release.Release(self.descriptor).rehearsal()
+                for name in ("orchestrator", "slackbot"):
+                    self.sibling_compose["services"][name]["environment"].pop(key, None)
+        self.sibling_compose["services"]["slackbot"]["environment"].update(HTTP_PROXY="", https_proxy="", ALL_PROXY="")
+        self.repin_graph(spec, self.sibling_compose)
+        self.assertEqual(release.Release(self.descriptor).rehearsal()["status"], "PLANNED")
+
+    def test_live_final_slack_identity_is_compared_with_effective_sibling_and_keyed(self):
+        spec = self.sibling()
+        row = {"Id": "final-container", "State": {"Running": True}, "Mounts": [],
+            "Config": {"Labels": {"com.docker.compose.project": "fixture-director"}, "Env": []},
+            "NetworkSettings": {"Networks": {}}, "HostConfig": {"PortBindings": {}}}
+        image_field = None
+        def observe(argv, **kwargs):
+            if argv[:2] == ["docker", "ps"] and "label=com.docker.compose.project=fixture-director" in argv:
+                self.assertIn("-a", argv)
+                self.assertIn("--no-trunc", argv)
+                return b"final-container"
+            if argv[:2] == ["docker", "inspect"] and argv[-1] == "final-container":
+                return release.encoded([row])
+            raw = self.platform(argv, **kwargs)
+            if image_field and argv[:3] == ["docker", "image", "inspect"]:
+                image = json.loads(raw)
+                image[0]["Config"]["Env"].append(image_field + "=synthetic-live-identity")
+                return release.encoded(image)
+            return raw
+        with patch.object(release, "command", side_effect=observe):
+            for field in release.SLACK_IDENTITY_KEYS:
+                for running in (True, False):
+                    with self.subTest(field=field, running=running):
+                        row["State"]["Running"] = running
+                        row["Config"]["Env"] = [field + "=" + self.sibling_compose["services"]["slackbot"]["environment"][field]]
+                        with self.assertRaisesRegex(release.ReleaseError, "sibling_slack_identity_not_isolated"):
+                            release.Release(self.descriptor).rehearsal()
+                # The orchestrator does not override these fields in the stock
+                # fixture. Its effective image fallback must also be isolated.
+                image_field = field
+                row["Config"]["Env"] = [field + "=synthetic-live-identity"]
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_slack_identity_not_isolated"):
+                    release.Release(self.descriptor).rehearsal()
+                self.sibling_compose["services"]["orchestrator"]["environment"][field] = "synthetic-isolated-override"
+                self.repin_graph(spec, self.sibling_compose)
+                plan = release.Release(self.descriptor).rehearsal()
+                for step in plan["steps"]:
+                    self.assertNotIn(b"synthetic-live-identity", base64.b64decode(step["argv"][-1]))
+                    self.assertNotIn(b"synthetic-isolated-override", base64.b64decode(step["argv"][-1]))
+                self.sibling_compose["services"]["orchestrator"]["environment"].pop(field)
+                self.repin_graph(spec, self.sibling_compose)
+                image_field = None
+            inventory = release.resource_inventory(observe, "fixture-director", "ab" * 32)
+            other = release.resource_inventory(observe, "fixture-director", "cd" * 32)
+            self.assertNotIn("synthetic-live-identity", json.dumps(inventory))
+            self.assertNotEqual(inventory["slack_identities"], other["slack_identities"])
+            for malformed in (None, {}, ["SLACK_APP_TOKEN"], ["SLACK_APP_TOKEN=a", "SLACK_APP_TOKEN=b"]):
+                row["Config"]["Env"] = malformed
+                with self.subTest(malformed=malformed), self.assertRaisesRegex(
+                        release.ReleaseError, "final_resource_inventory_unavailable"):
+                    release.Release(self.descriptor).rehearsal()
+            row["Config"].pop("Env")
+            with self.assertRaisesRegex(release.ReleaseError, "final_resource_inventory_unavailable"):
+                release.Release(self.descriptor).rehearsal()
+
+    def test_launcher_rechecks_only_keyed_final_slack_identity_before_effects(self):
+        self.sibling()
+        row = {"Id": "final-container", "Mounts": [],
+            "Config": {"Labels": {"com.docker.compose.project": "fixture-director"}, "Env": ["SLACK_APP_TOKEN=synthetic-live-final"]},
+            "NetworkSettings": {"Networks": {}}, "HostConfig": {"PortBindings": {}}}
+        def observe(argv, **kwargs):
+            if argv[:2] == ["docker", "ps"] and "label=com.docker.compose.project=fixture-director" in argv:
+                return b"final-container"
+            if argv[:2] == ["docker", "inspect"] and argv[-1] == "final-container":
+                return release.encoded([row])
+            return self.platform(argv, **kwargs)
+        with patch.object(release, "command", side_effect=observe):
+            plan = release.Release(self.descriptor).rehearsal()
+        self.launch_fixture(plan["steps"][0], observe=observe)
+        row["Config"]["Env"] = ["SLACK_APP_TOKEN=synthetic-changed-final"]
+        for action in ("StartDatabase", "Preflight"):
+            step = next(step for step in plan["steps"] if step["action"] == action)
+            with self.subTest(action=action), self.assertRaisesRegex(SystemExit, "final project resources changed"):
+                self.launch_fixture(step, observe=observe)
+            self.assertEqual(self.launched, [])
+
     def sibling_with_postgres_n8n(self):
         sibling = self.sibling()
         graph = self.sibling_compose
@@ -2118,6 +2274,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 else:
                     self.assertEqual(git("status", "--porcelain=v2"), b"", "real Git must demonstrate the hidden change")
                 tool = release.Release.__new__(release.Release)
+                tool.host_environment = release.child_environment()
                 tool.executables = {"git": str(Path(shutil.which("git")).resolve())}
                 tool.source, tool.deadline = checkout, time.monotonic() + 30
                 tool.spec = {"candidate": {kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip() for kind in ("commit", "tree")}}
@@ -2151,6 +2308,7 @@ class ReleasePreparationTests(unittest.TestCase):
             child = """import pathlib,runpy,sys,time
 m=runpy.run_path(sys.argv[1],run_name='verified_runner')
 t=m['Release'].__new__(m['Release']); t.source=pathlib.Path(sys.argv[2]); t.deadline=time.monotonic()+30
+t.host_environment=m['child_environment']()
 t.executables={'git':sys.argv[5]}
 t.spec={'candidate':{'commit':sys.argv[3],'tree':sys.argv[4]}}
 t.source_check()
@@ -2250,6 +2408,7 @@ assert fixture_cache.SAFE and callable(jsonschema.validate)
             child = """import pathlib,runpy,sys,time
 m=runpy.run_path(sys.argv[1],run_name='verified_runner')
 t=m['Release'].__new__(m['Release']); t.source=pathlib.Path.cwd(); t.deadline=time.monotonic()+5
+t.host_environment=m['child_environment']()
 t.executables={'git':sys.argv[2]}
 try: t.run(['git','/c','echo harmless>candidate-executed'])
 except m['ReleaseError']: pass
@@ -2431,6 +2590,74 @@ except m['ReleaseError']: pass
                     tool = release.Release(self.descriptor)
                     tool.compose_document(tool.runtime)
                 self.assertFalse(any(argv[:2] == ["docker", "compose"] for argv, _ in self.calls))
+
+    def test_compose_refuses_startup_interpolation_and_ambiguous_control_selectors(self):
+        original = copy.deepcopy(self.spec)
+        for value in ("$PSModulePath", "${PSModulePath:-safe}", "$${PSModulePath}", "${psmodulepath:+other}"):
+            with self.subTest(reference=value):
+                self.spec["compose_files"] = [self.pin("compose.yml", release.encoded({"services": {
+                    "orchestrator": {"image": self.image, "environment": {"FIXTURE_REFERENCE": value}}}}))]
+                self.save()
+                before = len(self.calls)
+                with self.assertRaisesRegex(release.ReleaseError, "compose_startup_interpolation_unsupported"):
+                    release.Release(self.descriptor)
+                self.assertFalse(any(argv[:2] == ["docker", "compose"] for argv, _ in self.calls[before:]))
+        self.spec = original
+        self.spec["compose_files"] = [self.pin("compose.yml", b"services: {}\n")]
+        for key, value, reason in (("FIXTURE_REFERENCE", "${PSModulePath}", "compose_startup_interpolation_unsupported"),
+                                  ("PSMODULEPATH", "synthetic", "compose_startup_interpolation_unsupported"),
+                                  ("DIRECTOR_ASGI_APP", "'director_orchestrator.main:app'", "compose_control_selector_unsupported"),
+                                  ("DIRECTOR_RUNTIME_IMAGE", "${FIXTURE_IMAGE}", "compose_control_selector_unsupported"),
+                                  ("ALLOW_PAID_RUNS", "false # inline comment", "compose_control_selector_unsupported")):
+            with self.subTest(key=key, value=value):
+                self.spec["runtime_env"] = self.pin_env("runtime.env", dict(self.runtime, **{key: value}))
+                self.save()
+                with self.assertRaisesRegex(release.ReleaseError, reason):
+                    release.Release(self.descriptor)
+
+    def test_host_preflight_refuses_runtime_loader_tool_and_host_overrides_before_child(self):
+        for key in ("PYTHONPATH", "LD_PRELOAD", "DOCKER_HOST", "GIT_CONFIG_GLOBAL", "PATH", "TEMP", "HOME"):
+            with self.subTest(key=key):
+                self.spec["runtime_env"] = self.pin_env("runtime.env", dict(self.runtime, **{key: "synthetic-override"}))
+                self.save()
+                tool = release.Release(self.descriptor)
+                self.calls.clear()
+                with self.assertRaisesRegex(release.ReleaseError, "runtime_host_environment_unsupported"):
+                    tool.live_config_check()
+                self.assertFalse(any(Path(argv[-1]).name == "live-dispatch-preflight.py" for argv, _ in self.calls))
+        token = "synthetic-intended-app-token"
+        self.spec["runtime_env"] = self.pin_env("runtime.env", dict(self.runtime, GITHUB_TOKEN=token,
+            ORACLE_AUTOMERGE_GITHUB_TOKEN=token))
+        self.save()
+        release.Release(self.descriptor).live_config_check()
+        self.assertEqual(sum(Path(argv[-1]).name == "live-dispatch-preflight.py" for argv, _ in self.calls), 1)
+        environment = next(kwargs["env"] for argv, kwargs in self.calls if Path(argv[-1]).name == "live-dispatch-preflight.py")
+        self.assertTrue(environment["GITHUB_TOKEN"] == environment["ORACLE_AUTOMERGE_GITHUB_TOKEN"] == token)
+
+    def test_compose_environment_uses_control_selectors_and_frozen_host_values(self):
+        self.runtime.update(TEMP="profile-temp", HOME="profile-home", PATH="profile-path",
+                            FIXTURE_QUOTED="'synthetic-secret'", FIXTURE_EXPANDED="${FIXTURE_QUOTED}")
+        self.spec["runtime_env"] = self.pin_env("runtime.env", self.runtime)
+        self.save()
+        with patch.dict(os.environ, {"TEMP": "frozen-temp", "HOME": "frozen-home", "PATH": "frozen-path"}):
+            tool = release.Release(self.descriptor)
+        with patch.dict(os.environ, {"TEMP": "later-temp", "HOME": "later-home", "PATH": "later-path"}):
+            tool.compose_document(tool.runtime)
+        environment = next(kwargs["env"] for argv, kwargs in reversed(self.calls) if argv[:2] == ["docker", "compose"])
+        self.assertEqual(environment["TEMP"], "frozen-temp")
+        self.assertEqual(environment["HOME"], "frozen-home")
+        self.assertEqual(environment["PATH"], str(Path(self.spec["executables"]["powershell"]).parent) + os.pathsep + "frozen-path")
+        self.assertNotIn("FIXTURE_QUOTED", environment)
+        self.assertNotIn("FIXTURE_EXPANDED", environment)
+        self.assertEqual(environment["DIRECTOR_RUNTIME_IMAGE"], self.image)
+        self.assertEqual(environment["DIRECTOR_ENV_FILE"], self.spec["runtime_env"]["path"])
+        control = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
+        block = control[control.index("$env:DIRECTOR_ENV_FILE = $environmentPath"):control.index("Invoke-Compose config --quiet")]
+        self.assertEqual(tuple(re.findall(r'"([A-Z][A-Z0-9_]*)"', block)), release.CONTROL_SELECTORS)
+        for changes in release.RUNTIME_CHANGES.values():
+            self.assertLessEqual(set(changes), set(release.CONTROL_SELECTORS))
+            self.assertEqual({key: release.compose_environment(tool.compose_base_environment(),
+                dict(tool.runtime, **changes))[key] for key in changes}, changes)
 
     def test_n8n_postgres_requires_healthy_required_database_dependency(self):
         self.sibling()
@@ -2694,7 +2921,9 @@ except m['ReleaseError']: pass
         payload.update(cwd=str(checkout), first_step=False, action="Fixture", state_volumes={}, images={}, ports=[],
             candidate={kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip() for kind in ("commit", "tree")},
             control_argv=[sys.executable, "-I", "-B", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('ran')", str(marker)],
-            final_resources_sha256=release.sha(release.encoded({key: [] for key in ("containers", "binds", "volumes", "networks", "ports")})))
+            final_resources_sha256=release.sha(release.encoded(dict(
+                {key: [] for key in ("containers", "binds", "volumes", "networks", "ports")},
+                slack_identities={key: [] for key in release.SLACK_IDENTITY_KEYS}))))
         payload["executables"]["git"] = git_path
         payload.pop("local_database", None)
         # Docker observations alone are replaced. The isolated process uses real
