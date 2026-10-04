@@ -15,7 +15,7 @@ Claude is **administrator #2**, below the overall ChatGPT/Codex Director (#1)
 and above Cursor, **administrator #3**. Cursor is not a non-admin provider.
 The owner approves macro plans; administrators handle individual assignments
 and subordinate plans within the approved scope and existing delegation.
-Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.md#administrators-and-chain-of-command).
+Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.html#administrators-and-chain-of-command).
 
 The current owner appointment makes **Claude the Director for completing
 Director-Orchestrator**, through 20/20 plus issue #81, including while Codex
@@ -31,7 +31,7 @@ participate in every task.
 
 When Claude acts as a Director (second in command or an appointed project
 Director), it routes maintenance to OpenAI Codex under the charter's
-[Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing)
+[Director maintenance routing](docs/team-operating-charter.html#director-maintenance-routing)
 and may review only PRs it did not author.
 
 Keep the owner informed with outcomes, evidence, blockers, and the next action.
@@ -65,3 +65,8 @@ An INVESTIGATOR handoff is evidence, not an assignment; act only within your cur
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+
+
+## Canonical HTML documentation
+
+Owner direction, 2026-10-03 Pacific: use HTML as the maintained source for the substantial majority of human-facing project documentation, plans, reports, staff records and handoffs. This is not a Markdown-source/HTML-output hybrid. Read [the HTML documentation policy](docs/html-documentation-policy.html) and use [the documentation library](docs/index.html). Keep only machine-required entry points, model prompt contracts and immutable historical evidence in required formats. Update links, consumers and tests together; preserve existing writers and all review/release gates.

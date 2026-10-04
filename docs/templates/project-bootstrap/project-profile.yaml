@@ -13,13 +13,13 @@
 # Canonical project profile template (director-project-profile/v1).
 # Do not place secrets, credentials, tokens, or raw private source here.
 # Workflow skills are procedure overlays, not permission grants.
-# Provider roles and debate rules: docs/team-operating-charter.md
+# Provider roles and debate rules: docs/team-operating-charter.html
 schema_version: "director-project-profile/v1"
 
 project:
   id: "<short-stable-project-id>"
   name: "<working project name>"
-  rollout_packet: "rollout-packet.md"
+  rollout_packet: "rollout-packet.html"
   proposition: "<what this project may accomplish, learn, decide, or change>"
   state: "exploring" # exploring | framing | building | validating | operating | paused | closed
   owner: "<owner or authorized source>"
@@ -126,7 +126,7 @@ team:
   director:
     provider: "<openai | claude | canonical provider key from provider-roles-contract.yaml>"
     appointment: "<owner appointment reference (date/record), or none>"
-    # Select bounded roles from docs/project-bootstrap-protocol.md#provider-fit-menu.
+    # Select bounded roles from docs/project-bootstrap-protocol.html#provider-fit-menu.
     # This template creates no standing provider assignment; record owner appointment.
     # Acting leadership is separate from the actual runtime provider.
     # Keep Moderator, Participant and Director distinct per the roles contract.

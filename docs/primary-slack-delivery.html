@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Primary Slack lifecycle delivery · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]] -->
+<h1 id="primary-slack-lifecycle-delivery">Primary Slack lifecycle delivery</h1>
+<p>The receipt API returns nullable <code>owner_decision</code> (<code>approve</code> or <code>reject</code>)
+alongside its command identity and timestamp. Startup adds the column
+idempotently. A matching durable command sets it once; <code>deny</code> maps to <code>reject</code>
+and legacy rows remain unknown. See <a href="collect-offline-slack-trials.html">offline trial tooling</a>
+for approved-pause arithmetic and its evidence limits.</p>
+<p>Primary tasks now send an approval request and a terminal result to the original
+owner Slack thread. A small read-only task that a live standing grant
+pre-authorizes (phase 4S in <code>human-out-of-the-loop-operation.md</code>) skips the
+execution approval request. The FastAPI lifespan starts the delivery worker when primary
+mode is constructed. It uses the existing bot token, owner, channel and primary
+PostgreSQL configuration; it does not start providers or enable paid execution.</p>
+<p>The gateway signs intake in both operating modes. <code>/v1/intake</code> verifies any
+supplied attestation, including in offline mode. Partial or invalid attestations
+are rejected. Paid intake still requires a valid attestation; unsigned offline
+API canaries remain <code>bearer_dry_run</code> and never produce Slack lifecycle posts.</p>
+<p>The approval shows the recorded plan, assignments, repository scope and
+acceptance criteria. An external-action approval also shows its persisted exact
+grant, including repository, PR and base/head commits. Historical requests without
+that grant cannot offer a Slack approval button. Oversized approval displays
+likewise withhold approval instead of hiding scope behind a truncated preview.
+The owner can reject them or inspect the authenticated full task record before
+using the existing explicit <code>/director approve DIR-LG-...</code> command.</p>
+<p>The new buttons bind the displayed task, projection digest, approval kind and
+request digest. The gateway compares all four with the current task before
+signing the existing primary resume command. A changed projection requires its
+new request; a stale button cannot approve it. Existing deterministic execution,
+budget, owner, callback, exact-candidate and external-effect gates still run.</p>
+<p>The control-plane migration adds <code>director_primary_slack_delivery</code> and its guard
+trigger. Use the existing reviewed migration/startup mechanism; do not create a
+second database or manually edit delivery rows. These records belong to the same
+primary schema and backup as the task projections.</p>
+<p>The worker first checks the bot identity using Slack's native
+<a href="https://docs.slack.dev/reference/methods/auth.test/"><code>auth.test</code></a>, which needs no
+additional scope. This identity is recorded with the post and matched on
+readback; another Slack sender cannot provide its delivery evidence. A transport
+failure permits one identity-check recovery attempt; an explicit refusal does not.</p>
+<p>Each notice has an immutable task/milestone identity, projection digest, payload
+and <code>client_msg_id</code>. PostgreSQL admits a post once under the current intake-owner
+lease. State can advance but cannot be reset to pending, and message/evidence
+identity cannot be overwritten. Cancellation supersedes unsent approvals. A
+terminal graph outcome no longer exposes a stale pending approval.</p>
+<p>Delivery states distinguish an API acknowledgement from remote verification:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PENDING</code></td>
+<td>Prepared, no post attempt claimed</td>
+</tr>
+<tr>
+<td><code>POSTING</code></td>
+<td>One attempt claimed; a crash has an unknown outcome</td>
+</tr>
+<tr>
+<td><code>ACKNOWLEDGED</code></td>
+<td>Slack returned its channel and timestamp; readback is unverified</td>
+</tr>
+<tr>
+<td><code>DELIVERED</code></td>
+<td>Remote message matches its identity, text and visible blocks</td>
+</tr>
+<tr>
+<td><code>AMBIGUOUS</code></td>
+<td>Post acknowledgement is missing/invalid; never automatically repost</td>
+</tr>
+<tr>
+<td><code>REFUSED</code></td>
+<td>Slack explicitly refused the request; no automatic retry</td>
+</tr>
+<tr>
+<td><code>SUPPRESSED</code></td>
+<td>Intake lacked owner Slack authority or its configured channel changed</td>
+</tr>
+<tr>
+<td><code>SUPERSEDED</code></td>
+<td>An unsent decision is no longer the current projection</td>
+</tr>
+</tbody>
+</table>
+<p>Slack rate limiting (<a href="https://docs.slack.dev/apis/web-api/rate-limits/#responding-to-rate-limiting-conditions">HTTP 429 with <code>Retry-After</code> seconds</a>)
+is handled narrowly. HTTP 429 is classified from the status line and headers
+before the body is drained at all, so a slow, truncated, oversize,
+envelope-less, non-JSON or malformed 429 body can neither stall the worker
+past <code>Retry-After</code> nor turn Slack's definite non-acceptance into an ambiguous
+outcome. A 429
+on <code>chat.postMessage</code> settles the claimed row as <code>REFUSED</code> with <code>last_error</code>
+<code>slack_rate_limited:retry_after=N</code>: Slack did not post, so the row is never
+reposted. The worker then records a process-local not-before horizon for the
+<strong>full</strong> <code>Retry-After</code> delay (whole seconds, honored without any ceiling; a
+missing or malformed header defaults to 30 seconds) and makes no Slack call of
+any kind, and claims no further row, until it passes; withheld rows stay
+<code>PENDING</code> instead of ageing into <code>AMBIGUOUS</code>, and a delay that outlives the
+worker keeps it deferring for as long as it runs. A 429 on <code>auth.test</code> keeps
+the bounded identity attempts, and a 429 on <code>conversations.replies</code> consumes
+that one readback attempt without posting again. Other non-success statuses
+keep the existing ambiguous classification.
+<code>/health.primary_slack_delivery.rate_limited</code> reports the horizon. The horizon
+is not durable across a worker restart, and because the guard trigger forbids
+<code>POSTING → PENDING</code>, a durable requeue of the refused notice would need a
+ledger-identity change in <code>langgraph_postgres.py</code>; neither is part of this
+change.</p>
+<p>A crashed <code>POSTING</code> attempt becomes ambiguous after sixty seconds. Up to two
+read-only lookups may resolve a found message, including after a lost post
+acknowledgement. An absent message is never evidence that reposting is safe.
+Readback needs the existing Slack app's access to the thread history; this
+change does not grant scopes. A missing scope remains unverified. The bounded
+lookup reads at most 100 replies and does not prove absence beyond that window.</p>
+<p>The worker discovers at most 100 notices and attempts at most four posts per
+pass, plus four recovery readbacks and one initial identity check. Each network operation has a ten-second wall
+deadline and a 256 KiB response limit. There are no POST retries. The two-second
+interval starts after a pass finishes. The outbox anti-join excludes previously
+observed milestones so old tasks do not consume the discovery batch forever.</p>
+<p><code>/health.primary_slack_delivery</code> exposes configuration, ledger readability, recent
+worker activity and counts for pending, ambiguous and unverified deliveries.
+Authenticated <code>GET /v1/primary/tasks/{id}/deliveries</code> returns safe receipt fields:
+task/milestone/projection identity, message ID/timestamp, attempt/readback state,
+preparation/claim/acknowledgement/readback timestamps and the bound owner command
+timestamp. It returns neither the token nor stored message payload. Correlate
+these with the task's intake event/thread and source timestamp for measured runs.</p>
+<p>Offline results retain <code>SIMULATION — NO PROVIDER INTERACTION</code>. Actual recorded
+execution mode is persisted with each projection and retained on recovery;
+current deployment flags cannot relabel a historical task. An older task without
+that field or explicit offline outcomes has an unknown execution mode. Actual
+outcomes are shown; this feature does not turn digest-only doubles into factual
+repository summaries. Long final results are explicitly marked excerpts, with
+the complete outcomes retained in the authenticated task record. Dollar cost
+remains unknown unless separate billing telemetry supplies it. A delivered
+notification is not evidence of paid activation, useful result correctness,
+sub-minute completion, or a dollar-cost ceiling.</p>
+<p>Validation uses the sanctioned disposable PostgreSQL 17 lane, real primary
+state transitions and real FastAPI/gateway signing with mocked Slack HTTP.
+No live Slack messages, credentials, providers, production migrations or
+deployment are part of those tests.</p>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

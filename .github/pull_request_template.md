@@ -12,7 +12,7 @@ Sole author: <assistant> (<model>)
 ## Evidence
 
 - Changed surface:
-- Sole author and shares (at least 52 %, with receipt references; see docs/contribution-attribution-policy.md#sole-author-rule):
+- Sole author and shares (at least 52 %, with receipt references; see docs/contribution-attribution-policy.html#sole-author-rule):
 - `base_sha` (target-branch tip at review):
 - `merge_base_sha` (for authorship share computation):
 - Head SHA:

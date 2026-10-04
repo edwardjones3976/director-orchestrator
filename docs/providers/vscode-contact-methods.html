@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>VS Code contact methods and Director integration · Director Orchestrator</title>
+<link rel="stylesheet" href="../assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../../README.html">Overview</a><a href="../index.html">All documents</a><a href="../project-leadership.html">Leadership</a><a href="../provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#authentication-controls">Authentication controls</a></li><li class="top"><a href="#common-langgraph--n8n--director-contract">Common LangGraph / n8n / Director contract</a></li><li class="top"><a href="#host-observations-and-bounded-follow-up">Host observations and bounded follow-up</a></li><li class="top"><a href="#official-references">Official references</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | BEGIN]] -->
+<h1 id="vs-code-contact-methods-and-director-integration">VS Code contact methods and Director integration</h1>
+<p>VS Code is an editor and agent host, not a provider with one universal API key.
+Register the actual provider, product, authentication mode, and execution route
+separately. This inventory documents supported connection classes; it does not
+enroll a route, establish remaining capacity, or grant production authority.</p>
+<table>
+<thead>
+<tr>
+<th>Connection</th>
+<th>Authentication and purpose</th>
+<th>Director process</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Built-in Copilot chat / Copilot extension</td>
+<td>GitHub sign-in and eligible Copilot entitlement</td>
+<td>Interactive route until a supported adapter proves task submission, completion, and cancellation. Opening chat is not dispatch evidence.</td>
+</tr>
+<tr>
+<td>GitHub Copilot CLI</td>
+<td>GitHub OAuth; supported token in <code>COPILOT_GITHUB_TOKEN</code>, <code>GH_TOKEN</code>, or <code>GITHUB_TOKEN</code>; stored credentials or GitHub CLI fallback</td>
+<td>Existing <code>github-copilot</code> command/packet route. Resolve the native executable, verify entitlement and capacity, then apply packet and resource controls.</td>
+</tr>
+<tr>
+<td>VS Code Language Model extension API</td>
+<td>Extension requests user consent and an available model</td>
+<td>Runs inside an extension host. It is not a public HTTP endpoint or a portable Copilot API key. Requires a separately reviewed extension adapter.</td>
+</tr>
+<tr>
+<td>Custom model / BYOK integration</td>
+<td>Provider-specific credentials or a local model endpoint</td>
+<td>Preserve actual provider identity and billing product. API access cannot silently substitute for a subscription coding route.</td>
+</tr>
+<tr>
+<td>Agent extensions / agent harnesses</td>
+<td>Product-specific sign-in, subscription, or API credential</td>
+<td>Codex, Claude, and other agents keep their actual provider identity even when launched from VS Code. Confirm each installed adapter rather than inferring support from an extension name.</td>
+</tr>
+<tr>
+<td>MCP servers</td>
+<td>Local stdio or remote HTTP; server-specific OAuth or protected credential inputs</td>
+<td>Tool/data connection, not proof of an autonomous provider. Validate server trust, allowed tools, authorization, timeout, and results.</td>
+</tr>
+<tr>
+<td>VS Code CLI / URI handlers</td>
+<td>Local user session and installed editor</td>
+<td>Workspace-opening and UI routing only. A successful launch does not establish task acceptance or output validity.</td>
+</tr>
+<tr>
+<td>Remote SSH / tunnels / containers</td>
+<td>SSH credentials, tunnel sign-in, or container access</td>
+<td>Execution-environment transport. Enroll the remote worker separately and retain repository, capability, and credential boundaries.</td>
+</tr>
+<tr>
+<td>GitHub cloud coding agent</td>
+<td>GitHub identity, entitlement, repository access, and policy</td>
+<td>Remote job route with job/PR identifiers and asynchronous completion evidence. Distinct from a local editor session.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="authentication-controls">Authentication controls</h2>
+<p>Copilot CLI supports OAuth tokens, fine-grained personal access tokens with
+Copilot Requests permission, and GitHub App user-to-server tokens. Classic PATs
+are not supported. A token's presence is not authentication, entitlement, or
+remaining-capacity evidence. Preserve existing secret-store bindings; do not
+copy values into packets, repository documentation, logs, or editor settings.</p>
+<p>Check BYOK environment overrides before dispatch: they may change the selected
+model and billing route. Never fall back to separately billed access implicitly.
+Microsoft 365 Copilot remains retired from this project; VS Code and GitHub
+Copilot setup does not reintroduce it. Shared Microsoft/GitHub provenance must
+remain visible when determining reviewer independence.</p>
+<h2 id="common-langgraph--n8n--director-contract">Common LangGraph / n8n / Director contract</h2>
+<ol>
+<li>Record the assignment ID, actual provider/product, exact starting revision,
+allowed files/tools, objective, acceptance checks, and resource limits.
+Reconcile the real rolling assignment history before admitting production
+work; this inventory earns no production allocation credit.</li>
+<li>Resolve a supported executable, extension adapter, or remote job transport.
+Verify authentication, entitlement, capability, and capacity independently.
+Route unavailable or unknown evidence through the existing fail-closed gates.</li>
+<li>Submit through the existing Director packet boundary. Preserve LangGraph's
+sole-writer ownership and n8n intake behavior. Record execution ID, deadline,
+cancellation handling, and any ambiguous effects before considering recovery.</li>
+<li>Validate the result and attributable artifacts. Preserve failed and malformed
+responses. Work acceptance, Slack posting confirmation, and asynchronous
+readback are separate outcomes; notification recovery must not duplicate work.</li>
+<li>Record tests, elapsed time, available usage evidence, and independent review.
+Neither editor access nor a provider reply authorizes merge or activation.</li>
+</ol>
+<h2 id="host-observations-and-bounded-follow-up">Host observations and bounded follow-up</h2>
+<p>Observed on 2026-09-13 UTC: VS Code 1.135.0 includes built-in <code>copilot</code> and
+<code>github-authentication</code> components. Copilot CLI 1.0.83 is installed via npm.
+Its PATH entry is a PowerShell launcher; its native executable is nested under
+the package's platform dependency. The current Director discovery requires a
+native executable and can therefore miss this installation. An explicit native
+executable binding needs a bounded transport-author fix and independent review;
+this document does not change discovery or claim the route ready.</p>
+<p>The project has a Copilot credential binding. A separate live attempt reached
+the spending limit, so this inventory does not repeat a paid call. Local tests
+must be reported separately from authenticated live execution. Do not infer
+Grok Bot's capacity from Copilot or Cursor model limits.</p>
+<h2 id="official-references">Official references</h2>
+<ul>
+<li><a href="https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli">Copilot CLI authentication</a></li>
+<li><a href="https://code.visualstudio.com/docs/setup/copilot">VS Code Copilot setup</a></li>
+<li><a href="https://code.visualstudio.com/docs/agent-customization/language-models">VS Code language models</a></li>
+<li><a href="https://code.visualstudio.com/api/extension-guides/ai/language-model">Language Model extension API</a></li>
+<li><a href="https://code.visualstudio.com/docs/agent-customization/mcp-servers">MCP servers</a></li>
+<li><a href="https://code.visualstudio.com/docs/configure/command-line">VS Code command line</a></li>
+<li><a href="https://docs.github.com/en/copilot/concepts/agents/coding-agent/about-coding-agent">GitHub coding agent</a></li>
+</ul>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

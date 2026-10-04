@@ -1,0 +1,656 @@
+{
+  "version": "director-html-documents/v1",
+  "canonical_format": "html",
+  "migration_base": "c4d5a0094ac0024907cddca88eb8165eb0639611",
+  "mapping": {
+    "README.md": "README.html",
+    "docs/activation-plan-2026-09-13.md": "docs/activation-plan-2026-09-13.html",
+    "docs/always-on-runbook.md": "docs/always-on-runbook.html",
+    "docs/antigravity-team-engineering.md": "docs/antigravity-team-engineering.html",
+    "docs/cancelled-pending-reconciliation.md": "docs/cancelled-pending-reconciliation.html",
+    "docs/chatgpt-bridge-activation.md": "docs/chatgpt-bridge-activation.html",
+    "docs/chatgpt-slack-alias-bridge.md": "docs/chatgpt-slack-alias-bridge.html",
+    "docs/ci-acceptance-issuer.md": "docs/ci-acceptance-issuer.html",
+    "docs/close-out-report-2026-09-13.md": "docs/close-out-report-2026-09-13.html",
+    "docs/cloud-hosting-later.md": "docs/cloud-hosting-later.html",
+    "docs/collect-offline-slack-trials.md": "docs/collect-offline-slack-trials.html",
+    "docs/contribution-attribution-policy.md": "docs/contribution-attribution-policy.html",
+    "docs/delegation-matrix-2026-09-13.md": "docs/delegation-matrix-2026-09-13.html",
+    "docs/delegation-round-2026-09-09.md": "docs/delegation-round-2026-09-09.html",
+    "docs/director-completion-gates.md": "docs/director-completion-gates.html",
+    "docs/director-decision-rules.md": "docs/director-decision-rules.html",
+    "docs/director-review-handoff-history-2026-09-09.md": "docs/director-review-handoff-history-2026-09-09.html",
+    "docs/director-user-guide.md": "docs/director-user-guide.html",
+    "docs/edge-oracle-operations.md": "docs/edge-oracle-operations.html",
+    "docs/engineering-workload-ledger.md": "docs/engineering-workload-ledger.html",
+    "docs/entitlement-control-plane.md": "docs/entitlement-control-plane.html",
+    "docs/findings-2026-09-09-gate8-and-holds.md": "docs/findings-2026-09-09-gate8-and-holds.html",
+    "docs/grok-bot-chat-dispatch.md": "docs/grok-bot-chat-dispatch.html",
+    "docs/grok-lanes-separation-2026-09-09.md": "docs/grok-lanes-separation-2026-09-09.html",
+    "docs/hotl-execution-predicate.md": "docs/hotl-execution-predicate.html",
+    "docs/human-out-of-the-loop-operation.md": "docs/human-out-of-the-loop-operation.html",
+    "docs/intake-lease-recovery.md": "docs/intake-lease-recovery.html",
+    "docs/langgraph-primary-operations.md": "docs/langgraph-primary-operations.html",
+    "docs/langgraph-primary-stage-a-runbook.md": "docs/langgraph-primary-stage-a-runbook.html",
+    "docs/langgraph-shadow-operations.md": "docs/langgraph-shadow-operations.html",
+    "docs/langgraph-transition-plan.md": "docs/langgraph-transition-plan.html",
+    "docs/model-interoperability-contract.md": "docs/model-interoperability-contract.html",
+    "docs/n8n-integration-validation-2026-09-09.md": "docs/n8n-integration-validation-2026-09-09.html",
+    "docs/n8n-operations.md": "docs/n8n-operations.html",
+    "docs/native-acceptance-issuers.md": "docs/native-acceptance-issuers.html",
+    "docs/native-auth-enrollment.md": "docs/native-auth-enrollment.html",
+    "docs/native-codex-packet-transport.md": "docs/native-codex-packet-transport.html",
+    "docs/native-issuer-cutover-extensions.md": "docs/native-issuer-cutover-extensions.html",
+    "docs/native-v3-review-issuer.md": "docs/native-v3-review-issuer.html",
+    "docs/openai-responses-validation.md": "docs/openai-responses-validation.html",
+    "docs/paid-safety-recovery-audit.md": "docs/paid-safety-recovery-audit.html",
+    "docs/paid-wave-preflight.md": "docs/paid-wave-preflight.html",
+    "docs/postgres-test-lane-cap.md": "docs/postgres-test-lane-cap.html",
+    "docs/primary-provider-budget-production.md": "docs/primary-provider-budget-production.html",
+    "docs/primary-slack-delivery.md": "docs/primary-slack-delivery.html",
+    "docs/primary-staging-controls.md": "docs/primary-staging-controls.html",
+    "docs/primary-staging-worksheet.md": "docs/primary-staging-worksheet.html",
+    "docs/project-bootstrap-protocol.md": "docs/project-bootstrap-protocol.html",
+    "docs/project-leadership.md": "docs/project-leadership.html",
+    "docs/project-uppercut-reiteration.md": "docs/project-uppercut-reiteration.html",
+    "docs/protocol-compliance-audit-2026-09-09.md": "docs/protocol-compliance-audit-2026-09-09.html",
+    "docs/provider-acceptance-v2-runtime.md": "docs/provider-acceptance-v2-runtime.html",
+    "docs/provider-acceptance-v2.md": "docs/provider-acceptance-v2.html",
+    "docs/provider-allocation-profiles.md": "docs/provider-allocation-profiles.html",
+    "docs/provider-connection-audit-2026-09-09.md": "docs/provider-connection-audit-2026-09-09.html",
+    "docs/provider-evidence-run-spec.md": "docs/provider-evidence-run-spec.html",
+    "docs/provider-profiles/README.md": "docs/provider-profiles/README.html",
+    "docs/provider-profiles/antigravity.profile.md": "docs/provider-profiles/antigravity.profile.html",
+    "docs/provider-profiles/claude.profile.md": "docs/provider-profiles/claude.profile.html",
+    "docs/provider-profiles/cursor.profile.md": "docs/provider-profiles/cursor.profile.html",
+    "docs/provider-profiles/firecrawl.profile.md": "docs/provider-profiles/firecrawl.profile.html",
+    "docs/provider-profiles/github-copilot.profile.md": "docs/provider-profiles/github-copilot.profile.html",
+    "docs/provider-profiles/grok.profile.md": "docs/provider-profiles/grok.profile.html",
+    "docs/provider-profiles/openai.profile.md": "docs/provider-profiles/openai.profile.html",
+    "docs/provider-profiles/perplexity.profile.md": "docs/provider-profiles/perplexity.profile.html",
+    "docs/provider-profiles/zai.profile.md": "docs/provider-profiles/zai.profile.html",
+    "docs/provider-setup.md": "docs/provider-setup.html",
+    "docs/provider-transport-configuration.md": "docs/provider-transport-configuration.html",
+    "docs/provider-validation-harness.md": "docs/provider-validation-harness.html",
+    "docs/providers/vscode-contact-methods.md": "docs/providers/vscode-contact-methods.html",
+    "docs/responses-team-readiness-composition.md": "docs/responses-team-readiness-composition.html",
+    "docs/site-coordination.md": "docs/site-coordination.html",
+    "docs/slack-collaboration-bus.md": "docs/slack-collaboration-bus.html",
+    "docs/slack-status-receipts.md": "docs/slack-status-receipts.html",
+    "docs/stage-a-evidence-worksheet.md": "docs/stage-a-evidence-worksheet.html",
+    "docs/state-witness.md": "docs/state-witness.html",
+    "docs/team-operating-charter.md": "docs/team-operating-charter.html",
+    "docs/team-staff-and-briefings.md": "docs/team-staff-and-briefings.html",
+    "docs/templates/contribution-submission.md": "docs/templates/contribution-submission.html",
+    "docs/templates/project-bootstrap/README.md": "docs/templates/project-bootstrap/README.html",
+    "docs/templates/project-bootstrap/intake.md": "docs/templates/project-bootstrap/intake.html",
+    "docs/templates/project-bootstrap/minimal-fix.md": "docs/templates/project-bootstrap/minimal-fix.html",
+    "docs/templates/project-bootstrap/project-state-report.md": "docs/templates/project-bootstrap/project-state-report.html",
+    "docs/templates/project-bootstrap/review-ready.md": "docs/templates/project-bootstrap/review-ready.html",
+    "docs/templates/project-bootstrap/rollout-packet.md": "docs/templates/project-bootstrap/rollout-packet.html",
+    "docs/templates/project-bootstrap/workstream-plan.md": "docs/templates/project-bootstrap/workstream-plan.html",
+    "docs/third-party/unlazy-provenance.md": "docs/third-party/unlazy-provenance.html",
+    "docs/twenty-check-completion-scorecard.md": "docs/twenty-check-completion-scorecard.html",
+    "docs/twenty-point-system.md": "docs/twenty-point-system.html",
+    "docs/two-party-activation-v3.md": "docs/two-party-activation-v3.html"
+  },
+  "exceptions": {
+    "docs/archive/": "Historical records retained unchanged",
+    "docs/providers/zai-welcome-aboard.md": "Runtime prompt input read by zai_trial.py",
+    "AGENTS.md": "Agent discovery contract",
+    "CLAUDE.md": "Agent discovery contract",
+    ".agents/**/SKILL.md": "Skill discovery contract",
+    ".github/pull_request_template.md": "GitHub template discovery",
+    "prompts/": "Runtime model prompt contracts",
+    "README.md": "Short GitHub discovery pointer only",
+    "projects/homemade-llm/": "Separately led project excluded from this assignment",
+    "tests/fixtures/": "Test and authority fixtures"
+  },
+  "documents": [
+    {
+      "source": "README.md",
+      "target": "README.html",
+      "title": "Director Orchestrator",
+      "source_sha256": "bcfd43e4bfd32961c7d2ae0ed72562645edc0e9c65425861edc08704eb2ccbad"
+    },
+    {
+      "source": "docs/activation-plan-2026-09-13.md",
+      "target": "docs/activation-plan-2026-09-13.html",
+      "title": "LangGraph-primary + n8n activation plan (v4 — ASAP)",
+      "source_sha256": "d233cc2f82a18e2fe4248cc6f3d08b43a3dd743483fd58fd3b63dae2549af74a"
+    },
+    {
+      "source": "docs/always-on-runbook.md",
+      "target": "docs/always-on-runbook.html",
+      "title": "Always-On Windows Runbook",
+      "source_sha256": "670207ed815dd78cc4a8f5862bb51b29f08e30e432ba4d8fa80b82dc84195a6f"
+    },
+    {
+      "source": "docs/antigravity-team-engineering.md",
+      "target": "docs/antigravity-team-engineering.html",
+      "title": "Antigravity team engineering boundary",
+      "source_sha256": "8665825f4bd8487eab523d10226f7443e5fa904e0a69ebe98122c2562172e246"
+    },
+    {
+      "source": "docs/cancelled-pending-reconciliation.md",
+      "target": "docs/cancelled-pending-reconciliation.html",
+      "title": "Reconcile never-started assignments after cancellation",
+      "source_sha256": "1021c19331d013cb33621fa23bc8aafd8d53309f85d56bd9f465ff1db95443bb"
+    },
+    {
+      "source": "docs/chatgpt-bridge-activation.md",
+      "target": "docs/chatgpt-bridge-activation.html",
+      "title": "ChatGPT bridge activation",
+      "source_sha256": "6dd6311c35740a01db723162a76dbefddf138eedc6a6eada051a3db02aecb086"
+    },
+    {
+      "source": "docs/chatgpt-slack-alias-bridge.md",
+      "target": "docs/chatgpt-slack-alias-bridge.html",
+      "title": "ChatGPT Slack alias bridge",
+      "source_sha256": "8e35f5ae6a043cf56717d5fd60d3d7191b9b7ee376406164ac2f77ef53b87db4"
+    },
+    {
+      "source": "docs/ci-acceptance-issuer.md",
+      "target": "docs/ci-acceptance-issuer.html",
+      "title": "Isolated CI acceptance issuer",
+      "source_sha256": "9d4eec0dcc34272d2d32c851d4bfe326af1b79a30e7430008b354d45b103f314"
+    },
+    {
+      "source": "docs/close-out-report-2026-09-13.md",
+      "target": "docs/close-out-report-2026-09-13.html",
+      "title": "Close-out report — LangGraph-primary and n8n delivery",
+      "source_sha256": "73e44a2f3e173293b194197f0110edf4035081147d17d97459a31b1862e5e3ba"
+    },
+    {
+      "source": "docs/cloud-hosting-later.md",
+      "target": "docs/cloud-hosting-later.html",
+      "title": "Cloud Hosting Later",
+      "source_sha256": "5df6f9fd5c32c1586ded99fd11c681a2b4ad9f5236d513b5a31132718ab24e94"
+    },
+    {
+      "source": "docs/collect-offline-slack-trials.md",
+      "target": "docs/collect-offline-slack-trials.html",
+      "title": "Offline Slack trial evidence",
+      "source_sha256": "3c15edbbdc243c25ccf2383827b12668c209d8c32f5a2ddfd2909c8d0856b281"
+    },
+    {
+      "source": "docs/contribution-attribution-policy.md",
+      "target": "docs/contribution-attribution-policy.html",
+      "title": "Contribution attribution in Git",
+      "source_sha256": "7d3404d39e66b5fc39fc8f41765998690692a592c0d4a244e189443fa050d27c"
+    },
+    {
+      "source": "docs/delegation-matrix-2026-09-13.md",
+      "target": "docs/delegation-matrix-2026-09-13.html",
+      "title": "Delegation matrix — 2026-09-13 delivery (rev 2)",
+      "source_sha256": "daccfec00b43971c20596b5355c4169278f138e81689120f0c40519c859303e6"
+    },
+    {
+      "source": "docs/delegation-round-2026-09-09.md",
+      "target": "docs/delegation-round-2026-09-09.html",
+      "title": "Delegation round — 2026-09-09, ASAP scope",
+      "source_sha256": "065a4e33e89672d29bc36db232e529ac2ea86c85bfa35a606813827f255a7702"
+    },
+    {
+      "source": "docs/director-completion-gates.md",
+      "target": "docs/director-completion-gates.html",
+      "title": "Director Completion Gates",
+      "source_sha256": "37becf36842b2b00e832b7986ae861d59ab08c82f1666e7545345bcf6bdb2269"
+    },
+    {
+      "source": "docs/director-decision-rules.md",
+      "target": "docs/director-decision-rules.html",
+      "title": "Director decision rules",
+      "source_sha256": "09b43b2d2282ed0ea08806eb9b0d357d0660887d4b9776edaffa3d8b3b495a00"
+    },
+    {
+      "source": "docs/director-review-handoff-history-2026-09-09.md",
+      "target": "docs/director-review-handoff-history-2026-09-09.html",
+      "title": "Historical review-handoff correction, 2026-09-09",
+      "source_sha256": "4c8079d85378361a2f92c1ec025e59455e933bd48fc8f44731ca83258fc0e04f"
+    },
+    {
+      "source": "docs/director-user-guide.md",
+      "target": "docs/director-user-guide.html",
+      "title": "Director-Orchestrator operator guide",
+      "source_sha256": "c30e925e57505fd5ecc23dd08b4f4d9bba80d4d764c33e3f5f1bae46cacf8ce2"
+    },
+    {
+      "source": "docs/edge-oracle-operations.md",
+      "target": "docs/edge-oracle-operations.html",
+      "title": "Edge Oracle isolated operations",
+      "source_sha256": "975c4bc12a0a6323c6e7386d9070affdc94f2bf862444e3e322aa3f9192ddca8"
+    },
+    {
+      "source": "docs/engineering-workload-ledger.md",
+      "target": "docs/engineering-workload-ledger.html",
+      "title": "External engineering assignment ledger",
+      "source_sha256": "a6ecff6b66eb633e2a95648564556c21fed0e24689c93ce3aa42a3d77867a7cc"
+    },
+    {
+      "source": "docs/entitlement-control-plane.md",
+      "target": "docs/entitlement-control-plane.html",
+      "title": "Entitlement control plane (default off)",
+      "source_sha256": "8e2fbb6e1ca9f34ec96c65c55aef1c223a6097aa1affd7196982c8fe743e6ec7"
+    },
+    {
+      "source": "docs/findings-2026-09-09-gate8-and-holds.md",
+      "target": "docs/findings-2026-09-09-gate8-and-holds.html",
+      "title": "Findings — Gate 8, the two holds, and schedule feasibility",
+      "source_sha256": "518bdf98f9c06911bee7eb0325d61cf0a2253c5ff5088f7c365c4fa2a4b0e960"
+    },
+    {
+      "source": "docs/grok-bot-chat-dispatch.md",
+      "target": "docs/grok-bot-chat-dispatch.html",
+      "title": "Grok Bot chat dispatch",
+      "source_sha256": "9bc5948ee004f85411375b66f60c45adf8e092656d632fa390caaae1fe8eba07"
+    },
+    {
+      "source": "docs/grok-lanes-separation-2026-09-09.md",
+      "target": "docs/grok-lanes-separation-2026-09-09.html",
+      "title": "Grok, Cursor Grok, and Grok Bot are three different things",
+      "source_sha256": "300c3f53b428d14f42e739c0fd5bc33914c34d1fa94e7f7822d59f0e698eff26"
+    },
+    {
+      "source": "docs/hotl-execution-predicate.md",
+      "target": "docs/hotl-execution-predicate.html",
+      "title": "Standing-authorization execution predicate",
+      "source_sha256": "197062e32cc202c63f717b81287c53916bf10062bfe8e739fe81a6eb01d05891"
+    },
+    {
+      "source": "docs/human-out-of-the-loop-operation.md",
+      "target": "docs/human-out-of-the-loop-operation.html",
+      "title": "Human-out-of-the-loop operation",
+      "source_sha256": "bd5055909b9450c79573bc2721c95b6c78386555dfedc7a286f12ecbf41419cf"
+    },
+    {
+      "source": "docs/intake-lease-recovery.md",
+      "target": "docs/intake-lease-recovery.html",
+      "title": "Controlled intake lease recovery",
+      "source_sha256": "ecfe6ae52a68ba893d9ff87d0631d032982b229710f37883b5e39ffb511d8790"
+    },
+    {
+      "source": "docs/langgraph-primary-operations.md",
+      "target": "docs/langgraph-primary-operations.html",
+      "title": "LangGraph-primary operations authority",
+      "source_sha256": "3a8baaaa854c636ef271eb5ff6e38267dee7776144af48c6d13cbd2a0cff80f9"
+    },
+    {
+      "source": "docs/langgraph-primary-stage-a-runbook.md",
+      "target": "docs/langgraph-primary-stage-a-runbook.html",
+      "title": "Stage A: LangGraph primary as intake owner, with simulated providers",
+      "source_sha256": "3ea6331541eafc365e3a2b7efe771e0f5709df0a4689cdc87fb0e02a18bbcfed"
+    },
+    {
+      "source": "docs/langgraph-shadow-operations.md",
+      "target": "docs/langgraph-shadow-operations.html",
+      "title": "LangGraph shadow operations (tombstone)",
+      "source_sha256": "f2443dceb5c940722206373da48ce04b6da41feed9b41216b167b02dee34f2ea"
+    },
+    {
+      "source": "docs/langgraph-transition-plan.md",
+      "target": "docs/langgraph-transition-plan.html",
+      "title": "LangGraph transition plan (tombstone)",
+      "source_sha256": "1e909ebcbe10dad249cb1bf7d350099b56a735562401c67ebb83e4980de40169"
+    },
+    {
+      "source": "docs/model-interoperability-contract.md",
+      "target": "docs/model-interoperability-contract.html",
+      "title": "Model interoperability contract",
+      "source_sha256": "b102c35ac003a1ddf72791edb70c2e171affb3019b087d4369540b387eedb711"
+    },
+    {
+      "source": "docs/n8n-integration-validation-2026-09-09.md",
+      "target": "docs/n8n-integration-validation-2026-09-09.html",
+      "title": "Director Intake ↔ n8n — integration validation, 2026-09-09",
+      "source_sha256": "c8d15e0c4bceaaff57cd6424821e50e7f583a47ffebbe7432f9d7a759ddb63ee"
+    },
+    {
+      "source": "docs/n8n-operations.md",
+      "target": "docs/n8n-operations.html",
+      "title": "n8n operations",
+      "source_sha256": "aba5c5f73f25d4b93453391af89cd18ce294233fdf641acf2f6e29e02faab82b"
+    },
+    {
+      "source": "docs/native-acceptance-issuers.md",
+      "target": "docs/native-acceptance-issuers.html",
+      "title": "Native acceptance issuers",
+      "source_sha256": "7d42b3de4c5e8d17dd130205d349958e490e4a0effda8e78e7fd18f13e959fc8"
+    },
+    {
+      "source": "docs/native-auth-enrollment.md",
+      "target": "docs/native-auth-enrollment.html",
+      "title": "Native AGY issuer authentication evidence",
+      "source_sha256": "5386cfa77a6b028c998f0fbeb0a98477d15bca19754f3c5e435c9091b4eb2838"
+    },
+    {
+      "source": "docs/native-codex-packet-transport.md",
+      "target": "docs/native-codex-packet-transport.html",
+      "title": "Native Codex packet transport",
+      "source_sha256": "dc30b1543d0bc6494b9b608636e51385b455c5a95d8f181e2dea8531d7247a68"
+    },
+    {
+      "source": "docs/native-issuer-cutover-extensions.md",
+      "target": "docs/native-issuer-cutover-extensions.html",
+      "title": "Native issuer and GitHub target extensions",
+      "source_sha256": "af09f24229d88f6ad037d56cf32e10ccf8a0686b1aebf7b81e6367a4303c0e42"
+    },
+    {
+      "source": "docs/native-v3-review-issuer.md",
+      "target": "docs/native-v3-review-issuer.html",
+      "title": "Native v3 independent-review issuer (collect-only)",
+      "source_sha256": "4ce81dd9ef110985a8e7cb137099314625a3b62622732b0e51f99c3e285ee4d4"
+    },
+    {
+      "source": "docs/openai-responses-validation.md",
+      "target": "docs/openai-responses-validation.html",
+      "title": "OpenAI Responses validation route",
+      "source_sha256": "9ca109a9b4e55f1f11e35079439e96e8deec7294666314ff86ce72513105c048"
+    },
+    {
+      "source": "docs/paid-safety-recovery-audit.md",
+      "target": "docs/paid-safety-recovery-audit.html",
+      "title": "PR #326 recovery audit",
+      "source_sha256": "a6d845fc4b3c4fe5e7fda6b6191679295c528a5455c7e70bbc5db0a670d0e26e"
+    },
+    {
+      "source": "docs/paid-wave-preflight.md",
+      "target": "docs/paid-wave-preflight.html",
+      "title": "Paid wave setup preflight",
+      "source_sha256": "db031f63f3e0e90ac02e63a28663c7769f358ea5d842fe9118860c8b34230830"
+    },
+    {
+      "source": "docs/postgres-test-lane-cap.md",
+      "target": "docs/postgres-test-lane-cap.html",
+      "title": "Local PostgreSQL test-lane concurrency",
+      "source_sha256": "d3a92f2e3857f087b411c546c6b0ec5a443346d01b1882d53f53f7c79e9db174"
+    },
+    {
+      "source": "docs/primary-provider-budget-production.md",
+      "target": "docs/primary-provider-budget-production.html",
+      "title": "Primary provider budget production: unsigned preparation and already-signed import",
+      "source_sha256": "50b1999bb7ef2bb20d677fe1ffbccf0ef915e0cf3dbf3f613dd5d21665614041"
+    },
+    {
+      "source": "docs/primary-slack-delivery.md",
+      "target": "docs/primary-slack-delivery.html",
+      "title": "Primary Slack lifecycle delivery",
+      "source_sha256": "b803a7195c9f6bcb1d9518307a53b7d7183c2c19caaeaeabfc119d1ba99b6baf"
+    },
+    {
+      "source": "docs/primary-staging-controls.md",
+      "target": "docs/primary-staging-controls.html",
+      "title": "Primary staging and generation controls",
+      "source_sha256": "73c421678a4778d622c16cb9bbc1eda57765eaf407001458d3162b07d929f8ea"
+    },
+    {
+      "source": "docs/primary-staging-worksheet.md",
+      "target": "docs/primary-staging-worksheet.html",
+      "title": "Primary lane staging worksheet",
+      "source_sha256": "20112bb59ade606e262c2a5e0e5999c179047d4084412cbcf76824a59b9e08d1"
+    },
+    {
+      "source": "docs/project-bootstrap-protocol.md",
+      "target": "docs/project-bootstrap-protocol.html",
+      "title": "Modular project bootstrap protocol",
+      "source_sha256": "fa8db46c9e6d41486dc56831a5cc9ec44c285daf7c0f263392f22ab5f09b0df6"
+    },
+    {
+      "source": "docs/project-leadership.md",
+      "target": "docs/project-leadership.html",
+      "title": "Current project leadership",
+      "source_sha256": "426ab1dbfa3ed66670faf560437083941740ebc1104626bb30d39b5cf6022845"
+    },
+    {
+      "source": "docs/project-uppercut-reiteration.md",
+      "target": "docs/project-uppercut-reiteration.html",
+      "title": "Project Uppercut Reiteration",
+      "source_sha256": "1f60ff6b7359ef7247e8f37dbb3a6d771085d324a8080bd5690054a49c43d100"
+    },
+    {
+      "source": "docs/protocol-compliance-audit-2026-09-09.md",
+      "target": "docs/protocol-compliance-audit-2026-09-09.html",
+      "title": "Protocol compliance audit — the 2026-09-13 delivery",
+      "source_sha256": "baec61298f8b4173dd2e6e8ac58277d1ae4ad6bed4948bff96646527c63b8d71"
+    },
+    {
+      "source": "docs/provider-acceptance-v2-runtime.md",
+      "target": "docs/provider-acceptance-v2-runtime.html",
+      "title": "Provider-v2 runtime acceptance",
+      "source_sha256": "abb7ac97426dfcdf28fda74091a763c4ebe0e301f1acd17c1ebf881fc4da05f4"
+    },
+    {
+      "source": "docs/provider-acceptance-v2.md",
+      "target": "docs/provider-acceptance-v2.html",
+      "title": "Provider acceptance v2 verification core",
+      "source_sha256": "dbf68e46c7c63104bf2f6abd911b302eac1348378b7881dab19d5a3f55dedd7c"
+    },
+    {
+      "source": "docs/provider-allocation-profiles.md",
+      "target": "docs/provider-allocation-profiles.html",
+      "title": "Provider allocation profiles",
+      "source_sha256": "3b8768ae081d7d6a4a9d0d3ffdd57d4ff693e1470653f8cdd6ca7a66587cd8f9"
+    },
+    {
+      "source": "docs/provider-connection-audit-2026-09-09.md",
+      "target": "docs/provider-connection-audit-2026-09-09.html",
+      "title": "Provider connection audit — 2026-09-09",
+      "source_sha256": "0b75eed7a1bad5249cc94a8af99fab9b5598516fc87c8cb63312b03577d85a28"
+    },
+    {
+      "source": "docs/provider-evidence-run-spec.md",
+      "target": "docs/provider-evidence-run-spec.html",
+      "title": "Provider activation evidence: mechanism and blockers",
+      "source_sha256": "6cdcd2489ee9021117cfd62f051e9686ed52fed8ffe708d9b55bcded7a4ea4d7"
+    },
+    {
+      "source": "docs/provider-profiles/README.md",
+      "target": "docs/provider-profiles/README.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "7370f45b4679e3ce51e003fec70e3014777c9262d556b742127f780425cc300d"
+    },
+    {
+      "source": "docs/provider-profiles/antigravity.profile.md",
+      "target": "docs/provider-profiles/antigravity.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "cd493efa15647e54f37826c4ce8d577b19c30427d292ef0345556ba33cd58ffd"
+    },
+    {
+      "source": "docs/provider-profiles/claude.profile.md",
+      "target": "docs/provider-profiles/claude.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "8ed71c049cb6bb45be3a84c36b3b3534a101217f991d5b797fd2bd0194337564"
+    },
+    {
+      "source": "docs/provider-profiles/cursor.profile.md",
+      "target": "docs/provider-profiles/cursor.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "b78f9cf322f87356521960f4e4e3847ee2159cfa8d1889ea9dd391534f49c4eb"
+    },
+    {
+      "source": "docs/provider-profiles/firecrawl.profile.md",
+      "target": "docs/provider-profiles/firecrawl.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "3e997c5451d5109b20d6e901827c709bb0860717a2937b7e52dccb1bc02bd872"
+    },
+    {
+      "source": "docs/provider-profiles/github-copilot.profile.md",
+      "target": "docs/provider-profiles/github-copilot.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "8013757903756a342b045c8356d4f22f29b1b434504d92a142c24d4353467979"
+    },
+    {
+      "source": "docs/provider-profiles/grok.profile.md",
+      "target": "docs/provider-profiles/grok.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "4bc9b609962095527a2aca94ef48d29723008e628acbefee56b0cd0b9f9d68cb"
+    },
+    {
+      "source": "docs/provider-profiles/openai.profile.md",
+      "target": "docs/provider-profiles/openai.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "144d9d99bc944d42493776725af6d672845ccfc6e4a34d65fedd965ffe97e08f"
+    },
+    {
+      "source": "docs/provider-profiles/perplexity.profile.md",
+      "target": "docs/provider-profiles/perplexity.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "da5ca7de6b630b8223d8f82f911eff07be4267e9df137143fea2984e233a7f33"
+    },
+    {
+      "source": "docs/provider-profiles/zai.profile.md",
+      "target": "docs/provider-profiles/zai.profile.html",
+      "producer": "provider-profile renderer",
+      "source_sha256": "8cff2d0a939bcfaa69290e1c8fec2d2bce9b3a7fcd3e61c41dca08c1559f97cb"
+    },
+    {
+      "source": "docs/provider-setup.md",
+      "target": "docs/provider-setup.html",
+      "title": "Provider Setup Matrix",
+      "source_sha256": "9e1dbc90e171dd79289074f470513d76a0bec806a0dd870d1b72b6712f5f562f"
+    },
+    {
+      "source": "docs/provider-transport-configuration.md",
+      "target": "docs/provider-transport-configuration.html",
+      "title": "Provider transport configuration",
+      "source_sha256": "43ebf306bcf9d5e0026b881797adb9c32dc246f4b269b85c97e85e898cab5653"
+    },
+    {
+      "source": "docs/provider-validation-harness.md",
+      "target": "docs/provider-validation-harness.html",
+      "title": "Provider validation harness checkpoint",
+      "source_sha256": "96eac0d958d3e37159b1f48df5d4a47948c1f91eea4cfab8e9f6e4b39442475c"
+    },
+    {
+      "source": "docs/providers/vscode-contact-methods.md",
+      "target": "docs/providers/vscode-contact-methods.html",
+      "title": "VS Code contact methods and Director integration",
+      "source_sha256": "54a5c470b6dc53020e945ae78b3a2598746fe5ea6b387418da324fa5d64c46d5"
+    },
+    {
+      "source": "docs/responses-team-readiness-composition.md",
+      "target": "docs/responses-team-readiness-composition.html",
+      "title": "Responses and team readiness composition",
+      "source_sha256": "bbf28c21b1bf692b196b290ddf7bcd549be0abaf9cdf05b279351c65bc565ddd"
+    },
+    {
+      "source": "docs/site-coordination.md",
+      "target": "docs/site-coordination.html",
+      "title": "Site coordination",
+      "source_sha256": "c805c394440a2fede007e6add9ee09f988613b1cb74d5f1f07631b0381086807"
+    },
+    {
+      "source": "docs/slack-collaboration-bus.md",
+      "target": "docs/slack-collaboration-bus.html",
+      "title": "Slack collaboration bus",
+      "source_sha256": "8742d18b40b9a3263858e6a318993d2ba8b011756655c88128dffd4670b22498"
+    },
+    {
+      "source": "docs/slack-status-receipts.md",
+      "target": "docs/slack-status-receipts.html",
+      "title": "Slack status receipts (Issue #230)",
+      "source_sha256": "7cac31c7322e499af83bbce36ef91ac6434ff1da115329ec6da8d074d6721f27"
+    },
+    {
+      "source": "docs/stage-a-evidence-worksheet.md",
+      "target": "docs/stage-a-evidence-worksheet.html",
+      "title": "Stage A evidence worksheet — profile S",
+      "source_sha256": "70e8550baabdd302af5c42a4bcb0cbd3ac197b44c71cae8219f4669e952e6229"
+    },
+    {
+      "source": "docs/state-witness.md",
+      "target": "docs/state-witness.html",
+      "title": "No receipt, no state: the Witness Ledger",
+      "source_sha256": "c3517fc9357e207e3fdd230bcea93d5c913810c050031ba2f4aef3f63b9aad05"
+    },
+    {
+      "source": "docs/team-operating-charter.md",
+      "target": "docs/team-operating-charter.html",
+      "title": "Director team operating charter",
+      "source_sha256": "79721a885edb6c45ca820eaf01bf535515b482aca20353539a5880a22ca6633a"
+    },
+    {
+      "source": "docs/team-staff-and-briefings.md",
+      "target": "docs/team-staff-and-briefings.html",
+      "title": "Staff register, contacts and nightly briefings",
+      "source_sha256": "0e6b4fd2d36f03f3926ea9d5b79412d40344c44b48dac60c599da82b5c55071a"
+    },
+    {
+      "source": "docs/templates/contribution-submission.md",
+      "target": "docs/templates/contribution-submission.html",
+      "title": "Contribution Submission",
+      "source_sha256": "537f3c8a5ffa28a6ca356a624ac12a9bf6ae308ca3d57bfa5bdfbe942c180713"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/README.md",
+      "target": "docs/templates/project-bootstrap/README.html",
+      "title": "Project bootstrap template kit",
+      "source_sha256": "a1cd312a11c94aebc43fc5fb57c4c0ea39036291c4c0d88603b9a1540b927bfe"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/intake.md",
+      "target": "docs/templates/project-bootstrap/intake.html",
+      "title": "PROJECT_BOOTSTRAP",
+      "source_sha256": "964715a45dbcfb36e274724643ce9e16ec105b8b9c8bb0e5c18d5586de7d8a53"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/minimal-fix.md",
+      "target": "docs/templates/project-bootstrap/minimal-fix.html",
+      "title": "Minimal integration fix record",
+      "source_sha256": "1ba63210eace69e6f348a40e0425a79b2f482694596fa0912ef54cad7a345576"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/project-state-report.md",
+      "target": "docs/templates/project-bootstrap/project-state-report.html",
+      "title": "Project state report",
+      "source_sha256": "81f47c206ca2223d8ddc02d447541e1f43977926d8d236f95293fb6f4acefa02"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/review-ready.md",
+      "target": "docs/templates/project-bootstrap/review-ready.html",
+      "title": "REVIEW_READY",
+      "source_sha256": "c565c9c16abc5e49eefec7f7d54edfdbb4afe721293e601def254681ca25a694"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/rollout-packet.md",
+      "target": "docs/templates/project-bootstrap/rollout-packet.html",
+      "title": "Project rollout packet",
+      "source_sha256": "a41e19e268ec15d3e754cf60720a0b7cbd2d92bef74fa3d77d4bf8b86d3b53f8"
+    },
+    {
+      "source": "docs/templates/project-bootstrap/workstream-plan.md",
+      "target": "docs/templates/project-bootstrap/workstream-plan.html",
+      "title": "Project workstream plan",
+      "source_sha256": "6fa5cde5a9063dc30adf2b595b520c0da485bd5640cb399059796d3a47994ada"
+    },
+    {
+      "source": "docs/third-party/unlazy-provenance.md",
+      "target": "docs/third-party/unlazy-provenance.html",
+      "title": "Unlazy provenance for Director Completion Gates",
+      "source_sha256": "7cfac74351dd981eeeaf364aca59a5fafb2a7d8e81f0add9b1e6add650a67f76"
+    },
+    {
+      "source": "docs/twenty-check-completion-scorecard.md",
+      "target": "docs/twenty-check-completion-scorecard.html",
+      "title": "Twenty checks for a completed Director",
+      "source_sha256": "c3daa3aacf0259e261e0b5e664e697c9a0b0efd7e2a82d72d74ebcb9deafb42f"
+    },
+    {
+      "source": "docs/twenty-point-system.md",
+      "target": "docs/twenty-point-system.html",
+      "title": "The two twenty-point controls",
+      "source_sha256": "1bc63a9edb869010ca28e46c9684cfa826edb473351ee863b870c7bc5e904428"
+    },
+    {
+      "source": "docs/two-party-activation-v3.md",
+      "target": "docs/two-party-activation-v3.html",
+      "title": "Two-party activation acceptance v3",
+      "source_sha256": "9510494e2281dd491d9c739f55c209cb7054c81338f83cab4430a16bdc1418d6"
+    }
+  ],
+  "compatibility_pointers": [
+    "docs/contribution-attribution-policy.md",
+    "docs/project-bootstrap-protocol.md",
+    "docs/team-operating-charter.md"
+  ]
+}

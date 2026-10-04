@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Grok Bot chat dispatch · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#where-things-live">Where things live</a></li><li class="top"><a href="#steps-run-from-the-repository-root-in-git-bash">Steps (run from the repository root, in Git Bash)</a></li><li class="top"><a href="#validation-record-2026-09-13-windows-11-real-app">Validation record (2026-09-13, Windows 11, real app)</a></li><li class="sub"><a href="#guarded-paste-on-a-busy-desktop-2026-09-17-0100-utc-real-app">Guarded paste on a busy desktop (2026-09-17 01:00 UTC, real app)</a></li><li class="top"><a href="#constraints">Constraints</a></li><li class="top"><a href="#idle-desktop-focus-guard-clipboard-restore-added-2026-09-17">Idle desktop, focus guard, clipboard restore (added 2026-09-17)</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:59 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 19:15 UTC | BEGIN]] -->
+<h1 id="grok-bot-chat-dispatch">Grok Bot chat dispatch</h1>
+<p>Grok Bot (<code>C:\Program Files\Grok Bot\Grok Bot.exe</code>) has no CLI. This route
+drives its chat composer from a session that has no computer-use tool. The
+owner ranks it among the top three ways to reach Grok Bot, above Computer Use.
+It is a coordination contact only: Grok Bot's reply is review evidence for the
+exact-SHA record, never merge, callback, or runtime authority (see
+<code>docs/provider-profiles/grok.yaml</code>, transport <code>grok-bot</code>).</p>
+<p>One script, five actions (<code>focus</code>, <code>paste</code>, <code>send</code>, <code>shot</code>, <code>clear</code>), every
+failure a terminating error that stops before the keystroke that would send.
+No P/Invoke; COM <code>WScript.Shell</code> (AppActivate by <strong>process id</strong>, SendKeys),
+managed UI Automation (<code>UIAutomationClient</code>, to read which process owns
+keyboard focus before every keystroke), the clipboard (saved before the paste
+and restored after it), and a GDI screenshot only.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]] -->
+<h2 id="where-things-live">Where things live</h2>
+<p>All artifacts default to <code>%LOCALAPPDATA%\director-orchestrator\grok-bot\</code> —
+the packet copy, the preview and after screenshots, and the send receipt —
+never inside the repository. Screenshots capture a whole display, so they must
+not land in a worktree. Override with <code>-ArtifactRoot</code> if needed.</p>
+<h2 id="steps-run-from-the-repository-root-in-git-bash">Steps (run from the repository root, in Git Bash)</h2>
+<ol>
+<li>
+<p>Write the packet as an ASCII text file outside the repo, for example
+<code>%LOCALAPPDATA%\director-orchestrator\grok-bot\packet.txt</code>: a read-only
+review request, the exact 40-character SHA, the checks, and the required final
+line <code>VERDICT: ACCEPT | CHANGES_REQUIRED | SERIOUS_SAFETY_STOP bound to &lt;sha&gt;</code>.
+The script refuses packets that are empty, non-ASCII, or missing that line.</p>
+</li>
+<li>
+<p>Paste:</p>
+<pre><code class="language-bash">powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/grok-bot-chat/grok_bot_chat.ps1 -Action paste -Packet &quot;$LOCALAPPDATA/director-orchestrator/grok-bot/packet.txt&quot;
+</code></pre>
+<p>It finds exactly one Grok Bot main window whose executable path matches
+(two windows or a different path is a stop), writes the clipboard and reads
+it back (mismatch is a stop), activates by process id, pastes, reads the
+clipboard back again (a change mid-paste is a stop), and writes a preview
+screenshot named by the packet's sha256. It prints <code>digest=&lt;sha256&gt;</code>.</p>
+</li>
+<li>
+<p><strong>Read the preview PNG.</strong> The composer must show the packet tail and the SHA.
+If it does not (focus trap, empty composer, stale text), do not send; run
+<code>-Action clear</code> to abandon the paste, fix focus, and paste again. The same
+digest cannot be sent twice. Before any of this, the desktop must be idle;
+see &quot;Idle desktop, focus guard, clipboard restore&quot; below.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC]] -->
+</li>
+<li>
+<p>Send:</p>
+<pre><code class="language-bash">powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/grok-bot-chat/grok_bot_chat.ps1 -Action send -Digest &lt;sha256&gt;
+</code></pre>
+<p>Refuses unless a preview exists for that digest, no receipt exists yet, the
+<code>&lt;digest&gt;.pasted.json</code> marker written by <code>paste</code> exists, and the Grok Bot
+process id in that marker is still the running one (a restarted app has an
+unverified composer: re-paste). The clipboard is <em>not</em> consulted — <code>paste</code>
+restored the owner's clipboard already. Focus is asserted, then the receipt
+is written <strong>before</strong> the Enter keystroke, so an ambiguous submission is
+never retried: if in doubt, look at the screen, do not press again.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]] -->
+</li>
+<li>
+<p>Poll (screenshot only, no input) every minute or two until the reply ends
+with the VERDICT line, typically 3-6 minutes:</p>
+<pre><code class="language-bash">powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/grok-bot-chat/grok_bot_chat.ps1 -Action shot
+</code></pre>
+</li>
+<li>
+<p>Transcribe findings and the verdict into the PR's exact-SHA review record.
+Grok's line pins can run +/-2; it sometimes posts a self-correction message.</p>
+</li>
+</ol>
+<h2 id="validation-record-2026-09-13-windows-11-real-app">Validation record (2026-09-13, Windows 11, real app)</h2>
+<p>Run from the repository root with the app open on the secondary display:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-Action paste</code> with a missing packet</td>
+<td><code>Get-Content</code> terminates (<code>PathNotFound</code>); no clipboard write, no keystroke</td>
+</tr>
+<tr>
+<td>empty packet</td>
+<td><code>packet is empty</code></td>
+</tr>
+<tr>
+<td>non-ASCII packet</td>
+<td><code>packet must be ASCII; non-ASCII pastes as mojibake</code></td>
+</tr>
+<tr>
+<td>packet without the VERDICT line</td>
+<td><code>packet must end with the exact-SHA VERDICT line</code></td>
+</tr>
+<tr>
+<td><code>-Action send</code> with an unknown digest</td>
+<td><code>no preview for &lt;digest&gt;</code></td>
+</tr>
+<tr>
+<td><code>-Action paste</code> with a validation-only packet</td>
+<td>preview PNG shows the text and VERDICT line in the Grok Bot composer; <code>digest=8bf521a8…</code> printed; no receipt written</td>
+</tr>
+<tr>
+<td><code>-Action clear</code></td>
+<td>composer empty on the after-screenshot; no send receipt exists</td>
+</tr>
+</tbody>
+</table>
+<h3 id="guarded-paste-on-a-busy-desktop-2026-09-17-0100-utc-real-app">Guarded <code>paste</code> on a busy desktop (2026-09-17 01:00 UTC, real app)</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-Action focus</code> before the run</td>
+<td><code>focused=ChatGPT pid=41744 grok_bot_window_pid=41880 keys_would_reach_grok_bot=False</code></td>
+</tr>
+<tr>
+<td>first <code>-Action paste</code></td>
+<td>refused at the clipboard read-back (<code>clipboard read-back differs from the packet; not pasting</code>); no keystroke; owner clipboard sentinel intact. A transient race with another clipboard writer; the refusal is the designed outcome</td>
+</tr>
+<tr>
+<td>second and third <code>-Action paste</code></td>
+<td><code>AppActivate</code> took focus, <code>Assert-GrokBotFocused</code> passed, text landed in the composer, <code>clipboard=restored</code> and the owner's sentinel was back on the clipboard; one <code>.pasted.json</code> marker written</td>
+</tr>
+<tr>
+<td><code>-Action clear</code></td>
+<td>composer empty afterwards; no <code>.sent.json</code> exists; nothing was sent</td>
+</tr>
+</tbody>
+</table>
+<p>Not yet observed at that time: the case the guard exists for, <code>AppActivate</code> returning true while focus stays with the interactive user. On this desktop AppActivate took focus each time; the guard's refusal path was proven only by <code>-Action focus</code> reporting <code>False</code> when Grok Bot is not in front.</p>
+<p><strong>Observed 2026-09-18 17:22 UTC</strong> (<code>[[Claude Code | Claude Opus 5 | 2026-09-18 | 17:35 UTC]]</code>): with the owner active in the Claude desktop app, <code>-Action paste</code> ran <code>AppActivate</code> (returned <code>$true</code>) and then stopped at <code>Assert-GrokBotFocused</code> with <code>keyboard focus is with 'claude' (pid 38952), not Grok Bot (pid 49060); not sending keys</code>. No keystroke reached any window; the owner's clipboard was restored by the <code>finally</code>. A retry twenty seconds later, once focus had moved, pasted normally (<code>clipboard=cleared (previous content was empty or not text)</code>) and was sent after the preview was read. The same session also hit and fixed the empty-clipboard restore bug (<code>ad7bf88</code>).
+| <code>-Action shot</code> | one PNG under <code>%LOCALAPPDATA%\director-orchestrator\grok-bot\</code> |</p>
+<p>Nothing was sent to Grok Bot during validation.</p>
+<h2 id="constraints">Constraints</h2>
+<ul>
+<li>Run the script as a file from Git Bash. Do not inline PowerShell bodies that
+touch the clipboard and SendKeys through a tool: Bitdefender flagged that
+command line as injection on 2026-09-12. Never <code>Add-Type</code> user32 P/Invoke
+(<code>keybd_event</code>, <code>SetForegroundWindow</code>), blocked as <code>CMD:Heur.BZC.ZFV.Boxter</code>.</li>
+<li>Screen geometry defaults to the secondary display at virtual origin
+<code>(0,-864)</code>; pass <code>-ShotX/-ShotY/-ShotW/-ShotH</code> if the window moves.</li>
+<li>Read-only packets only. Grok Bot holds a live GitHub connection and could act.</li>
+<li>One packet at a time; wait for the VERDICT line before pasting the next.</li>
+</ul>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 19:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC | BEGIN]] -->
+<h2 id="idle-desktop-focus-guard-clipboard-restore-added-2026-09-17">Idle desktop, focus guard, clipboard restore (added 2026-09-17)</h2>
+<p><strong>Incident.</strong> On 2026-09-16 at 23:23 UTC a keystroke meant for Grok Bot reached
+the owner's browser instead. <code>AppActivate</code> had returned <code>$true</code>, but Windows keeps
+focus with an interactively active user, so the key went to the foreground window
+the owner was using. An hour later a screenshot taken before a paste showed the
+owner in a credential dialog with a &quot;Copy to clipboard&quot; button on screen; the
+paste step, which overwrites the clipboard, would have replaced the value the
+owner was about to copy. Neither risk was covered by the 2026-09-13 script.</p>
+<p><strong>Rule.</strong> Run <code>paste</code>, <code>send</code> and <code>clear</code> only on an idle desktop: the owner is
+not typing, and no dialog is open. <code>-Action shot</code> and <code>-Action focus</code> are always
+safe (no input, no clipboard). When in doubt run <code>focus</code> first; it prints
+<code>keys_would_reach_grok_bot=True|False</code>.</p>
+<p><strong>Guards in the script.</strong></p>
+<ul>
+<li>Every <code>SendKeys</code> is preceded by <code>Assert-GrokBotFocused</code>, which reads the
+focused element through managed UI Automation (<code>UIAutomationClient</code>, no user32
+P/Invoke) and stops with <code>keyboard focus is with '&lt;name&gt;' (pid N), not Grok Bot</code> unless the focus owner is the Grok Bot main-window process or a same-named
+child of the exact executable. <code>AppActivate</code> returning <code>$true</code> is not trusted.</li>
+<li><code>paste</code> saves the owner's clipboard text before writing the packet and
+restores it (or clears a non-text clipboard) in a <code>finally</code> once the paste is
+verified; the output line <code>clipboard=restored|cleared (...)</code> records which.
+Non-text clipboard content (an image, a file list) cannot be restored and is
+cleared; the line says so.</li>
+<li><code>send</code> no longer checks the clipboard. It requires <code>&lt;digest&gt;.pasted.json</code>,
+written by <code>paste</code>, and refuses if the Grok Bot pid has changed since the paste.
+Focus is asserted <strong>before</strong> the receipt is written, so a refused send leaves
+no false &quot;sent&quot; record and the same digest can be retried.</li>
+</ul>
+<p><strong>Validation, 2026-09-17 00:37 UTC, Windows 11, real app.</strong> <code>-Action focus</code> with
+the Claude desktop app in front: <code>focused=claude pid=35152 grok_bot_window_pid=41880 keys_would_reach_grok_bot=False</code>. The script parses
+(<code>Parser::ParseFile</code>, zero errors); <code>UIAutomationClient</code> loads without a
+Bitdefender block. <code>paste</code> with the guard was exercised on 2026-09-17 (table above); <code>send</code> with the guard was not, and the AppActivate-succeeds-but-focus-stays case was not observed at validation
+time because the desktop was in use — which is the point.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:59 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

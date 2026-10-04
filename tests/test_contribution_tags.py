@@ -46,6 +46,8 @@ import os
 import subprocess
 import tempfile
 import unittest
+
+from director_orchestrator.documentation import read_document
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -447,12 +449,8 @@ class ProviderRoleHandoffTests(unittest.TestCase):
 class ContributionPolicySurfaceTests(unittest.TestCase):
     def test_roles_and_tagging_policy_are_present_on_authoritative_surfaces(self):
         root = Path(__file__).resolve().parents[1]
-        charter = (root / "docs" / "team-operating-charter.md").read_text(
-            encoding="utf-8"
-        )
-        prompt = (root / "prompts" / "director-system.md").read_text(
-            encoding="utf-8"
-        )
+        charter = read_document(root / "docs" / "team-operating-charter.html")
+        prompt = read_document(root / "prompts" / "director-system.md")
         for expected in (
             # Z.ai enrollment 2026-09-27: 18% everywhere, others reduced to 82%.
             "| OpenAI / Codex production | 22% | 33% | 16% | 27% |",
@@ -485,12 +483,12 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         surfaces = {
             "agents": root / "AGENTS.md",
             "prompt": root / "prompts" / "director-system.md",
-            "charter": root / "docs" / "team-operating-charter.md",
-            "policy": root / "docs" / "contribution-attribution-policy.md",
+            "charter": root / "docs" / "team-operating-charter.html",
+            "policy": root / "docs" / "contribution-attribution-policy.html",
             "rule": root / ".cursor" / "rules" / "contribution-attribution.mdc",
         }
         normalized = {
-            name: " ".join(path.read_text(encoding="utf-8").split())
+            name: " ".join(read_document(path).split())
             for name, path in surfaces.items()
         }
 
@@ -521,7 +519,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
             self.assertIn("removes no deterministic gate", normalized[name], name)
 
         self.assertIn(
-            "alwaysApply: true", surfaces["rule"].read_text(encoding="utf-8")
+            "alwaysApply: true", read_document(surfaces["rule"])
         )
 
     def test_openai_authorship_ban_is_scoped_to_control_plane_inference(self):
@@ -538,8 +536,7 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         prompt = " ".join(
-            (root / "prompts" / "director-system.md")
-            .read_text(encoding="utf-8")
+            read_document(root / "prompts" / "director-system.md")
             .split()
         )
 
@@ -812,7 +809,7 @@ class GitAttributionTests(unittest.TestCase):
 
     def test_active_agent_policy_retires_formatting_preserving_real_gates(self):
         root = Path(__file__).resolve().parents[1]
-        active = (root / "AGENTS.md").read_text(encoding="utf-8").split(
+        active = read_document(root / "AGENTS.md").split(
             "## Contribution attribution", 1)[1].split("\n11. Communicate", 1)[0]
         self.assertIn("procedures are discontinued", active)
         self.assertIn("normal Git Author/Committer provenance", active)

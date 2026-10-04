@@ -3,7 +3,7 @@
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]]
-"""Drift tests binding ``docs/primary-staging-worksheet.md`` to the code it describes.
+"""Drift tests binding ``docs/primary-staging-worksheet.html`` to the code it describes.
 
 The worksheet tells an operator how ``provider_activation_bindings_configured``
 is computed and which variable names the primary control script demands. Both
@@ -18,6 +18,8 @@ import json
 import os
 import re
 import unittest
+
+from director_orchestrator.documentation import read_document
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -27,7 +29,7 @@ from director_orchestrator.primary_roster import PRIMARY_TEAM, core_inventory_re
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSHEET = ROOT / "docs" / "primary-staging-worksheet.md"
+WORKSHEET = ROOT / "docs" / "primary-staging-worksheet.html"
 CONTROL_SCRIPT = ROOT / "scripts" / "windows-langgraph-primary-control.ps1"
 CONFIG_SOURCE = ROOT / "src" / "director_orchestrator" / "config.py"
 ACTIVATION_SOURCE = ROOT / "src" / "director_orchestrator" / "primary_provider_activation.py"
@@ -104,7 +106,7 @@ def _required_addition_names(block: str) -> set[str]:
 
 
 def _script_names(block_start: str, block_end: str, *, required_additions=False) -> set[str]:
-    source = CONTROL_SCRIPT.read_text(encoding="utf-8")
+    source = read_document(CONTROL_SCRIPT)
     start = source.index(block_start)
     end = source.index(block_end, start)
     block = source[start:end]
@@ -172,13 +174,13 @@ class BindingSignalTests(unittest.TestCase):
         self.assertFalse(_bindings_configured(core))
 
     def test_code_shape_matches_worksheet_claims(self):
-        config_source = CONFIG_SOURCE.read_text(encoding="utf-8")
+        config_source = read_document(CONFIG_SOURCE)
         self.assertIn(
             "activation_bindings_configured = bound_pool.issubset(configured_pool)"
             " and core_inventory_ready(tuple(bound_pool))",
             config_source,
         )
-        activation_source = ACTIVATION_SOURCE.read_text(encoding="utf-8")
+        activation_source = read_document(ACTIVATION_SOURCE)
         self.assertIn("app_live = app_live and readiness.app.live_ready", activation_source)
         self.assertIn(
             "adapter_live = adapter_live and readiness.runtime_adapter.live_ready",
@@ -188,7 +190,7 @@ class BindingSignalTests(unittest.TestCase):
 
 class WorksheetWordingTests(unittest.TestCase):
     def setUp(self):
-        self.text = WORKSHEET.read_text(encoding="utf-8")
+        self.text = read_document(WORKSHEET)
 
     def test_section_2_states_the_core_pool_rule(self):
         section = _flat(_section(self.text, SECTION_2))
@@ -216,7 +218,7 @@ class WorksheetWordingTests(unittest.TestCase):
 
     def test_inventory_defaults_match_config(self):
         inventory = _flat(_section(self.text, INVENTORY))
-        config_source = CONFIG_SOURCE.read_text(encoding="utf-8")
+        config_source = read_document(CONFIG_SOURCE)
         self.assertIn(
             'os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1")', config_source
         )
@@ -252,8 +254,8 @@ class WorksheetWordingTests(unittest.TestCase):
 
     def test_inventory_states_the_conditional_openai_api_key(self):
         inventory = _flat(_section(self.text, INVENTORY))
-        config_source = CONFIG_SOURCE.read_text(encoding="utf-8")
-        transports_source = TRANSPORTS_SOURCE.read_text(encoding="utf-8")
+        config_source = read_document(CONFIG_SOURCE)
+        transports_source = read_document(TRANSPORTS_SOURCE)
         self.assertIn('os.getenv("OPENAI_API_KEY", "")', config_source)
         self.assertIn(
             'if openai_transport == "responses-api" and openai_api_key'
@@ -278,7 +280,7 @@ class WorksheetWordingTests(unittest.TestCase):
 
     def test_inventory_denies_permission_to_run_without_pins(self):
         inventory = _flat(_section(self.text, INVENTORY))
-        script = CONTROL_SCRIPT.read_text(encoding="utf-8")
+        script = read_document(CONTROL_SCRIPT)
         # Blank pins fail the script's own shape check, whichever version is held.
         self.assertIn(
             "Primary repository authority must have exact commit and tree pins.", script
@@ -294,7 +296,7 @@ class WorksheetWordingTests(unittest.TestCase):
 
     def test_inventory_separates_the_current_control_version(self):
         inventory = _flat(_section(self.text, INVENTORY))
-        script = CONTROL_SCRIPT.read_text(encoding="utf-8")
+        script = read_document(CONTROL_SCRIPT)
         self.assertRegex(script, r'\[ValidateSet\("PrepareAcceptance",')
         self.assertIn(
             "`BootstrapDatabaseIdentity`, `SelectGeneration`, `StageRuntime`, and"

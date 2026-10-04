@@ -355,6 +355,8 @@ jobs:
           python scripts/ci_scope.py run
       - run: python -m compileall -q src scripts tests
         if: (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
+      - name: Validate canonical HTML documentation
+        run: python scripts/check_html_documentation.py
       - run: python -m json.tool n8n/workflows/director-intake.json
         if: (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
       - run: python -m json.tool docs/oracle-review-artifact.example.json

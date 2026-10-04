@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Provider Setup Matrix · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#shared-periodic-usage-check-behavior">Shared periodic usage-check behavior</a></li><li class="top"><a href="#live-dispatch-preflight">Live dispatch preflight</a></li><li class="sub"><a href="#the-ordered-prerequisite-list">The ordered prerequisite list</a></li><li class="sub"><a href="#mutual-exclusions-and-pairings">Mutual exclusions and pairings</a></li><li class="sub"><a href="#the-paidlive-coupling">The paid/live coupling</a></li><li class="top"><a href="#owner-account-and-routing-context">Owner account and routing context</a></li><li class="top"><a href="#intake-routing-defaults">Intake routing defaults</a></li><li class="top"><a href="#trusted-openai-debate-turn-accounting">Trusted OpenAI debate-turn accounting</a></li><li class="top"><a href="#grok-primary-cursor-family-profile">Grok primary Cursor-family profile</a></li><li class="top"><a href="#perplexity-research-only-profile">Perplexity research-only profile</a></li><li class="top"><a href="#zai-production-lane">Z.ai production lane</a></li><li class="sub"><a href="#routes">Routes</a></li><li class="sub"><a href="#accounting">Accounting</a></li><li class="sub"><a href="#capability-map">Capability map</a></li><li class="top"><a href="#zai-trial-only-contact-lane">Z.ai trial-only contact lane</a></li><li class="top"><a href="#antigravity-subordinate-profile">Antigravity subordinate profile</a></li><li class="top"><a href="#oracle-merge-base-ref-is-per-project">Oracle merge base ref is per project</a></li><li class="top"><a href="#gemini-interactions-api-contract">Gemini Interactions API contract</a></li><li class="sub"><a href="#daily-spend-admission-for-metered-providers">Daily spend admission for metered providers</a></li><li class="top"><a href="#label-triggered-codex-security-review">Label-triggered Codex security review</a></li><li class="top"><a href="#important-claude-cowork-boundary">Important Claude Cowork boundary</a></li><li class="top"><a href="#credential-order">Credential order</a></li><li class="top"><a href="#official-references">Official references</a></li><li class="top"><a href="#primary-security-credential-boundaries">Primary security credential boundaries</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
+<h1 id="provider-setup-matrix">Provider Setup Matrix</h1>
+<p>For editor-hosted agents, consult the <a href="providers/vscode-contact-methods.html">VS Code contact methods and Director
+integration guide</a>. It separates GitHub
+Copilot, provider-specific credentials, extension APIs, MCP, and workspace
+transports, with the evidence required before a route can accept assignments.</p>
+<p>The cross-provider responsibility, debate, advisory-voting, and strict
+Perplexity evidence boundaries are defined in
+<a href="team-operating-charter.html"><code>team-operating-charter.md</code></a>.</p>
+<h2 id="shared-periodic-usage-check-behavior">Shared periodic usage-check behavior</h2>
+<p>The orchestrator can periodically send every configured provider a short <code>DIRECTOR_USAGE_CHECK</code> prompt. The prompt instructs the provider not to browse, call tools, inspect repositories, edit files, create branches or pull requests, or perform project work. This is an instruction rather than a provider-side sandbox for agent products such as Cursor and Gemini, so provider-side spend limits remain required. The monitor records provider-returned tokens and cost when available, bounded attempts, and normalized quota failures; it never invents missing cost telemetry.</p>
+<p>These probes consume provider usage and are opt-in through <code>USAGE_CHECK_ENABLED=true</code>. They are also disabled by the global paid-run gate and cannot execute while <code>ALLOW_PAID_RUNS=false</code>. The default interval is 360 minutes and the enforced minimum is 15 minutes, including manual runs. <code>POST /v1/usage-checks/run</code> returns a structured schedule (<code>accepted</code> / <code>not_due</code> / <code>busy</code>) so callers know which providers were actually scheduled before waiting for records. Account dashboards, not model prose, remain authoritative for plan balances and billing.</p>
+<p>An OpenAI HTTP 429 is an unambiguously rejected availability request, so the monitor may make one recovery attempt only when a short, valid <code>Retry-After</code> window is available or absent. The accepted delay is 0–60 seconds, expressed as seconds or an HTTP date; absent headers use two seconds, and invalid, past, or longer delays stop recovery. It records both attempts and a sanitized error code for transport, HTTP, JSON, or response-validation failures; the retry never applies to another status or to a Claude callback-pending record.</p>
+<p>Configure one provider at a time and leave <code>ALLOW_PAID_RUNS=false</code> until every intended adapter has passed a credential/readiness check. Subscription access and API billing are separate unless the provider explicitly says otherwise.</p>
+<p>Before enabling live execution, configure an exact deployment profile:</p>
+<ul>
+<li>Create a project-local rollout packet using
+<code>docs/templates/project-bootstrap/rollout-packet.html</code> as the starting
+template. If another Director deployment will remain active, assign a
+distinct Slack app, project channel, deployment profile, and state namespace.
+Record app and channel IDs and readiness only; keep token values and exact
+owner-user allowlist IDs in the ignored deployment profile. Missing or reused
+identities block Slack activation while leaving analysis-only shaping
+available.</li>
+<li><code>PROJECT_ALLOWLIST</code>: case-insensitive project names accepted by this deployment.</li>
+<li><code>REPOSITORY_ALLOWLIST</code>: exact GitHub <code>owner/repository</code> targets; GitHub HTTPS URLs normalize to this form.</li>
+<li><code>ALLOWED_STARTING_REFS</code>: case-sensitive starting branches or refs. Cursor auto-generated <code>cursor/...</code> working branches are not durable starting points; they are deleted after merge. A pre-creation &quot;GitHub branch not found&quot; response for one of those refs retries once against the first allowlisted ref. A follow-up against a deleted working branch starts a new agent from that same durable ref instead of resuming the dead session. Durable refs such as <code>main</code> still fail closed.</li>
+<li><code>CLAUDE_CALLBACK_SECRET</code>: a dedicated callback bearer secret, stored only by the orchestrator and trusted callback sender.</li>
+</ul>
+<p>An absent project allowlist blocks every live plan. Cursor cannot use an implicit dashboard repository, and model output or owner approval cannot widen these target lists.</p>
+<h2 id="live-dispatch-preflight">Live dispatch preflight</h2>
+<p>The prerequisites for paid, live provider dispatch are spread across several
+validators that each raise on the first problem they reach, so configuring them
+by starting the process reveals them one process death at a time. Read them all
+at once instead:</p>
+<pre><code>PYTHONPATH=src python -B scripts/live-dispatch-preflight.py
+</code></pre>
+<p>It reports and does nothing else: it sets no variable, writes no file, opens no
+socket, touches no database, and calls no provider. Every verdict it prints is
+the deterministic validator's own EXCEPT the paid/live coupling line, which is
+the preflight's own paraphrase of the startup constructor's refusal, because a
+read-only preflight must not construct the activation (it opens a Postgres
+control plane). It removes, relaxes, and defaults nothing. It prints variable
+names and booleans only, never a value —
+the same rule <code>/health</code> follows. The preflight reports bridge CONFIGURATION booleans only; the startup challenge result (captured once when the activation built its live dependencies; /health never re-challenges and opens no connection per request) is exposed as <code>/health.host_bridge.startup_challenge_ok</code>, named for what it is: startup evidence, not current liveness. Exit status is 0 when nothing is outstanding
+and 1 when anything is. A clean exit is a configuration statement only: it is
+not acceptance, not provider activation evidence, and not owner approval.</p>
+<p>The script evaluates the rest of the configuration as though the four coupled
+switches (<code>ALLOW_PAID_RUNS</code>, <code>LANGGRAPH_PRIMARY_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>, and
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code>) were already set for the
+first three validators, and as though two additional switches
+(<code>LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED</code> and <code>LANGGRAPH_RUNTIME_ENABLED</code>)
+were also set for the last two validators. This is what lets one pass name every
+remaining prerequisite.</p>
+<h3 id="the-ordered-prerequisite-list">The ordered prerequisite list</h3>
+<p>Reported following main.py's order, additionally running the runtime validator which startup reaches later through runtime activation.</p>
+<ol>
+<li>
+<p><strong>The coupled switches.</strong> <code>ALLOW_PAID_RUNS</code>, <code>LANGGRAPH_PRIMARY_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>, and
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code>. Any primary execution
+switch requires <code>LANGGRAPH_PRIMARY_ENABLED</code>; live dispatch additionally
+requires <code>ALLOW_PAID_RUNS</code>; primary enabled without new intake answers every
+intake with HTTP 503 rather than falling back to the legacy engine.</p>
+</li>
+<li>
+<p><strong>Workload policy.</strong> Always: <code>WORKLOAD_POLICY_MODE</code>,
+<code>WORKLOAD_POLICY_WINDOW_ASSIGNMENTS</code>, <code>WORKLOAD_POLICY_SHADOW_ASSIGNMENTS</code>.
+Then, while <code>WORKLOAD_POLICY_ENABLED</code> is on and paid runs are on:
+<code>PRIMARY_WORKHORSE</code>, then <code>TRUSTED_PROVIDER_COST_RANKS</code>, which must be
+configured, unique, a total order, and must cover every ready specialist.
+At least one specialist must be ready; an empty ready set fails this check.
+This validator raises one problem at a time, in that order, so the preflight
+can only surface the first outstanding one of them per pass.</p>
+</li>
+<li>
+<p><strong>Shadow lane isolation</strong>, when <code>LANGGRAPH_SHADOW_ENABLED</code> or
+<code>LANGGRAPH_APPROVAL_RESUME_ENABLED</code> is on: <code>LANGGRAPH_CHECKPOINT_PATH</code>,
+<code>LANGGRAPH_CHECKPOINT_NAMESPACE</code>, and isolation from <code>SQLITE_PATH</code>.</p>
+</li>
+<li>
+<p><strong>Primary configuration.</strong> <code>LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES</code>;
+<code>LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS</code>;
+<code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code>;
+<code>LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET</code>;
+the three distinct completion-authority evidence secrets
+(<code>LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET</code>);
+<code>LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON</code>;
+<code>LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET</code>;
+<code>LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT</code> with
+<code>LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET</code>, configured together or not at all;
+pairwise-distinct ingress secrets; <code>LANGGRAPH_PRIMARY_POSTGRES_DSN</code>;
+<code>LANGGRAPH_PRIMARY_POSTGRES_SCHEMA</code>;
+<code>LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE</code>, distinct from the shadow and
+runtime namespaces; <code>LANGGRAPH_PRIMARY_OWNER_TOKEN</code>;
+<code>REPOSITORY_SNAPSHOT_ROOT</code>; exactly one <code>REPOSITORY_ALLOWLIST</code> entry;
+exactly one <code>ALLOWED_STARTING_REFS</code> entry; and
+<code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> with
+<code>LANGGRAPH_PRIMARY_PINNED_TREE_SHA</code>, supplied together or not at all.
+A binding for <code>microsoft-365-copilot</code> additionally requires
+<code>MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE</code>,
+<code>MICROSOFT_365_COPILOT_TENANT_ID</code>,
+<code>MICROSOFT_365_COPILOT_EXPECTED_SUBJECT</code>, and
+<code>MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID</code>.</p>
+</li>
+<li>
+<p><strong>The paid/live coupling</strong>, checked next, at the point where startup builds
+the primary activation. See below.</p>
+</li>
+<li>
+<p><strong>Parallel dispatch</strong>, evaluated by the preflight with
+<code>LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED</code> forced on so its prerequisites
+are reported even before the operator enables it:
+<code>LANGGRAPH_PARALLEL_INITIAL_MAX_CONCURRENCY</code>,
+<code>LANGGRAPH_PARALLEL_AUTO_SCALE_MAX_CONCURRENCY</code>,
+<code>LANGGRAPH_PARALLEL_CLEAN_BATCHES_TO_SCALE</code>,
+<code>LANGGRAPH_PARALLEL_RECOVERY_CLEAN_BATCHES</code>, and the per-provider caps. The
+fixed values are not tunable and a different one is a startup refusal.</p>
+</li>
+<li>
+<p><strong>Runtime lane</strong>, evaluated by the preflight with
+<code>LANGGRAPH_RUNTIME_ENABLED</code> forced on so its prerequisites are reported even
+before the operator enables it:
+<code>LANGGRAPH_RUNTIME_CHECKPOINT_PATH</code>, <code>LANGGRAPH_RUNTIME_LEDGER_PATH</code>,
+<code>LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE</code>,
+<code>LANGGRAPH_RUNTIME_WRITER_OWNER_ID</code>, <code>LANGGRAPH_RUNTIME_WRITER_SECRET</code>,
+<code>LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED</code>, and distinct store files.</p>
+</li>
+<li>
+<p><strong>Execution profile</strong>, which fails closed before any provider call:
+<code>PROJECT_ALLOWLIST</code>, <code>REPOSITORY_ALLOWLIST</code>, <code>ALLOWED_STARTING_REFS</code>, and
+<code>CLAUDE_CALLBACK_SECRET</code>, as listed above.</p>
+</li>
+<li>
+<p><strong>Subsystem readiness</strong>, evaluated last, mirroring what live startup
+requires without connecting to anything. The entitlement control plane:
+<code>ENTITLEMENT_CONTROL_PLANE_ENABLED</code> must be true, and its dependent checks
+run whether or not it is (one pass reports everything): the DSN file must
+exist at the literal configured path, be at most 65536 bytes and, stripped,
+be one non-empty line that the same <code>_parse_connection_target</code> startup
+uses accepts (explicit dbname, port, user, a verifying sslmode with
+sslrootcert, no delegated identity) and that names the same database and
+role as <code>LANGGRAPH_PRIMARY_POSTGRES_DSN</code> under the entitlement schema —
+the identical storage-identity digest startup compares; only the
+database-side accepted identity, which needs the live handle, is left to
+startup. The parser and digest are imported as pure functions; the file
+still opens no connection, which its tests pin by name; each of
+the three secret files must exist after <code>~</code> expansion and, stripped, hold
+at least 32 UTF-8 bytes with at least 16 distinct byte values — the same
+rule <code>_read_secret_file</code> applies; the schema must match <code>[a-z0-9_]+_v&lt;N&gt;</code>.
+File contents are read only to apply those rules and never reach the
+output; any filesystem or <code>~user</code> expansion failure reads as an unavailable
+file. The effect gateways: <code>SLACK_BOT_TOKEN</code> or a GitHub credential; when
+the registry would build the GitHub App gateway, its credential must also
+pass the constructor's local syntax checks (numeric ids, strict base64
+private key) — an incomplete App configuration is skipped by startup and
+therefore not reported. The host provider bridge: endpoint/secret
+configuration booleans only; the pairing rule is reported by the
+langgraph-primary validator above.</p>
+<p><code>/health.providers.lanes.&lt;lane&gt;</code> reports two booleans. <code>configured</code> is a
+startup observation: an executable was observed for the lane, or the lane
+has a composed adapter (the Antigravity team route dispatches without a
+local executable; an installed lane outside
+<code>LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS</code> has no adapter). <code>live_ready</code> is the
+gate dispatch itself applies: the lane has a composed adapter and the
+activation service currently reports <code>provider_ready(lane, live=True)</code>, so
+a lapsed <code>LIVE_OK</code> capture flips it to false on the next read; without an
+activation service nothing is live. A binary or login that disappears after
+startup is not re-probed by <code>/health</code> (dispatch would fail the same way);
+that liveness belongs to a bounded monitor, not the health endpoint.</p>
+</li>
+</ol>
+<h3 id="mutual-exclusions-and-pairings">Mutual exclusions and pairings</h3>
+<ul>
+<li><code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED</code> and
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code> are <strong>mutually
+exclusive</strong>. Leaving offline simulation on while requesting live dispatch is
+a startup refusal, not a precedence rule.</li>
+<li><code>LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT</code> and
+<code>LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET</code> must be present together or absent
+together.</li>
+<li><code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> and
+<code>LANGGRAPH_PRIMARY_PINNED_TREE_SHA</code> must be supplied together.</li>
+<li><code>LANGGRAPH_RUNTIME_TASK_WRITER_ENABLED</code> must be on whenever
+<code>LANGGRAPH_RUNTIME_LIVE_DISPATCH_ENABLED</code> is on.</li>
+</ul>
+<h3 id="the-paidlive-coupling">The paid/live coupling</h3>
+<p><code>ALLOW_PAID_RUNS</code> and <code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code> are
+coupled in <strong>both</strong> directions, and the two must move as one unit:</p>
+<ul>
+<li>Live dispatch without paid runs is rejected by the primary configuration
+validator.</li>
+<li>Paid runs without live dispatch requested, on a deployment where
+<code>LANGGRAPH_PRIMARY_ENABLED</code> is on, is rejected when startup builds the
+primary activation. <strong>The process does not start.</strong> Turning paid runs on by
+itself takes the deployment down rather than enabling anything.</li>
+</ul>
+<p>The preflight reports that second state explicitly, against the configuration
+as it stands rather than the target, because it is the trap: a deployment can
+be one variable away from not booting while every other prerequisite reads as
+satisfied.</p>
+<h2 id="owner-account-and-routing-context">Owner account and routing context</h2>
+<ul>
+<li><strong>The primary team is OpenAI, Claude, Cursor, and Grok.</strong> These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.</li>
+<li><strong>Implementation uses cheap-capable-model-first routing.</strong> Establish scope, transport, readiness, capability, tools, context, risk, and reviewer independence; then prefer an under-target eligible provider and the lowest trusted comparable estimated cost. Missing cost is unknown, not zero. An exact trusted assignment requirement may select Claude, but workload length alone does not.</li>
+<li><strong>OpenAI Pro 20x and Claude Max 5x</strong> are the owner-reported account context. These capacity signals do not fund separate API calls; verify route-specific remaining capacity and budget.</li>
+<li><strong>Cursor and Grok are primary Cursor-family teammates.</strong> Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.</li>
+<li><strong>Gemini and Perplexity are supplemental specialists.</strong> Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.</li>
+</ul>
+<p>Use the <a href="provider-allocation-profiles.html">approved eight-lane allocation profiles</a>,
+with Engineering as the default. Freeze profile and digest before approval,
+preserve real history, and exclude zero-target lanes over the prospective fixed
+twenty-slot denominator; the owner retired the target+5 hard ceiling on
+2026-09-21. The ±3-point normal band guides preference; observed effort is
+separately reported and cannot create production credit.
+OpenAI production and Antigravity specialist work require their actual scoped
+adapters and non-author verification; a target alone proves no live capability.</p>
+<p>Every assignment has at most three conditional attempt slots. The Director
+derives a deterministic roster of the provider's configured packet formats and
+transports and rejects rosters larger than three. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. Each child attempt is appended to Postgres before I/O
+and settled with exact provider, format, transport, idempotency, budget,
+result, and reason digests. An ambiguous paid attempt stops redispatch until
+authenticated reconciliation; a failed attempt remains untrusted and cannot
+overwrite the final assignment result artifact.</p>
+<p>Practical operating patterns:</p>
+<ol>
+<li><strong>Cheap-capable implementation lane:</strong> select OpenAI production, Claude, Cursor, Grok, or an eligible bounded Antigravity lane only after capability, context, readiness, and independence; apply direct-production hard eligibility and under-target preference before total-effort rank, then trusted cost and deterministic tie-break; retain the assigned provider's transport and authority limits.</li>
+<li><strong>Exact-requirement lane:</strong> when a trusted work order explicitly requires Claude or a named model profile, honor it; otherwise do not infer a provider requirement from task length.</li>
+<li><strong>Optional specialist lane:</strong> when materially useful, Perplexity gathers current public sources and Gemini Antigravity produces bounded subordinate artifacts. A primary model independently verifies and integrates or rejects their evidence.</li>
+<li><strong>Graceful degradation:</strong> periodic usage checks report availability and returned token counts. If substitution could affect scope, cost, or quality, pause for an owner decision rather than silently changing providers.</li>
+</ol>
+<p>For each selection, record the eligible models, exclusions, trusted comparable
+costs, selected provider/model, and tie-break reason. Track accepted productive
+units, first-pass yield, correction rate, duplicate validation, and categorized
+waste. Compute provider-reported cost ROI only from correlated returned cost;
+never invent missing telemetry or treat it as zero.</p>
+<p>Before enabling paid workload routing, set <code>PRIMARY_WORKHORSE=cheapest_capable</code>
+and populate <code>TRUSTED_PROVIDER_COST_RANKS</code> in the ignored deployment profile as a
+JSON object. Include every configured ready specialist among <code>claude</code>, <code>cursor</code>,
+<code>gemini</code>, <code>grok</code>, and <code>perplexity</code>. Each value must be a unique positive integer;
+lower means cheaper. The Director has no built-in provider order and fails closed
+before the planning call when the setting is absent, malformed, or incomplete.
+Use current operator-verified comparable cost evidence rather than copying a
+sample ranking from documentation.</p>
+<h2 id="intake-routing-defaults">Intake routing defaults</h2>
+<p>Two owner-set variables supply the allocation profile and the primary capability
+request that every Slack intake carries. They are deployment configuration only.
+The Slack gateway never derives either value from message text: a Slack message
+is untrusted data and cannot steer provider selection.</p>
+<ul>
+<li><code>INTAKE_ALLOCATION_PROFILE</code> selects one of the four approved
+<a href="provider-allocation-profiles.html">allocation profiles</a>: <code>engineering</code>,
+<code>mixed</code>, <code>public_research</code>, or <code>enterprise</code>. The default is <code>engineering</code>.</li>
+<li><code>INTAKE_PRIMARY_REQUIRED_CAPABILITIES</code> is a comma-separated list drawn from
+<code>public_research</code>, <code>bounded_scaffolding</code>, and <code>repository_assistance</code>. The
+default is empty. A repeated entry is refused.</li>
+</ul>
+<p>Leaving both unset reproduces the previous behavior exactly, so an existing
+deployment changes nothing by upgrading. Startup validation refuses an unknown
+profile name, an unknown capability, and a repeated capability before the
+service accepts any intake; it does not wait for a per-task roster hold.</p>
+<p><code>enterprise_context</code> is a valid intake capability but is <strong>not</strong> configurable.
+No scoped enterprise production adapter exists, so the roster selector holds
+every plan that requests it. Configuring it could therefore only produce one
+hold per task, and startup refuses it instead. This refusal is additive and
+removes no existing gate.</p>
+<p>These variables change which lanes can be selected, which creates one
+operational prerequisite:</p>
+<ul>
+<li><code>bounded_scaffolding</code> makes the Antigravity lane selectable, and
+<code>repository_assistance</code> makes the GitHub Copilot lane selectable. Under
+<code>engineering</code> the GitHub Copilot target is zero and the lane stays ineligible
+on allocation grounds; <code>mixed</code> and <code>enterprise</code> give it a non-zero target.</li>
+<li><strong>Every selectable lane must have a rank in <code>TRUSTED_PROVIDER_COST_RANKS</code>.</strong>
+The selector holds the <em>entire</em> roster with <code>primary_trusted_cost_rank_required</code>
+when any candidate lane lacks a rank, not just that one lane. Configure a
+<code>github-copilot</code> rank before enabling <code>repository_assistance</code>. The Antigravity
+lane already draws its rank from the <code>gemini</code> entry — <code>antigravity</code> is
+accepted as a spelling and normalizes to <code>gemini</code> — so a deployment with a
+ready Gemini specialist already satisfies <code>bounded_scaffolding</code>.</li>
+<li>The <code>ready_provider_ranks_complete</code> readiness boolean covers only the ready
+specialists <code>claude</code>, <code>cursor</code>, <code>gemini</code>, <code>grok</code>, and <code>perplexity</code>. It does
+<strong>not</strong> cover <code>github-copilot</code>, so a missing GitHub Copilot rank passes
+startup validation and surfaces later as a plan-time hold. Verify the rank
+when enabling the capability.</li>
+</ul>
+<p>The same setting must additionally cover every lane the primary roster can
+select. A lane bound in <code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code>
+becomes a roster candidate as soon as an intake names a profile and capability
+that admit it, and the roster refuses to select <em>anyone</em> while any candidate is
+unranked. With <code>ALLOW_PAID_RUNS</code> and <code>WORKLOAD_POLICY_ENABLED</code> both true, the
+service therefore refuses to start and names the unranked lane and
+<code>TRUSTED_PROVIDER_COST_RANKS</code>. Two consequences are worth planning for:</p>
+<ul>
+<li>An <code>antigravity</code> binding is satisfied by a <code>gemini</code> rank; the parser
+normalizes the two names to one entry, so do not add a separate rank.</li>
+<li>The requirement follows the activation bindings, not credentials. Removing a
+lane from <code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code> removes its
+rank requirement, because an unbound lane is never observed ready and never
+reaches a roster. Leaving a lane bound while omitting its rank is the
+configuration that previously failed only at dispatch.</li>
+</ul>
+<h2 id="trusted-openai-debate-turn-accounting">Trusted OpenAI debate-turn accounting</h2>
+<p>Set <code>OPENAI_DEBATE_TURN_ESTIMATED_COST_USD</code> to one finite positive estimate for
+each paid OpenAI counter-bias, synthesis, and ordinary-tie-judgment turn. The
+default is <code>$0.05</code>. Provider-generated plan estimates are untrusted for budget
+purposes: the Director persists and reserves the greater of the provider estimate
+and this operator setting. A missing or zero plan estimate therefore cannot make a
+paid debate turn free, while a higher conservative estimate is preserved. A
+non-positive or non-finite configured value prevents the service from starting.</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Supported bridge in this package</th>
+<th>Required values</th>
+<th>Completion path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Primary — Director</td>
+<td>OpenAI Responses API with Structured Outputs</td>
+<td><code>OPENAI_API_KEY</code>, <code>OPENAI_DIRECTOR_MODEL</code></td>
+<td>Immediate planning/review response</td>
+</tr>
+<tr>
+<td>Primary — full-spectrum implementation/review</td>
+<td>Claude Code Routine API trigger</td>
+<td><code>CLAUDE_ROUTINE_URL</code>, <code>CLAUDE_ROUTINE_TOKEN</code></td>
+<td>Session URL plus callback/manual report</td>
+</tr>
+<tr>
+<td>Primary — repository teammate</td>
+<td>Cursor Cloud Agents API v1</td>
+<td><code>CURSOR_API_KEY</code></td>
+<td>Poll durable agent run; draft PR allowed</td>
+</tr>
+<tr>
+<td>Primary — Cursor-family teammate</td>
+<td>xAI Responses API plus separately authorized Grok Build/Bot contacts</td>
+<td><code>GROK_ENABLED</code>, <code>XAI_API_KEY</code>, <code>GROK_MODEL</code> and the fail-closed controls below</td>
+<td>Synchronous API response or named-worktree CLI/Bot evidence</td>
+</tr>
+<tr>
+<td>Supplemental — subordinate boilerplate/ideation</td>
+<td>Gemini Antigravity Agent over the Interactions API</td>
+<td><code>GEMINI_API_KEY</code>, <code>GEMINI_AGENT</code>, <code>GEMINI_API_REVISION</code> and the subordinate controls below</td>
+<td>Poll stored background Interaction</td>
+</tr>
+<tr>
+<td>Supplemental — current research</td>
+<td>Perplexity Search API; Agent API only for the bounded availability probe</td>
+<td><code>PERPLEXITY_ENABLED</code>, <code>PERPLEXITY_API_KEY</code> and the research-only controls below</td>
+<td>Synchronous ranked results</td>
+</tr>
+</tbody>
+</table>
+<p>GitHub Copilot Lite is not another provider bridge. It is an optional
+hygiene observation requested only after required checks are green and the exact
+candidate is frozen. It has no assigned workload share, range, or ceiling,
+no provider adapter or automatic routing, and no production credit,
+independent acceptance role, gate, merge authority, or every-push automation.
+Without an authenticated contact it fails closed as unavailable. A requested
+observation binds at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch.
+Quota/unavailability and rejected findings are recorded as waste.
+A confirmed defect follows the normal correction path, and any substantive
+Copilot-authored fix makes Copilot a material author ineligible to independently
+review that candidate.</p>
+<p>Per-provider profile sheets in <code>docs/provider-profiles/</code> are rendered from YAML
+sources and list each lane's variable names, readiness booleans, transports, and
+routes. They mirror this document and the team operating charter, fail the drift
+tests when they diverge, and grant no authority; no value, credential, allowlist
+entry, endpoint, or path is ever recorded in a sheet.</p>
+<h2 id="grok-primary-cursor-family-profile">Grok primary Cursor-family profile</h2>
+<p>The Grok adapter has two explicit transports. General analysis and debate use
+the synchronous, tool-free xAI Responses API. Repository implementation and
+exact-SHA review use the locally authenticated Grok Build CLI in an
+operator-mapped clean named worktree. The Director never promotes API-only
+output into repository or review authority. Keep both transports disabled until
+their dedicated credentials, paths, and budgets are configured:</p>
+<pre><code class="language-dotenv">GROK_ENABLED=false
+XAI_API_KEY=
+GROK_API_BASE=https://api.x.ai/v1
+GROK_MODEL=grok-4.6
+GROK_MODE=cursor_family_primary
+GROK_TIMEOUT_SECONDS=180
+GROK_MAX_OUTPUT_TOKENS=4096
+GROK_MAX_CONTEXT_CHARS=262144
+GROK_DAILY_BUDGET_USD=2.00
+GROK_DAILY_REQUEST_LIMIT=50
+GROK_REQUEST_COST_FLOOR_USD=0.01
+GROK_ALLOW_TOOLS=false
+GROK_ALLOW_REPOSITORY_WRITE=false
+GROK_ALLOW_REVIEW_VERDICT=false
+GROK_CLI_ENABLED=false
+GROK_CLI_EXECUTABLE=
+GROK_CLI_EXECUTABLE_SHA256=
+GROK_CLI_REPOSITORY_MAP_JSON={}
+GROK_CLI_TIMEOUT_SECONDS=3600
+GROK_CLI_MAX_TURNS=20
+</code></pre>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
+<p>One xAI key serves every project (owner decision 2026-09-16); do not mint
+per-project keys. <code>GROK_ENABLED=true</code> plus a configured <code>XAI_API_KEY</code> is not
+enough for the key to be exercised: the lane must also appear in
+<code>PRIMARY_TEAM</code> (assignments) and <code>USAGE_CHECK_PROVIDERS</code> (periodic usage
+checks). A deployment <code>.env</code> that overrides those lists without <code>grok</code> leaves
+the credential idle with no error; <code>scripts/live-dispatch-preflight.py</code>
+reports this under &quot;provider roster&quot;.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
+<p>Readiness fails closed unless the endpoint is exactly <code>https://api.x.ai/v1</code>,
+tools remain disabled for the API contact, every bound is valid, and any enabled
+repository-write or review authority has a nonempty explicit CLI worktree map.
+The CLI executable must be an absolute regular-file path and its exact SHA-256
+must be recorded in <code>GROK_CLI_EXECUTABLE_SHA256</code>; the adapter revalidates that
+digest immediately before every repository-capable dispatch.
+The CLI transport is a native-host capability: a containerized Director cannot
+use a Windows executable or host worktree path unless an authenticated host
+runner is explicitly provided. The checked-in examples therefore keep CLI,
+repository-write, and review authority disabled; operators enable them only in
+an ignored native-host environment with an absolute named-worktree map.
+Before the first
+paid request in a process, the adapter authenticates <code>GET /models</code> and requires
+the configured model ID to be present. Requests use <code>POST /responses</code> with
+<code>tools=[]</code>, <code>store=false</code>, complete-or-rejected context, and no repository-write,
+branch, pull-request, merge, or deployment lane. Grok Build CLI repository work
+is dispatched only from an exact configured clean worktree. Exact-SHA review
+verifies that both commit objects exist locally, that base is an ancestor of
+head, runs in read-only plan mode, and binds that repository/base/head evidence
+to the returned review artifact. Draft-PR work requires an isolated <code>grok/*</code>
+worktree and may create one draft PR but may not merge it. These are transport
+controls, not provider-rank limits. The synchronous API adapter never polls.
+Assignment and usage-check requests share one atomic durable daily ledger, and
+every Grok request reserves at least <code>GROK_REQUEST_COST_FLOOR_USD</code>.</p>
+<h2 id="perplexity-research-only-profile">Perplexity research-only profile</h2>
+<p>Use a dedicated Perplexity API Platform key, not a browser session or consumer
+subscription credential. Keep the key only in the ignored deployment <code>.env</code> and
+start with <code>PERPLEXITY_ENABLED=false</code>:</p>
+<pre><code class="language-dotenv">PERPLEXITY_ENABLED=false
+PERPLEXITY_API_KEY=
+PERPLEXITY_API_BASE=https://api.perplexity.ai
+PERPLEXITY_PRESET=fast-search
+PERPLEXITY_MODE=research_only
+PERPLEXITY_MAX_RESULTS=10
+PERPLEXITY_SEARCH_CONTEXT_SIZE=high
+PERPLEXITY_TIMEOUT_SECONDS=180
+PERPLEXITY_DAILY_BUDGET_USD=2.00
+PERPLEXITY_DAILY_REQUEST_LIMIT=100
+PERPLEXITY_ALLOW_REPOSITORY_WRITE=false
+PERPLEXITY_ALLOW_REVIEW_VERDICT=false
+</code></pre>
+<p>Normal assignments use <code>POST /search</code>. Every Perplexity assignment requires an
+owner approval bound to the digest of the exact assignment; the Slack prompt
+shows the complete outbound <code>public_research_query</code>, and a later query mutation
+invalidates that approval. The adapter sends only the approved bounded research query and
+result limit; it does not send repository context,
+acceptance authority, credentials, or Slack state. Results are normalized with
+the query, retrieval time, URL, page title, available publication/update dates,
+supporting excerpt, source type, and explicit markers where confidence or
+contradiction evidence is unavailable. OpenAI or another primary-team model
+evaluates that evidence; Perplexity does not issue approval, review, or merge
+verdicts.</p>
+<p><code>PERPLEXITY_SEARCH_CONTEXT_SIZE</code> is validated now for compatibility with an
+optional future Agent API research lane, where the web-search tool supports
+<code>low</code>, <code>medium</code>, or <code>high</code>. The raw Search API does not accept that field, so the
+current adapter does not send it. The existing no-tools Agent API call is used
+only for the bounded availability/usage prompt.</p>
+<p>The adapter refuses to run unless every research-only control is valid. It also
+rejects draft-PR authority and any assignment whose estimated cost exceeds
+<code>PERPLEXITY_DAILY_BUDGET_USD</code>. It is a fail-closed per-assignment ceiling and the
+usage monitor stops new probes after provider-reported daily cost reaches it.
+<code>PERPLEXITY_DAILY_REQUEST_LIMIT</code> bounds daily monitor requests. Provider-reported
+cost may be incomplete, so configure an API Platform budget/credit control as the
+authoritative daily spend backstop. Only after billing and the dedicated
+key are ready should an operator set <code>PERPLEXITY_ENABLED=true</code> and include
+<code>perplexity</code> in <code>USAGE_CHECK_PROVIDERS</code> if periodic checks are desired.</p>
+<h2 id="zai-production-lane">Z.ai production lane</h2>
+<p>The owner enrolled Z.ai (GLM Coding Plan) as its own production lane <code>zai</code> on
+2026-09-27 with an 18% allocation target (see <code>docs/provider-allocation-profiles.html</code>).
+Its GLM models are reached by running the Claude Code executable against Z.ai's
+Anthropic-compatible endpoint; the lane, family and result provider stay <code>zai</code>
+and are never relabelled Claude. The lane is in the provider enums, the
+allocation lanes, the primary roster (implementer and independent reviewer of
+other lanes' work, never of its own), <code>PRIMARY_PROVIDER_LANES</code>, the Windows host
+bridge lanes, the interaction identities and the Postgres admission constraint.
+It holds a committee seat at advisory weight 1.5, is not part of the core-inventory
+floor and is not a native acceptance
+issuer. The worker is <code>src/director_orchestrator/zai_native.py</code>.</p>
+<h3 id="routes">Routes</h3>
+<p>The central and Edge Directors run in Docker; the Claude Code CLI is on
+Windows. <code>ZAI_TRANSPORT</code> selects how a Director reaches the worker:</p>
+<ul>
+<li><code>host_bridge</code> (default, the Docker deployment): the existing authenticated
+Windows host bridge runs the worker in the bridge process. The container holds
+<strong>neither</strong> <code>ZAI_API_KEY</code> nor the CLI; it needs the bridge endpoint and secret
+and its own production switches. The bridge's <code>DIRECTOR_HOST_PROVIDER_COMMANDS_JSON</code>
+entry is exactly <code>&quot;zai&quot;: [&lt;absolute claude.exe&gt;, &lt;GLM model&gt;, &lt;max turns 1-100&gt;, &quot;read-only&quot; | &quot;owned-path-writes&quot;, &quot;sha256:&lt;SHA-256 of the key's ID part&gt;&quot;]</code>, and
+the bridge profile forwards <code>ZAI_API_KEY</code> by listing it in
+<code>DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES</code>. The bridge offers <code>zai</code> only while
+that key's ID matches the digest (the account binding) and the executable
+exists. Its signed challenge reports the entry, and the Director builds the
+lane only when the reported model equals its <code>ZAI_MODEL</code>. Every bridge control
+applies unchanged: HMAC request and response signatures, the durable claim
+(one attempt, ambiguous never rerun), the Postgres writer fence checked before
+launch, the host deadline and process-tree cutoff.</li>
+<li><code>native</code> (a host deployment): this process runs the CLI and needs
+<code>ZAI_API_KEY</code>, an absolute <code>ZAI_CLI_EXECUTABLE</code>, <code>ZAI_MAX_TURNS</code> and
+<code>ZAI_PRODUCTION_TIMEOUT_SECONDS</code>.</li>
+</ul>
+<p>Everything stays closed by default. Production on the Docker route needs:</p>
+<pre><code class="language-dotenv">ZAI_MODE=production
+ZAI_TRANSPORT=host_bridge
+ZAI_ENABLED=true
+ZAI_PRODUCTION_ACTIVATION=sha256:&lt;digest of the owner's activation record&gt;
+ZAI_API_BASE=https://api.z.ai/api/anthropic
+ZAI_MODEL=glm-5.3-flash
+ZAI_ALLOW_REPOSITORY_WRITE=false
+ZAI_TRIAL_ENABLED=false
+LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT=https://host.docker.internal:18765/v1/provider/dispatch
+LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET=&lt;distinct secret&gt;
+</code></pre>
+<p><code>GET /health</code> reports <code>providers.zai</code> and the <code>zai_production</code> readiness
+booleans (never a key, path, endpoint or model value); their mode-specific keys
+are <code>host_bridge_configured</code> or <code>credential_configured</code>/<code>cli_configured</code>/
+<code>max_turns_valid</code>/<code>timeout_valid</code>. Startup refuses production mode without an
+activation digest, with the trial lane enabled, with an unknown <code>ZAI_TRANSPORT</code>
+or with a non-official endpoint. The activation digest is deployment
+configuration: it is not evidence that a live round trip happened.</p>
+<p>What each attempt gets:</p>
+<ul>
+<li><strong>Credentials.</strong> Only the Z.ai key, passed as the child's
+<code>ANTHROPIC_AUTH_TOKEN</code>, with <code>ANTHROPIC_BASE_URL</code> pinned to Z.ai's Coding Plan
+endpoint and every Anthropic model slot set to the GLM model. No host
+Anthropic/Claude token or other lane credential is inherited, and
+<code>ZAI_API_KEY</code> never reaches the child by that name. Home and
+<code>CLAUDE_CONFIG_DIR</code> are a fresh temporary directory, removed afterwards;
+settings sources, MCP servers and session persistence are off.</li>
+<li><strong>Tools, scoped by the work packet.</strong> <code>READ_REPOSITORY</code> → Read/Grep/Glob;
+<code>RUN_TESTS</code> → Bash limited to <code>python -m unittest</code>, <code>python -m pytest</code> and
+<code>pytest</code>; <code>WRITE_ISOLATED_BRANCH</code> → Edit/Write only inside the packet's owned
+paths, and only when both the Director (<code>ZAI_ALLOW_REPOSITORY_WRITE=true</code>) and
+the bridge entry (<code>owned-path-writes</code>) allow it. <code>.env</code> files, <code>.git</code> and the
+packet's prohibited paths are always denied. Pure reads run in plan mode;
+test runs (including in review assignments) and writes run in default mode,
+which runs exactly the listed rules and, in print mode, refuses everything
+else. There is no permissions bypass. These are Claude Code permission rules
+on an ordinary host process, <strong>not an operating-system sandbox</strong>; test
+commands execute repository code.</li>
+<li><strong>Only supported tools are offered.</strong> These are client-side coding tools that
+the documented Claude Code route runs locally. <code>PUBLIC_WEB_SEARCH</code> is refused:
+WebSearch is an Anthropic server tool on this CLI, and a generic Claude tool
+name is not evidence that Z.ai supports it. No MCP server is installed. Any
+other grant, and any external effect (branch push, pull request), is refused
+before launch; the Docker Director refuses them before signing anything, and
+a host-only refusal returns a signed no-run. Effects stay with the Director's
+effect gateway.</li>
+<li><strong>No hang on permissions.</strong> The CLI runs in print mode with the prompt on a
+finite stdin file, so it can never wait on an interactive permission prompt;
+a denied action fails at once, and the shared absolute cutoff ends a stalled
+process tree.</li>
+<li><strong>Bounds.</strong> <code>--max-turns</code>, the shared absolute cutoff and contained process
+tree, writer fencing, the per-attempt budget variables and attempt limits, and
+the existing three-attempt and ambiguity rules.</li>
+<li><strong>Verification.</strong> Only a <code>result</code>/<code>success</code>/<code>is_error: false</code> envelope that
+ended on <code>end_turn</code> within the turn limit is accepted, and every model in
+<code>modelUsage</code> must be exactly the configured GLM model; anything else is
+rejected, never relabelled. Over the bridge the Director re-checks the
+returned provider, packet bindings, model and cost field. Token counts come
+from the native envelope; if they are missing the result is never <code>SUCCEEDED</code>.</li>
+</ul>
+<h3 id="accounting">Accounting</h3>
+<p>The owner's budget decision (2026-09-27) allocates <strong>$0 additional API cash</strong>
+to this Coding Plan route and keeps the $5 total ceiling and historical holds.
+Three quantities stay distinct and none is invented:</p>
+<ul>
+<li>incremental cash expense: <code>usage.cost_usd</code> is <code>null</code>, because a call measures
+no charge; confirm it against the account after the call;</li>
+<li>Coding Plan credits: not reported by the CLI; read them from the account;</li>
+<li>model-equivalent dollar telemetry: the CLI's own figure at Anthropic tariffs,
+recorded as a result risk line and never as a charge.</li>
+</ul>
+<p>No budget check is removed or bypassed to express this.</p>
+<p>Media capabilities of individual GLM models are not wired or advertised; the
+lane is text coding and tool-enabled agent work only. Enrollment is prospective:
+it does not read, rewrite or re-credit the trial ledger below. Historical failed
+or ambiguous attempts stay held and are never replayed. The integration owner
+qualifies the route after exact-head independent review and the applicable CI
+and security gates. Completion of the enrollment needs a real authorized Slack
+thread response and receipt through the existing Director relay; installing
+configuration is not round-trip evidence.</p>
+<h3 id="capability-map">Capability map</h3>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Identity <code>zai</code>, family Z.ai, GLM model verified per result</td>
+<td>Supported</td>
+<td>Never relabelled Claude; a foreign serving model is rejected</td>
+</tr>
+<tr>
+<td>Allocation 18%, rolling-20 ±3 normal band as routing guidance</td>
+<td>Supported</td>
+<td>Allocation share never blocks dispatch: the owner retired the former target+5 hard limit for Z.ai on 2026-09-27 (for other lanes on 2026-09-21); zero-target, budget, approval, availability, retry and safety checks remain</td>
+</tr>
+<tr>
+<td>Implementation, tests, repository research through LangGraph primary</td>
+<td>Supported</td>
+<td>Native route or Docker → Windows host bridge</td>
+</tr>
+<tr>
+<td>Independent review of candidates Z.ai did not author, with approved tests</td>
+<td>Supported</td>
+<td>Default permission mode runs only the fixed test runners</td>
+</tr>
+<tr>
+<td>Material-author family in acceptance evidence</td>
+<td>Supported</td>
+<td>Binds reviewer independence for Z.ai-authored candidates</td>
+</tr>
+<tr>
+<td>Interaction identities (<code>InteractionProvider.ZAI</code>, <code>ProviderTransport.ZAI_CODING_CLI</code>)</td>
+<td>Supported</td>
+<td>Ledger and packet-result evidence keep the Z.ai identity</td>
+</tr>
+<tr>
+<td>Slack</td>
+<td>Supported via the Director relay</td>
+<td>Z.ai never posts; <code>thread_ts</code> is preserved</td>
+</tr>
+<tr>
+<td>Committee seat and advisory vote, weight 1.5</td>
+<td>Supported</td>
+<td>Owner decision 2026-09-27, &quot;Approve 1.5; total 10.0&quot;; new debates use 10.0, earlier tallies keep their recorded 8.5</td>
+</tr>
+<tr>
+<td>Invited committee turns in the primary runtime</td>
+<td>Supported</td>
+<td>The owner's <code>DIRECTOR debate</code> command (see the Director user guide) becomes a gateway-signed invitation verified by <code>/v1/intake</code>. The Director (OpenAI) is always seated for its own position and 2.5 vote; Z.ai and any other invited primary member (Claude, Cursor, Grok) get one POSITION seat each, dispatched through the ordinary bounded dispatcher (Z.ai over the host bridge or native). The evidence phase tallies the persisted, validated contributions over the fixed 10.0 total, lists uninvited members as not seated, fails closed without the Director's contribution, and a replay recomputes it without dispatch. Plan approval and budgets still apply; primary tasks hold no rebuttal round</td>
+</tr>
+<tr>
+<td>Legacy engine worker</td>
+<td>Unavailable under legacy rollback</td>
+<td>A supported rollback path, but its worker has no v1 packet and the only route to the Windows CLI is the host bridge, whose primary Postgres writer fence rollback disables; legacy intake refuses an invitation (409). No fence bypass, second engine, substitute provider or second launcher</td>
+</tr>
+<tr>
+<td>Protected signing (native acceptance issuer, v2 issuer family, v3 review product)</td>
+<td>Excluded</td>
+<td>No keys, principals or signing authority are granted; ordinary review is unaffected</td>
+</tr>
+<tr>
+<td>Web search, MCP servers, media capabilities</td>
+<td>Excluded</td>
+<td>Not qualified on the Coding Plan route; a generic Claude tool name is not evidence</td>
+</tr>
+<tr>
+<td>External effects (push, pull request, Slack post)</td>
+<td>Excluded</td>
+<td>Owned by the Director's effect gateway</td>
+</tr>
+<tr>
+<td>Plan-credit and cash measurement</td>
+<td>Not measured offline</td>
+<td>Read from the account after the owner-qualified canary; never invented</td>
+</tr>
+</tbody>
+</table>
+<h2 id="zai-trial-only-contact-lane">Z.ai trial-only contact lane</h2>
+<p>This is the historical Lite trial route. Z.ai (GLM Coding Plan) was staged as a
+trial-only, fail-closed contact lane under owner directive #207. The trial lane
+and its ledger remain trial-only after the production enrollment above: trial
+attempts carry no production credit, no counted review verdict and no merge
+authority, and anything the trial reviewed stays advisory input to the author.
+The trial identity, ledger and dispatch path live in
+<code>src/director_orchestrator/zai_lane.py</code>; the transport is unchanged in <code>zai_trial.py</code>.</p>
+<p>Keep the key only in the ignored deployment <code>.env</code> and start with
+<code>ZAI_TRIAL_ENABLED=false</code>:</p>
+<pre><code class="language-dotenv">ZAI_TRIAL_ENABLED=false
+ZAI_API_KEY=
+ZAI_API_BASE=https://api.z.ai/api/anthropic
+ZAI_MODE=trial_only
+ZAI_MODEL=glm-5.3-flash
+ZAI_CLI_EXECUTABLE=
+ZAI_TRIAL_JOURNAL_DIR=
+ZAI_TRIAL_LEDGER_PATH=
+ZAI_TIMEOUT_SECONDS=60
+ZAI_LITE_ENTITLEMENT_VERIFIED=false
+ZAI_PRODUCTION_ACTIVATION=
+ZAI_ALLOW_REPOSITORY_WRITE=false
+ZAI_ALLOW_REVIEW_VERDICT=false
+</code></pre>
+<p><code>ZAI_CLI_EXECUTABLE</code> is the absolute path of the Claude Code CLI that hosts the
+session on this host. The transport pins it to <code>ZAI_API_BASE</code>, which must stay the
+official Anthropic-compatible endpoint, and disables tools, MCP servers, settings
+sources and session persistence for every call. <code>ZAI_TRIAL_JOURNAL_DIR</code> holds the
+per-attempt receipts (exclusive reservation, redacted native output, result) and
+<code>ZAI_TRIAL_LEDGER_PATH</code> is the separate append-only SQLite trial ledger. Reuse both
+across attempts; changing either to escape an attempt reservation is a policy
+breach. The ledger must be its own file: startup and the CLI refuse a
+<code>ZAI_TRIAL_LEDGER_PATH</code> that names the TaskStore, a LangGraph checkpoint, resume-claim,
+acceptance, runtime-ledger or completion-gate store, and an existing file is reused
+only when it is exactly this build's schema and version (a foreign, partial, weakened
+or older file is refused, never migrated). The deployed container image does not carry the Claude Code CLI, so the
+lane is closed there by construction and is operated from the Windows host.</p>
+<p>In trial mode startup refuses any widening: <code>ZAI_MODE</code> other than <code>trial_only</code> or
+<code>production</code>, <code>ZAI_ENABLED=true</code>, either
+<code>ZAI_ALLOW_*</code> flag set true, a non-official <code>ZAI_API_BASE</code>, any value in
+<code>ZAI_PRODUCTION_ACTIVATION</code>, or <code>ZAI_TRIAL_ENABLED=true</code> without
+<code>ZAI_LITE_ENTITLEMENT_VERIFIED=true</code> (the owner has observed the Lite
+entitlement). <code>GET /health</code> reports <code>providers.zai</code> (one boolean) and <code>zai_trial</code>
+(the individual readiness booleans); neither carries a key, path, endpoint or
+model value. The lane also refuses to dispatch at or after 2026-09-29 07:00 UTC,
+the trial end the transport already enforces.</p>
+<p>Run bounded Lite assignments with <code>scripts/zai-trial.py</code>, which reads only the
+<code>ZAI_*</code> lines of the file named by <code>--env-file</code>:</p>
+<pre><code class="language-bash">PYTHONPATH=src python scripts/zai-trial.py --env-file .env status
+PYTHONPATH=src python scripts/zai-trial.py --env-file .env dispatch --work-packet packet.json --purpose &quot;bounded Lite assignment&quot;
+PYTHONPATH=src python scripts/zai-trial.py --env-file .env evaluate --attempt &lt;id&gt; --evaluator cursor --correctness correct --first-pass --privacy-fit fit --usefulness accepted
+</code></pre>
+<p><code>dispatch</code> validates the v1 work packet and mirrors the transport's deterministic
+refusals (digest, tools, budget, timeout, trial end) before it reserves one attempt
+per assignment in the trial ledger, so a packet that could never reach Z.ai
+consumes nothing; afterwards it records status, latency and the result digest.
+Cost stays unknown, never zero, because the host CLI prices with Anthropic
+tariffs. Outcome statuses: <code>SUCCEEDED</code>, <code>FAILED</code>, <code>AMBIGUOUS</code> (timeout or unknown
+provider state), <code>REFUSED</code> (stopped before provider contact, attempt not consumed)
+and <code>BLOCKED</code> (Z.ai answered <code>OWNER_DECISION_REQUIRED</code>; needs a new assignment).
+Nothing retries automatically: one recovery is allowed only after a recorded
+<code>FAILED</code> outcome and only with an explicit <code>--recovery-basis</code>; a <code>SUCCEEDED</code>,
+<code>AMBIGUOUS</code> or <code>BLOCKED</code> attempt is never redispatched, and the route closes after
+three recorded failures (<code>FAILED</code> plus <code>AMBIGUOUS</code>). <code>resolve --attempt &lt;id&gt; --reason …</code> closes an attempt that a killed process left without an outcome, as
+<code>AMBIGUOUS</code> only. <code>evaluate</code> records the non-Z.ai evaluator's correctness,
+first-pass, correction-count, privacy-fit and usefulness verdicts (any evaluator
+name naming Z.ai or GLM, or equal to the attempt's model, is refused), and
+<code>status</code> derives the first-pass yield and correction rate the 2026-09-29 decision
+needs. The ledger issues no production credit and is not the canonical rolling
+allocation ledger.
+The conditional eleven-contact allocation profile is the <code>PROPOSED</code> descriptor
+<code>conditional_20260929</code> in <code>src/director_orchestrator/conditional_allocation.py</code>
+(targets, policy families and named prerequisites; the table is in
+<code>docs/provider-allocation-profiles.html</code>). It shares this lane's 2026-09-29 boundary,
+binds no route, and stays <code>PROPOSED</code> until that decision.</p>
+<h2 id="antigravity-subordinate-profile">Antigravity subordinate profile</h2>
+<p>Antigravity is a subordinate Edge Oracle specialist, not a fourth primary
+model. <code>GEMINI_MODE=antigravity_subordinate</code> is required for readiness, and
+<code>GEMINI_ALLOW_REVIEW_VERDICT</code> and <code>GEMINI_ALLOW_PRIMARY_AUTHORITY</code> must stay
+<code>false</code>; any other value fails the readiness profile closed and the adapter
+refuses to dispatch before any paid call.</p>
+<p>Deterministic policy admits an Antigravity work assignment only when its
+<code>kind</code> is <code>boilerplate</code>, <code>scaffolding</code>, <code>low_level_implementation</code>, or
+<code>abstract_ideation</code>, its task names that subordinate scope explicitly, it
+requests no review, acceptance, merge, contract, or methodology authority, and
+it does not create a draft pull request. Every admitted work assignment also
+requires a later OpenAI, Claude, Cursor, or Grok assignment that directly depends on it and
+carries the runtime-bound wording to independently reproduce the artifact and
+integrate only the verified portions or reject it.</p>
+<p>Ordinary Antigravity work dispatch sends no model-authored prose. The
+assignment's task, acceptance checks, upstream handoff, owner objective, Slack
+text, dependency results, and repository context remain in Director state and
+never cross the Antigravity work boundary. Instead, the adapter selects one
+repository-owned fixture specification using a closed lane enum plus bounded
+enum and integer parameters; its closed-vocabulary validator rejects any other
+outbound string.
+A revision reuses that same fixed work contract and the prior sandbox
+<code>environment_id</code>, failing closed rather than transmitting reviewer prose or
+provisioning an unrelated sandbox. Preview routing selects Antigravity only for
+an explicit boilerplate, scaffolding, low-level, mechanical, or
+alternate-ideation request; other work follows cheap-capable-model-first routing.</p>
+<p>Debate is the deliberate, narrow prose-bearing exception—not an ordinary work
+packet. Antigravity may return an independent position and bounded rebuttal only
+after the Director persists and dispatches a matching invitation. The separate
+typed debate contract carries only the sanitized question, vote options,
+accepted declared-dependency contributions, and any bounded Director revision
+request. Antigravity cannot initiate, self-route, widen, or autonomously
+continue a discussion. Its configured advisory weight remains advisory, and a
+debate seat grants no review, acceptance, merge, deployment, publication,
+external-write, access, or methodology authority.</p>
+<h2 id="oracle-merge-base-ref-is-per-project">Oracle merge base ref is per project</h2>
+<p><code>ORACLE_AUTOMERGE_BASE_REF</code> has no default. When it is unset the Oracle merge
+gate refuses, and it also refuses the shared trunk names outright, naming tier 0
+and the variable. Each project configures its own base ref rather than inheriting
+one. GitHub branch protection and active repository/organization rules are read
+for the exact base, with missing or inaccessible evidence refused. The gateway
+rechecks before merging; concurrent administrator changes are not atomically locked. <code>/health</code> reports
+<code>oracle_merge.base_ref_configured</code> as a boolean; it never reports the value.
+<code>ORACLE_AUTOMERGE_ENABLED</code> and <code>ORACLE_AUTOMERGE_KILL_SWITCH</code> are unchanged and
+stay closed.</p>
+<p>The gate compares provider identities as canonical allocation lanes on both
+sides, so a lane alias resolves to its lane before the reviewer allowlist, the
+no-self-review comparison, and the <code>ORACLE_AUTOMERGE_*_ACTORS</code> lookups. An alias
+therefore cannot reach a different verdict than its lane, and cannot review its
+own lane's implementation. Admitting a lane to the reviewer allowlist remains a
+separate decision.</p>
+<h2 id="gemini-interactions-api-contract">Gemini Interactions API contract</h2>
+<h3 id="daily-spend-admission-for-metered-providers">Daily spend admission for metered providers</h3>
+<p>Owner configuration can supply <code>GEMINI_INPUT_USD_PER_MTOK</code>,
+<code>GEMINI_OUTPUT_USD_PER_MTOK</code>, <code>GROK_INPUT_USD_PER_MTOK</code>,
+<code>GROK_OUTPUT_USD_PER_MTOK</code>, <code>PERPLEXITY_INPUT_USD_PER_MTOK</code>, and
+<code>PERPLEXITY_OUTPUT_USD_PER_MTOK</code>. Each supplied price must be positive and
+finite; invalid settings refuse startup without echoing the value. Both prices
+are required for pricing readiness. <code>/health</code> reports only the per-provider
+booleans under <code>provider_prices</code>. Readiness does not attest the configured prices
+match the provider tariff: the owner must cover the selected model, input-size
+tiers, and all billed token categories, and update them before a tariff change.</p>
+<p>For a bounded token-only request, let <code>B</code> be the byte length of the complete
+JSON request serialized with ASCII escaping, <code>O</code> its enforced maximum output
+tokens, and <code>Pi</code> / <code>Po</code> the owner prices per million tokens. The upper bound is
+<code>W = (B * Pi + O * Po) / 1_000_000</code>, rounded upward to the next representable
+float. One token per encoded byte conservatively sizes text input, including
+the request envelope. Grok uses the same request-body builder for admission and
+submission, including context, fixed instructions and revision text, and sends
+<code>GROK_MAX_OUTPUT_TOKENS</code> to the API. Its request cost floor is never an upper bound.</p>
+<p>For the bounded Grok API route, the reservation is
+<code>max(W, existing_floor, assignment.estimated_cost_usd)</code>.
+The model-authored estimate can only increase the reservation.</p>
+<p>Managed Gemini cannot honor a finite per-request monetary bound.
+<code>GEMINI_MAX_TOTAL_TOKENS</code> and configured <code>GEMINI_*_USD_PER_MTOK</code> prices
+do not establish one; managed work always uses serialized admission.</p>
+<p>When prices are missing, or the transport cannot be bounded by those prices,
+admission serializes through the same SQLite <code>BEGIN IMMEDIATE</code> transaction:
+at most one unresolved paid request per provider, holding <strong>all remaining daily
+capacity</strong>, never merely a floor. This includes packet/CLI transports whose
+complete request is unavailable here, Perplexity <code>/search</code> and agent presets
+with non-token search charges, managed Gemini work, and Gemini stateless probes
+without an enforced
+output-token cap. Token prices alone do not authorize concurrency on those
+routes. Usage probes share this gate with ordinary work.</p>
+<p>Further admissions return <code>provider_spend_pending_retryable</code> and instruct the
+caller to retry after settlement or reconciliation. The hold spans processes,
+UTC rollover, and subsequent price configuration. Known settlement replaces the
+reserved exposure with the actual charge; repeated charge records cannot lower
+an already recorded charge. Unknown settlement retains the reservation. Stale
+requests remain visible as unreconciled and require reconciliation before new
+paid work; aging is not evidence that a request stopped or incurred no charge.
+Serialized Gemini probes make one attempt until that reconciliation.</p>
+<p>The hold applies only to new admissions of different effects. An already-bound
+packet resumes without repeating spend admission, including after UTC rollover
+or a pricing change; authenticated readback and terminal settlement still run.
+Owner <code>/dispatch-reconciliation</code> with <code>not_created</code> closes the exact ambiguous
+effect and records zero spend. The durable closure is replayed on restart if the
+process stops between saving the task and settling spend. A <code>created</code> resolution
+retains the hold until the recovered run supplies authoritative terminal cost;
+unknown cost does not become zero. Retry the waiting task after reconciliation.</p>
+<p>Serialization prevents overlapping unknown charges; it cannot prove that one
+unpriced request costs less than the remaining budget. A strict monetary bound
+for such a route additionally requires an enforced provider-side spend ceiling
+or a defensible tariff bound for its non-token charges. Do not treat token-price
+readiness or serialization as that evidence.</p>
+<p>The Gemini adapter uses the REST Interactions API; it does not call the legacy
+<code>generateContent</code> endpoint. <code>GEMINI_AGENT</code> names the managed Antigravity agent and
+is sent as the request's <code>agent</code> field. New runs use <code>environment=remote</code>, while a
+revision reuses the <code>environment_id</code> returned by the prior interaction together
+with <code>previous_interaction_id</code>. Availability checks instead use the low-cost
+<code>GEMINI_USAGE_MODEL=gemini-3.5-flash-lite</code> statelessly with <code>store=false</code>; they do
+not provision an Antigravity sandbox. The adapter supports at most
+<code>GEMINI_USAGE_MAX_ATTEMPTS</code> bounded attempts, but daily admission limits unpriced
+probes to one attempt pending reconciliation. The final normalized quota code
+is persisted without provider response text or credentials.</p>
+<p>Managed-agent Gemini calls are bounded background interactions with <code>store=true</code>.
+Google requires stored state for background polling. Terminal output is read from the
+<code>model_output</code> entries in the Interaction <code>steps</code> timeline, with <code>output_text</code>
+accepted only as an SDK-compatible convenience field. <code>requires_action</code> and
+<code>budget_exceeded</code> fail closed; the Director never loops indefinitely or treats
+those statuses as successful completion.</p>
+<p><code>GEMINI_MAX_TOTAL_TOKENS</code> caps managed-agent runs. The monitor enforces
+<code>GEMINI_DAILY_REQUEST_LIMIT</code> for its own probes and reports request, retry, token,
+quota-failure, and provider-reported-cost totals. Google AI Studio billing and
+quota settings remain the authoritative spend backstop when Gemini omits cost.</p>
+<p>Gemini remains an optional supplemental specialist. Installing its developer
+documentation tooling does not configure <code>GEMINI_API_KEY</code>, enable Gemini usage
+checks, add Gemini to the primary team, or open the paid-run gate.</p>
+<p>For coding agents that support MCP and portable skills, install Google's current
+documentation tools outside the repository:</p>
+<pre><code class="language-powershell">codex mcp add gemini-docs --url https://gemini-api-docs-mcp.dev
+npx skills add google-gemini/gemini-skills --skill gemini-interactions-api --global
+</code></pre>
+<p>Restart the coding-agent session after installation so it discovers the new MCP
+server and skill. Confirm the MCP is enabled with <code>codex mcp get gemini-docs</code>.</p>
+<h2 id="label-triggered-codex-security-review">Label-triggered Codex security review</h2>
+<p>The optional <code>.github/workflows/codex-security-review.yml</code> lane runs only when
+an authorized repository maintainer applies the <code>codex-security-review</code> label to
+a same-repository pull request targeting <code>main</code>. Store a project-scoped OpenAI
+key in the GitHub Actions secret <code>EDGE_ORACLE_OPENAI_API_KEY</code>; never reuse the
+Windows Director <code>.env</code> file or expose the key to a pull-request checkout.</p>
+<p>The workflow checks out the exact pull-request head SHA without persisted GitHub
+credentials and runs the SHA-pinned Codex action with <code>drop-sudo</code> and a read-only
+sandbox. Codex cannot edit, push, merge, deploy, or authorize the deterministic
+Oracle merge gate. A separate publisher job receives only the GitHub permissions
+needed to post the bounded advisory result. Remove and reapply the label to run a
+fresh review after a new head commit; each run consumes OpenAI API usage.</p>
+<h2 id="important-claude-cowork-boundary">Important Claude Cowork boundary</h2>
+<p>Claude Cowork supports cloud and scheduled tasks, but the official Cowork documentation does not currently expose an on-demand inbound API trigger for a real-time Slack loop. The supported programmable bridge here is a <strong>Claude Code Routine</strong> with an API trigger. A Cowork project or scheduled task can be added later for recurring knowledge-work jobs, but it should report into Slack rather than being treated as a synchronous API adapter.</p>
+<h2 id="credential-order">Credential order</h2>
+<ol>
+<li>Create and install a project-specific Slack app from
+<code>slack-app-manifest.yaml</code>; do not reuse an app or project channel belonging
+to another concurrently active deployment.</li>
+<li>Generate its Socket Mode app token and copy the bot token into the local <code>.env</code>.</li>
+<li>Add the OpenAI API key and test Director planning with the specialist adapters still disabled.</li>
+<li>Add one specialist credential, run a low-risk task, and verify its terminal state.</li>
+<li>Repeat for each remaining specialist.</li>
+<li>Set provider-side spend limits, then change <code>ALLOW_PAID_RUNS=true</code>.</li>
+</ol>
+<p>Credential generation is an owner action. Do not paste any secret into Slack, ChatGPT, GitHub, documentation, screenshots, or issue bodies.</p>
+<h2 id="official-references">Official references</h2>
+<h2 id="primary-security-credential-boundaries">Primary security credential boundaries</h2>
+<p>Completion evidence uses three pairwise-distinct secrets:
+<code>LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET</code>, and
+<code>LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET</code>. None may equal a provider,
+shared, effect, bridge, or other ingress secret. Configure
+<code>LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON</code> with exactly
+<code>independent_review</code>, <code>ci</code>, and <code>security</code>; every entry has nonempty <code>issuers</code>
+and <code>principals</code> arrays, and all three authorities must be pairwise disjoint.
+Each role signs only its exact result binding; the aggregate has no bundle
+credential capable of minting another role. Durable Postgres readback preserves
+and revalidates the three canonical authority proofs.</p>
+<p>Activation review authority is separately configured through
+<code>LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON</code> and
+<code>LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON</code>. These
+GitHub-login arrays must be disjoint. Only an <code>APPROVED</code> review from an
+<code>OWNER</code>, <code>MEMBER</code>, or <code>COLLABORATOR</code> is considered, and its body must equal one
+canonical JSON object with exactly <code>actor</code>, <code>head_sha</code>, <code>kind</code>,
+<code>schema_version</code>, and <code>verdict</code>. Comments, prose, quotes, code fences, extra
+fields, and substring markers are never activation evidence.</p>
+<p>The Windows bridge permits plaintext HTTP only on an exact loopback host.
+Container-to-host use must use HTTPS. An all-interface bridge bind requires
+explicit TLS certificate and private-key files; the certificate must be trusted
+by the client runtime and cover <code>host.docker.internal</code>.</p>
+<ul>
+<li>OpenAI Responses and Structured Outputs: https://developers.openai.com/api/docs/guides/structured-outputs</li>
+<li>Cursor Cloud Agents API: https://cursor.com/docs/cloud-agent/api/endpoints</li>
+<li>Claude Code Routines: https://docs.anthropic.com/en/docs/claude-code/routines</li>
+<li>Claude Cowork scheduled tasks: https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork</li>
+<li>Gemini Interactions API: https://ai.google.dev/gemini-api/docs/interactions-overview</li>
+<li>Gemini Antigravity Agent: https://ai.google.dev/gemini-api/docs/antigravity-agent</li>
+<li>Gemini coding-agent setup: https://ai.google.dev/gemini-api/docs/coding-agents</li>
+<li>Gemini <code>generateContent</code> migration: https://ai.google.dev/gemini-api/docs/migrate-to-interactions</li>
+<li>xAI API quickstart: https://docs.x.ai/developers/quickstart</li>
+<li>xAI model catalog: https://docs.x.ai/developers/rest-api-reference/inference/models</li>
+<li>Grok Build CLI: https://docs.x.ai/build/overview</li>
+<li>Perplexity Search API: https://docs.perplexity.ai/api-reference/search-post</li>
+<li>Perplexity Agent API: https://docs.perplexity.ai/docs/agent-api/quickstart</li>
+<li>Perplexity API privacy and security: https://docs.perplexity.ai/docs/resources/privacy-security</li>
+</ul>
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 01:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 03:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:34 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 11:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 18:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 04:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 05:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

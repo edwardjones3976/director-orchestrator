@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from html.parser import HTMLParser
 import os
 import re
 import tempfile
@@ -40,6 +41,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from director_orchestrator import provider_profiles as pp
+from director_orchestrator.documentation import html_text, read_document
 from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE
 from director_orchestrator.antigravity import (
     ANTIGRAVITY_CONTRACT_VERSION,
@@ -584,8 +586,8 @@ class AntigravityModeTests(unittest.TestCase):
         self.assertTrue(team["review_requires_different_material_author_family"])
         self.assertEqual(profile["capabilities"]["may_issue_review_verdict"], "never")
         self.assertFalse(profile["capabilities"]["receives_repository_context"])
-        rendered = pp.render_profile_markdown(profile, pp.load_route_catalog())
-        self.assertIn("## Execution modes", rendered)
+        rendered = pp.render_profile_html(profile, pp.load_route_catalog())
+        self.assertIn('<h2 id="execution-modes">Execution modes</h2>', rendered)
         self.assertIn("preserved restricted mode", rendered)
         self.assertIn("not_qualified_not_live", rendered)
 
@@ -830,10 +832,10 @@ class RouteCatalogTests(unittest.TestCase):
     def test_rendered_names_cannot_be_agent_instruction_files(self):
         outputs = pp.planned_outputs(None)
         for lane in LANES:
-            self.assertIn(PROFILE_ROOT / f"{lane}.profile.md", outputs)
+            self.assertIn(PROFILE_ROOT / f"{lane}.profile.html", outputs)
             self.assertFalse((PROFILE_ROOT / f"{lane}.md").exists())
         index = outputs[PROFILE_ROOT / pp.INDEX_FILENAME]
-        self.assertIn("antigravity.profile.md#execution-modes", index)
+        self.assertIn("antigravity.profile.html#execution-modes", index)
 
     def test_status_rules(self):
         ids = [route["route_id"] for route in self.catalog["routes"]]
@@ -856,7 +858,7 @@ class RouteCatalogTests(unittest.TestCase):
                     self.assertTrue(route["prohibition_quote"])
                     self.assertEqual(route["default_config_state"], "not_applicable")
                 for reference in route["charter_basis"]:
-                    text = (ROOT / reference["document"]).read_text(encoding="utf-8")
+                    text = read_document(ROOT / reference["document"])
                     self.assertIn(reference["anchor"], text, route_id)
                 for code_ref in route["enforced_by"]:
                     self.assertTrue((ROOT / code_ref.split(":", 1)[0]).is_file(), code_ref)
@@ -962,20 +964,82 @@ class HygieneTests(unittest.TestCase):
                 self.assertNotIn("\n", value, lane)
 
 
+class SemanticDocument(HTMLParser):
+    def __init__(self, text):
+        super().__init__(convert_charrefs=True)
+        self.source = text
+        self.text, self.tags, self.ids, self.links = [], [], [], []
+        self.feed(text)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append(tag)
+        attributes = dict(attrs)
+        if 'id' in attributes:
+            self.ids.append(attributes['id'])
+        if tag == 'a':
+            self.links.append(attributes.get('href', ''))
+
+    def handle_data(self, data):
+        self.text.append(data)
+
+    def visible(self):
+        return ' '.join(html_text(self.source, structured=False).split())
+
+
 class RenderTests(unittest.TestCase):
     def test_scalar_description_is_one_complete_bullet(self):
         self.assertEqual(pp._bullets("Bounded artifacts from a provider"), ["- Bounded artifacts from a provider"])
         self.assertEqual(pp._bullets(["first", "second"]), ["- first", "- second"])
 
-    def test_rendered_outputs_are_current_and_tagged(self):
+    def test_rendered_outputs_are_current_semantic_html_without_new_envelopes(self):
         self.assertEqual(pp.check_outputs(), [])
-        for path in list(PROFILE_ROOT.glob("*.md")) + list(PROFILE_ROOT.glob("*.yaml")):
+        for path in PROFILE_ROOT.glob("*.html"):
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path.name):
                 self.assertNotIn("\r", text)
-                relative = path.relative_to(ROOT).as_posix()
-                self.assertEqual(validate_inline_contribution_tags(relative, text), [])
-                self.assertIn(pp.GENERATED_MARKER.split("{")[0], text if path.suffix == ".md" else pp.GENERATED_MARKER)
+                self.assertIn(pp.GENERATED_MARKER.split("{")[0], text)
+                self.assertTrue(text.startswith('<!doctype html>'))
+                self.assertFalse(any(parse_contribution_tag(line) for line in text.splitlines()))
+                parsed = SemanticDocument(text)
+                for tag in ('html', 'title', 'nav', 'main', 'section', 'h1', 'h2', 'footer'):
+                    self.assertIn(tag, parsed.tags)
+                self.assertEqual(len(parsed.ids), len(set(parsed.ids)))
+                self.assertTrue(all(link[1:] in parsed.ids for link in parsed.links if link.startswith('#')))
+
+    def test_html_preserves_every_profile_and_catalog_string_as_inert_text(self):
+        profiles, catalog = _profiles(), _catalog()
+        for lane, profile in profiles.items():
+            text = pp.render_profile_html(profile, catalog)
+            visible = SemanticDocument(text).visible()
+            for value in _walk_strings(profile):
+                self.assertIn(' '.join(value.split()), visible, lane)
+        index = SemanticDocument(pp.render_index_html(profiles, catalog))
+        index_text = index.visible()
+        for value in _walk_strings(catalog):
+            self.assertIn(' '.join(value.split()), index_text)
+        hostile = json.loads(json.dumps(profiles['openai']))
+        hostile['roles']['summary'] = '<script>alert("x")</script> & "quoted"'
+        rendered = pp.render_profile_html(hostile, catalog)
+        parsed = SemanticDocument(rendered)
+        self.assertNotIn('script', parsed.tags)
+        self.assertIn(hostile['roles']['summary'], parsed.visible())
+
+    def test_canonical_generation_does_not_call_markdown_renderers_or_add_tags(self):
+        with patch.object(pp, 'render_profile_markdown', side_effect=AssertionError('Markdown intermediate')), \
+                patch.object(pp, 'render_index_markdown', side_effect=AssertionError('Markdown intermediate')):
+            outputs = pp.planned_outputs(pp.TagIdentity('Legacy', 'Compatibility', datetime.now(timezone.utc)))
+        self.assertEqual({path.suffix for path in outputs}, {'.html', '.json'})
+        for text in outputs.values():
+            self.assertNotIn('[[Legacy', text)
+
+    def test_html_drift_is_detected(self):
+        outputs = pp.planned_outputs(None)
+        target = PROFILE_ROOT / 'openai.profile.html'
+        original = Path.read_text
+        def changed(path, *args, **kwargs):
+            return original(path, *args, **kwargs) + ('<p>drift</p>' if path == target else '')
+        with patch.object(Path, 'read_text', changed):
+            self.assertIn('stale rendered output: openai.profile.html', pp.check_outputs())
 
     def test_compose_tagged_document_is_idempotent_for_the_same_identity(self):
         identity = pp.TagIdentity("Claude Code", "Claude Fable 5.1", datetime(2026, 9, 6, 19, 40, tzinfo=timezone.utc))
@@ -1014,21 +1078,21 @@ class DiscoveryTests(unittest.TestCase):
         self.assertNotIn("no standing director role", normalized.lower())
         self.assertNotIn("Lead delivery:", claude_instructions)
         self.assertIn("keep other work within its explicit assignment authority", normalized)
-        self.assertIn("docs/project-leadership.md", claude_instructions)
+        self.assertIn("docs/project-leadership.html", claude_instructions)
 
     def test_active_surfaces_avoid_non_exempt_standing_role_language(self):
         files = (
             ROOT / "AGENTS.md",
             ROOT / "CLAUDE.md",
-            ROOT / "README.md",
-            ROOT / "docs" / "project-leadership.md",
-            ROOT / "docs" / "provider-allocation-profiles.md",
-            ROOT / "docs" / "contribution-attribution-policy.md",
-            ROOT / "docs" / "team-operating-charter.md",
+            ROOT / "README.html",
+            ROOT / "docs" / "project-leadership.html",
+            ROOT / "docs" / "provider-allocation-profiles.html",
+            ROOT / "docs" / "contribution-attribution-policy.html",
+            ROOT / "docs" / "team-operating-charter.html",
             ROOT / "prompts" / "director-system.md",
             ROOT / "docs" / "templates" / "project-bootstrap" / "provider-roles-contract.yaml",
             *sorted((ROOT / "docs" / "provider-profiles").glob("*.yaml")),
-            *sorted((ROOT / "docs" / "provider-profiles").glob("*.md")),
+            *sorted((ROOT / "docs" / "provider-profiles").glob("*.html")),
         )
         banned = (
             "project secretary",
@@ -1049,6 +1113,8 @@ class DiscoveryTests(unittest.TestCase):
         )
         for path in files:
             body = path.read_text(encoding="utf-8").lower()
+            if path.suffix == ".html":
+                body = SemanticDocument(body).visible()
             with self.subTest(path=path.name):
                 for phrase in banned:
                     self.assertNotIn(phrase, body)
@@ -1058,11 +1124,12 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("docs/provider-profiles/", prompt)
         self.assertIn("grant no authority", prompt)
         self.assertIn("No direct provider-to-provider channel exists; route every exchange through the Director.", prompt)
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("docs/provider-profiles/README.md", readme)
-        local = readme.split("\n## Local validation", 1)[1]
+        readme = (ROOT / "README.html").read_text(encoding="utf-8")
+        self.assertIn("docs/provider-profiles/README.html", readme)
+        self.assertIn('id="local-validation"', readme)
+        local = SemanticDocument(readme).visible()
         self.assertIn("scripts\\render_provider_profiles.py --check", local)
-        setup = (ROOT / "docs" / "provider-setup.md").read_text(encoding="utf-8")
+        setup = (ROOT / "docs" / "provider-setup.html").read_text(encoding="utf-8")
         self.assertIn("docs/provider-profiles/", setup)
         self.assertIn("grant no authority", setup)
 

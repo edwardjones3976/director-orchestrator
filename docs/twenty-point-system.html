@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>The two twenty-point controls · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#assignment-balance">Assignment balance</a></li><li class="top"><a href="#completion-evidence">Completion evidence</a></li><li class="top"><a href="#operator-entry-points">Operator entry points</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:05 UTC | BEGIN]] -->
+<h1 id="the-two-twenty-point-controls">The two twenty-point controls</h1>
+<p>The Director has two separate measures: <strong>who receives the next assignment</strong> and
+<strong>whether the project has proved its required outcomes</strong>. A good allocation does
+not prove a working product, and a completion score does not grant permission to
+dispatch, merge or spend.</p>
+<h2 id="assignment-balance">Assignment balance</h2>
+<p>The <a href="engineering-workload-ledger.html">engineering ledger</a> records actual bounded
+assignments in one local SQLite journal. On 2026-09-12 the owner chose to keep the
+existing five-provider engineering allocation:</p>
+<table>
+<thead>
+<tr>
+<th>Allocation lane</th>
+<th style="text-align:right">Target</th>
+<th style="text-align:right">Target count in twenty</th>
+<th style="text-align:right">Retired hard maximum in twenty (reference only)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI</td>
+<td style="text-align:right">40%</td>
+<td style="text-align:right">8</td>
+<td style="text-align:right">9</td>
+</tr>
+<tr>
+<td>Claude</td>
+<td style="text-align:right">25%</td>
+<td style="text-align:right">5</td>
+<td style="text-align:right">6</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td style="text-align:right">15%</td>
+<td style="text-align:right">3</td>
+<td style="text-align:right">4</td>
+</tr>
+<tr>
+<td>Direct Grok</td>
+<td style="text-align:right">10%</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">3</td>
+</tr>
+<tr>
+<td>Gemini / Antigravity</td>
+<td style="text-align:right">10%</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">3</td>
+</tr>
+</tbody>
+</table>
+<p>The normal tolerance is three percentage points, an advisory routing preference.
+The owner retired the target-plus-five rolling-twenty hard ceiling on 2026-09-21
+as outdated; it no longer blocks or refuses admission. A zero target remains
+ineligible regardless of history. Each assignment contributes five percentage
+points. Failed, cancelled, reserved and ambiguous work stays in history. Retries
+belong to the same assignment and cannot erase its cost or create a new
+allowance. Pure coordination is recorded separately.</p>
+<p>Actual <strong>Grok Bot is a separate product</strong> from direct Grok and from Cursor's Grok
+models. The current allocation has no Grok Bot binding. The journal reports that
+gap instead of attributing its work to a different product. Product identity,
+allocation and reviewer eligibility are separate fields.</p>
+<p>The journal is not populated with guessed past work. A new installation either
+imports an attested complete last twenty or starts at an explicitly recorded
+quiescent boundary with earlier history marked unknown. Empty slots are visible;
+they are not invented assignments. Local admission is enforced by transactions;
+external launchers must consume the resulting permit immediately before actual
+submission. The journal cannot intercept an unrelated browser or agent tool.</p>
+<h2 id="completion-evidence">Completion evidence</h2>
+<p>The <a href="twenty-check-completion-scorecard.html">completion scorecard</a> contains twenty
+fixed outcomes covering routing, intake, Slack delivery, primary ownership,
+recovery, independent evidence, workload, budgets and a successful paid result.
+It generates a readable report and matching JSON from one bounded collection.
+Activation, acceptance and issue #81 evidence consumers require <code>attested: true</code>
+and a successful <code>python -I &lt;owner-installed-launcher&gt; --verify-report &lt;report.json&gt;</code>
+check against the owner-local completed receipt. Missing or invalid attestation
+means UNATTESTED with no usable pass total; a candidate's verifier or a copied
+boolean is not proof. See the scorecard document for installation and receipt
+boundaries. Attestation grants no activation or acceptance authority.</p>
+<p>Each check is <strong>PASS</strong>, <strong>FAIL</strong> or <strong>UNKNOWN</strong>. Only a fresh observation from an
+implemented source collector can earn a point. An unavailable collector, copied
+receipt, stale observation or source mismatch cannot. Checks stay visible while
+their live verification is unfinished.</p>
+<pre><code>verified score = count of current PASS checks / 20
+verified percent = 5 * count of current PASS checks
+</code></pre>
+<p>This percentage describes evidence coverage, not an estimate of hours remaining.
+The report keeps the reviewed candidate separate from the image actually running.
+Tests of a candidate do not prove that candidate is deployed. An offline simulated
+result cannot qualify as a real paid result, and unknown billing cannot become
+zero cost.</p>
+<h2 id="operator-entry-points">Operator entry points</h2>
+<p>Run the commands from the selected Director worktree with its normal Python
+environment and <code>PYTHONPATH=src</code>:</p>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+python scripts/engineering-workload.py --db &lt;existing-journal.sqlite3&gt; --human status
+python -I $HOME\.director-scorecard\launcher.py &lt;repository&gt; --candidate-sha &lt;full-commit-sha&gt; --live --deployment &lt;compose-project&gt; --channel &lt;slack-channel-id&gt; --gateway &lt;exact-running-container-name&gt; --github --ledger &lt;existing-journal.sqlite3&gt; --output-dir &lt;report-directory&gt;
+</code></pre>
+<p>The scorecard line runs through the owner-installed launcher from a working
+directory outside the checkout; it executes the pinned evaluator tree, never the
+worktree (see <code>docs/twenty-check-completion-scorecard.html</code>, &quot;Install the launcher&quot;).</p>
+<p>Reading an absent journal reports unknown history; it does not create or reset a
+database. Follow the ledger document for enrollment and bounded admission, and the
+scorecard document for supported authoritative collectors. <code>--live</code> inspects only the
+selected Compose <code>--deployment</code>; there is no default stack, and the Slack channel
+comes only from <code>--channel</code>. Both tools preserve
+existing policy, security, exact-candidate and spending gates.</p>
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:05 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 14:10 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>
