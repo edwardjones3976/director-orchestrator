@@ -180,6 +180,7 @@ class ReleasePreparationTests(unittest.TestCase):
         self.source_calls = []
         self.reply_changes = {}
         self.probe_rows = {}
+        self.intake_rows = {}
         command_patch = patch.object(release, "command", side_effect=self.platform)
         command_patch.start()
         self.addCleanup(command_patch.stop)
@@ -207,6 +208,8 @@ class ReleasePreparationTests(unittest.TestCase):
         return release.sha(self.installed.read_bytes())
 
     def platform(self, argv, **kwargs):
+        if argv[0] == self.spec["executables"]["docker"]:
+            argv = ["docker", *argv[1:]]
         if argv[0] == "git":
             self.source_calls.append((argv, kwargs))
         else:
@@ -233,12 +236,21 @@ class ReleasePreparationTests(unittest.TestCase):
         if argv[:2] == ["docker", "info"]:
             return b"fixture-daemon"
         if argv[:3] == ["docker", "volume", "inspect"]:
+            if argv[-1] in self.intake_rows:
+                return release.encoded([self.intake_rows[argv[-1]]])
             key = argv[-1].removeprefix("fixture-sibling_")
             return release.encoded([{"Name": argv[-1], "Driver": "local", "Options": None,
                 "Labels": {"com.docker.compose.project": "fixture-sibling", "com.docker.compose.volume": key},
                 "Mountpoint": "/fixture/" + key, "CreatedAt": "2026-01-01T00:00:00Z", "Scope": "local"}])
         if argv[:3] == ["docker", "volume", "ls"]:
-            return b"fixture-sibling_director-data\nfixture-sibling_langgraph-primary-db-data\n"
+            return b"fixture-sibling_director-data\nfixture-sibling_langgraph-primary-db-data\n" + "\n".join(self.intake_rows).encode()
+        if argv[:3] == ["docker", "volume", "create"]:
+            name = argv[-1]
+            if name not in self.intake_rows:
+                row = json.loads(self.platform(["docker", "volume", "inspect", name]))[0]
+                row["Labels"].update(dict(argv[i + 1].split("=", 1) for i, value in enumerate(argv) if value == "--label"))
+                self.intake_rows[name] = row
+            return name.encode()
         if argv[:2] == ["docker", "network"]:
             return b""
         if argv[:2] == ["docker", "ps"] and any(str(value).startswith("name=^/") for value in argv):
@@ -925,10 +937,10 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertFalse(report["executed"])
         self.assertLess(report["timeout_seconds"], 1500)
         actions = [row["action"] for row in report["steps"]]
-        self.assertEqual(actions, ["StartDatabase", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
+        self.assertEqual(actions, ["InitializeIntakeVolumes", "StartDatabase", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
                                    "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health", "Stop"])
         for step in report["steps"]:
-            if step["action"] in ("StartDatabase", "Stop"):
+            if step["action"] in ("InitializeIntakeVolumes", "StartDatabase", "Stop"):
                 continue
             argv = step["control_argv"]
             self.assertEqual(argv[argv.index("-ComposeProject") + 1], "fixture-sibling")
@@ -947,7 +959,8 @@ class ReleasePreparationTests(unittest.TestCase):
                    "COMPOSE_FILE": "wrong.yml", "OPENAI_API_KEY": "fixture-never-forward"}
         with patch.dict(os.environ, ambient):
             plan = release.Release(self.descriptor).rehearsal()
-            step = plan["steps"][0]
+            self.initialize_intake(plan)
+            step = next(item for item in plan["steps"] if item["action"] == "StartDatabase")
             payload = json.loads(base64.b64decode(step["argv"][-1]))
             payload["control_argv"] = [sys.executable, "-I", "-c",
                 "import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps(dict(os.environ)))",
@@ -1036,6 +1049,10 @@ class ReleasePreparationTests(unittest.TestCase):
         for defect in (None, "dirty", "dirty_after_probe", "commit", "tree", "filter", "submodule", "network"):
             for first_step in (True, False):
                 with self.subTest(defect=defect, first_step=first_step), tempfile.TemporaryDirectory() as directory:
+                    self.intake_rows.clear()
+                    Path(plan["steps"][0]["receipt_path"]).unlink(missing_ok=True)
+                    if not first_step:
+                        self.initialize_intake(plan)
                     checkout = Path(directory)
                     def git(*args):
                         return real_read(["git", *args], cwd=checkout, env=release.child_environment(),
@@ -1046,7 +1063,8 @@ class ReleasePreparationTests(unittest.TestCase):
                     git("add", "control.ps1")
                     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                         "commit", "-qm", "fixture")
-                    payload = json.loads(base64.b64decode(plan["steps"][0]["argv"][-1]))
+                    step = plan["steps"][0 if first_step else 1]
+                    payload = json.loads(base64.b64decode(step["argv"][-1]))
                     payload.update(cwd=str(checkout), first_step=first_step,
                         candidate={kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip()
                                    for kind in ("commit", "tree")})
@@ -1067,7 +1085,7 @@ class ReleasePreparationTests(unittest.TestCase):
                                 (argv[1] in ("inspect", "wait", "logs", "rm") and argv[-1] in self.probe_rows) or
                                 (argv[1] == "ps" and any(str(arg).startswith("name=^/fixture-sibling-probe-") and str(arg).endswith("$") for arg in argv))):
                             return self.platform(argv, **kwargs)
-                        if argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
+                        if argv[:2] in (["docker", "compose"], ["docker", "volume"]) or argv[0] == self.spec["executables"]["docker"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
                             if defect == "dirty_after_probe":
@@ -1087,13 +1105,18 @@ class ReleasePreparationTests(unittest.TestCase):
                             child.assert_not_called()
                         else:
                             exec(compile(release.REHEARSAL_LAUNCH, "launcher", "exec"), {})
-                            child.assert_called_once()
+                            if first_step:
+                                child.assert_not_called()
+                                self.assertEqual(len(Path(payload["intake"]["path"]).read_bytes().splitlines()), 2)
+                            else:
+                                child.assert_called_once()
 
     def test_control_timeout_preserves_quiescence_and_full_health_wait(self):
         self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
         for step in plan["steps"]:
-            if step["action"] in ("StartDatabase", "Stop"):
+            if step["action"] in ("InitializeIntakeVolumes", "StartDatabase", "Stop"):
                 continue
             payload = json.loads(base64.b64decode(step["argv"][-1]))
             health = int(step["control_argv"][step["control_argv"].index("-TimeoutSeconds") + 1])
@@ -1416,7 +1439,7 @@ class ReleasePreparationTests(unittest.TestCase):
         harness = self.root / "control-parameters-only.ps1"
         harness.write_text(parameters + '\n$PSBoundParameters | ConvertTo-Json -Compress\n', encoding="utf-8")
         for step in plan["steps"]:
-            if step["action"] in ("StartDatabase", "Stop"):
+            if step["action"] in ("InitializeIntakeVolumes", "StartDatabase", "Stop"):
                 continue
             arguments = step["control_argv"][step["control_argv"].index("-File") + 2:]
             result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness), *arguments],
@@ -1480,6 +1503,12 @@ class ReleasePreparationTests(unittest.TestCase):
             finally:
                 self.launched = child.call_args_list
         return payload
+
+    def initialize_intake(self, plan):
+        """Execute the real first-step launcher against the modeled daemon."""
+        self.assertEqual(plan["steps"][0]["action"], "InitializeIntakeVolumes")
+        self.launch_fixture(plan["steps"][0])
+        self.assertEqual(self.launched, [])  # Only the declared native volume commands ran.
 
     def test_rehearsal_rechecks_every_pinned_input_before_every_action(self):
         sibling = self.sibling()
@@ -1656,7 +1685,7 @@ class ReleasePreparationTests(unittest.TestCase):
                     _, error = process.communicate(timeout=20)
                     self.assertEqual(process.returncode, 0, error)
             self.launch_fixture(step, effect=effect)
-            self.assertEqual(len(self.launched), 1)
+            self.assertEqual(len(self.launched), 0 if step["action"] == "InitializeIntakeVolumes" else 1)
             if step["action"] in ("StageRuntime", "ActivateOffline", "Rollback"):
                 following = plan["steps"][plan["steps"].index(step) + 1]
                 raw = path.read_bytes()
@@ -1687,13 +1716,14 @@ class ReleasePreparationTests(unittest.TestCase):
             LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES="true")
         self.repin_graph(sibling, graph)
         plan = release.Release(self.descriptor).rehearsal()
-        self.assertEqual([row["action"] for row in plan["steps"][:2]], ["StartDatabase", "Preflight"])
+        self.initialize_intake(plan)
+        self.assertEqual([row["action"] for row in plan["steps"][:3]], ["InitializeIntakeVolumes", "StartDatabase", "Preflight"])
         self.assertFalse(plan["preparation_ready"])
         self.assertIn({"check": "database", "status": "DEFERRED", "reason": "local_database_start_required"},
                       plan["checks"])
         probes = [kwargs for argv, kwargs in self.calls if argv[-1] == release.DATABASE_PROBE]
         self.assertEqual(len(probes), 1, "only the already available final DB may be probed during planning")
-        start = plan["steps"][0]
+        start = next(item for item in plan["steps"] if item["action"] == "StartDatabase")
         self.assertEqual(start["control_argv"][-1], "langgraph-primary-db")
         for option in ("--no-deps", "--no-build", "--wait", "--wait-timeout"):
             self.assertIn(option, start["control_argv"])
@@ -1828,6 +1858,193 @@ class ReleasePreparationTests(unittest.TestCase):
                 release.ReleaseError, "state_volume_identity_mismatch"):
             tool.rehearsal_images(self.sibling_compose)
 
+    def test_fresh_rehearsal_refuses_stale_offline_attempt_before_activation(self):
+        sibling = self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
+        tool = release.Release(self.spec["rehearsal"]["descriptor"]["path"])
+        marker = Path(tool.prior_images_path().replace(".prior-images.", ".offline-attempt."))
+        marker.write_text("director-offline-attempt/v1")
+        with self.subTest(phase="planning"), self.assertRaises(release.ReleaseError):
+            release.Release(self.descriptor).rehearsal()
+        runtime_path = Path(sibling["runtime_env"]["path"])
+        runtime = release.dotenv(runtime_path.read_bytes())
+        runtime.update(release.RUNTIME_CHANGES["StageRuntime"])
+        runtime_path.write_bytes("".join(f"{key}={value}\n" for key, value in runtime.items()).encode())
+        step = next(item for item in plan["steps"] if item["action"] == "ActivateOffline")
+        for late in (False, True):
+            if late:
+                marker.unlink()
+            def observe(argv, **kwargs):
+                if late and argv[:2] == ["docker", "logs"]:
+                    marker.write_text("director-offline-attempt/v1")
+                return None
+            with self.subTest(phase="before_control" if late else "activation"):
+                with self.assertRaisesRegex(SystemExit, "offline attempt"):
+                    self.launch_fixture(step, observe=observe)
+                self.assertEqual(self.launched, [])
+
+    def test_n8n_state_appearing_after_first_step_is_not_silently_adopted(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
+        for action in ("Preflight", "StageRuntime"):
+            step = next(item for item in plan["steps"] if item["action"] == action)
+            self.assertFalse(json.loads(base64.b64decode(step["argv"][-1]))["first_step"])
+            def foreign(argv, **kwargs):
+                if argv[:3] == ["docker", "volume", "ls"]:
+                    return self.platform(argv, **kwargs) + b"fixture-sibling_n8n-data\n"
+                if argv[:3] == ["docker", "volume", "inspect"] and argv[-1] == "fixture-sibling_n8n-data":
+                    rows = json.loads(self.platform(argv, **kwargs))
+                    rows[0]["Labels"]["com.docker.compose.project"] = "unrelated-project"
+                    return release.encoded(rows)
+                return None
+            with self.subTest(action=action):
+                with self.assertRaises(SystemExit):
+                    self.launch_fixture(step, observe=foreign)
+                self.assertEqual(self.launched, [])
+
+    def test_primary_database_requires_stock_enabled_readiness_before_plan(self):
+        sibling = self.sibling()
+        for health in ({}, {"disable": True}, {"test": ["NONE"]}, {"test": []}):
+            self.sibling_compose["services"]["langgraph-primary-db"]["healthcheck"] = health
+            self.repin_graph(sibling, self.sibling_compose)
+            with self.subTest(health=health), self.assertRaises(release.ReleaseError):
+                release.Release(self.descriptor).rehearsal()
+
+    def sibling_with_postgres_n8n(self):
+        sibling = self.sibling()
+        graph = self.sibling_compose
+        database = graph["services"]["n8n-db"] = copy.deepcopy(graph["services"]["langgraph-primary-db"])
+        database["environment"] = {"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture"}
+        database["healthcheck"]["test"] = ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+        database["volumes"][0]["source"] = "n8n-db-data"
+        graph["volumes"]["n8n-db-data"] = {"name": "fixture-sibling_n8n-db-data"}
+        graph["services"]["n8n"]["environment"].update(DB_TYPE="postgresdb", DB_POSTGRESDB_HOST="n8n-db",
+            DB_POSTGRESDB_DATABASE="n8n", DB_POSTGRESDB_USER="n8n", DB_POSTGRESDB_PASSWORD="fixture")
+        graph["services"]["n8n"]["depends_on"] = {"n8n-db": {"condition": "service_healthy"}}
+        self.repin_graph(sibling, graph)
+        return sibling
+
+    def test_intake_initialization_binds_both_stock_volumes_before_all_consumers(self):
+        sibling = self.sibling_with_postgres_n8n()
+        plan = release.Release(self.descriptor).rehearsal()
+        first = plan["steps"][0]
+        self.assertEqual(first["control_argv"], [])
+        self.assertEqual(first["timeout_seconds"], 35)
+        self.assertEqual(plan["timeout_seconds"], 1499)
+        self.assertEqual(len(first["initialize_argvs"]), 2)
+        self.assertTrue(all(argv[0] == sibling["executables"]["docker"] for argv in first["initialize_argvs"]))
+        self.assertLessEqual(max(len(subprocess.list2cmdline(step["argv"]).encode("utf-16-le")) // 2 + 1
+                                 for step in plan["steps"]), 32767)
+        before = len(self.calls)
+        self.initialize_intake(plan)
+        self.assertFalse(any(argv[-1] == release.LOCAL_DATABASE_PROBE for argv, _ in self.calls[before:]))
+        receipt = Path(first["receipt_path"])
+        rows = [json.loads(line) for line in receipt.read_bytes().splitlines()]
+        payload = json.loads(base64.b64decode(first["argv"][-1]))
+        self.assertEqual(rows[0], {"event": "intent", "binding": payload["intake"]["binding"]})
+        self.assertEqual(set(rows[1]["volumes"]), {"fixture-sibling_n8n-data", "fixture-sibling_n8n-db-data"})
+        for name, row in self.intake_rows.items():
+            self.assertEqual(rows[1]["volumes"][name], release.sha(release.encoded(release.volume_identity(row))))
+        original = receipt.read_bytes()
+        # Run every actual emitted consumer in order; native control effects are
+        # limited to the already-reviewed runtime-map transitions in this fixture.
+        profile = Path(sibling["runtime_env"]["path"])
+        for step in plan["steps"][1:]:
+            def effect(argv, **kwargs):
+                if step["action"] in release.RUNTIME_CHANGES:
+                    values = release.dotenv(profile.read_bytes())
+                    values.update(release.RUNTIME_CHANGES[step["action"]])
+                    profile.write_bytes("".join(f"{key}={value}\n" for key, value in values.items()).encode())
+            with self.subTest(action=step["action"]):
+                self.launch_fixture(step, effect=effect)
+                self.assertEqual(len(self.launched), 1)
+                self.assertEqual(receipt.read_bytes(), original)
+
+    def test_intake_initialization_leaves_nonreplayable_intent_on_uncertain_create(self):
+        self.sibling_with_postgres_n8n()
+        plan = release.Release(self.descriptor).rehearsal()
+        first = plan["steps"][0]
+        payload = json.loads(base64.b64decode(first["argv"][-1]))
+        receipt = Path(payload["intake"]["path"])
+        name = next(iter(payload["intake"]["binding"]["names"]))
+        for mode in ("occupied", "timeout", "partial", "nonzero", "wrong-name", "foreign", "wrong-driver", "driver-options"):
+            self.intake_rows.clear()
+            receipt.unlink(missing_ok=True)
+            creates = []
+            def observe(argv, **kwargs):
+                if argv[:3] == ["docker", "volume", "ls"] and mode == "occupied" and receipt.exists():
+                    return (name + "\n").encode()
+                if argv[1:3] == ["volume", "create"]:
+                    creates.append(argv)
+                    self.assertEqual(len(receipt.read_bytes().splitlines()), 1, "intent must precede every create")
+                    result = self.platform(argv, **kwargs)
+                    if mode == "timeout" or mode == "partial" and len(creates) == 2: raise subprocess.TimeoutExpired(argv, 1)
+                    if mode == "nonzero": raise subprocess.CalledProcessError(1, argv)
+                    if mode == "wrong-name": return b"unrelated-name"
+                    if mode == "foreign": self.intake_rows[name]["Labels"]["org.director.release.intake"] = "foreign"
+                    if mode == "wrong-driver": self.intake_rows[name]["Driver"] = "remote"
+                    if mode == "driver-options": self.intake_rows[name]["Options"] = {"device": "unrelated"}
+                    return result
+                return None
+            with self.subTest(mode=mode), self.assertRaisesRegex(SystemExit, "initialization uncertain") as error:
+                self.launch_fixture(first, observe=observe)
+            self.assertIn(payload["intake"]["binding"]["nonce"], str(error.exception))
+            self.assertIn(creates[-1][-1] if mode == "partial" else name, str(error.exception))
+            self.assertEqual(len(receipt.read_bytes().splitlines()), 1)
+            self.assertEqual(len(creates), 0 if mode == "occupied" else 2 if mode == "partial" else 1)
+            if mode != "occupied":
+                self.assertIn(name, self.intake_rows, "uncertain resources must not be deleted")
+            with self.assertRaises(SystemExit):
+                self.launch_fixture(first)
+            with self.assertRaises(release.ReleaseError):
+                release.Release(self.descriptor).rehearsal()
+            with self.assertRaisesRegex(SystemExit, "intake volume receipt"):
+                self.launch_fixture(plan["steps"][1])
+            self.assertEqual(self.launched, [])
+
+    def test_intake_receipt_and_identity_drift_block_before_probe_and_before_control(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
+        step = next(item for item in plan["steps"] if item["action"] == "Preflight")
+        payload = json.loads(base64.b64decode(step["argv"][-1]))
+        receipt = Path(payload["intake"]["path"])
+        original, volume_rows = receipt.read_bytes(), copy.deepcopy(self.intake_rows)
+        name = next(iter(self.intake_rows))
+        for mode in ("missing", "incomplete", "oversized", "directory", "nonce", "candidate", "digest", "identity", "missing-volume", "late-identity", "late-receipt"):
+            self.intake_rows = copy.deepcopy(volume_rows)
+            if receipt.is_dir(): receipt.rmdir()
+            receipt.write_bytes(original)
+            rows = [json.loads(line) for line in original.splitlines()]
+            if mode == "missing": receipt.unlink()
+            elif mode == "incomplete": receipt.write_bytes(original.splitlines(keepends=True)[0])
+            elif mode == "oversized": receipt.write_bytes(b" " * (release.MAX_BYTES + 1))
+            elif mode == "directory":
+                receipt.unlink()
+                receipt.mkdir()
+            elif mode in ("nonce", "candidate"):
+                rows[0]["binding"][mode] = "unrelated"
+                receipt.write_bytes(b"".join(release.encoded(row) + b"\n" for row in rows))
+            elif mode == "digest":
+                rows[1]["volumes"][name] = "0" * 64
+                receipt.write_bytes(b"".join(release.encoded(row) + b"\n" for row in rows))
+            elif mode == "identity": self.intake_rows[name]["CreatedAt"] = "replaced"
+            probes = []
+            def observe(argv, **kwargs):
+                if argv[:3] == ["docker", "volume", "inspect"] and argv[-1] == name and mode == "missing-volume":
+                    raise subprocess.CalledProcessError(1, argv)
+                if argv[:2] == ["docker", "logs"]:
+                    probes.append(argv)
+                    if mode == "late-identity": self.intake_rows[name]["CreatedAt"] = "replaced"
+                    elif mode == "late-receipt": receipt.write_bytes(original + b"\n")
+                return None
+            with self.subTest(mode=mode), self.assertRaises((SystemExit, FileNotFoundError)):
+                self.launch_fixture(step, observe=observe)
+            self.assertEqual(self.launched, [])
+            self.assertEqual(bool(probes), mode.startswith("late-"))
+
     def test_n8n_database_configuration_must_match_its_stock_postgres_service(self):
         self.sibling()
         graph = copy.deepcopy(self.sibling_compose)
@@ -1846,6 +2063,7 @@ class ReleasePreparationTests(unittest.TestCase):
     def test_successful_rehearsal_ends_with_bounded_stop_and_proof_for_all_intake(self):
         sibling = self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
         self.assertEqual([step["action"] for step in plan["steps"][-3:]], ["Rollback", "Health", "Stop"])
         self.assertEqual(plan["timeout_seconds"], 1499)
         stop = plan["steps"][-1]
@@ -2044,7 +2262,9 @@ except m['ReleaseError']: pass
 
     def test_emitted_control_timeout_ends_the_child_and_grandchild(self):
         self.sibling()
-        step = release.Release(self.descriptor).rehearsal()["steps"][0]
+        plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
+        step = next(item for item in plan["steps"] if item["action"] == "StartDatabase")
         payload = json.loads(base64.b64decode(step["argv"][-1]))
         marker = self.root / "escaped-grandchild"
         ready = self.root / "grandchild-started"
@@ -2092,7 +2312,9 @@ except m['ReleaseError']: pass
 
     def test_database_probe_owns_cleanup_and_never_accepts_unknown_outcomes(self):
         self.sibling()
-        step = next(item for item in release.Release(self.descriptor).rehearsal()["steps"] if item["action"] == "Preflight")
+        plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
+        step = next(item for item in plan["steps"] if item["action"] == "Preflight")
         for mode in ("success", "restart-empty", "restart-always", "restart-missing", "wait-timeout", "create-timeout", "create-absent", "cleanup-failure", "absence-unavailable",
                      "identity-name", "identity-owner", "identity-project", "identity-service", "identity-oneoff", "identity-id", "identity-image"):
             rows, removed = {}, []
@@ -2243,7 +2465,8 @@ except m['ReleaseError']: pass
         self.save()
         with patch.dict(os.environ, {"DIRECTOR_ENV_FILE": str(self.root / "unbound.env")}):
             plan = release.Release(self.descriptor).rehearsal()
-            start = plan["steps"][0]
+            self.initialize_intake(plan)
+            start = next(item for item in plan["steps"] if item["action"] == "StartDatabase")
             self.assertEqual(start["action"], "StartDatabase")
             payload = json.loads(base64.b64decode(start["argv"][-1]))
             self.assertEqual(payload["environment"].get("DIRECTOR_ENV_FILE"), sibling["runtime_env"]["path"])
@@ -2375,6 +2598,7 @@ except m['ReleaseError']: pass
         import socket
         self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
         step = next(item for item in plan["steps"] if item["action"] == "StageRuntime")
         for protocol, kind in (("tcp", socket.SOCK_STREAM), ("udp", socket.SOCK_DGRAM)):
             with socket.socket(socket.AF_INET, kind) as listener:
@@ -2411,6 +2635,7 @@ except m['ReleaseError']: pass
     def test_gateway_start_actions_require_running_pinned_sibling_process(self):
         sibling = self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
         path = Path(sibling["runtime_env"]["path"])
         original = release.dotenv(path.read_bytes())
         for action, preceding in (("ActivateOffline", "StageRuntime"), ("Rollback", "ActivateOffline")):
@@ -2450,7 +2675,9 @@ except m['ReleaseError']: pass
 
     def test_real_emitted_launcher_imports_verified_containment_without_cache_writes(self):
         self.sibling()
-        step = release.Release(self.descriptor).rehearsal()["steps"][0]
+        plan = release.Release(self.descriptor).rehearsal()
+        self.initialize_intake(plan)
+        step = next(item for item in plan["steps"] if item["action"] == "StartDatabase")
         checkout = self.root / "real-source"
         package = checkout / "src" / "director_orchestrator"
         package.mkdir(parents=True)
@@ -2474,7 +2701,7 @@ except m['ReleaseError']: pass
         # Git twice, imports the actual helper from this pinned tiny checkout,
         # and launches a real harmless child through the production containment.
         harness = self.root / "emitted-fixture.json"
-        harness.write_bytes(release.encoded({"code": step["argv"][-2], "payload": payload}))
+        harness.write_bytes(release.encoded({"code": step["argv"][-2], "payload": payload, "intake_rows": self.intake_rows}))
         wrapper = """import base64,json,pathlib,subprocess,sys
 fixture=json.loads(pathlib.Path(sys.argv[1]).read_bytes()); v=fixture['payload']
 assert sys.flags.isolated and sys.flags.dont_write_bytecode
@@ -2485,6 +2712,7 @@ def read(args,**kwargs):
         return original(args,**kwargs)
     if args[:2]==['docker','info']: return v['daemon_id'].encode()
     if args[:2]==['docker','ps']: return b''
+    if args[:3]==['docker','volume','inspect']: return json.dumps([fixture['intake_rows'][args[-1]]]).encode()
     raise AssertionError(args)
 subprocess.check_output=read
 sys.argv=['launcher',base64.b64encode(json.dumps(v).encode()).decode()]

@@ -302,6 +302,8 @@ through the existing approved controls; this interface does not bootstrap them.<
 probe. The complete backup/restore rehearsal requires the stock
 <code>langgraph-primary-db</code> service and the orchestrator's corresponding container-local
 DSN, database and user; an external-only database has no supported backup contract.
+The primary database must retain its enabled stock <code>pg_isready</code> healthcheck;
+an absent, empty or disabled check cannot satisfy <code>up --wait</code> readiness.
 The sibling's previously provisioned identity is <strong>DEFERRED</strong>, with
 <code>preparation_ready: false</code>, until its planned database-only start succeeds.
 <code>StartDatabase</code> uses the pinned Compose inputs and cached image, no build/pull or
@@ -412,9 +414,29 @@ Read-only bind sources must already exist, have no linked path components and
 explicitly use <code>bind.create_host_path: false</code>. The acceptance-registry bind
 must be the exact directory named by the protected sibling runtime profile.
 Planning and execution do not implicitly create missing host directories.</p>
-<p>The sibling project must have no existing containers, named networks or prior-image record.
+<p>The sibling project must have no existing containers, named networks, prior-image record
+or generation/image-specific offline-attempt marker. A fresh plan also checks the
+offline-attempt marker immediately before <code>ActivateOffline</code>, after its
+database probe, so an interrupted activation cannot select the existing control's
+retry path. Reconciliation is required; standalone activation/resume rules are unchanged.
 n8n and its optional PostgreSQL state volumes must be new, project-scoped named
-volumes. Reused databases/workflows, bind-mounted n8n state
+volumes. The first emitted action, <code>InitializeIntakeVolumes</code>, checks freshness,
+then creates only these exact stock local volumes with the Compose project/key
+labels and a plan-specific nonce. This is a launcher-owned action: its
+<code>control_argv</code> is empty, and <code>initialize_argvs</code> lists the pinned Docker
+commands executed by <code>argv</code>; it is not a primary-control action.
+A create-only receipt in the protected sibling output directory binds the nonce,
+candidate, descriptors, daemon, project and names. Its intent is flushed before
+the first create. Completion is appended through the same open file only after
+each returned name and full observed volume identity is verified. The native
+calls share a 35-second deadline, within the unchanged 1,499-second operator allowance.
+An occupied name, partial or uncertain creation, incomplete receipt or missing
+identity stops for reconciliation; nothing is adopted, deleted or replayed.
+Every later action requires the bounded, regular, unlinked receipt and matching
+current identities both before its database probe and immediately before its
+control. This permits legitimate Compose reuse, including volumes retained by
+dependency selection, without silently accepting state that appeared later.
+Reused databases/workflows, bind-mounted n8n state
 and alternate database hosts are refused because Director paid switches cannot
 constrain arbitrary stored workflows. These restrictions require explicit sibling
 Compose overrides for the stock graph's pull policies, local logging, bind creation
@@ -424,7 +446,10 @@ isolated primary database storage remains subject to the existing identity check
 The orchestrator and primary database state volumes must already be provisioned
 with the stock Compose project/volume labels and local driver, without driver
 options. Their observed identities, including creation time and mountpoint, are
-pinned and checked before each action. The runner never creates or deletes them.
+pinned and checked before each action. The runner never creates or deletes these
+previously provisioned orchestrator/primary-database volumes. The nonce and receipt
+operate within the protected-owner/daemon trust model; they do not authenticate a
+privileged operator or protect against one changing volume contents in place.
 For the PostgreSQL n8n topology, effective host, port, database, user and password
 must match the stock n8n database service; errors contain no secret values.
 The effective n8n settings must also retain the stock values:
@@ -507,6 +532,8 @@ Cleanup consumes the same operator-enforced overall budget; it grants no extra
 rehearsal runtime. Plans whose
 serialized launcher or control argument list exceeds Windows' 32,767 UTF-16-unit
 limit (including quoting and the terminating NUL) are refused before emission.
+The fixed launcher uses standard-library compression in its isolated bootstrap;
+the actual emitted argument list, including its payload, remains subject to this limit.
 Shorten the protected paths or inherited command search path and generate a new
 plan; the runner does not create an unpinned fallback launcher file.</p>
 <p>Claude's assigned W6 operator executes this plan only within the separately authorized

@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import time
 from types import ModuleType
+import zlib
 
 from jsonschema import Draft202012Validator
 import yaml
@@ -443,6 +444,7 @@ def file_bytes(name):
         metadata=part.lstat()
         if stat.S_ISLNK(metadata.st_mode) or getattr(metadata,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0):
             raise SystemExit('linked input refused')
+    if not path.is_file(): raise SystemExit('regular input required')
     with path.open('rb') as stream: raw=stream.read(4*1024*1024+1)
     if len(raw)>4*1024*1024: raise SystemExit('input too large')
     return raw
@@ -474,6 +476,10 @@ def input_check():
         if digest(raw)!=pin['sha256']: raise SystemExit('initial runtime profile changed')
     elif digest(encoded(dotenv(raw)))!=pin['values_sha256']:
         raise SystemExit('runtime profile differs from expected control transition')
+
+def offline_attempt_check():
+    if (v['first_step'] or v['action']=='ActivateOffline') and os.path.lexists(v['prior_images'].replace('.prior-images.','.offline-attempt.')):
+        raise SystemExit('stale offline attempt requires reconciliation')
 def probe_read(args,deadline):
     # Reserve the last five seconds for verified host-client tree cleanup.
     if time.monotonic()>=deadline-5: raise RuntimeError('probe deadline')
@@ -535,6 +541,61 @@ def database_check():
     slots=json.loads(read([sys.executable,'-B','-c',VALIDATION_PROBE],input=encoded({
         'validation_dsn':profile['DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN'],'generation':db['generation']})))
     if slots.get('occupied_slots')!=[]: raise SystemExit('validation slot already occupied')
+receipt_digest=None
+def intake_identity(name,key,reader):
+    rows=json.loads(reader(['docker','volume','inspect',name]))
+    if len(rows)!=1: raise ValueError('intake volume identity')
+    row=rows[0]; binding=v['intake']['binding']
+    labels={'com.docker.compose.project':binding['project'],'com.docker.compose.volume':key,
+        'org.director.release.intake':binding['nonce']}
+    if row.get('Name')!=name or row.get('Driver')!='local' or row.get('Options') or row.get('Scope')!='local' or any(
+        row.get('Labels',{}).get(k)!=value for k,value in labels.items()) or not all(
+        isinstance(row.get(k),str) and row[k] for k in ('Mountpoint','CreatedAt')):
+        raise ValueError('intake volume identity')
+    return digest(encoded(volume_identity(row)))
+
+def intake_check():
+    global receipt_digest
+    if v['action']=='InitializeIntakeVolumes': return
+    try:
+        raw=file_bytes(v['intake']['path']); rows=[json.loads(line) for line in raw.splitlines()]
+        binding=v['intake']['binding']
+        if not raw.endswith(b'\n') or len(rows)!=2 or rows[0]!={'event':'intent','binding':binding} or set(rows[1])!={'event','volumes'} or rows[1]['event']!='complete' or set(rows[1]['volumes'])!=set(binding['names']):
+            raise ValueError('intake receipt')
+        if receipt_digest is not None and digest(raw)!=receipt_digest: raise ValueError('intake receipt changed')
+        for name,key in binding['names'].items():
+            if intake_identity(name,key,read)!=rows[1]['volumes'][name]: raise ValueError('intake volume changed')
+        receipt_digest=digest(raw)
+    except Exception: raise SystemExit('intake volume receipt or identity changed; reconciliation required') from None
+
+def initialize_intake_volumes():
+    path=pathlib.Path(v['intake']['path']); binding=v['intake']['binding']; deadline=time.monotonic()+35; name='unstarted'
+    try:
+        if not path.is_absolute(): raise ValueError('intake receipt path')
+        for parent in path.parents:
+            info=parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or getattr(info,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0):
+                raise ValueError('linked receipt parent')
+        # The exclusive file remains open through both flushed records. Partial
+        # creation leaves the intent in place, without replay or adoption.
+        with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'wb') as stream:
+            intent=encoded({'event':'intent','binding':binding})+b'\n'
+            stream.write(intent); stream.flush(); os.fsync(stream.fileno())
+            identities={}
+            for command in v['initialize_argvs']:
+                name=command[-1]; key=binding['names'][name]
+                if name in probe_read(['docker','volume','ls','--format','{{.Name}}'],deadline).decode().splitlines():
+                    raise ValueError('intake name occupied')
+                if probe_read(command,deadline).decode().strip()!=name: raise ValueError('intake create result')
+                identities[name]=intake_identity(name,key,lambda args:probe_read(args,deadline))
+            current=path.lstat(); owned=os.fstat(stream.fileno())
+            if (current.st_dev,current.st_ino)!=(owned.st_dev,owned.st_ino) or not stat.S_ISREG(current.st_mode):
+                raise ValueError('intake receipt changed')
+            complete=encoded({'event':'complete','volumes':identities})+b'\n'
+            stream.write(complete); stream.flush(); os.fsync(stream.fileno())
+        if file_bytes(str(path))!=intent+complete: raise ValueError('intake receipt readback')
+    except Exception: raise SystemExit('intake volume initialization uncertain; reconcile receipt='+str(path)+' nonce='+binding['nonce']+' name='+name) from None
+
 def source_check():
     names=read(['git','config','--null','--name-only','--list']).decode().split(chr(0))
     if any(re.match(r'filter\..*\.(clean|smudge|process)$',name,re.I) for name in names):
@@ -550,6 +611,7 @@ def source_check():
         raise SystemExit('verified source no longer clean')
 input_check()
 source_check()
+offline_attempt_check()
 sys.path.insert(0,str(pathlib.Path(v['cwd'])/'src'))
 from director_orchestrator.process_isolation import launch_contained_process,stop_contained_process
 if read(['docker','info','--format','{{.ID}}']).decode().strip()!=v['daemon_id']:
@@ -578,9 +640,12 @@ if prior.exists():
     saved=json.loads(prior.read_text(encoding='utf-8-sig'))
     if any(saved.get(key)!=v['runtime_image'] for key in ('orchestrator_image_id','gateway_image_id')):
         raise SystemExit('rollback image outside verified rehearsal')
-if v['action'] not in ('StartDatabase','Stop'): database_check()
+intake_check()
+if v['action'] not in ('InitializeIntakeVolumes','StartDatabase','Stop'): database_check()
 input_check()
 source_check()
+offline_attempt_check()
+intake_check()
 if v['first_step'] or v['action']=='StageRuntime':
     for port in v['ports']:
         kind=socket.SOCK_STREAM if port['protocol']=='tcp' else socket.SOCK_DGRAM
@@ -588,12 +653,14 @@ if v['first_step'] or v['action']=='StageRuntime':
             if hasattr(socket,'SO_EXCLUSIVEADDRUSE'): sock.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
             try: sock.bind((port['host_ip'],int(port['published'])))
             except OSError: raise SystemExit('sibling port is occupied') from None
-process,guard=launch_contained_process(v['control_argv'],env=env,cwd=v['cwd'],stdin=subprocess.DEVNULL,
-    executable=v['executables'].get(v['control_argv'][0],v['control_argv'][0]))
-try:
-    code=process.wait(timeout=v['control_timeout_seconds'])
-    if code: raise subprocess.CalledProcessError(code,v['control_argv'])
-finally: stop_contained_process(process,guard,grace_seconds=5)
+if v['action']=='InitializeIntakeVolumes': initialize_intake_volumes()
+else:
+    process,guard=launch_contained_process(v['control_argv'],env=env,cwd=v['cwd'],stdin=subprocess.DEVNULL,
+        executable=v['executables'].get(v['control_argv'][0],v['control_argv'][0]))
+    try:
+        code=process.wait(timeout=v['control_timeout_seconds'])
+        if code: raise subprocess.CalledProcessError(code,v['control_argv'])
+    finally: stop_contained_process(process,guard,grace_seconds=5)
 if v['action']=='StartDatabase':
     input_check()
     database_check()
@@ -620,6 +687,8 @@ if v['action']=='Stop':
 """
 REHEARSAL_LAUNCH = ("LOCAL_DATABASE_PROBE=" + repr(LOCAL_DATABASE_PROBE) + "\nVALIDATION_PROBE=" +
                    repr(VALIDATION_PROBE) + "\n" + RESOURCE_INVENTORY + SOURCE_PROOF + REHEARSAL_LAUNCH)
+REHEARSAL_BOOTSTRAP = ("import base64,zlib;exec(zlib.decompress(base64.b64decode(" +
+                       repr(base64.b64encode(zlib.compress(REHEARSAL_LAUNCH.encode())).decode("ascii")) + ")))")
 
 
 class Release:
@@ -1035,6 +1104,10 @@ class Release:
         # The existing Backup/RestoreDrill controls operate on this exact service;
         # an external-only database has no supported complete rehearsal contract.
         require("langgraph-primary-db" in sibling_graph["services"], "sibling_backup_database_required")
+        health = sibling_graph["services"]["langgraph-primary-db"].get("healthcheck", {})
+        require(not health.get("disable") and
+                health.get("test") == ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"],
+                "sibling_primary_database_readiness_required")
         from urllib.parse import urlsplit
         database_service = sibling_graph["services"]["langgraph-primary-db"].get("environment", {})
         database_url = urlsplit(sibling_graph["services"]["orchestrator"].get("environment", {}).get(
@@ -1053,6 +1126,19 @@ class Release:
                 "sibling_docker_target_mismatch")
         images = sibling.rehearsal_images(sibling_graph)
         sibling.rehearsal_modes()
+        intake = {"path": str(sibling.intake_receipt_path()), "binding": {
+            "nonce": os.urandom(16).hex(), "candidate": sibling.spec["candidate"],
+            "descriptor_sha256": sibling.descriptor_digest, "final_descriptor_sha256": self.descriptor_digest,
+            "owner_descriptor_sha256": self.owner_descriptor_digest,
+            "daemon_id": sibling.daemon_id, "project": sibling.spec["compose_project"],
+            "names": {sibling_graph["volumes"][mount["source"]]["name"]: mount["source"]
+                      for name in ("n8n", "n8n-db")
+                      for mount in sibling_graph["services"].get(name, {}).get("volumes", [])}}}
+        initialize_argvs = [[sibling.executables["docker"], "volume", "create", "--driver", "local",
+            "--label", "com.docker.compose.project=" + sibling.spec["compose_project"],
+            "--label", "com.docker.compose.volume=" + key,
+            "--label", "org.director.release.intake=" + intake["binding"]["nonce"], name]
+            for name, key in sorted(intake["binding"]["names"].items())]
         environment = child_environment()
         environment.update(sibling.docker_environment)
         environment.update(COMPOSE_FILE=os.pathsep.join(pin["path"] for pin in sibling.spec["compose_files"]),
@@ -1074,13 +1160,15 @@ class Release:
         pins = {pin["path"]: pin for pin in immutable_pins}
         expected_runtime = dict(sibling.runtime)
         runtime_changed = False
-        actions = (["StartDatabase"] if local_database else []) + [
+        actions = ["InitializeIntakeVolumes"] + (["StartDatabase"] if local_database else []) + [
             "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
             "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health", "Stop"]
         steps = []
         for action in actions:
             arguments = [*base, "-Action", action, *common]
-            if action == "StartDatabase":
+            if action == "InitializeIntakeVolumes":
+                arguments = []  # The explicit bounded commands are exposed below.
+            elif action == "StartDatabase":
                 arguments = [*compose, "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait",
                              "--wait-timeout", "120", "langgraph-primary-db"]
             elif action == "Stop":
@@ -1089,7 +1177,8 @@ class Release:
                 arguments += ["-AcceptanceArtifactPath", plan["acceptance_artifact"]["path"]]
             elif action in ("Backup", "RestoreDrill"):
                 arguments += ["-BackupPath", str(backup)]
-            arguments[0] = sibling.executables.get(arguments[0], arguments[0])
+            if arguments:
+                arguments[0] = sibling.executables.get(arguments[0], arguments[0])
             payload = {"environment": environment, "cwd": str(sibling.source), "daemon_id": sibling.daemon_id,
                        "executables": sibling.executables,
                        "snapshot_path": sibling.spec["snapshot"]["path"],
@@ -1106,26 +1195,31 @@ class Release:
                        # 65s. Preserve their full 120s health wait plus overhead.
                        "control_timeout_seconds": 260 if action in ("ActivateOffline", "Rollback") else 140,
                        "images": images, "control_argv": arguments, "runtime_image": sibling.spec["image_id"],
+                       "intake": intake,
                        "state_volumes": sibling.state_volumes,
                        "prior_images": sibling.prior_images_path(), "first_step": not steps,
                        "project": sibling.spec["compose_project"],
                        "fresh_networks": [item["name"] for item in sibling_graph["networks"].values()],
-                       "fresh_volumes": [sibling_graph["volumes"][mount["source"]]["name"]
-                           for name in ("n8n", "n8n-db")
-                           for mount in sibling_graph["services"].get(name, {}).get("volumes", [])]}
+                       "fresh_volumes": list(intake["binding"]["names"])}
+            if action == "InitializeIntakeVolumes":
+                payload["initialize_argvs"] = initialize_argvs
             if local_database:
                 payload["local_database"] = {"compose": compose, "bridge_path": sibling.spec["bridge_env"]["path"],
                     "generation": sibling.spec["generation_manifest"]["sha256"], "final": self.observed_database,
                     "expected": {key: sibling.manifest["activation"][key] for key in
                                  ("database_identity", "database_instance_id")}}
-            argv = [sibling.spec["executables"]["python"], "-I", "-B", "-c", REHEARSAL_LAUNCH,
+            argv = [sibling.spec["executables"]["python"], "-I", "-B", "-c", REHEARSAL_BOOTSTRAP,
                     base64.b64encode(encoded(payload)).decode("ascii")]
             # CreateProcess counts the terminating NUL and UTF-16 code units,
             # including quoting added by Python's actual Windows serializer.
-            for command_argv in (argv, arguments):
+            for command_argv in (argv, arguments, *(initialize_argvs if action == "InitializeIntakeVolumes" else [])):
                 require(len(subprocess.list2cmdline(command_argv).encode("utf-16-le")) // 2 + 1 <= 32767,
                         "rehearsal_command_line_too_long")
             steps.append({"action": action, "control_argv": arguments, "argv": argv})
+            if action == "InitializeIntakeVolumes":
+                steps[-1]["initialize_argvs"] = initialize_argvs
+                steps[-1]["timeout_seconds"] = 35
+                steps[-1]["receipt_path"] = intake["path"]
             if action in RUNTIME_CHANGES:
                 expected_runtime.update(RUNTIME_CHANGES[action])
                 runtime_changed = True
@@ -1165,6 +1259,10 @@ class Release:
                               "label=com.docker.compose.project=" + self.spec["compose_project"],
                               "--format", "{{.ID}}"]).strip(), "sibling_project_already_exists")
         require(not Path(self.prior_images_path()).exists(), "sibling_prior_images_exist")
+        require(not os.path.lexists(self.prior_images_path().replace(".prior-images.", ".offline-attempt.")),
+                "sibling_offline_attempt_exists")
+        unlinked(self.intake_receipt_path())
+        require(not os.path.lexists(self.intake_receipt_path()), "sibling_intake_receipt_exists")
         networks = set(self.run(["docker", "network", "ls", "--format", "{{.Name}}"]).decode().splitlines())
         require(not networks.intersection(item["name"] for item in graph["networks"].values()),
                 "sibling_network_not_fresh")
@@ -1229,6 +1327,9 @@ class Release:
     def prior_images_path(self):
         return (self.spec["runtime_env"]["path"] + ".prior-images." +
                 self.spec["generation_manifest"]["sha256"] + "." + self.spec["image_id"][7:] + ".json")
+
+    def intake_receipt_path(self):
+        return self.output / (self.spec["release_id"] + ".intake-volumes.jsonl")
 
     def protected_paths(self):
         paths = [self.source, self.output, self.path, self.owner_root, self.spec["snapshot"]["path"]]
