@@ -199,6 +199,7 @@ def health():
                           # usage-check probes, and only gemini, grok and perplexity carry a numeric budget.
                           "daily_accounting": {
                               "grok": accounting(request_count=2, reported_cost_usd=0.1, reserved_cost_usd=0.2,
+                                                 unreconciled_request_count=0, unsettled_request_count=0,
                                                  daily_budget_usd=5.0, daily_request_limit=100),
                               "claude": accounting(request_count=3, reported_cost_usd=0.3)}}}
 
@@ -3384,6 +3385,22 @@ class WorkloadJournalPinTests(unittest.TestCase):
             report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=journal), now=NOW)
         return report, read.call_count
 
+    def test_case_distinct_files_are_not_the_pinned_journal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pinned, other = Path(folder) / "journal.sqlite3", Path(folder) / "JOURNAL.sqlite3"
+            pinned.write_bytes(b"")
+            if other.exists():
+                self.skipTest("requires a case-sensitive filesystem")
+            other.write_bytes(b"")
+            self.assertFalse(os.path.samefile(pinned, other))
+            with patch.object(sc.os.path, "normcase", side_effect=lambda path: os.fspath(path).lower()):
+                self.assertEqual(os.path.normcase(pinned), os.path.normcase(other))
+                report, reads = self.collect(other, {"workload_journal": str(pinned)})
+                self.assertEqual(reads, 0)
+                self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+                _, reads = self.collect(pinned, {"workload_journal": str(pinned)})
+                self.assertEqual(reads, 1)
+
     def test_only_the_pinned_journal_is_read(self):
         with tempfile.TemporaryDirectory() as folder:
             pinned, other = Path(folder) / "pinned.sqlite3", Path(folder) / "other.sqlite3"
@@ -5492,16 +5509,33 @@ class ScorecardCollectorTests(unittest.TestCase):
         entry["approval_receipts_truncated"] = True
         self.assertEqual(case.state("08"), "UNKNOWN")
 
-    def test_bounded_grok_does_not_require_unsettled_count_15(self):
-        for unsettled in (1, None, "missing"):
-            with self.subTest(unsettled=unsettled):
-                case = self.world(evaluate_rules=True)
-                daily = case.payload["usage_monitor"]["daily_accounting"]["grok"]
-                daily.update(provider_request_count=1, unreconciled_request_count=0,
-                             unsettled_request_count=unsettled)
-                if unsettled == "missing":
-                    del daily["unsettled_request_count"]
-                self.assertEqual(case.state("15"), "PASS")
+    def test_ledger_unsettled_count_requires_exact_zero_even_without_attempts_15(self):
+        for provider in ("gemini", "perplexity", "grok"):
+            for requests in (0, 1):
+                for unsettled in (1, None, False, True, 0.0, "0", -1, "missing", 0):
+                    with self.subTest(provider=provider, requests=requests, unsettled=unsettled):
+                        case = self.world(evaluate_rules=True)
+                        if provider not in case.payload["usage_monitor"]["providers"]:
+                            case.payload["usage_monitor"]["providers"].append(provider)
+                        daily = accounting(provider_request_count=requests, unreconciled_request_count=0,
+                                           unsettled_request_count=unsettled, daily_budget_usd=5.0)
+                        case.payload["usage_monitor"]["daily_accounting"][provider] = daily
+                        if unsettled == "missing":
+                            del daily["unsettled_request_count"]
+                        report = case.report()
+                        priced = type(unsettled) is int and unsettled == 0
+                        self.assertEqual(row(report, "15")["status"], "PASS" if priced else "UNKNOWN")
+                        if not priced:
+                            self.assertIn(provider, row(report, "15")["explanation"])
+                            self.assertIn(provider, row(report, "15")["evidence"][0]["facts"]["unknown_cost_providers"])
+                        # Incomplete counts cannot downgrade a proven cap violation from FAIL to UNKNOWN.
+                        if provider == "grok" and requests == 1:
+                            daily["exposure_usd"] = 6.0
+                            self.assertEqual(case.state("15"), "FAIL")
+                        if priced:
+                            daily["exposure_usd"] = 0.0
+                            daily["unreconciled_request_count"] = None
+                            self.assertEqual(case.state("15"), "UNKNOWN")
 
     def test_outcomes_and_ledger_rows_are_a_bijection_10_20(self):
         """Sweep (one-directional joins): outcomes and assignments pair one-to-one by sequence, both ways."""
@@ -6467,71 +6501,224 @@ class ScorecardCollectorTests(unittest.TestCase):
         with patch.object(sc, "_run_json", side_effect=ValueError("offline")):
             return sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
 
-    def test_fresh_unsettled_request_reaches_monitor_and_check_15(self):
+    def spend_monitor_world(self, store, provider):
         from director_orchestrator.config import Settings
+        from director_orchestrator.usage import UsageMonitor
+
+        settings = dataclasses.replace(Settings(), provider_timeout_seconds=60,
+                                       **{provider.value + "_daily_budget_usd": 1.0,
+                                          provider.value + "_daily_request_limit": 10})
+        monitor = UsageMonitor(settings, store, adapters={provider: object()})
+        world = self.world(evaluate_rules=True)
+        if provider.value not in world.payload["usage_monitor"]["providers"]:
+            world.payload["usage_monitor"]["providers"].append(provider.value)
+        return monitor, world
+
+    def test_fresh_unsettled_request_reaches_monitor_and_check_15(self):
         from director_orchestrator.models import ProviderName
         from director_orchestrator.providers import ProviderDailySpendLedger
         from director_orchestrator.store import TaskStore
-        from director_orchestrator.usage import UsageMonitor
 
-        with tempfile.TemporaryDirectory() as folder:
-            store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
-            ledger = ProviderDailySpendLedger(store.path)
-            ledger.reserve(provider=ProviderName.GEMINI, effect_key="a" * 64, estimated_cost_usd=0.75,
-                           request_limit=10, budget_usd=1.0, now=NOW)
-            settings = dataclasses.replace(Settings(), gemini_daily_budget_usd=1.0, gemini_daily_request_limit=10)
-            monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: object()})
-            world = self.world(evaluate_rules=True)
-            self.assertEqual(world.state("15"), "PASS")
-            world.payload["usage_monitor"]["providers"].append("gemini")
-            daily = monitor._daily_accounting("gemini", NOW)
-            self.assertEqual(daily["provider_request_count"], 1)
-            self.assertEqual(daily["unreconciled_request_count"], 0)
-            self.assertEqual(daily["unsettled_request_count"], 1)
-            self.assertEqual(daily["exposure_usd"], 0.75)
-            world.payload["usage_monitor"]["daily_accounting"]["gemini"] = daily
-            self.assertEqual(world.state("15"), "UNKNOWN")
-            ledger.record_charge(provider=ProviderName.GEMINI, effect_key="a" * 64,
-                                 actual_cost_usd=0.8, now=NOW)
-            world.payload["usage_monitor"]["daily_accounting"]["gemini"] = monitor._daily_accounting("gemini", NOW)
-            self.assertEqual(world.state("15"), "PASS")
+        # Match the production reservation modes: Grok CLI/managed Gemini/Perplexity have no
+        # monetary bound; Grok API reserves a computed bound. No provider call is made.
+        for provider, serialized in ((ProviderName.GROK, True), (ProviderName.GROK, False),
+                                     (ProviderName.GEMINI, True), (ProviderName.PERPLEXITY, True)):
+            for age in (timedelta(0), timedelta(seconds=61), timedelta(days=1)):
+                with self.subTest(provider=provider, serialized=serialized, age=age), \
+                        tempfile.TemporaryDirectory() as folder:
+                    store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+                    ledger = ProviderDailySpendLedger(store.path)
+                    at = NOW - age
+                    ledger.reserve(provider=provider, effect_key="a" * 64, estimated_cost_usd=0.75,
+                                   request_limit=10, budget_usd=1.0, serialize=serialized, now=at)
+                    monitor, world = self.spend_monitor_world(store, provider)
+                    daily = monitor._daily_accounting(provider.value, NOW)
+                    self.assertEqual(daily["provider_request_count"], int(at.date() == NOW.date()))
+                    self.assertEqual(daily["unreconciled_request_count"], int(age.total_seconds() >= 60))
+                    self.assertEqual(daily["unsettled_request_count"], int(serialized))
+                    self.assertEqual(daily["exposure_usd"],
+                                     (1.0 if serialized else 0.75) if at.date() == NOW.date() else 0.0)
+                    world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+                    self.assertEqual(world.state("15"),
+                                     "UNKNOWN" if serialized or age.total_seconds() >= 60 else "PASS")
+                    ledger.record_charge(provider=provider, effect_key="a" * 64, actual_cost_usd=0.0, now=NOW)
+                    daily = monitor._daily_accounting(provider.value, NOW)
+                    self.assertEqual((daily["unsettled_request_count"], daily["unreconciled_request_count"]), (0, 0))
+                    world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+                    self.assertEqual(world.state("15"), "PASS")
+
+    def test_fresh_cross_midnight_request_reaches_monitor_and_check_15(self):
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import TaskStore
+
+        # Keep the scorecard clock at NOW; only the monitor reads two seconds past midnight.
+        midnight = NOW.replace(hour=0, minute=0, second=1, microsecond=0)
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as folder:
+                store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+                ledger = ProviderDailySpendLedger(store.path)
+                ledger.reserve(provider=provider, effect_key="a" * 64, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0, serialize=True,
+                               now=midnight - timedelta(seconds=2))
+                monitor, world = self.spend_monitor_world(store, provider)
+                daily = monitor._daily_accounting(provider.value, midnight)
+                self.assertEqual((daily["provider_request_count"], daily["unreconciled_request_count"],
+                                  daily["unsettled_request_count"], daily["exposure_usd"]), (0, 0, 1, 0.0))
+                world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+                self.assertEqual(world.state("15"), "UNKNOWN")
 
     def test_malformed_persisted_charge_reaches_monitor_and_check_15(self):
         import sqlite3
         from contextlib import closing
-        from director_orchestrator.config import Settings
         from director_orchestrator.models import ProviderName
         from director_orchestrator.providers import ProviderDailySpendLedger
         from director_orchestrator.store import TaskStore
-        from director_orchestrator.usage import UsageMonitor
 
-        for actual in ("unpriced", float("inf"), -0.1):
-            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as folder:
-                store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
-                ledger = ProviderDailySpendLedger(store.path)
-                ledger.reserve(provider=ProviderName.GEMINI, effect_key="a" * 64, estimated_cost_usd=0.75,
-                               request_limit=10, budget_usd=1.0, now=NOW)
-                ledger.record_charge(provider=ProviderName.GEMINI, effect_key="a" * 64,
-                                     actual_cost_usd=None, now=NOW)
-                with closing(sqlite3.connect(store.path)) as connection, connection:
-                    if actual == -0.1:
-                        # Only this test copy bypasses the production CHECK.
-                        connection.execute("CREATE TABLE charge_copy AS SELECT * FROM provider_daily_spend_reservations")
-                        connection.execute("DROP TABLE provider_daily_spend_reservations")
-                        connection.execute("ALTER TABLE charge_copy RENAME TO provider_daily_spend_reservations")
-                    connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?", (actual,))
-                settings = dataclasses.replace(Settings(), gemini_daily_budget_usd=1.0, gemini_daily_request_limit=10)
-                monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: object()})
-                daily = monitor._daily_accounting("gemini", NOW)
-                self.assertEqual(daily["provider_request_count"], 1)
-                self.assertGreater(daily["unreconciled_request_count"], 0)
-                self.assertEqual(daily["exposure_usd"], 0.75)
-                world = self.world(evaluate_rules=True)
-                self.assertEqual(world.state("15"), "PASS")
-                world.payload["usage_monitor"]["providers"].append("gemini")
-                world.payload["usage_monitor"]["daily_accounting"]["gemini"] = daily
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            for actual in (0.0, None, "unpriced", float("inf"), -0.1):
+                with self.subTest(provider=provider, actual=actual), tempfile.TemporaryDirectory() as folder:
+                    store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+                    ledger = ProviderDailySpendLedger(store.path)
+                    ledger.reserve(provider=provider, effect_key="a" * 64, estimated_cost_usd=0.75,
+                                   request_limit=10, budget_usd=1.0, serialize=True, now=NOW)
+                    ledger.record_charge(provider=provider, effect_key="a" * 64,
+                                         actual_cost_usd=None, now=NOW)
+                    with closing(sqlite3.connect(store.path)) as connection, connection:
+                        # Only this test connection permits corrupt negative persisted data.
+                        connection.execute("PRAGMA ignore_check_constraints = ON")
+                        connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?", (actual,))
+                    monitor, world = self.spend_monitor_world(store, provider)
+                    daily = monitor._daily_accounting(provider.value, NOW)
+                    invalid = actual != 0.0
+                    self.assertEqual(daily["provider_request_count"], 1)
+                    self.assertEqual((daily["unreconciled_request_count"], daily["unsettled_request_count"]),
+                                     (int(invalid), int(invalid)))
+                    self.assertEqual(daily["exposure_usd"], 1.0 if invalid else 0.0)
+                    world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+                    self.assertEqual(world.state("15"), "UNKNOWN" if invalid else "PASS")
+
+    def test_historical_migrations_reach_monitor_and_check_15(self):
+        import sqlite3
+        from contextlib import closing
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import TaskStore
+
+        for pre_settlement, age in ((False, timedelta(0)), (False, timedelta(days=1)), (True, timedelta(days=1))):
+            with self.subTest(pre_settlement=pre_settlement, age=age), tempfile.TemporaryDirectory() as folder:
+                path = str(Path(folder) / "tasks.sqlite3")
+                # Reproduce both old schemas before opening any ledger, rather than manually assigning markers.
+                with closing(sqlite3.connect(path)) as db, db:
+                    charge_column = "" if pre_settlement else ", actual_cost_usd REAL"
+                    db.execute(f"""CREATE TABLE provider_daily_spend_reservations (
+                        provider TEXT NOT NULL, effect_key TEXT NOT NULL, utc_day TEXT NOT NULL,
+                        estimated_cost_usd REAL NOT NULL, recorded_at TEXT NOT NULL
+                        {charge_column}, PRIMARY KEY(provider, effect_key))""")
+                    at = NOW - age
+                    db.execute("""INSERT INTO provider_daily_spend_reservations
+                        (provider, effect_key, utc_day, estimated_cost_usd, recorded_at) VALUES (?, ?, ?, ?, ?)""",
+                               ("grok", "a" * 64, at.date().isoformat(), 0.75, at.isoformat()))
+                ledger = ProviderDailySpendLedger(path)
+                with closing(sqlite3.connect(path)) as db:
+                    self.assertEqual(db.execute("""SELECT serialized, legacy, actual_cost_usd, settled_at
+                        FROM provider_daily_spend_reservations""").fetchone(),
+                                     (0, 1, None, None) if pre_settlement else (1, 0, None, None))
+                self.assertEqual(ledger.unsettled_not_proven_bounded(ProviderName.GROK),
+                                 [] if pre_settlement else ["a" * 64])
+                self.assertEqual(ledger.unreconciled(ProviderName.GROK, stale_after=timedelta(seconds=60), now=NOW),
+                                 ["a" * 64] if age else [])
+                monitor, world = self.spend_monitor_world(TaskStore(path), ProviderName.GROK)
+                daily = monitor._daily_accounting("grok", NOW)
+                self.assertEqual((daily["provider_request_count"], daily["unsettled_request_count"],
+                                  daily["unreconciled_request_count"]),
+                                 (int(not age), int(not pre_settlement), int(bool(age))))
+                world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
                 self.assertEqual(world.state("15"), "UNKNOWN")
-                self.assertIn("no recorded actual charge", row(world.report(), "15")["explanation"])
+
+    def test_charge_only_fallback_is_not_outstanding_15(self):
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import TaskStore
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+            ledger = ProviderDailySpendLedger(store.path)
+            ledger.record_charge(provider=ProviderName.GROK, effect_key="a" * 64, actual_cost_usd=0.0, now=NOW)
+            self.assertEqual(ledger.unsettled_not_proven_bounded(ProviderName.GROK), [])
+            self.assertEqual(ledger.unreconciled(ProviderName.GROK, stale_after=timedelta(0), now=NOW), [])
+            monitor, world = self.spend_monitor_world(store, ProviderName.GROK)
+            daily = monitor._daily_accounting("grok", NOW)
+            self.assertEqual((daily["unsettled_request_count"], daily["unreconciled_request_count"]), (0, 0))
+            world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
+            self.assertEqual(world.state("15"), "PASS")
+
+    def test_released_reservation_is_not_counted_or_resurrected_by_reads_15(self):
+        import sqlite3
+        from contextlib import closing
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger, ProviderReservationIdentityConflict
+        from director_orchestrator.store import TaskStore
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+            ledger = ProviderDailySpendLedger(store.path)
+            reservation = dict(provider=ProviderName.GROK, effect_key="a" * 64, estimated_cost_usd=0.75,
+                               request_limit=10, budget_usd=1.0, serialize=True, now=NOW)
+            ledger.reserve(**reservation)
+            ledger.record_charge(provider=ProviderName.GROK, effect_key="a" * 64,
+                                 actual_cost_usd=0.0, request_exists=False, now=NOW)
+            ledger.release_not_created(provider=ProviderName.GROK, effect_key="a" * 64)
+            # A released row is excluded by release state, even if its stored charge is later damaged.
+            with closing(sqlite3.connect(store.path)) as db, db:
+                db.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = NULL")
+                released_at = db.execute("SELECT released_at FROM provider_daily_spend_reservations").fetchone()[0]
+            ledger.record_charge(provider=ProviderName.GROK, effect_key="a" * 64,
+                                 actual_cost_usd=None, request_exists=False, now=NOW)
+            with self.assertRaises(ProviderReservationIdentityConflict):
+                ledger.reserve(**reservation)
+            monitor, world = self.spend_monitor_world(store, ProviderName.GROK)
+            daily = monitor._daily_accounting("grok", NOW + timedelta(seconds=61))
+            self.assertEqual((daily["provider_request_count"], daily["unsettled_request_count"],
+                              daily["unreconciled_request_count"], daily["exposure_usd"]), (0, 0, 0, 0.0))
+            with closing(sqlite3.connect(store.path)) as db:
+                self.assertEqual(db.execute("SELECT released_at FROM provider_daily_spend_reservations").fetchone()[0],
+                                 released_at)
+            world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
+            self.assertEqual(world.state("15"), "PASS")
+            # Real charged existence may reinstate exposure, but never unknown outstanding work.
+            ledger.record_charge(provider=ProviderName.GROK, effect_key="a" * 64,
+                                 actual_cost_usd=0.25, request_exists=True, now=NOW)
+            daily = monitor._daily_accounting("grok", NOW)
+            self.assertEqual((daily["provider_request_count"], daily["unsettled_request_count"],
+                              daily["unreconciled_request_count"], daily["exposure_usd"]), (1, 0, 0, 0.25))
+            world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
+            self.assertEqual(world.state("15"), "PASS")
+
+    def test_insertion_between_ledger_reads_cannot_pass_check_15(self):
+        from director_orchestrator.models import ProviderName
+        from director_orchestrator.providers import ProviderDailySpendLedger
+        from director_orchestrator.store import TaskStore
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = TaskStore(str(Path(folder) / "tasks.sqlite3"))
+            ledger = ProviderDailySpendLedger(store.path)
+            monitor, world = self.spend_monitor_world(store, ProviderName.GROK)
+            read = monitor.provider_spend.reservations
+
+            def insert_before_return(*args, **kwargs):
+                previous = read(*args, **kwargs)
+                if kwargs.get("include_released") is False:
+                    ledger.reserve(provider=ProviderName.GROK, effect_key="a" * 64, estimated_cost_usd=0.75,
+                                   request_limit=10, budget_usd=1.0, serialize=True, now=NOW)
+                return previous
+
+            with patch.object(monitor.provider_spend, "reservations", side_effect=insert_before_return):
+                daily = monitor._daily_accounting("grok", NOW)
+            self.assertEqual((daily["provider_request_count"], daily["unreconciled_request_count"],
+                              daily["unsettled_request_count"]), (0, 0, 1))
+            world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
+            self.assertEqual(world.state("15"), "UNKNOWN")
 
     def test_ledger_bounds_14(self):
         self.assertEqual(row(sc.score(SHA, now=NOW), "14")["scope"], "coordination")
@@ -6644,16 +6831,6 @@ class ScorecardCollectorTests(unittest.TestCase):
                     daily_budget_usd=5.0, exposure_usd=0.4)
                 self.assertEqual(ledger.state("15"), "PASS")
                 daily = ledger.payload["usage_monitor"]["daily_accounting"][provider]
-                for unsettled in (1, None, False, 0.0, "0", -1):
-                    with self.subTest(unsettled=unsettled):
-                        daily["unsettled_request_count"] = unsettled
-                        report = ledger.report()
-                        self.assertEqual(row(report, "15")["status"], "UNKNOWN")
-                        self.assertIn(provider, row(report, "15")["explanation"])
-                del daily["unsettled_request_count"]
-                self.assertEqual(ledger.state("15"), "UNKNOWN")
-                daily["unsettled_request_count"] = 0
-                self.assertEqual(ledger.state("15"), "PASS")
                 ledger.payload["usage_monitor"]["daily_accounting"][provider]["unreconciled_request_count"] = 1
                 self.assertEqual(ledger.state("15"), "UNKNOWN")
         idle = self.world(evaluate_rules=True)

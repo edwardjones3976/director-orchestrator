@@ -274,6 +274,9 @@ class UsageMonitor:
             request_count, reserved_cost_usd = self.provider_spend.totals(
                 ProviderName.GROK, now=now
             )
+        # These ledger reads are not one atomic snapshot: a reservation inserted after the request-count
+        # read still fails closed when the later outstanding read sees it, even with zero requests today.
+        # Writes after that read require a later observation; this is not an atomicity guarantee.
         return {
             "request_count": request_count,
             # Kept apart (review of check 15): the monitor's own USAGE_CHECK_PROMPT probes, and real provider
@@ -283,8 +286,10 @@ class UsageMonitor:
             # Settled real requests whose provider reported no cost (review 4112533824): they count at their
             # reservation, a lower bound, so check 15 cannot pass while any exists. None: not ledger-accounted.
             "unreconciled_request_count": self._unreconciled_request_count(provider, records, now),
-            # Include fresh in-flight work: an unbounded reservation is not a known actual charge.
-            "unsettled_request_count": self._unreconciled_request_count(provider, records, now, stale_after=timedelta(0)),
+            # Outstanding reservations NOT PROVEN BOUNDED (serialized=1, legacy=0, unreleased,
+            # without a valid actual charge), across all days, including the migration-defaulted
+            # historical rows; legacy rows are covered by unreconciled().
+            "unsettled_request_count": self._unsettled_request_count(provider, records),
             "exposure_usd": self._exposure_usd(provider, attempted, now),
             "retry_count": retry_count,
             "quota_failure_count": quota_failures,
@@ -312,7 +317,7 @@ class UsageMonitor:
         return sum(key not in probes for key, _ in self.provider_spend.reservations(name, now=now, include_released=False))
 
     def _unreconciled_request_count(
-        self, provider: str, records: list[UsageCheckRecord], now: datetime, *, stale_after: timedelta | None = None
+        self, provider: str, records: list[UsageCheckRecord], now: datetime
     ) -> int | None:
         try:
             name = ProviderName(provider)
@@ -323,9 +328,19 @@ class UsageMonitor:
         probes = {_probe_key(record.cycle_id, provider, attempt)
                   for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
         # A reservation still unsettled after the provider timeout counts too (review 4112697677).
-        if stale_after is None:
-            stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
+        stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
         return sum(key not in probes for key in self.provider_spend.unreconciled(name, stale_after=stale_after, now=now))
+
+    def _unsettled_request_count(self, provider: str, records: list[UsageCheckRecord]) -> int | None:
+        try:
+            name = ProviderName(provider)
+        except ValueError:
+            return None
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return None
+        probes = {_probe_key(record.cycle_id, provider, attempt)
+                  for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
+        return sum(key not in probes for key in self.provider_spend.unsettled_not_proven_bounded(name))
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
         """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts

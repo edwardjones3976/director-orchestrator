@@ -141,8 +141,6 @@ REPOSITORY = "edwardjones3976/director-orchestrator"
 MAX_BYTES = 2 * 1024 * 1024
 FRESH_FOR = timedelta(minutes=5)
 _COLLECTED = object()
-# providers.assignment_request_cost_bound: these requests use serialized admission, not monetary bounds.
-_REQUEST_COST_UNBOUNDED_PROVIDERS = frozenset({"gemini", "perplexity"})
 # Exact selectors. There is no default deployment and no committed channel.
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 _CHANNEL = re.compile(r"[CG][A-Z0-9]{8,20}")
@@ -2978,14 +2976,13 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                 if used > budget:
                     over.append("usage monitor " + str(provider))
             unsettled = value.get("unsettled_request_count")
-            if attempted and str(provider) not in over and (
+            if (real is not None or value["unreconciled_request_count"] is not None) and (
                 type(value["unreconciled_request_count"]) is not int
-                or (provider in _REQUEST_COST_UNBOUNDED_PROVIDERS
-                    and (type(unsettled) is not int or unsettled != 0))
+                or type(unsettled) is not int or unsettled != 0
             ):
-                # Unbounded real requests need valid actual charges, including fresh in-flight reservations.
+                # Real reservations not proven bounded need valid actual charges, including fresh ones.
+                # Outstanding prior-day requests count even when today's provider_request_count is zero.
                 # Neither a reservation estimate nor the probes' price visibility proves their final cost.
-                # Grok retains its bounded-reservation rule. Unknown cost is not zero.
                 unpriced.append(str(provider))
     budgets = None
     if paid is not None and consistency is not None:
@@ -3640,7 +3637,7 @@ def _journal_pinned(path: Path) -> bool:
                 if (stat.S_ISLNK(info.st_mode)
                         or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
                     return False
-        return os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(pin))
+        return os.path.samefile(path, pin)
     except (OSError, ValueError):
         return False
 
