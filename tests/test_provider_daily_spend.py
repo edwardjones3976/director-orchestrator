@@ -288,6 +288,32 @@ class ProviderDailySpendLedgerTests(unittest.TestCase):
                 self.assertEqual(ledger.unreconciled(
                     ProviderName.GEMINI, stale_after=timedelta(0), now=tomorrow), [key])
 
+    def test_malformed_serialized_charge_holds_admission_across_utc_days(self):
+        import sqlite3
+        from contextlib import closing
+        from datetime import timedelta
+        now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        tomorrow = now + timedelta(days=1)
+        for actual in (None, "unpriced", float("inf"), -0.1):
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as directory:
+                ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+                ledger.reserve(provider=ProviderName.GEMINI, effect_key="a" * 64, estimated_cost_usd=0,
+                               request_limit=10, budget_usd=1.0, serialize=True, now=now)
+                with closing(sqlite3.connect(ledger.path)) as connection, connection:
+                    if actual == -0.1:
+                        # Model a legacy/corrupt persisted row without changing production constraints.
+                        connection.execute("CREATE TABLE charge_copy AS SELECT * FROM provider_daily_spend_reservations")
+                        connection.execute("DROP TABLE provider_daily_spend_reservations")
+                        connection.execute("ALTER TABLE charge_copy RENAME TO provider_daily_spend_reservations")
+                    connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = ?", (actual,))
+                reopened = ProviderDailySpendLedger(ledger.path)
+                self.assertEqual(reopened.exposure(ProviderName.GEMINI, now=tomorrow), (0, 0.0))
+                with self.assertRaises(ProviderDailyLimitExceeded) as caught:
+                    reopened.reserve(provider=ProviderName.GEMINI, effect_key="b" * 64, estimated_cost_usd=0,
+                                     request_limit=10, budget_usd=1.0, serialize=True, now=tomorrow)
+                self.assertEqual(caught.exception.code, "provider_spend_pending_retryable")
+                self.assertEqual(reopened.exposure(ProviderName.GEMINI, now=tomorrow), (0, 0.0))
+
     def test_valid_null_unresolved_and_released_charges_keep_their_meaning(self):
         from datetime import timedelta
         now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)

@@ -3400,6 +3400,17 @@ class WorkloadJournalPinTests(unittest.TestCase):
                     self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
                     self.assertIn("pins as the deployment's workload journal", row(report, "13")["explanation"])
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_pinned_fifo_returns_unknown_without_blocking(self):
+        with tempfile.TemporaryDirectory() as folder:
+            journal = Path(folder) / "journal.sqlite3"
+            os.mkfifo(journal)
+            started = time.monotonic()
+            report, reads = self.collect(journal, {"workload_journal": str(journal)})
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertEqual(reads, 0)
+            self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+
     def test_nonlocal_workload_journal_namespaces_are_rejected(self):
         from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
         for value in (r"\\?\C:\journal.sqlite3", r"\\.\C:\journal.sqlite3",
@@ -3463,6 +3474,135 @@ class WorkloadJournalPinTests(unittest.TestCase):
                     report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=journal), now=NOW)
                 self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
                 self.assertIn("held-file identity", row(report, "13")["explanation"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permits replacing an open journal")
+    def test_real_swap_read_restore_grades_the_original_held_journal(self):
+        from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            journal, substitute, saved = (Path(folder) / name for name in ("journal.sqlite3", "pass.sqlite3", "saved.sqlite3"))
+            ledger_fixture(substitute)
+            journal.write_bytes(substitute.read_bytes())
+            # A real SQLite journal with only nineteen admissions cannot pass either check.
+            db = sqlite3.connect(journal)
+            try:
+                with db:
+                    for table in ("completions", "outcomes", "attempts", "assignments"):
+                        db.execute(f"DROP TRIGGER immutable_{table}_DELETE")
+                        db.execute(f"DELETE FROM {table} WHERE assignment_id=?", ("fixture-19",))
+            finally:
+                db.close()
+            read = sc._workload_observation
+            original = read(journal, NOW)
+            self.assertTrue(all(item.passed is not True for item in original))
+            self.assertTrue(all(item.passed is True for item in read(substitute, NOW)))
+            identity = journal.stat().st_ino
+            document = {"version": CLI_RELEASE_DESCRIPTOR_VERSION, "workload_journal": str(journal)}
+
+            def swap_read_restore(path, at):
+                os.replace(journal, saved)
+                os.replace(substitute, journal)
+                try:
+                    return read(path, at)  # Actual SQLite opens the path supplied by the collector.
+                finally:
+                    os.replace(journal, substitute)
+                    os.replace(saved, journal)
+
+            with patch.object(sc, "cli_release_descriptor", return_value=document), \
+                    patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                    patch.object(sc, "_workload_observation", side_effect=swap_read_restore) as reader:
+                observations = sc.collect(SHA, now=NOW, ledger_path=journal)
+            reader.assert_called_once()
+            self.assertEqual(journal.stat().st_ino, identity)
+            found = {item.check_id: item for item in observations if item.check_id in ("13", "14")}
+            for item in original:
+                self.assertIs(found[item.check_id].passed, item.passed)
+                self.assertEqual(found[item.check_id].explanation, item.explanation)
+            report = sc.score(SHA, observations, now=NOW)
+            self.assertTrue(all(row(report, key)["status"] != "PASS" for key in ("13", "14")))
+
+    def test_reader_receives_private_snapshot_bytes_and_reports_pinned_source(self):
+        from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            journal = Path(folder) / "journal.sqlite3"
+            ledger_fixture(journal)
+            expected = journal.read_bytes()
+            read = sc._workload_observation
+            snapshots = []
+
+            def read_snapshot(path, at):
+                self.assertNotEqual(path, journal)
+                self.assertNotEqual(path.parent, journal.parent)
+                self.assertEqual(path.read_bytes(), expected)
+                snapshots.append(path)
+                return read(path, at)
+
+            document = {"version": CLI_RELEASE_DESCRIPTOR_VERSION, "workload_journal": str(journal)}
+            with patch.object(sc, "cli_release_descriptor", return_value=document), \
+                    patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                    patch.object(sc, "_workload_observation", side_effect=read_snapshot):
+                observations = sc.collect(SHA, now=NOW, ledger_path=journal)
+            self.assertEqual(len(snapshots), 1)
+            self.assertFalse(snapshots[0].exists())
+            found = [item for item in observations if item.check_id in ("13", "14")]
+            self.assertEqual(len(found), 2)
+            for item in found:
+                self.assertIs(item.passed, True)
+                self.assertEqual(item.source, str(journal))
+                self.assertEqual(item.facts["journal_snapshot_sha256"], hashlib.sha256(expected).hexdigest())
+                self.assertEqual(item.digest, hashlib.sha256(json.dumps(
+                    item.facts, sort_keys=True, allow_nan=False).encode()).hexdigest())
+
+    def test_sidecars_before_or_after_snapshot_void_both_checks(self):
+        from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
+        for suffix in ("-wal", "-journal", "-shm"):
+            for timing in ("before", "after"):
+                with self.subTest(suffix=suffix, timing=timing), tempfile.TemporaryDirectory() as folder:
+                    journal = Path(folder) / "journal.sqlite3"
+                    journal.write_bytes(b"held journal")
+                    sidecar = Path(str(journal) + suffix)
+                    if timing == "before":
+                        sidecar.write_bytes(b"")  # Existence alone rejects even an empty sidecar.
+
+                    def read_snapshot(path, at):
+                        sidecar.write_bytes(b"uncheckpointed state")
+                        return [sc._observation(key, True, "must be discarded", str(path), {}, at)
+                                for key in ("13", "14")]
+
+                    document = {"version": CLI_RELEASE_DESCRIPTOR_VERSION, "workload_journal": str(journal)}
+                    with patch.object(sc, "cli_release_descriptor", return_value=document), \
+                            patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                            patch.object(sc, "_workload_observation", side_effect=read_snapshot) as reader:
+                        report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=journal), now=NOW)
+                    self.assertEqual(reader.call_count, 0 if timing == "before" else 1)
+                    for key in ("13", "14"):
+                        self.assertEqual(row(report, key)["status"], "UNKNOWN")
+                        self.assertIn("committed state is not fully in the main file", row(report, key)["explanation"])
+
+    def test_held_file_size_or_mtime_change_during_copy_voids_both_checks(self):
+        for field in ("st_size", "st_mtime_ns"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as folder:
+                journal = Path(folder) / "journal.sqlite3"
+                journal.write_bytes(b"held journal")
+                real_fstat, calls = os.fstat, 0
+
+                def changed_fstat(fd):
+                    nonlocal calls
+                    info = real_fstat(fd)
+                    calls += 1
+                    if calls == 3:  # Initial identity, then before-copy and after-copy metadata.
+                        values = {key: getattr(info, key) for key in ("st_size", "st_mtime_ns")}
+                        values[field] += 1
+                        return types.SimpleNamespace(**values)
+                    return info
+
+                with patch.object(sc.os, "fstat", side_effect=changed_fstat):
+                    report, reads = self.collect(journal, {"workload_journal": str(journal)})
+                self.assertEqual(reads, 0)
+                for key in ("13", "14"):
+                    self.assertEqual(row(report, key)["status"], "UNKNOWN")
+                    self.assertIn("stable private snapshot", row(report, key)["explanation"])
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links are not available")
     def test_a_pinned_journal_with_a_linked_parent_is_not_pinned(self):

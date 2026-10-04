@@ -425,8 +425,8 @@ class ProviderDailySpendLedger:
                 # Unsettled non-legacy serialized requests hold admission across days.
                 # Legacy and bounded reservations still count in daily exposure.
                 pending = connection.execute(
-                    """SELECT 1 FROM provider_daily_spend_reservations
-                    WHERE provider = ? AND actual_cost_usd IS NULL
+                    f"""SELECT 1 FROM provider_daily_spend_reservations
+                    WHERE provider = ? AND NOT ({_VALID_ACTUAL_CHARGE})
                     AND serialized = 1 AND legacy = 0 AND released_at IS NULL LIMIT 1""",
                     (provider.value,),
                 ).fetchone()

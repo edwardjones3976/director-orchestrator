@@ -3637,6 +3637,15 @@ def _journal_pinned(path: Path) -> bool:
         return False
 
 
+def _require_journal_without_sidecars(path: Path) -> None:
+    for suffix in ("-wal", "-journal", "-shm"):
+        try:
+            os.lstat(str(path) + suffix)
+        except FileNotFoundError:
+            continue
+        raise ValueError("workload journal has a SQLite sidecar")
+
+
 def _workload_observation(path: Path, at: datetime) -> list[Observation]:
     from .engineering_workload_ledger import EngineeringWorkloadLedger
 
@@ -3802,24 +3811,51 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
     elif ledger_path is not None:
         try:
             started = datetime.now(timezone.utc)
-            # Windows keeps this handle open without delete sharing, blocking rename/delete during the read.
-            # POSIX permits swap-and-swap-back between checks; upgrade the ledger to read the held handle
-            # (and bind its SQLite sidecars) before claiming protection against that stronger race.
-            with ledger_path.open("rb") as journal:
+            reason = "The assignment journal path or held-file identity could not be verified across the read."
+            # The reader consumes the held handle's bytes, so a path swap (even with restore) cannot change
+            # what is graded. The remaining assumption is that a writer with access to the real journal
+            # does not rewrite its inode in place; size/mtime checks detect ordinary concurrent writes.
+            if not stat.S_ISREG(os.stat(ledger_path).st_mode):
+                raise ValueError("workload journal is not a regular file")
+            fd = os.open(ledger_path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, "rb") as journal:
                 held_stat = os.fstat(journal.fileno())
                 identity = (held_stat.st_dev, held_stat.st_ino)
                 before = os.stat(ledger_path)
                 if (not stat.S_ISREG(held_stat.st_mode) or not _journal_pinned(ledger_path)
                         or identity != (before.st_dev, before.st_ino)):
                     raise ValueError("workload journal identity changed before read")
-                observations = list(_workload_observation(ledger_path, collection_end()))
+                with tempfile.TemporaryDirectory() as folder:
+                    snapshot = Path(folder) / "journal.sqlite3"
+                    reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                    _require_journal_without_sidecars(ledger_path)
+                    reason = "The held assignment journal could not be copied to a stable private snapshot."
+                    copy_before = os.fstat(journal.fileno())
+                    digest = hashlib.sha256()
+                    journal.seek(0)
+                    with snapshot.open("wb") as target:
+                        while chunk := journal.read(1024 * 1024):
+                            target.write(chunk)
+                            digest.update(chunk)
+                    copy_after = os.fstat(journal.fileno())
+                    if ((copy_before.st_size, copy_before.st_mtime_ns)
+                            != (copy_after.st_size, copy_after.st_mtime_ns)):
+                        raise ValueError("workload journal changed during snapshot")
+                    reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                    _require_journal_without_sidecars(ledger_path)
+                    reason = "The private assignment journal snapshot could not be read."
+                    observations = [replace(_relabel(item, {"journal_snapshot_sha256": digest.hexdigest()}),
+                                            source=str(ledger_path))
+                                    for item in _workload_observation(snapshot, collection_end())]
+                reason = "The assignment journal path or held-file identity could not be verified across the read."
                 after = os.stat(ledger_path)
                 if not _journal_pinned(ledger_path) or identity != (after.st_dev, after.st_ino):
                     raise ValueError("workload journal identity changed during read")
+                reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                _require_journal_without_sidecars(ledger_path)
             result.extend(since(started, observations))
         except _SOURCE_ERRORS:
-            result.extend(_observation(key, None, "The assignment journal path or held-file identity could not be "
-                                       "verified across the read; no retry was made.",
+            result.extend(_observation(key, None, reason + " No retry was made.",
                                        str(ledger_path), {}, at) for key in ("13", "14"))
     if security_scan_id is not None:
         try:
