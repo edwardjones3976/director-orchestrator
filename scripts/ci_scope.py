@@ -25,9 +25,9 @@ POLICY_FILES = frozenset(
     {
         ".github/pull_request_template.md",
         "AGENTS.md",
-        "docs/contribution-attribution-policy.md",
-        "docs/templates/contribution-submission.md",
-        "docs/templates/project-bootstrap/review-ready.md",
+        "docs/contribution-attribution-policy.html",
+        "docs/templates/contribution-submission.html",
+        "docs/templates/project-bootstrap/review-ready.html",
         "projects/homemade-llm/README.md",
     }
 )
@@ -39,6 +39,8 @@ SCORER_FILES = frozenset(
 )
 POLICY_TESTS = (
     "test_active_documentation.py",
+    "test_documentation.py",
+    "test_html_documentation.py",
     "test_contribution_tags.py",
     "test_director_schema.py",
     "test_human_out_of_the_loop_authority.py",

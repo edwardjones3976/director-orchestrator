@@ -53,7 +53,7 @@ MAX_RESPONSE = 2 * MAX_DOCUMENT         # base64 document plus worker provenance
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | END]]
 ROLE_PROVIDER = {"security": "claude", "independent_review": "cursor"}
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
-# Grok holds the existing security-review responsibility in docs/provider-setup.md
+# Grok holds the existing security-review responsibility in docs/provider-setup.html
 # and is eligible for the security role only. Eligibility is not qualification:
 # the Grok capture lane still fails closed until its native terminal, session and
 # served-model observations exist and its protected host is qualified.

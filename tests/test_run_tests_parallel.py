@@ -203,9 +203,12 @@ class ParallelRunnerTests(unittest.TestCase):
             sys.modules.pop("test_parallel_hook", None)
 
     def test_docs_classifier(self):
-        self.assertTrue(runner.docs_only(["README.md", "docs/guide.md", "docs/schemas/example.json"]))
+        self.assertTrue(runner.docs_only(["README.html", "README.md", "docs/guide.html", "docs/schemas/example.json"]))
+        self.assertTrue(runner.docs_only(["docs/legacy.md"]))
         for paths in ([], ["AGENTS.md"], ["CLAUDE.md"], ["docs/AGENTS.md"],
-                      ["src/app.py"], ["README.md", "n8n/workflows/example.json"]):
+                      ["src/app.py"], ["README.md", "n8n/workflows/example.json"],
+                      ["README.html", "src/director_orchestrator/documentation.py"],
+                      ["src/app.html"], ["README.html", "scripts/render_provider_profiles.py"]):
             self.assertFalse(runner.docs_only(paths))
 
     def test_docs_diff_keeps_deleted_and_renamed_source_paths(self):

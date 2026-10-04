@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Provider allocation profiles · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="sub"><a href="#zai-production-enrollment-2026-09-27">Z.ai production enrollment (2026-09-27)</a></li><li class="top"><a href="#admission-and-accounting">Admission and accounting</a></li><li class="sub"><a href="#previously-frozen-allocation-digests">Previously frozen allocation digests</a></li><li class="top"><a href="#capacity-capabilities-and-authority">Capacity, capabilities, and authority</a></li><li class="top"><a href="#proposed-conditional-allocation-profile-issue-207">Proposed conditional allocation profile (Issue 207)</a></li><li class="sub"><a href="#staged-contract-constraints-and-limitations">Staged contract constraints and limitations</a></li><li class="top"><a href="#contact-family-safety-directive-207">Contact-family safety (directive #207)</a></li><li class="top"><a href="#dual-activity-ledgers">Dual activity ledgers</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]] -->
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+<h1 id="provider-allocation-profiles">Provider allocation profiles</h1>
+<p>Owner-approved policy; the prospective Claude/OpenAI duty swap is effective 2026-09-08. Engineering is the default for this repository.
+The canonical runtime definitions are in <code>allocation_profiles.py</code>; select one profile before plan approval and bind its digest to the immutable assignment plan.</p>
+<table>
+<thead>
+<tr>
+<th>Provider lane</th>
+<th style="text-align:right">Mixed</th>
+<th style="text-align:right">Engineering (default)</th>
+<th style="text-align:right">Public research</th>
+<th style="text-align:right">Enterprise</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI / Codex production</td>
+<td style="text-align:right">22%</td>
+<td style="text-align:right">33%</td>
+<td style="text-align:right">16%</td>
+<td style="text-align:right">27%</td>
+</tr>
+<tr>
+<td>Claude</td>
+<td style="text-align:right">27%</td>
+<td style="text-align:right">21%</td>
+<td style="text-align:right">21%</td>
+<td style="text-align:right">31%</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td style="text-align:right">9%</td>
+<td style="text-align:right">12%</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">4%</td>
+</tr>
+<tr>
+<td>Grok</td>
+<td style="text-align:right">8%</td>
+<td style="text-align:right">8%</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">4%</td>
+</tr>
+<tr>
+<td>Gemini / Antigravity</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">8%</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">4%</td>
+</tr>
+<tr>
+<td>Perplexity</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">21%</td>
+<td style="text-align:right">0%</td>
+</tr>
+<tr>
+<td>Firecrawl</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">12%</td>
+<td style="text-align:right">4%</td>
+</tr>
+<tr>
+<td>GitHub Copilot</td>
+<td style="text-align:right">4%</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">8%</td>
+</tr>
+<tr>
+<td>Z.ai (GLM)</td>
+<td style="text-align:right">18%</td>
+<td style="text-align:right">18%</td>
+<td style="text-align:right">18%</td>
+<td style="text-align:right">18%</td>
+</tr>
+<tr>
+<td>Total</td>
+<td style="text-align:right">100%</td>
+<td style="text-align:right">100%</td>
+<td style="text-align:right">100%</td>
+<td style="text-align:right">100%</td>
+</tr>
+</tbody>
+</table>
+<p>Canonical profile IDs are <code>mixed</code>, <code>engineering</code>, <code>public_research</code>, and
+<code>enterprise</code>. Canonical lane IDs are <code>openai</code>, <code>claude</code>, <code>cursor</code>, <code>grok</code>,
+<code>antigravity</code>, <code>perplexity</code>, <code>firecrawl</code>, <code>github-copilot</code>, and <code>zai</code>. Models, native apps, CLI contacts, API transports, and
+aliases map to their existing parent lane; they never create a second quota or
+an independent reviewer. Gemini and Antigravity share the Antigravity lane.
+Z.ai is its own lane and family even though its native route runs the Claude
+Code executable; that executable never makes Z.ai output Claude's.</p>
+<h3 id="zai-production-enrollment-2026-09-27">Z.ai production enrollment (2026-09-27)</h3>
+<p>The owner enrolled Z.ai as a production lane with an 18% target (owner
+instruction: &quot;18% target; existing $5 total budget&quot;). The eight earlier lanes'
+weights were redistributed deterministically, once, and are not silently
+rebalanced afterwards:</p>
+<ol>
+<li>Every nonzero lane was scaled by 82/100 and floored.</li>
+<li>The whole points still missing to reach 82 went one each to the largest
+fractional remainders, ties broken by lane order.</li>
+<li>Zero lanes stayed zero; each profile totals exactly 100.</li>
+</ol>
+<p><code>allocation_profiles.redistribute_for_enrollment</code> records the procedure and a
+test pins it to the literal table above. The pre-enrollment eight-lane targets
+are kept as <code>PRE_ZAI_ALLOCATION_PROFILES</code>; their digests
+(<code>pre_zai_allocation_profile_digest</code>) and the older pinned identities still
+authenticate admissions recorded before the enrollment, in both the PostgreSQL
+admission ledger and the SQLite engineering journal. They never authorize a
+new admission, and such rows can never name <code>zai</code>.</p>
+<p>The current identity is <code>capacity-allocation-v3-zai-enrollment</code>. As with the
+2026-09-08 swap, it changes all four profile digests: an approval bound to an
+earlier digest does not authorize the new weights, and unfinished plans need a
+fresh plan and approval. PostgreSQL history recorded under the pre-enrollment
+digests stays readable, so the <code>workload_history_invalid</code> hold described below
+does not arise from this change.</p>
+<p>Rolling twenty and the normal band of target plus or minus three apply to Z.ai
+as routing guidance. The owner retired the former target plus five hard limit
+for Z.ai on 2026-09-27 (as for every other lane on 2026-09-21), so allocation
+share never blocks its dispatch. The current identity carries no hard tolerance.</p>
+<p>The PROPOSED <code>conditional_20260929</code> profile below was not activated; only its
+Z.ai target was adopted. No other conditional lane (Grok Bot, VS Code Coding
+Bot) was enrolled.</p>
+<h2 id="admission-and-accounting">Admission and accounting</h2>
+<p>Assess the prospective last nineteen real assignments plus the candidate using
+a fixed denominator of twenty, including startup. Normal tolerance is plus or
+minus three percentage points, an advisory routing preference. The owner retired
+the rolling-twenty target-plus-five hard ceiling on 2026-09-21 as outdated; the
+historical ceiling number is preserved for reference and does not block or
+refuse admission. A zero target remains ineligible regardless of history.
+Startup under-allocation is warming, never permission for filler work.
+Engineering targets correspond to about 6.6 OpenAI, 4.2 Claude, 3.6 Z.ai, 2.4
+Cursor, 1.6 Grok, and 1.6 Antigravity assignments per full window; these are
+targets, not mandatory concurrent agents or quotas to fill with unnecessary work.</p>
+<p>Reserve admission before provider I/O and retain failed or ambiguous reservations
+for admission accounting. Accepted productive output and total observed effort
+remain separate records. Retries and repeated tool calls create no new productive
+assignment credit. Preserve real history across profile changes and simulate the
+ordered specialist, producer, and independent reviewer sequence before approval.
+A profile change invalidates the previous plan approval; it never resets history.
+Do not silently redistribute shares, relax ceilings, or change an approved
+provider after failure. Use an explicitly approved feasible fallback profile or
+return a concise owner decision identifying the unavailable capability.</p>
+<h3 id="previously-frozen-allocation-digests">Previously frozen allocation digests</h3>
+<p>The 2026-09-08 share swap changes all four profile digests. An approval for the
+previous digest does not authorize the new weights. Preserve the old plan,
+prestage packet, admissions, outcomes, and their original digests as evidence.
+For unfinished work, prepare a new plan and canonical prestage packet under the
+current profile, then obtain fresh owner approval before dispatch; never edit an
+old digest in place or reset the rolling history to make a plan pass.</p>
+<p>The existing gates distinguish these persisted states:</p>
+<ul>
+<li>SQLite rejects reuse of the old assignment binding with
+<code>WorkloadReservationConflict: workload allocation profile binding changed</code>.
+The engine records <code>OWNER_DECISION_REQUIRED</code> before provider I/O; an existing
+approval or another attempt key does not authorize rebinding the assignment.</li>
+<li>PostgreSQL rejects replay of an old admission with
+<code>workload_admission_identity_changed</code>. Reading prior v3 history under a changed
+digest, or admitting new work against that history, holds with
+<code>workload_history_invalid</code>. The original rows remain intact and no provider
+attempt is inserted.</li>
+</ul>
+<p>For the PostgreSQL history hold, keep affected dispatch held and record the old
+and current profile digests and affected assignment identities for an explicit,
+reviewed compatibility reconciliation approved by the owner. Fresh plan approval
+alone does not clear this hold. This change provides no migration or automatic
+digest rewrite; do not delete, reseed, relabel, or silently accept old history.</p>
+<h2 id="capacity-capabilities-and-authority">Capacity, capabilities, and authority</h2>
+<p>The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
+are paid but have materially lower capacity. These owner-reported signals inform
+the approved matrix, not a conversion between providers' usage units. Prefer
+subscription-backed execution when suitable and authenticated. Separately billed
+API execution requires its own known budget and gates. Unknown remaining quota,
+cost, or usage telemetry is unknown, never zero or assumed entitlement.</p>
+<p>ChatGPT/Codex is the acting project Director; actual runtime provider identity
+remains an independently recorded deployment fact. This routing-policy change does not attest deployed provider execution or activate
+providers, and it does not alter historical attribution.
+OpenAI production is separately assigned and attributed; Director coordination,
+Moderator and Participant functions, acceptance supervision, and merge activity
+do not earn production credit. The materially authoring OpenAI lane cannot review
+or merge its own candidate; different-provider exact-candidate review remains
+required. A non-author Director inherits no authorship from delegation, QA, or
+merge coordination. Reserve a capable different
+non-author reviewer before production; all exact-SHA, security, CI and owner gates
+remain binding.</p>
+<p>Antigravity is capability-routed within the selected authenticated contract. The
+restricted fixture contact requires downstream independent verification before
+integration; the separate team contract requires its explicit grants and host
+qualification. Allocation grants no exact-SHA acceptance, merge authority,
+unrestricted context, or broader outbound packet contract.
+Perplexity receives only explicitly approved public research, never private
+repository context. Firecrawl and enterprise providers require their actual
+capabilities, authorized sources, least privilege, authenticated readiness, and
+supported adapters. A nonzero target is not evidence that a route is operational.
+GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;
+Lite creates no production credit or independent acceptance authority.</p>
+<p>The default LangGraph primary OpenAI transport uses the separately billed Responses
+API. OpenAI Pro 20x does not fund that API route. A native Codex subscription
+transport is not implemented by this allocation package; subscription capacity
+is a target-setting signal, not proof of subscription-backed execution.</p>
+<p>The default legacy provider registry does not include OpenAI production, Firecrawl,
+or Copilot production adapters. Their allocation authority is implemented in
+legacy accounting, but that registry must receive a real authenticated adapter
+before those lanes can execute there. The LangGraph primary path has its own
+authenticated transport composition. Microsoft 365 enterprise production remains
+a typed scope/capability hold in that path until a scoped adapter is supplied.</p>
+<p>The legacy default provider registry currently supplies Claude, Cursor, Gemini,
+Grok, and Perplexity adapters. Its expanded accounting does not add OpenAI,
+Firecrawl, or Copilot execution adapters; these lanes remain unavailable there
+unless an actual authorized adapter is composed. The primary LangGraph path uses
+authenticated transport discovery and scoped capability checks for its new lanes.
+Neither path infers production readiness from Director credentials or allocations.</p>
+<p>Record profile ID and digest, logical lane, actual provider/model/transport,
+material authors, admission and accepted counts, effort, remaining capacity when
+known, costs and categorized waste. Token, spend, runtime and concurrency limits
+remain separate. Missing eligible integration or review capability fails closed;
+selecting a profile does not install an adapter or deploy LangGraph.</p>
+<h2 id="proposed-conditional-allocation-profile-issue-207">Proposed conditional allocation profile (Issue 207)</h2>
+<p>The staged conditional profile descriptor (<code>src/director_orchestrator/conditional_allocation.py</code>)
+encodes an eleven-lane accepted-production policy target pending future activation:</p>
+<table>
+<thead>
+<tr>
+<th>Provider / contact lane</th>
+<th>Policy family</th>
+<th style="text-align:right">Target</th>
+<th style="text-align:right">Soft band (preference)</th>
+<th style="text-align:right">Hard ceiling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gemini / Antigravity</td>
+<td>Google</td>
+<td style="text-align:right">20%</td>
+<td style="text-align:right">17% – 23%</td>
+<td style="text-align:right">25%</td>
+</tr>
+<tr>
+<td>Z.ai</td>
+<td>Z.ai</td>
+<td style="text-align:right">18%</td>
+<td style="text-align:right">15% – 21%</td>
+<td style="text-align:right">23%</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>Anysphere</td>
+<td style="text-align:right">13%</td>
+<td style="text-align:right">10% – 16%</td>
+<td style="text-align:right">18%</td>
+</tr>
+<tr>
+<td>Direct Grok</td>
+<td>xAI</td>
+<td style="text-align:right">13%</td>
+<td style="text-align:right">10% – 16%</td>
+<td style="text-align:right">18%</td>
+</tr>
+<tr>
+<td>Grok Bot</td>
+<td>xAI</td>
+<td style="text-align:right">13%</td>
+<td style="text-align:right">10% – 16%</td>
+<td style="text-align:right">18%</td>
+</tr>
+<tr>
+<td>OpenAI / Codex production</td>
+<td>OpenAI</td>
+<td style="text-align:right">10%</td>
+<td style="text-align:right">7% – 13%</td>
+<td style="text-align:right">15%</td>
+</tr>
+<tr>
+<td>Claude</td>
+<td>Anthropic</td>
+<td style="text-align:right">5%</td>
+<td style="text-align:right">2% – 8%</td>
+<td style="text-align:right">10%</td>
+</tr>
+<tr>
+<td>Perplexity</td>
+<td>Perplexity</td>
+<td style="text-align:right">3%</td>
+<td style="text-align:right">0% – 6%</td>
+<td style="text-align:right">8%</td>
+</tr>
+<tr>
+<td>GitHub Copilot</td>
+<td>GitHub/Microsoft</td>
+<td style="text-align:right">2%</td>
+<td style="text-align:right">0% – 5%</td>
+<td style="text-align:right">7%</td>
+</tr>
+<tr>
+<td>VS Code Coding Bot</td>
+<td>GitHub/Microsoft</td>
+<td style="text-align:right">2%</td>
+<td style="text-align:right">0% – 5%</td>
+<td style="text-align:right">7%</td>
+</tr>
+<tr>
+<td>Firecrawl</td>
+<td>Firecrawl</td>
+<td style="text-align:right">1%</td>
+<td style="text-align:right">0% – 4%</td>
+<td style="text-align:right">6%</td>
+</tr>
+<tr>
+<td>Total</td>
+<td></td>
+<td style="text-align:right">100%</td>
+<td style="text-align:right"></td>
+<td style="text-align:right"></td>
+</tr>
+</tbody>
+</table>
+<p>Cursor, Direct Grok, and Grok Bot are intentionally equal at 13%. GitHub Copilot and
+VS Code Coding Bot are intentionally equal at 2%.</p>
+<h3 id="staged-contract-constraints-and-limitations">Staged contract constraints and limitations</h3>
+<ul>
+<li><strong>Proposed status only:</strong> The descriptor status is <code>PROPOSED</code>. It does not modify
+active <code>allocation_profiles.py</code> profiles (<code>engineering</code>, <code>mixed</code>, <code>public_research</code>,
+<code>enterprise</code>), default profile, legacy digests, or any existing assignment bindings.
+It confers no runtime readiness, admission authority, or enrollment.</li>
+<li><strong>Descriptive static contract:</strong> This module is an immutable static descriptor,
+not an admission or independence engine. It exposes no eligibility or admission APIs.</li>
+<li><strong>Activation prerequisites:</strong> Eligibility begins on or after <strong>2026-09-29 UTC</strong>.
+Activation requires owner acceptance of Z.ai Lite qualification evidence and a
+separate, explicit owner activation decision. No automatic Max purchase, activation,
+or quota redistribution is permitted. All deterministic gates (approval, admission,
+exact-candidate review, Codex Security, CI) remain mandatory. Prerequisites are named
+immutable requirements, not runtime status flags.</li>
+<li><strong>Trial boundary:</strong> Z.ai Lite evaluation through 2026-09-28 operates under a separate
+trial ledger and earns zero accepted-production credit.</li>
+<li><strong>Policy families and independence:</strong> Direct Grok and Grok Bot share the <code>xAI</code>
+policy family; GitHub Copilot and VS Code Coding Bot share the <code>GitHub/Microsoft</code>
+policy family. These are owner-selected policy labels for reviewer-independence
+restriction and anti-duplication; they are not authenticated proof of a managed
+serving model. Contacts and products remain distinct. A family label never proves
+reviewer independence, and unknown contacts fail closed.</li>
+<li><strong>Unresolved integration:</strong> VS Code Coding Bot has no identified installed independent
+integration. Its binding status is unresolved, its route is unbound, and no route is
+invented. All profile descriptors remain unbound.</li>
+<li><strong>OpenAI Director-activity floor:</strong> At least 75% of OpenAI's own authenticated activity
+must be Director/control-plane effort. This floor applies to OpenAI's own authenticated
+work and has a distinct denominator from the 10% direct-production target. This
+descriptor does not enforce the floor or provide the two activity ledgers; the dual
+activity ledgers and runtime consumer integration remain required and are not
+implemented by this contract.</li>
+<li><strong>Window and tolerance:</strong> Evaluated across a 20-slot window (5% per slot), with normal
+tolerance of +/-3 percentage points (preference). The descriptor's target + 5 points
+ceiling is a historical reference number only; this staged PROPOSED descriptor was
+never bound to a runtime cap, and the owner's 2026-09-21 retirement of the rolling-
+twenty hard-ceiling mechanism removes nothing from it. For Firecrawl (target 1%), a
+5% mathematical slot is within that reference ceiling (6%), but this descriptor
+conveys no actual admission or execution authority.</li>
+<li><strong>Specialty boundaries:</strong> Perplexity public research and Firecrawl authorized retrieval
+boundaries are preserved; no permanent specialties exist for other participants.</li>
+<li><strong>Canonical digest derivation:</strong> The canonical digest dynamically binds all semantic
+descriptor fields (effective date, prerequisites, OpenAI floor and denominators,
+contacts, boundaries) in one immutable payload, ensuring the digest never goes stale.</li>
+</ul>
+<h2 id="contact-family-safety-directive-207">Contact-family safety (directive #207)</h2>
+<p><code>src/director_orchestrator/contact_families.py</code> types every known contact and
+lane id (for example <code>openai</code>, <code>claude</code>, <code>cursor</code>, <code>grok</code>, <code>grok-bot</code>,
+<code>gemini</code>, <code>antigravity</code>, <code>perplexity</code>, <code>firecrawl</code>, <code>github-copilot</code>,
+<code>vscode-coding-bot</code>, <code>zai</code>) to an owner-selected provider-family label: Direct
+Grok and Grok Bot are one xAI family; GitHub Copilot and VS Code Coding Bot
+are one GitHub/Microsoft family; Gemini and Antigravity are one Google family.
+Reviewer-independence checks in <code>review_handoff.py</code> and
+<code>policy.py::_independent_review_binding_errors</code> reject a reviewer whose
+provider family matches any material author's family, in addition to the
+existing identity check, so that separate contact lanes in the same family
+never create false different-provider review independence or duplicate
+accepted credit. An identity absent from the table is unknown and fails
+closed: it is never treated as independent. These family labels are policy
+labels for independence and anti-duplication decisions; they are not
+authenticated evidence of which underlying model actually served a request.</p>
+<h2 id="dual-activity-ledgers">Dual activity ledgers</h2>
+<p>The dual OpenAI activity ledgers (<code>openai_director_activity</code> and <code>openai_direct_production</code>) use schema and kind checks to prevent Director rows from being credited as production within these ledgers. Runtime credit and workload caps are unchanged until a consumer integrates the ledgers.
+Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation.
+Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
+The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. A kind outside the ledger's own kind set is refused (invalid_director_kind / invalid_production_kind) and never recorded.</p>
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]] -->
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

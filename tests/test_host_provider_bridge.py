@@ -1626,10 +1626,10 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         from director_orchestrator import host_provider_bridge_server as server_module
         from director_orchestrator.host_provider_bridge import _SAFE_OS_ENV
         from director_orchestrator.primary_transports import _BASE_CHILD_ENVIRONMENT
+        from director_orchestrator.documentation import read_document
         residual = _BASE_CHILD_ENVIRONMENT - _SAFE_OS_ENV
         self.assertEqual(residual, {"HOME", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "LANG", "LC_ALL"})
-        operations = (Path(__file__).resolve().parents[1] / "docs" / "langgraph-primary-operations.md"
-                      ).read_text(encoding="utf-8")
+        operations = read_document(Path(__file__).resolve().parents[1] / "docs" / "langgraph-primary-operations.html")
         for name in residual:
             self.assertIn(name, server_module._apply_pinned_process_environment.__doc__)
             self.assertIn(f"`{name}`", operations)

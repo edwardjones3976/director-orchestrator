@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 import unittest
+
+from director_orchestrator.documentation import read_document
 from pathlib import Path
 
 from director_orchestrator.hotl_execution import (
@@ -33,7 +35,7 @@ from director_orchestrator.hotl_execution import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC = ROOT / "docs" / "human-out-of-the-loop-operation.md"
+DOC = ROOT / "docs" / "human-out-of-the-loop-operation.html"
 
 CANDIDATE = ProposedAction(
     action_class="mark_pull_request_ready_for_review",
@@ -67,7 +69,7 @@ class TierTests(unittest.TestCase):
         identifier to the bullet it claims to encode, in both directions.
         """
 
-        section = DOC.read_text(encoding="utf-8").split("### Tier 1", 1)[1]
+        section = read_document(DOC).split("### Tier 1", 1)[1]
         section = section.split("### Tier 0", 1)[0]
         bullets = [line[2:].strip() for line in section.splitlines() if line.startswith("- ")]
 
@@ -117,7 +119,7 @@ class TierTests(unittest.TestCase):
 class GoverningDocumentTests(unittest.TestCase):
     def _main_copy(self):
         # Checked-in authority from 7e630a6; no remote ref, Git history or skip.
-        return (ROOT / "tests/fixtures/hotl-tier-authority.md").read_text(encoding="utf-8")
+        return read_document(ROOT / "tests/fixtures/hotl-tier-authority.md")
 
     def _bullets(self, text, heading):
         section = text.split(heading, 1)[1].split("\n#", 1)[0]
@@ -145,7 +147,7 @@ class GoverningDocumentTests(unittest.TestCase):
         """
 
         crlf, lf = chr(13) + chr(10), chr(10)
-        current = DOC.read_text(encoding="utf-8").replace(crlf, lf)
+        current = read_document(DOC).replace(crlf, lf)
         before = self._main_copy()
 
         for heading in ("### Tier 0", "### Tier 1"):
@@ -167,34 +169,31 @@ class GoverningDocumentTests(unittest.TestCase):
                 self.assertEqual(now, expected)
 
     def test_the_predicate_document_defers_to_the_governing_one(self):
-        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("human-out-of-the-loop-operation.md", text)
+        text = read_document(ROOT / "docs" / "hotl-execution-predicate.html")
+        self.assertIn("human-out-of-the-loop-operation.html", text)
         self.assertIn("governing document wins", text)
 
     def test_independence_uses_current_single_reviewer_protocol(self):
-        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8")
+        text = read_document(ROOT / "docs" / "hotl-execution-predicate.html")
         row = next(line for line in text.splitlines() if line.startswith("| `I` "))
         self.assertIn("One exact-SHA `ACCEPT` from a non-author reviewer", row)
         self.assertIn("that reviewer performs the merge", row)
-        authority = DOC.read_text(encoding="utf-8")
+        authority = read_document(DOC)
         self.assertIn("That `ACCEPT` is the whole verdict requirement", authority)
 
     def test_the_predicate_document_scopes_h_to_candidate_bound_classes(self):
         text = " ".join(
-            (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8").split())
+            read_document(ROOT / "docs" / "hotl-execution-predicate.html").split())
         self.assertIn("A proposed candidate-bound action runs without returning", text)
         self.assertIn("the pre-execution class uses `decide_pre_execution`", text)
         self.assertNotIn("without changing the closed tier lists", text)
-        row = next(line for line in (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
-            encoding="utf-8").splitlines() if line.startswith("| `eligibility` "))
+        row = next(line for line in read_document(ROOT / "docs" / "hotl-execution-predicate.html").splitlines() if line.startswith("| `eligibility` "))
         # A keyword scan is not item 7, and the row must not claim it is.
         self.assertTrue(row.rstrip().endswith("| — |"), row)
         self.assertIn("item 7 is not evaluated before execution", row)
 
     def test_the_governing_document_names_the_executable_form(self):
-        text = DOC.read_text(encoding="utf-8")
+        text = read_document(DOC)
         self.assertIn("hotl_execution.py", text)
         self.assertIn("implements the rules above and adds none", text)
 
@@ -221,7 +220,7 @@ class PreExecutionTests(unittest.TestCase):
         self.assertNotIn("gates", PRE_EXECUTION_TERMS)
         self.assertNotIn("independence", PRE_EXECUTION_TERMS)
         self.assertIn("audit", PRE_EXECUTION_TERMS)
-        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8")
+        text = read_document(ROOT / "docs" / "hotl-execution-predicate.html")
         section = text.split("## The pre-execution class", 1)[1].split("\n## ", 1)[0]
         for term in PRE_EXECUTION_TERMS:
             self.assertIn(f"| `{term}` |", section, term)
@@ -398,7 +397,7 @@ class RecoveryTests(unittest.TestCase):
         there, missed here.
         """
 
-        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8")
+        text = read_document(ROOT / "docs" / "hotl-execution-predicate.html")
         block = text.split("Decision(a) = execute", 1)[1].split("```", 1)[0]
         recover = " ".join(block.split()).lower()
         self.assertIn("every unmet term authorizes its own recovery", recover)
@@ -417,7 +416,7 @@ class RecoveryTests(unittest.TestCase):
         for a prohibited path with no audit record.
         """
 
-        text = DOC.read_text(encoding="utf-8")
+        text = read_document(DOC)
         formula = [line for line in text.splitlines() if line.startswith("H(a) = ")]
         self.assertEqual(len(formula), 1, formula)
         for letter in ("A(a)", "G(a)", "B(a)", "V(a)", "I(a)", "S(a)", "P(a)", "D(a)"):
@@ -448,7 +447,7 @@ class RecoveryTests(unittest.TestCase):
         the count is checkable directly.
         """
 
-        section = DOC.read_text(encoding="utf-8").split("## The evidence bar", 1)[1]
+        section = read_document(DOC).split("## The evidence bar", 1)[1]
         section = section.split("Any element that is missing", 1)[0]
         items = [line for line in section.splitlines() if re.match(r"^\d+\. ", line)]
         self.assertEqual(len(items), 10)

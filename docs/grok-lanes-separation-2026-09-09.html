@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Grok, Cursor Grok, and Grok Bot are three different things · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#the-three-entities">The three entities</a></li><li class="top"><a href="#the-naming-trap">The naming trap</a></li><li class="top"><a href="#correction-to-the-provider-connection-audit">Correction to the provider connection audit</a></li><li class="top"><a href="#routing-consequence-2026-09-09">Routing consequence, 2026-09-09</a></li><li class="top"><a href="#what-using-grok-bot-would-require">What using Grok Bot would require</a></li><li class="top"><a href="#what-is-not-claimed">What is not claimed</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
+<blockquote>
+<p><strong>Historical record restored on 2026-09-12.</strong> The observations and corrections below
+describe the author's 2026-09-09 session. They are not a current health check,
+route qualification, allocation decision, authorization, or activation receipt.
+Retained Microsoft 365 references describe the retired historical deployment;
+PR #161 retired that integration. Current authority is the
+<a href="team-operating-charter.html">team operating charter</a>,
+<a href="provider-allocation-profiles.html">provider allocation profiles</a>, and
+<a href="langgraph-primary-operations.html">LangGraph primary operations</a>.
+Verify current state through the <a href="state-witness.html">Witness Ledger</a> rather
+than treating a historical readiness claim as evidence of today's deployment.</p>
+</blockquote>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | BEGIN]] -->
+<h1 id="grok-cursor-grok-and-grok-bot-are-three-different-things">Grok, Cursor Grok, and Grok Bot are three different things</h1>
+<p>The owner asked for these to be kept distinct in the project. They already are
+distinct in billing and transport; what is not distinct is the <strong>naming</strong>, and
+one setting name actively implies the opposite of what the code does.</p>
+<h2 id="the-three-entities">The three entities</h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>What it actually is</th>
+<th>Whose quota it spends</th>
+<th>Present in this repository</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Grok (xAI)</strong></td>
+<td>Direct HTTPS to <code>https://api.x.ai/v1</code>, model <code>grok-4.6</code>, authenticated with an xAI key</td>
+<td><strong>xAI account.</strong> Nothing to do with Cursor</td>
+<td><strong>Yes</strong> — the <code>grok</code> lane</td>
+</tr>
+<tr>
+<td><strong>Cursor Grok</strong></td>
+<td>A model offered inside Cursor, counted in Cursor's &quot;Cursor Models&quot; allowance</td>
+<td>Cursor subscription</td>
+<td><strong>No</strong></td>
+</tr>
+<tr>
+<td><strong>Grok Bot</strong></td>
+<td>A separate Cursor product with its own weekly allowance, tracked separately from Cursor Models</td>
+<td>Cursor subscription, <strong>separate bucket</strong></td>
+<td><strong>No</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The 2026-09-09 author reported that a search of that checkout found no Grok Bot
+references. This dated inventory is superseded: the current tree records Grok Bot
+as a distinct contact in the Grok profile and charter.</p>
+<h2 id="the-naming-trap">The naming trap</h2>
+<pre><code>grok_mode: str = os.getenv(&quot;GROK_MODE&quot;, &quot;cursor_family_primary&quot;)
+</code></pre>
+<p><code>cursor_family_primary</code> reads like &quot;route Grok through Cursor&quot;. <strong>It does not.</strong>
+It is a role label only. It reaches the provider as</p>
+<pre><code>&quot;role&quot;: &quot;primary_cursor_family_teammate&quot;
+</code></pre>
+<p>inside the request packet, and the request goes to <code>api.x.ai</code>. <code>providers.py</code>
+verifies the model against <code>{grok_api_base}/models</code> and fails with &quot;Configured
+Grok model is unavailable to the authenticated <strong>xAI</strong> key&quot;. The single place
+<code>grok_mode</code> is enforced is <code>grok_primary_readiness</code>, which merely requires the
+string to equal <code>cursor_family_primary</code>.</p>
+<p><strong>Consequence:</strong> the <code>grok</code> lane is already fully independent of Cursor's
+allowance. Exhausting Cursor does not exhaust Grok, and spending on Grok does not
+touch Cursor. Only the setting's name suggests otherwise.</p>
+<h2 id="correction-to-the-provider-connection-audit">Correction to the provider connection audit</h2>
+<p>That audit named the wrong environment variable. It reported <code>GROK_API_KEY</code> as
+the absent credential. The code reads a different name:</p>
+<pre><code>grok_api_key: str = os.getenv(&quot;XAI_API_KEY&quot;, &quot;&quot;)
+</code></pre>
+<p><code>Settings.grok_api_key</code> reads <strong><code>XAI_API_KEY</code></strong> for xAI API readiness.
+<code>GROK_API_KEY</code> is also a recognized child-environment transport alias; it must
+not be described as unused throughout the code. The historical API-readiness
+observation is not proof of repository-review transport qualification.</p>
+<p>The audit's second named variable, <code>GROK_REPOSITORY_TRANSPORT</code>, is also not a
+real setting. Repository transport readiness is computed from the <code>GROK_CLI_*</code>
+group — <code>GROK_CLI_ENABLED</code>, <code>GROK_CLI_EXECUTABLE</code>, its pinned
+<code>..._SHA256</code>, <code>..._REPOSITORY_MAP_JSON</code>, <code>..._TIMEOUT_SECONDS</code>, <code>..._MAX_TURNS</code>
+— and is <strong>required only when</strong> <code>GROK_ALLOW_REPOSITORY_WRITE</code> or
+<code>GROK_ALLOW_REVIEW_VERDICT</code> is true. Both default false, so with tools and
+repository writes off, the lane is ready without any CLI at all.</p>
+<h2 id="routing-consequence-2026-09-09">Routing consequence, 2026-09-09</h2>
+<p>The session reported provider availability constraints. Private account spend,
+quota and reset details are deliberately omitted from this repository record.
+Launch errors alone did not establish their cause, and they did not authorize a
+billing change or another attempt.</p>
+<p><strong>Review eligibility was not proved.</strong> General <code>providers.grok</code> readiness and
+membership in the reviewer roster do not qualify the repository review route.
+That route separately requires <code>GROK_ALLOW_REVIEW_VERDICT</code>, an enabled pinned
+CLI and an explicit repository mapping. The historical session did not provide
+that complete qualification evidence, so its proposed reroute remains unproved.</p>
+<h2 id="what-using-grok-bot-would-require">What using Grok Bot would require</h2>
+<p>It cannot simply be selected. There is no Grok Bot transport, and it is a Cursor
+surface rather than an API this orchestrator dispatches to. Standing it up needs
+three questions requiring scoped authority and verified capability:</p>
+<ol>
+<li><strong>How the orchestrator reaches it.</strong> If it is only usable from inside Cursor's
+own agent surface, it belongs in the same category as an owner-launched
+session: a real dispatch path, but not one this service drives.</li>
+<li><strong>Whether it becomes a lane.</strong> <code>LANES</code> in <code>allocation_profiles.py</code> is a fixed
+tuple, and every allocation profile carries one target per lane. Adding a lane
+changes every profile.</li>
+<li><strong>Credentials.</strong> Owner-reserved. This session neither creates, retrieves,
+handles nor stores a credential of any kind.</li>
+</ol>
+<p>Until those are settled, &quot;prioritize Grok Bot&quot; is recorded as an owner
+preference, and the nearest thing the project can act on today is the <strong>xAI Grok
+lane</strong>. Its repository-review qualification must be established separately.</p>
+<h2 id="what-is-not-claimed">What is not claimed</h2>
+<p>No credential was created, retrieved, modified or read. <code>XAI_API_KEY</code> is reported
+as present and longer than twenty characters; its value was never read into any
+output. No provider ran in that historical session. Private account figures
+are not retained in this document.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>
