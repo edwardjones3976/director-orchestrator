@@ -421,6 +421,75 @@ class LangGraphPacketRuntime:
         self._legacy_database = Path(legacy_database_path).resolve()
         self._validate_storage_isolation()
         self._setup_ledger()
+        # Activated production packets share the canonical task's privacy lifecycle.
+        # Standalone offline/test runtimes retain their isolated fixture ledger.
+        self._result_store = None
+        if self.require_packet_boundary_adapter:
+            from .store import TaskStore
+            self._result_store = TaskStore(str(self._legacy_database))
+            self._migrate_result_payloads()
+
+    _RESULT_PAYLOAD_BATCH_LIMIT = 1000
+
+    def _migrate_result_payloads(self) -> None:
+        """Move still-needed legacy content, erase reset/consumed copies before activation."""
+        # One activation gets one bounded batch. A remaining backlog refuses
+        # activation after committing progress; the next activation resumes it.
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT idempotency_key, task_id, work_packet_json, result_packet_json, "
+                "work_packet_digest, result_packet_digest, assignment_id, provider, authority_snapshot_digest "
+                "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT ?",
+                (self._RESULT_PAYLOAD_BATCH_LIMIT,),
+            ).fetchall()
+            if rows:
+                connection.execute(
+                    "UPDATE runtime_result_cleanup_state SET pending_generation=pending_generation+1 WHERE singleton=1")
+                for key, task_id, work_json, encoded, work_digest, result_digest, assignment_id, provider, authority in rows:
+                    record = self._result_store.get(task_id)
+                    if (record is not None and record.plan is not None
+                            and key.startswith(f"{task_id}:{record.plan_generation}:")):
+                        result = validate_packet("result", json.loads(encoded))
+                        if (result["task_id"] != task_id or result["idempotency_key"] != key
+                                or result["assignment_id"] != assignment_id or result["provider"] != provider
+                                or result["authority_snapshot_digest"] != authority
+                                or document_digest(result) != result_digest):
+                            raise RuntimeContractError("legacy result cleanup identity mismatch")
+                        if work_json is not None:
+                            work = validate_packet("work", json.loads(work_json))
+                            build_replay_run(work, result)
+                            if document_digest(work) != work_digest:
+                                raise RuntimeContractError("legacy work packet digest mismatch")
+                        # Pre-work-packet rows retain their verified result. The
+                        # original work digest is checked again before replay.
+                        if result["correlation"]["correlation_id"] not in record.consumed_packet_results:
+                            self._result_store.reserve_runtime_result(result)
+                            self._result_store.save_runtime_result(result, encoded)
+                    connection.execute(
+                        "UPDATE runtime_dispatch_ledger SET result_packet_json=NULL WHERE idempotency_key=?", (key,))
+        # A crash or busy reader can leave cleanup pending after the last row was
+        # cleared. Persist that obligation with the clearing transaction; never
+        # checkpoint unrelated WAL traffic on a clean activation.
+        with closing(sqlite3.connect(self._ledger_database, timeout=0.2)) as connection:
+            pending, completed = connection.execute(
+                "SELECT pending_generation, completed_generation FROM runtime_result_cleanup_state WHERE singleton=1"
+            ).fetchone()
+            if pending > completed:
+                busy, _, _ = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if busy:
+                    raise RuntimeContractError("runtime result privacy cleanup is pending")
+                with connection:
+                    connection.execute(
+                        "UPDATE runtime_result_cleanup_state SET completed_generation=MAX(completed_generation, ?) WHERE singleton=1",
+                        (pending,))
+            remaining = connection.execute(
+                "SELECT 1 FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1"
+            ).fetchone()
+            pending, completed = connection.execute(
+                "SELECT pending_generation, completed_generation FROM runtime_result_cleanup_state WHERE singleton=1"
+            ).fetchone()
+            if remaining is not None or pending > completed:
+                raise RuntimeContractError("runtime result migration is pending; bounded activation may be resumed")
 
     def readiness(self) -> RuntimeReadiness:
         """Return honest readiness without claiming provider availability."""
@@ -482,6 +551,12 @@ class LangGraphPacketRuntime:
                     parallel_effect_key TEXT,
                     closed_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS runtime_result_cleanup_state (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    pending_generation INTEGER NOT NULL,
+                    completed_generation INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO runtime_result_cleanup_state VALUES (1, 0, 0);
                 """
             )
             columns = {
@@ -523,6 +598,8 @@ class LangGraphPacketRuntime:
         )
         try:
             connection.execute("PRAGMA busy_timeout = 30000")
+            connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("PRAGMA journal_size_limit = 0")
             connection.execute("BEGIN IMMEDIATE")
             yield connection
             connection.commit()
@@ -615,7 +692,9 @@ class LangGraphPacketRuntime:
         provider: str,
     ) -> RuntimeExecutionOutcome:
         try:
-            result = json.loads(str(row[7]))
+            encoded = (self._result_store.read_runtime_result(str(work["idempotency_key"]))
+                       if self._result_store is not None else row[7])
+            result = json.loads(str(encoded))
             validated = validate_packet("result", result)
         except Exception as exc:
             raise RuntimeContractError("persisted provider result is invalid") from exc
@@ -667,6 +746,16 @@ class LangGraphPacketRuntime:
         execution_mode: RuntimeExecutionMode,
         writer_token: WriterOwnershipToken | None,
     ) -> RuntimeExecutionOutcome | None:
+        if self._result_store is not None:
+            self._result_store.reserve_runtime_result(dict(work))
+            saved = self._result_store.read_runtime_result(str(work["idempotency_key"]))
+            row = self._ledger_row(str(work["idempotency_key"]))
+            if saved is not None and row is not None and row[9] in {"CLAIMED", "DISPATCHING", "RECONCILIATION_REQUIRED"}:
+                # The canonical payload is the prepared half of a result commit.
+                # Finish it under the ledger writer/status guard, never resend.
+                self._persist_result(work, json.loads(saved), provider=provider,
+                    writer_token=writer_token,
+                    allowed_statuses=("CLAIMED", "DISPATCHING", "RECONCILIATION_REQUIRED"))
         writer_digest = writer_token.digest if writer_token is not None else None
         with self._transaction() as connection:
             if writer_token is not None:
@@ -803,6 +892,23 @@ class LangGraphPacketRuntime:
         with self._transaction() as connection:
             if writer_token is not None:
                 self._assert_writer(connection, writer_token)
+            row = connection.execute(
+                "SELECT task_id, assignment_id, provider, execution_mode, "
+                "work_packet_digest, authority_snapshot_digest, writer_token_digest, "
+                "result_packet_json, result_packet_digest, status, error_code "
+                "FROM runtime_dispatch_ledger WHERE idempotency_key=?", (work["idempotency_key"],)
+            ).fetchone()
+            if row is None or row[9] not in allowed_statuses:
+                raise RuntimeContractError("dispatch result lost its durable reservation")
+            self._validate_existing_row(row, work=work, provider=provider,
+                execution_mode=RuntimeExecutionMode(row[3]),
+                writer_token_digest=writer_token.digest if writer_token else None)
+            if self._result_store is not None:
+                # Validate ownership before preparing immutable payload content.
+                # This also seeds recovery storage for unresolved legacy rows.
+                self._result_store.reserve_runtime_result(dict(work))
+                self._result_store.save_runtime_result(dict(work), encoded_result)
+                encoded_result = None
             cursor = connection.execute(
                 "UPDATE runtime_dispatch_ledger SET status='COMPLETED', "
                 "result_packet_json=?, result_packet_digest=?, error_code=NULL "
