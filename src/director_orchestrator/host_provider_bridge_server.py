@@ -29,6 +29,7 @@ import argparse
 import json
 import hmac
 import os
+import re
 import ssl
 import secrets
 import sys
@@ -199,6 +200,38 @@ def configuration_digests(executor, account_files, routed=None) -> dict[str, str
     return dict(sorted(digests.items()))
 
 
+def _configured_selection(*, candidate_commit, candidate_tree, generation_sha256, workspace, validation_dsn):
+    """Pure configuration identity; neither database-instance proof nor acceptance."""
+    from .provider_validation import SCHEMA
+    if (not isinstance(candidate_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate_commit)
+            or not isinstance(candidate_tree, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate_tree)
+            or not isinstance(generation_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", generation_sha256)
+            or not isinstance(validation_dsn, str) or not validation_dsn.strip()
+            or any(character in validation_dsn for character in ("\x00", "\r", "\n"))):
+        raise ValueError("bridge configured selection unavailable")
+    path = Path(workspace)
+    if not path.is_absolute() or not path.is_dir():
+        raise ValueError("bridge configured workspace unavailable")
+    return {
+        "schema_version": "director-bridge-configured-selection/v1",
+        "candidate_commit": candidate_commit,
+        "candidate_tree": candidate_tree,
+        "generation_sha256": generation_sha256,
+        "workspace_sha256": _digest(canonical_json_bytes({"workspace": str(path.resolve(strict=True))})),
+        "validation_store_configuration_sha256": _digest(canonical_json_bytes({"dsn": validation_dsn, "schema": SCHEMA})),
+    }
+
+
+def _capture_configured_selection(service):
+    """Called once after pinned environment and validation-service initialization."""
+    from .provider_validation import resolved_provider_validation_generation
+    return _configured_selection(
+        candidate_commit=_required("DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"),
+        candidate_tree=_required("DIRECTOR_PROVIDER_VALIDATION_TREE"),
+        generation_sha256=resolved_provider_validation_generation(),
+        workspace=service.production.cwd, validation_dsn=service.store.dsn)
+
+
 class _Handler(BaseHTTPRequestHandler):
     # One absolute bound for reading a request body, whatever its pace.
     _BODY_READ_SECONDS = 30.0
@@ -312,6 +345,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "ok": True, "configuration_digests": digests,
                 "lane_attestations": attestations,
                 "pinned_environment": bool(getattr(self.server, "pinned_environment", False)),
+                "configured_selection": getattr(self.server, "configured_selection", None),
             })
             return
         if self.path != "/health":
@@ -499,6 +533,9 @@ def main(argv: list[str] | None = None) -> None:
             team_route=team_route_from_environment(),
             openai_responses_route=responses_route_from_environment(),
         )
+        # Bind serving-process selection once. Requests never reread mutable
+        # profiles/environment or touch the store to produce this metadata.
+        server.configured_selection = _capture_configured_selection(server.validation_service)  # type: ignore[attr-defined]
     server.serve_forever(poll_interval=0.5)
 
 

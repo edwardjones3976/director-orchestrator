@@ -14,6 +14,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from director_orchestrator.documentation import read_document
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("review_loop_doc_guard", ROOT / "scripts/check_active_documentation.py")
 guard = importlib.util.module_from_spec(SPEC)
@@ -53,7 +55,7 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
                 self.assertIn(rule, rules(guard.check_instruction_text(text)))
 
     def test_agents_rule_eleven_copied_into_a_local_file_is_drift(self):
-        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        agents = read_document(ROOT / "AGENTS.md")
         rule = next(line for line in agents.splitlines() if line.startswith("11. "))
         self.assertIn("copied-allocation-window", rules(guard.check_instruction_text(rule)))
 
@@ -87,7 +89,7 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
 
     def test_pointer_surface_requires_a_canonical_pointer(self):
         self.assertIn("missing-canonical-pointer", rules(guard.check_instruction_text("Be concise.", pointer="always")))
-        for pointer in ("@AGENTS.md", "See AGENTS.md.", "[charter](docs/team-operating-charter.md#review-to-merge-handoff)"):
+        for pointer in ("@AGENTS.md", "See AGENTS.md.", "[charter](docs/team-operating-charter.html#review-to-merge-handoff)"):
             with self.subTest(pointer=pointer):
                 self.assertEqual([], guard.check_instruction_text(pointer, pointer="always"))
         # A pointer inside a historical block does not count as an active pointer.

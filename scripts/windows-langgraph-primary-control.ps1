@@ -50,11 +50,20 @@ param(
     [string]$GenerationManifestSha256,
     [string]$GitHubRepository,
     [ValidateRange(1, [int]::MaxValue)][int]$PullRequestNumber,
-    [int]$TimeoutSeconds = 180
+    [int]$TimeoutSeconds = 180,
+    [string]$GitExecutable = "git",
+    [string]$DockerExecutable = "docker",
+    [string]$GitHubExecutable = "gh"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+foreach ($tool in @(@($GitExecutable, "git"), @($DockerExecutable, "docker"), @($GitHubExecutable, "gh"))) {
+    if ($tool[0] -cne $tool[1] -and (-not [IO.Path]::IsPathFullyQualified($tool[0]) -or
+            -not (Test-Path -LiteralPath $tool[0] -PathType Leaf))) {
+        throw "Explicit native tools must be existing absolute trusted paths."
+    }
+}
 Set-Location (Split-Path -Parent $PSScriptRoot)
 if ($Action -cne "SelectGeneration" -and ($GenerationManifestPath -or $GenerationManifestSha256)) {
     throw "Generation selection inputs are valid only for SelectGeneration."
@@ -106,7 +115,7 @@ function Write-Switches {
 
 function Invoke-Compose {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    & docker compose --project-name $script:ComposeProject --env-file $script:environmentPath @Arguments
+    & $DockerExecutable compose --project-name $script:ComposeProject --env-file $script:environmentPath @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose command failed." }
 }
 
@@ -138,13 +147,14 @@ function Invoke-NativeBytes {
 }
 
 function Get-ResolvedDeploymentDigest {
-    $configuration = Invoke-NativeBytes -FilePath docker -ArgumentList @(
+    $configuration = Invoke-NativeBytes -FilePath $DockerExecutable -ArgumentList @(
         "compose", "--project-name", $script:ComposeProject, "--env-file", $script:environmentPath,
         "config", "--format", "json")
     # Compute inside the exact candidate image with no network or host mounts.
-    # Resolved secrets stay on stdin; only the digest is returned.
-    $result = Invoke-NativeBytes -FilePath docker -InputBytes $configuration -ArgumentList @(
-        "run", "--rm", "-i", "--network", "none", "--entrypoint", "python", $script:runtimeImageId,
+    # Resolved secrets stay on stdin; only the digest is returned. This direct
+    # one-off must not inherit a daemon logging driver that exports its output.
+    $result = Invoke-NativeBytes -FilePath $DockerExecutable -InputBytes $configuration -ArgumentList @(
+        "run", "--rm", "-i", "--network", "none", "--log-driver", "none", "--entrypoint", "python", $script:runtimeImageId,
         "-m", "director_orchestrator.primary_generation", "compose-digest", "--image-id", $script:runtimeImageId)
     $observed = [string](@([Text.Encoding]::UTF8.GetString($result) -split '\r?\n' | Where-Object { $_ }) | Select-Object -Last 1)
     if ($observed -cnotmatch '^[0-9a-f]{64}$') { throw "Resolved deployment configuration is not verified." }
@@ -155,7 +165,7 @@ function Assert-RunningCandidate {
     param([string]$AsgiApp)
     $containers = @(Invoke-Compose ps --status running -q orchestrator)
     if ($containers.Count -ne 1) { throw "Expected one running candidate container." }
-    $raw = @(& docker inspect ([string]$containers[0])) -join [Environment]::NewLine
+    $raw = @(& $DockerExecutable inspect ([string]$containers[0])) -join [Environment]::NewLine
     if ($LASTEXITCODE -ne 0) { throw "Candidate readback failed." }
     $observed = @(ConvertFrom-Json -InputObject $raw)[0]
     $expectedCommand = @("uvicorn", $AsgiApp, "--host", "0.0.0.0", "--port", "8080")
@@ -174,7 +184,7 @@ function Get-ServiceContainer {
         "--filter", "label=com.docker.compose.oneoff=False"
     )
     if ($Running) { $filters += @("--filter", "status=running") }
-    $containers = @(& docker ps -a --no-trunc -q @filters | Where-Object { $_ })
+    $containers = @(& $DockerExecutable ps -a --no-trunc -q @filters | Where-Object { $_ })
     if ($LASTEXITCODE -eq 0 -and $containers.Count -eq 0 -and $AllowAbsent) { return $null }
     if ($LASTEXITCODE -ne 0 -or $containers.Count -ne 1) {
         throw "Expected exactly one $Service container in the Compose project."
@@ -186,7 +196,7 @@ function Get-ServiceImageId {
     param([string]$Service, [switch]$Running, [switch]$AllowAbsent)
     $container = Get-ServiceContainer -Service $Service -Running:$Running -AllowAbsent:$AllowAbsent
     if ($null -eq $container) { return $null }
-    $image = [string](@(& docker inspect --format "{{.Image}}" $container) | Select-Object -Last 1)
+    $image = [string](@(& $DockerExecutable inspect --format "{{.Image}}" $container) | Select-Object -Last 1)
     if ($LASTEXITCODE -ne 0 -or $image -cnotmatch '^sha256:[0-9a-f]{64}$') {
         throw "The $Service image identity could not be read back."
     }
@@ -333,10 +343,10 @@ function Get-GitHubAcceptanceFacts {
     if ($script:GitHubRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
         throw "GitHub repository identity is invalid."
     }
-    if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
+    if ($null -eq (Get-Command $GitHubExecutable -ErrorAction SilentlyContinue)) {
         throw "GitHub CLI is required to verify exact-head acceptance evidence."
     }
-    $json = & gh pr view $script:PullRequestNumber --repo "https://github.com/$script:GitHubRepository" `
+    $json = & $GitHubExecutable pr view $script:PullRequestNumber --repo "https://github.com/$script:GitHubRepository" `
         --json headRefOid,author,reviews,statusCheckRollup
     if ($LASTEXITCODE -ne 0) { throw "GitHub acceptance evidence could not be read." }
     $pull = $json | ConvertFrom-Json -Depth 20
@@ -655,11 +665,11 @@ if ($Action -ceq "PrepareAcceptance") {
         LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON = $SecurityReviewerAllowlistJson
         LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON = $IndependentReviewerAllowlistJson
     }
-    if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
+    if ($null -eq (Get-Command $GitHubExecutable -ErrorAction SilentlyContinue)) {
         throw "Authenticated GitHub CLI is required to prepare acceptance."
     }
     # Tree authority comes from GitHub, not a caller-provided facts file or tree.
-    $commitJson = & gh api --hostname github.com "repos/$GitHubRepository/git/commits/$CandidateCommit"
+    $commitJson = & $GitHubExecutable api --hostname github.com "repos/$GitHubRepository/git/commits/$CandidateCommit"
     if ($LASTEXITCODE -ne 0) { throw "GitHub candidate could not be verified." }
     $commit = $commitJson | ConvertFrom-Json -Depth 10
     if ([string]$commit.sha -cne $CandidateCommit -or [string]$commit.tree.sha -cnotmatch '^[0-9a-f]{40}$') {
@@ -814,7 +824,7 @@ $snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]
     -ExpectedRepository ([string]$values["REPOSITORY_ALLOWLIST"]) `
     -StartingRef ([string]$values["ALLOWED_STARTING_REFS"]) `
     -ExpectedCommit $executionCommit `
-    -ExpectedTree $executionTree
+    -ExpectedTree $executionTree -GitExecutable $GitExecutable
 
 $env:DIRECTOR_ENV_FILE = $environmentPath
 $env:DIRECTOR_COMPOSE_PROJECT_NAME = $ComposeProject
@@ -827,8 +837,8 @@ foreach ($name in @("DIRECTOR_ASGI_APP", "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_P
     [Environment]::SetEnvironmentVariable($name, $selected, "Process")
 }
 Invoke-Compose config --quiet
-$candidateCommit = [string](@(& git rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
-$candidateTree = [string](@(& git rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
+$candidateCommit = [string](@(& $GitExecutable rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
+$candidateTree = [string](@(& $GitExecutable rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
 if ($candidateCommit -notmatch '^[0-9a-f]{40}$' -or $candidateTree -notmatch '^[0-9a-f]{40}$') {
     throw "The Director candidate commit/tree cannot be frozen."
 }
@@ -840,10 +850,10 @@ if ($Action -eq "Health") {
 }
 # Image construction is an explicit preparatory operation, never a side effect
 # of observing state, bootstrapping identity, selecting a generation or staging.
-if (@(& git status --porcelain).Count -ne 0 -or $LASTEXITCODE -ne 0) {
+if (@(& $GitExecutable status --porcelain).Count -ne 0 -or $LASTEXITCODE -ne 0) {
     throw "Runtime control requires a clean exact-candidate checkout."
 }
-$imageProof = @(& docker image inspect "$ComposeProject-orchestrator" --format '{{.Id}}|{{index .Config.Labels "org.director.candidate.commit"}}|{{index .Config.Labels "org.director.candidate.tree"}}|{{json .Config.Entrypoint}}')
+$imageProof = @(& $DockerExecutable image inspect "$ComposeProject-orchestrator" --format '{{.Id}}|{{index .Config.Labels "org.director.candidate.commit"}}|{{index .Config.Labels "org.director.candidate.tree"}}|{{json .Config.Entrypoint}}')
 $imageParts = ([string]($imageProof | Select-Object -Last 1)).Split('|')
 if ($LASTEXITCODE -ne 0 -or $imageParts.Count -ne 4 -or $imageParts[0] -cnotmatch '^sha256:[0-9a-f]{64}$' -or
     $imageParts[1] -cne $candidateCommit -or $imageParts[2] -cne $candidateTree -or $imageParts[3] -cnotin @("null", "[]")) {
@@ -960,12 +970,12 @@ if ($Action -eq "Backup") {
     if ([string]::IsNullOrWhiteSpace($container)) { throw "Primary Postgres container is unavailable." }
     $temporary = "/tmp/director-primary-$([Guid]::NewGuid().ToString('N')).dump"
     try {
-        & docker exec $container pg_dump -U director_primary -d director_primary --format=custom --file=$temporary
+        & $DockerExecutable exec $container pg_dump -U director_primary -d director_primary --format=custom --file=$temporary
         if ($LASTEXITCODE -ne 0) { throw "Postgres backup failed." }
-        & docker cp "${container}:${temporary}" $destination
+        & $DockerExecutable cp "${container}:${temporary}" $destination
         if ($LASTEXITCODE -ne 0) { throw "Postgres backup export failed." }
     }
-    finally { & docker exec $container rm -f -- $temporary | Out-Null }
+    finally { & $DockerExecutable exec $container rm -f -- $temporary | Out-Null }
     $backupDigest = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     Invoke-Evidence -Command record -Stage BACKED_UP -FactsJson ("{`"backup_digest`":`"sha256:$backupDigest`"}")
     Write-Host "Primary Postgres backup completed without displaying credentials."
@@ -980,20 +990,20 @@ if ($Action -eq "RestoreDrill") {
     $database = "director_restore_$([Guid]::NewGuid().ToString('N').Substring(0,12))"
     $temporary = "/tmp/${database}.dump"
     try {
-        & docker cp $source "${container}:${temporary}"
+        & $DockerExecutable cp $source "${container}:${temporary}"
         if ($LASTEXITCODE -ne 0) { throw "Restore-drill import failed." }
-        $hashProof = [string](@(& docker exec $container sha256sum -- $temporary) | Select-Object -Last 1)
+        $hashProof = [string](@(& $DockerExecutable exec $container sha256sum -- $temporary) | Select-Object -Last 1)
         if ($LASTEXITCODE -ne 0 -or $hashProof -notmatch '^([0-9a-f]{64})\s+') {
             throw "Restore-drill artifact could not be hashed."
         }
         $restoreDigest = [string]$matches[1]
         Invoke-Evidence -Command verify-backup -BackupDigest "sha256:$restoreDigest"
-        & docker exec $container createdb -U director_primary $database
+        & $DockerExecutable exec $container createdb -U director_primary $database
         if ($LASTEXITCODE -ne 0) { throw "Restore-drill database creation failed." }
-        & docker exec $container pg_restore -U director_primary -d $database --exit-on-error $temporary
+        & $DockerExecutable exec $container pg_restore -U director_primary -d $database --exit-on-error $temporary
         if ($LASTEXITCODE -ne 0) { throw "Restore drill failed." }
         $schema = [string]$values['LANGGRAPH_PRIMARY_POSTGRES_SCHEMA']
-        $proof = [string](@(& docker exec $container psql -U director_primary -d $database -v ON_ERROR_STOP=1 -Atc `
+        $proof = [string](@(& $DockerExecutable exec $container psql -U director_primary -d $database -v ON_ERROR_STOP=1 -Atc `
             "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('director_primary_control_plane','director_primary_intake_authority','director_primary_task_projection','director_primary_task_writer','director_primary_claim','director_primary_effect_reservation','director_primary_effect_approval_binding','director_primary_typed_effect_intent','director_primary_effect_execution','director_primary_reconciliation_event','director_primary_terminal_evidence','director_provider_activation_evidence','director_provider_activation_authorization','director_primary_parallel_batch','director_primary_parallel_assignment','director_primary_provider_attempt','director_primary_workload_assignment')) || '|' || (SELECT count(*) FROM information_schema.tables WHERE table_schema = '$schema' AND table_name IN ('checkpoints','checkpoint_blobs','checkpoint_writes','checkpoint_migrations')) || '|' || (SELECT count(*) FROM $schema.director_primary_control_plane WHERE database_instance_id = '$databaseInstanceId');" ) | Select-Object -Last 1)
         if ($LASTEXITCODE -ne 0 -or $proof -notmatch '^(\d+)\|(\d+)\|(\d+)$') { throw "Restored schema verification failed." }
         $requiredTableCount = [int]$matches[1]
@@ -1004,8 +1014,8 @@ if ($Action -eq "RestoreDrill") {
         }
     }
     finally {
-        & docker exec $container dropdb -U director_primary --if-exists $database | Out-Null
-        & docker exec $container rm -f -- $temporary | Out-Null
+        & $DockerExecutable exec $container dropdb -U director_primary --if-exists $database | Out-Null
+        & $DockerExecutable exec $container rm -f -- $temporary | Out-Null
     }
     # Key order is canonical so the script and Python store hash identical JSON.
     $facts = "{`"backup_digest`":`"sha256:$restoreDigest`",`"checkpoint_tables`":$checkpointTableCount,`"required_control_plane_tables`":$requiredTableCount,`"schema_evidence_rows`":$schemaEvidenceRows}"

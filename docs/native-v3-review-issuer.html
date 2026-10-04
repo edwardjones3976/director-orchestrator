@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Native v3 independent-review issuer (collect-only) · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#custody-enforced">Custody (enforced)</a></li><li class="top"><a href="#product-vs-family">Product vs family</a></li><li class="top"><a href="#authorization">Authorization</a></li><li class="top"><a href="#capture--observation--publication">Capture / observation / publication</a></li><li class="top"><a href="#cli">CLI</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | BEGIN]] -->
+<h1 id="native-v3-independent-review-issuer-collect-only">Native v3 independent-review issuer (collect-only)</h1>
+<p>Collect-only producer of one <strong>challenge-bound</strong>, <strong>write-once</strong>
+<code>independent_review</code> receipt for <code>provider-v3-two-party</code>.</p>
+<h2 id="custody-enforced">Custody (enforced)</h2>
+<p>Before any private-key read or signature:</p>
+<ol>
+<li>Mode must be <code>provider-v3-two-party</code>.</li>
+<li>Config is the fixed <code>&lt;root&gt;/issuer.json</code> digest pin (no embedded private key).</li>
+<li>Distinct <code>broker_sid</code> / <code>worker_sid</code> and non-empty <code>runtime_roots</code>.</li>
+<li><code>current_sid()</code> must equal <code>broker_sid</code>.</li>
+<li><code>verify_boundary(...)</code> from <code>native_acceptance_issuer</code> must succeed over root,
+code, config, runtime roots, broker private key, claims, and each consumed
+registry/authorization/capture/observation plus the public destination.</li>
+<li>Non-Windows hosts and missing ACL evidence <strong>fail closed</strong>.</li>
+</ol>
+<p>Private key bytes are read only from <code>&lt;root&gt;/broker/private.key</code> after those checks.</p>
+<h2 id="product-vs-family">Product vs family</h2>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th>Family rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>codex</code></td>
+<td>Must be enrolled <code>openai</code></td>
+</tr>
+<tr>
+<td><code>grok-bot</code></td>
+<td>Independently observed enrolled family (not inferred from Bot branding)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="authorization">Authorization</h2>
+<p><code>&lt;root&gt;/authorizations/&lt;challenge&gt;.json</code> must match the owner-adopted repository,
+PR, packet, activation, and <strong>exact</strong> <code>material_author_providers</code> set.</p>
+<h2 id="capture--observation--publication">Capture / observation / publication</h2>
+<p>Internal capture <code>director-protected-independent-review-capture/v1</code> requires
+terminal <code>ACCEPT</code> and exact challenge/packet/candidate/session binding.
+Observation must match. Output only <code>&lt;root&gt;/public/&lt;challenge&gt;.json</code> after a
+durable SQLite claim.</p>
+<h2 id="cli">CLI</h2>
+<pre><code class="language-text">python -m director_orchestrator.native_v3_review_issuer collect \
+  --config /run/issuer/issuer.json \
+  --config-sha256 &lt;64-hex&gt; \
+  --challenge &lt;64-hex-challenge&gt;
+</code></pre>
+<!-- [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

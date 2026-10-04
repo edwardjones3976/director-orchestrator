@@ -9,7 +9,7 @@
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 """Phase 1 of human-out-of-the-loop operation: grant schema and readiness only.
 
-``docs/human-out-of-the-loop-operation.md`` sequences this capability across six
+``docs/human-out-of-the-loop-operation.html`` sequences this capability across six
 phases and states that each is separately built, reviewed and accepted, that no
 phase begins before its predecessor is accepted, and that acceptance of one
 grants nothing to the next. This module is phase 1 and nothing beyond it.

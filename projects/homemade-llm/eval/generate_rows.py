@@ -37,6 +37,7 @@ import stat
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 import secrets
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -99,10 +100,13 @@ LICENSED_SPECIFICATION_ADMISSIONS = {
     ),
 }
 LICENSED_SPECIFICATION_REPOSITORY = "exercism/problem-specifications"
-# Exact corpus-admission bytes require separate independent code/data review.
-# These pins permit construction only; source/whole-row/training gates still apply.
-LICENSED_EXTRACTION_ADMISSIONS = frozenset({
-    "efaf1df009bae28ea6b57b72abc19f5c8864120e74de45e512533ab9cbc46ba9",
+# Exact admission and extraction-record bytes permit construction only.
+# Manifest membership alone proves neither qualification nor frozen selection order.
+# Only the current first-source record is bound; source/whole-row/training gates still apply.
+LICENSED_EXTRACTION_ADMISSIONS = MappingProxyType({
+    "efaf1df009bae28ea6b57b72abc19f5c8864120e74de45e512533ab9cbc46ba9": frozenset({
+        "c65d1a5b33952219fae0d7d7545de382782e0422ae0d8470c1b1334514d252e2",
+    }),
 })
 # Independently reviewed learnyounode batches; not a general source registry.
 LEARNYOUNODE_SERVER_ADMISSION = "b2f150ca5bfc37f7695b7391e723f6d34b95fd52e210a4d4c6859bf69c34f774"
@@ -842,6 +846,8 @@ def validate_licensed_extraction(scenario: dict[str, Any], source_root: Path,
         if (set(block) != {"kind", "admission_ref", "admission_sha256", "extraction_ref", "extraction_sha256"}
                 or block["admission_sha256"] not in LICENSED_EXTRACTION_ADMISSIONS):
             fail(f"{label}: no pinned licensed-extraction corpus admission")
+        if block["extraction_sha256"] not in LICENSED_EXTRACTION_ADMISSIONS[block["admission_sha256"]]:
+            fail(f"{label}: extraction record is outside the pinned qualified selection")
         if scenario["split"] != "dev":
             fail(f"{label}: construction-only licensed extraction cannot enter the train split")
 
@@ -2358,9 +2364,7 @@ def generate(
     root = infer_source_root(set_a, set_b, source_root)
     extractions = validate_scenarios_for_dispatch(scenarios, source_root=root, set_a=set_a, set_b=set_b, sets=sets,
                                                 review_receipts_root=source_review_receipts_root)
-    for scenario, extraction in zip(scenarios, extractions):
-        if extraction is not None and extraction["generated_at"] != generated_at:
-            fail("row generation timestamp must equal the bound extraction timestamp")
+    for scenario in scenarios:
         if scenario["source_provenance"].get("kind") == "licensed_specification":
             if provider != "local_model":
                 fail("licensed-specification targets require the admitted local_model route")
@@ -2427,7 +2431,7 @@ def generate(
         row = build_row(
             scenario, target, provider=provider, model=model,
             receipt=receipt, verified_at=terms_verified_at,
-            generated_at=generated_at, sets=sets,
+            generated_at=extraction["generated_at"] if extraction_route else generated_at, sets=sets,
         )
         if provider == "local_model":
             row["receipt_sha256"] = local_receipt_hash(result, scenario, target, terms_verified_at, native_release_pin=native_release_pin) if native_sdk else local_receipt_hash(result, scenario, target, terms_verified_at)

@@ -62,6 +62,10 @@ from .process_isolation import ProcessContainmentError, launch_contained_process
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
+_VALID_ACTUAL_CHARGE = (
+    "typeof(actual_cost_usd) IN ('real', 'integer') "
+    "AND actual_cost_usd >= 0 AND actual_cost_usd < 9e999"
+)
 
 
 class ProviderError(RuntimeError):
@@ -180,6 +184,23 @@ class ProviderDailySpendLedger:
                 task_id TEXT NOT NULL, effect_key TEXT NOT NULL, evidence TEXT NOT NULL,
                 PRIMARY KEY(task_id, effect_key))""")
 
+    @contextmanager
+    def read_snapshot(self) -> Iterator[ProviderDailySpendSnapshot]:
+        """One read-only, point-in-time ledger observation; no provider work inside."""
+        with closing(sqlite3.connect(self.path, isolation_level=None)) as connection:
+            connection.execute("PRAGMA query_only = ON")
+            try:
+                connection.execute("BEGIN DEFERRED")
+                # BEGIN alone does not establish a snapshot. Touch the ledger now,
+                # even when it is empty, before yielding any read methods.
+                connection.execute(
+                    "SELECT 1 FROM provider_daily_spend_reservations LIMIT 1"
+                ).fetchall()
+                yield ProviderDailySpendSnapshot(self, connection)
+            finally:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+
     def save_settlement(self, task_id: str, effect_key: str, evidence: dict, *, timeout: float = 30) -> None:
         """Persist only accounting/identity evidence, never provider content."""
         evidence = self.compact_settlement(evidence)
@@ -241,8 +262,9 @@ class ProviderDailySpendLedger:
         transaction, so reserve() compares and inserts under one BEGIN IMMEDIATE write lock."""
 
         count, exposure = connection.execute(
-            """SELECT COUNT(*),
-                      COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd)), 0)
+            f"""SELECT COUNT(*),
+                      COALESCE(SUM(CASE WHEN {_VALID_ACTUAL_CHARGE}
+                                        THEN actual_cost_usd ELSE estimated_cost_usd END), 0)
             FROM provider_daily_spend_reservations
             WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
             (provider.value, utc_day),
@@ -315,12 +337,13 @@ class ProviderDailySpendLedger:
                 )
                 return
             updated = connection.execute(
-                """UPDATE provider_daily_spend_reservations
-                SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?),
+                f"""UPDATE provider_daily_spend_reservations
+                SET actual_cost_usd = CASE WHEN {_VALID_ACTUAL_CHARGE} THEN MAX(actual_cost_usd, ?)
+                                          ELSE ? END,
                     released_at = CASE WHEN request_exists THEN NULL ELSE released_at END,
                     settled_at = COALESCE(settled_at, ?)
                 WHERE provider = ? AND effect_key = ?""",
-                (float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
+                (float(actual_cost_usd), float(actual_cost_usd), observed_at.isoformat(), provider.value, effect_key),
             ).rowcount
             if not updated:
                 connection.execute(
@@ -355,20 +378,44 @@ class ProviderDailySpendLedger:
     def unreconciled(
         self, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
     ) -> list[str]:
+        with self._connect() as connection:
+            return self._unreconciled(connection, provider, stale_after=stale_after, now=now)
+
+    def _unreconciled(
+        self, connection: sqlite3.Connection, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
+    ) -> list[str]:
         """Outstanding effect keys with no actual charge, across all reservation days: settled with unknown
         cost or still unsettled after ``stale_after``. Neither a crash nor UTC midnight reconciles a request."""
 
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend reconciliation applies only to supplemental providers")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
-                WHERE provider = ? AND actual_cost_usd IS NULL AND released_at IS NULL""",
-                (provider.value,),
-            ).fetchall()
+        rows = connection.execute(
+            f"""SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
+            WHERE provider = ? AND NOT ({_VALID_ACTUAL_CHARGE}) AND released_at IS NULL""",
+            (provider.value,),
+        ).fetchall()
         return [str(key) for key, settled_at, recorded_at in rows
                 if settled_at is not None or datetime.fromisoformat(recorded_at) <= observed_at - stale_after]
+
+    def unsettled_not_proven_bounded(self, provider: ProviderName) -> list[str]:
+        with self._connect() as connection:
+            return self._unsettled_not_proven_bounded(connection, provider)
+
+    def _unsettled_not_proven_bounded(self, connection: sqlite3.Connection, provider: ProviderName) -> list[str]:
+        """Unreleased reservations without a valid actual charge, across all days,
+        except current bounded reservations (serialized=0, legacy=0).
+        Legacy rows of any age are not proven bounded and count.
+        """
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend reconciliation applies only to supplemental providers")
+        rows = connection.execute(
+            f"""SELECT effect_key FROM provider_daily_spend_reservations
+            WHERE provider = ? AND NOT (serialized = 0 AND legacy = 0)
+            AND released_at IS NULL AND NOT ({_VALID_ACTUAL_CHARGE})""",
+            (provider.value,),
+        ).fetchall()
+        return [str(key) for (key,) in rows]
 
     @contextmanager
     def _connect(self, *, timeout: float = 30) -> Iterator[sqlite3.Connection]:
@@ -420,8 +467,8 @@ class ProviderDailySpendLedger:
                 # Unsettled non-legacy serialized requests hold admission across days.
                 # Legacy and bounded reservations still count in daily exposure.
                 pending = connection.execute(
-                    """SELECT 1 FROM provider_daily_spend_reservations
-                    WHERE provider = ? AND actual_cost_usd IS NULL
+                    f"""SELECT 1 FROM provider_daily_spend_reservations
+                    WHERE provider = ? AND NOT ({_VALID_ACTUAL_CHARGE})
                     AND serialized = 1 AND legacy = 0 AND released_at IS NULL LIMIT 1""",
                     (provider.value,),
                 ).fetchone()
@@ -472,21 +519,34 @@ class ProviderDailySpendLedger:
         *,
         now: datetime | None = None,
     ) -> tuple[int, float]:
+        with self._connect() as connection:
+            return self._totals(connection, provider, now=now)
+
+    def _totals(
+        self,
+        connection: sqlite3.Connection,
+        provider: ProviderName,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[int, float]:
         """Return the single durable accounting total shared by work and probes."""
 
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend totals apply only to supplemental providers")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        with self._connect() as connection:
-            count, reserved = connection.execute(
-                """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
-                FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
-                (provider.value, observed_at.date().isoformat()),
-            ).fetchone()
+        count, reserved = connection.execute(
+            """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
+            FROM provider_daily_spend_reservations
+            WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
+            (provider.value, observed_at.date().isoformat()),
+        ).fetchone()
         return int(count), float(reserved)
 
     def reservations(self, provider: ProviderName, *, now: datetime | None = None, include_released: bool = True) -> list[tuple[str, float]]:
+        with self._connect() as connection:
+            return self._reservations(connection, provider, now=now, include_released=include_released)
+
+    def _reservations(self, connection: sqlite3.Connection, provider: ProviderName, *, now: datetime | None = None, include_released: bool = True) -> list[tuple[str, float]]:
         """The day's reservations, including released audit records.
         Released rows are excluded only with include_released=False, used by real-request telemetry.
         """
@@ -494,13 +554,42 @@ class ProviderDailySpendLedger:
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend reservations apply only to supplemental providers")
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT effect_key, estimated_cost_usd FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ? AND (? OR released_at IS NULL)""",
-                (provider.value, observed_at.date().isoformat(), include_released),
-            ).fetchall()
+        rows = connection.execute(
+            """SELECT effect_key, estimated_cost_usd FROM provider_daily_spend_reservations
+            WHERE provider = ? AND utc_day = ? AND (? OR released_at IS NULL)""",
+            (provider.value, observed_at.date().isoformat(), include_released),
+        ).fetchall()
         return [(str(row[0]), float(row[1])) for row in rows]
+
+
+class ProviderDailySpendSnapshot:
+    """Read methods bound to the connection owned by read_snapshot()."""
+
+    def __init__(self, ledger: ProviderDailySpendLedger, connection: sqlite3.Connection):
+        self._ledger = ledger
+        self._connection = connection
+
+    def totals(self, provider: ProviderName, *, now: datetime | None = None) -> tuple[int, float]:
+        return self._ledger._totals(self._connection, provider, now=now)
+
+    def reservations(
+        self, provider: ProviderName, *, now: datetime | None = None, include_released: bool = True
+    ) -> list[tuple[str, float]]:
+        return self._ledger._reservations(self._connection, provider, now=now, include_released=include_released)
+
+    def exposure(self, provider: ProviderName, *, now: datetime | None = None) -> tuple[int, float]:
+        if provider not in self._ledger._SUPPORTED:
+            raise ValueError("daily spend exposure applies only to supplemental providers")
+        utc_day = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+        return self._ledger._exposure(self._connection, provider, utc_day)
+
+    def unreconciled(
+        self, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
+    ) -> list[str]:
+        return self._ledger._unreconciled(self._connection, provider, stale_after=stale_after, now=now)
+
+    def unsettled_not_proven_bounded(self, provider: ProviderName) -> list[str]:
+        return self._ledger._unsettled_not_proven_bounded(self._connection, provider)
 
 
 def _response_error_blob(response: httpx.Response) -> str:

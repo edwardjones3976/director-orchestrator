@@ -3409,9 +3409,11 @@ class OrchestrationEngine:
                 "owner_approval_recorded": assignment_is_approved(record, assignment),
             },
             "contribution_attribution": (
-                "Wrap free-form human-visible output in matching UTC contribution BEGIN/END "
-                "tags. Do not put tags inside JSON, callbacks, review artifacts, exact queries, "
-                "or other structured payloads; the Director tags their human-visible relay."
+                "Keep actual provider identity accurate using normal Git Author/Committer "
+                "provenance and existing authenticated task/run records. Do not add contribution "
+                "tags, custom trailers, prescribed author headers or percentage/share paperwork. "
+                "Preserve historical records, structured-payload contracts and every existing "
+                "approval, exact-candidate, independent-review and contributor/merger-separation gate."
             ),
             "dependency_outcomes": [
                 bounded(outcome)

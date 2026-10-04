@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Project Uppercut Reiteration · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#isolation-contract">Isolation contract</a></li><li class="top"><a href="#windows-initialization">Windows initialization</a></li><li class="top"><a href="#activation-gate">Activation gate</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]] -->
+<h1 id="project-uppercut-reiteration">Project Uppercut Reiteration</h1>
+<p>Project Uppercut uses the same runtime through an isolated deployment profile. It must not rewrite, reuse the task database of, or share local control-plane state with the primary Director deployment.</p>
+<h2 id="isolation-contract">Isolation contract</h2>
+<ul>
+<li>Populated profile: <code>.env.uppercut</code> (ignored by Git).</li>
+<li>Committed template: <code>.env.uppercut.example</code> (contains no credentials).</li>
+<li>Compose project: <code>project-uppercut-director</code>.</li>
+<li>Orchestrator: <code>127.0.0.1:18080</code>.</li>
+<li>n8n: <code>127.0.0.1:15678</code>.</li>
+<li>Dedicated Compose volumes and SQLite database.</li>
+<li>Repository allowlist limited to <code>edwardjones3976/Project-Uppercut</code>.</li>
+<li>Slack routing limited to the approved Project Uppercut channel and owner.</li>
+<li>Separate callback and internal service secrets. Provider credentials may be copied locally only through the explicit seeding switch; values are never printed or committed.</li>
+</ul>
+<h2 id="windows-initialization">Windows initialization</h2>
+<p>Run from the canonical <code>director-orchestrator</code> checkout:</p>
+<pre><code class="language-powershell">git switch main
+git pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-live-validation.ps1 -SeedProviderCredentialsFromPrimaryEnv
+</code></pre>
+<p>The first invocation creates <code>.env.uppercut</code>, generates new internal secrets, copies only the named credential values <code>OPENAI_API_KEY</code>, <code>CURSOR_API_KEY</code>, <code>CLAUDE_ROUTINE_URL</code>, <code>CLAUDE_ROUTINE_TOKEN</code>, <code>GEMINI_API_KEY</code>, <code>PERPLEXITY_API_KEY</code>, and <code>XAI_API_KEY</code> when requested, and then stops if dedicated Slack configuration is still absent. Enable flags are never copied or synthesized from a seeded key: Grok and Perplexity remain disabled unless <code>.env.uppercut</code> explicitly sets <code>GROK_ENABLED=true</code> or <code>PERPLEXITY_ENABLED=true</code> and adds <code>grok</code> or <code>perplexity</code> to <code>USAGE_CHECK_PROVIDERS</code>. Install the generated <code>CLAUDE_CALLBACK_SECRET</code> in the trusted callback sender before live Claude work.</p>
+<p>After the dry-run profile is healthy and provider-side limits are set, the paid invocation first proves the isolated task store is empty, validates the profile's explicit <code>USAGE_CHECK_PROVIDERS</code> before opening any paid switch (OpenAI, Claude, and Cursor are mandatory; <code>grok</code>, <code>perplexity</code>, or <code>gemini</code> may be listed only when enabled with a configured credential; duplicates and unknown names fail closed), starts only the API, runs fresh checks for exactly that provider set, and starts Slack intake only if every scheduled or cooling provider shows successful evidence. The committed <code>.env.uppercut.example</code> still lists <code>grok</code>; before a paid run either enable Grok with its key or remove <code>grok</code> from <code>USAGE_CHECK_PROVIDERS</code> in <code>.env.uppercut</code>:</p>
+<pre><code class="language-powershell">powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-live-validation.ps1 -EnablePaidRuns
+</code></pre>
+<h2 id="activation-gate">Activation gate</h2>
+<ol>
+<li>Finish Gate 0 in the authoritative <a href="https://github.com/edwardjones3976/director-orchestrator/pull/18">LangGraph transition plan in PR #18</a>.</li>
+<li>Prove the isolated profile leaves the primary <code>.env</code>, ports, containers, volumes, and task database unchanged.</li>
+<li>Run one analysis-only OpenAI → Claude → Cursor task.</li>
+<li>Run one reversible isolated-branch task that may create only a draft PR.</li>
+<li>Review provider evidence, spend, callbacks, approvals, and recovery before routine use.</li>
+</ol>
+<p><code>-SkipProviderChecks</code> cannot be combined with <code>-EnablePaidRuns</code>. If readiness or startup fails, the script closes both paid switches, stops Slack intake, and recreates the API in the disabled state.</p>
+<p>No agent may merge, deploy, publish, delete, purchase, expand access, or claim Unreal authority without the matching owner decision and Windows evidence.</p>
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

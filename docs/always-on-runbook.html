@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Always-On Windows Runbook · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#one-time-host-setup">One-time host setup</a></li><li class="top"><a href="#startup-and-recovery-behavior">Startup and recovery behavior</a></li><li class="top"><a href="#daily-check">Daily check</a></li><li class="top"><a href="#periodic-usage-check-operation">Periodic usage-check operation</a></li><li class="top"><a href="#scheduled-recovery-soak">Scheduled recovery soak</a></li><li class="top"><a href="#backup">Backup</a></li><li class="top"><a href="#safe-update">Safe update</a></li><li class="top"><a href="#host-outage">Host outage</a></li></ul></details></nav>
+<main id="content">
+<h1 id="always-on-windows-runbook">Always-On Windows Runbook</h1>
+<p>This is the first deployment target. The host is a Windows desktop running Linux containers in Docker Desktop. Slack connects outbound through Socket Mode, so no router port-forward or public webhook is required.</p>
+<h2 id="one-time-host-setup">One-time host setup</h2>
+<ol>
+<li>Install Docker Desktop and Git for Windows.</li>
+<li>In Docker Desktop, enable <strong>Start Docker Desktop when you sign in</strong> and use the WSL 2 engine.</li>
+<li>In Windows power settings, disable sleep and hibernation while plugged in. Screen-off is fine.</li>
+<li>Clone the private repository and run <code>scripts/windows-bootstrap.ps1</code> from PowerShell. The script securely prompts for the Slack <code>xapp-</code> and <code>xoxb-</code> tokens when they are not already present; input is hidden and the generated <code>.env</code> ACL is restricted to the current Windows account, SYSTEM, and local Administrators.</li>
+<li>Initialize n8n at <code>http://localhost:5678</code>, import <code>n8n/workflows/director-intake.json</code>, inspect it, and activate it.</li>
+<li>Add provider credentials to <code>.env</code> one at a time. Never place them in source control or Slack. Rotate any credential that was exposed in a message after the replacement has been installed locally and verified.</li>
+<li>Restart the stack with <code>docker compose up -d</code>.</li>
+</ol>
+<h2 id="startup-and-recovery-behavior">Startup and recovery behavior</h2>
+<ul>
+<li>Every service uses <code>restart: unless-stopped</code>.</li>
+<li>SQLite task state and n8n/PostgreSQL data live in named Docker volumes.</li>
+<li>On orchestrator startup, queued, planning, running, and reviewing tasks are reloaded.</li>
+<li>A recorded provider run is polled or reviewed again; it is not blindly redispatched.</li>
+<li>Slack events are deduplicated locally and again by a unique source-event key in SQLite.</li>
+<li>Tasks waiting for an owner decision remain paused after restart.</li>
+</ul>
+<h2 id="daily-check">Daily check</h2>
+<pre><code class="language-powershell">docker compose ps
+docker compose logs --tail 100 orchestrator slackbot
+</code></pre>
+<p>Healthy means the orchestrator is <code>healthy</code>, Slackbot and n8n are <code>running</code>, and <code>http://localhost:8080/health</code> returns <code>&quot;ok&quot;: true</code>.</p>
+<p>The health response also includes <code>usage_monitor</code>. Its <code>latest</code> list shows freshness, completion confidence, attempts, normalized quota code, tokens, and provider-reported cost without exposing model replies or credentials. <code>all_configured_have_recent_signal</code> is false for an empty list, unsupported names, missing, stale, skipped, or failed providers. <code>all_configured_completion_verified</code> is stricter and remains false while any configured provider has only a pending signal. A Claude <code>prompted</code> record is explicitly listed under <code>pending_completion_providers</code>; it proves Routine intake only, not callback completion. <code>daily_accounting</code> reports bounded request/retry/token/quota totals and never invents missing cost. Periodic checks remain dormant unless both <code>USAGE_CHECK_ENABLED=true</code> and <code>ALLOW_PAID_RUNS=true</code>.</p>
+<h2 id="periodic-usage-check-operation">Periodic usage-check operation</h2>
+<ul>
+<li>Default cadence: once every six hours per configured provider.</li>
+<li>Minimum enforced cadence: 15 minutes, even if the environment is misconfigured lower.</li>
+<li>Provider checks run sequentially with a delay between them.</li>
+<li>A restart does not immediately reprompt a provider that was checked within the interval.</li>
+<li>Token counts are recorded only when returned by the provider.</li>
+<li>Claude Routine can confirm prompt acceptance but requires its configured completion callback for final usage metadata.</li>
+<li>Model-reported quota is advisory; use each provider dashboard for authoritative subscription or billing balance.</li>
+</ul>
+<p>To pause the checks without disabling ordinary approved work, set <code>USAGE_CHECK_ENABLED=false</code> and restart <code>orchestrator</code>. To request one bounded cycle ahead of the normal six-hour cadence, call <code>POST /v1/usage-checks/run</code> with the local bearer secret. The endpoint still refuses to run unless both <code>USAGE_CHECK_ENABLED</code> and <code>ALLOW_PAID_RUNS</code> are true, and it never bypasses the 15-minute per-provider minimum.</p>
+<p>The manual endpoint returns a structured schedule contract instead of an ambiguous acceptance:</p>
+<ul>
+<li><code>202</code> + <code>status=accepted</code> when at least one configured supported provider is due. The body lists <code>scheduled_providers</code> and any <code>cooling_down_providers</code>, and only then schedules the background cycle.</li>
+<li><code>200</code> + <code>status=not_due</code> when every configured supported provider is still inside the 15-minute minimum. No <code>cycle_id</code> is accepted and no background work is scheduled.</li>
+<li><code>409</code> + <code>status=busy</code> when a cycle is already running or reserved, so callers cannot be promised records another pass cannot create.</li>
+</ul>
+<p>Edge Oracle recovery note: isolated live-validation used to wait for three records after every accepted <code>cycle_id</code>. When providers were cooling down, that wait timed out and could close paid-run switches even though no probes were due. The shared schedule contract fixes that for every deployment that calls the endpoint; do not encode Edge Oracle committee rules into global Director governance. Live validation still fail-closes unless every cooling primary provider has a latest <code>ok</code>/<code>prompted</code> record inside the 15-minute window—recent <code>error</code> or <code>skipped</code> results are not treated as readiness.</p>
+<h2 id="scheduled-recovery-soak">Scheduled recovery soak</h2>
+<p>The repository runs a bounded recovery probe every six hours and supports manual runs from GitHub Actions. Each scheduled job performs 12 independent cycles. Every cycle starts three separate Python processes against the same temporary SQLite database: one seeds an in-progress task with a recorded terminal provider result, one recovers and accepts it, and one verifies that a second recovery is an idempotent no-op.</p>
+<p>The probe fails if persisted state disappears, the assignment advances more than once, an extra provider run or outcome appears, or the engine attempts to redispatch or poll the recorded terminal run. It uses deterministic fake provider and Director components, does not load repository secrets, and makes no paid model calls.</p>
+<p>This distributed schedule is more useful for regression detection than one CI job sleeping for 24 hours: it exercises fresh GitHub runners at four points each day and leaves a separate pass/fail record for each observation. It is still not a substitute for observing the actual Windows host across sleep, Docker restart, network loss, or a real provider callback. Before production use, also run a shorter supervised host recovery drill with paid execution disabled.</p>
+<h2 id="backup">Backup</h2>
+<p>Before upgrades, stop new tasks and back up the three named volumes: <code>director-data</code>, <code>n8n-data</code>, and <code>n8n-db-data</code>. Store backups encrypted. Test a restore before treating the machine as production infrastructure.</p>
+<h2 id="safe-update">Safe update</h2>
+<ol>
+<li>Keep <code>ALLOW_PAID_RUNS=false</code> during the update.</li>
+<li>Back up volumes.</li>
+<li>Pull the reviewed repository branch.</li>
+<li>Run <code>docker compose build --pull</code> and <code>docker compose up -d</code>.</li>
+<li>Check health and run the dry-run Slack smoke test.</li>
+<li>Re-enable paid runs only after the dry-run behaves as expected.</li>
+</ol>
+<h2 id="host-outage">Host outage</h2>
+<p>Provider-side background runs may continue while the desktop is offline. When the host returns, recorded Cursor and Gemini run IDs are polled again; Perplexity Agent API calls return synchronously. Claude Routine sessions require their completion callback or manual completion report. Never create a second work order merely because the host rebooted; first inspect the original task ID.</p>
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

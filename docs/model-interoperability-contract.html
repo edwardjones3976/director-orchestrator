@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Model interoperability contract · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#acceptance-boundary">Acceptance boundary</a></li><li class="top"><a href="#principle">Principle</a></li><li class="top"><a href="#required-work-packet-fields">Required work-packet fields</a></li><li class="top"><a href="#required-result-fields">Required result fields</a></li><li class="top"><a href="#shared-status-vocabulary">Shared status vocabulary</a></li><li class="top"><a href="#handoff-rules">Handoff rules</a></li><li class="top"><a href="#repository-behavior">Repository behavior</a></li><li class="top"><a href="#context-discipline">Context discipline</a></li><li class="top"><a href="#formal-v1-authority-decision">Formal v1 authority decision</a></li><li class="top"><a href="#compatibility">Compatibility</a></li><li class="top"><a href="#replay-run-documents">Replay-run documents</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
+<h1 id="model-interoperability-contract">Model interoperability contract</h1>
+<p><strong>Status:</strong> Owner-accepted v1 documentation/schema authority, effective when PR #18 merges; adapter conformance remains unaccepted
+<strong>Applies to:</strong> OpenAI, Claude, Cursor, Grok, Gemini, Perplexity, and future adapters</p>
+<h2 id="acceptance-boundary">Acceptance boundary</h2>
+<p>The owner accepted this provider-neutral contract authority on 2026-08-16 after Gate 0 acceptance. Merging these documents and schemas authorizes fixture and adapter-conformance work only. It does not install LangGraph, enable a graph, dispatch a provider, migrate state, change the sole writer, or permit an external write.</p>
+<p>OpenAI, Claude, Cursor, and Grok are primary-capable lanes. The owner-approved allocation profiles also account for Antigravity, Perplexity, Firecrawl, and GitHub Copilot. Each requires its actual bounded adapter capability; a nonzero target never expands this contract or authenticates readiness. See <a href="provider-allocation-profiles.html">Provider allocation profiles</a>.</p>
+<h2 id="principle">Principle</h2>
+<p>Every model receives the same bounded work packet and returns the same bounded result packet. Provider-specific prompts, run IDs, session URLs, token metadata, and tool representations are adapter details. They never become project authority.</p>
+<p><strong>Adapter detail, accepted by the owner on 2026-09-23 as a Gate-0 amendment (recorded on the pull request that adds it):</strong> the work packet above stays the Director-side authority, validated in full and bound by <code>work_packet_digest</code>. On the native CLI work-packet lanes, the OpenAI Responses lane, and the Claude and Grok host-bridge lanes, the model is shown a <code>director-compact-work-view/v1</code> document derived from it: the packet's fields under the view's own schema version, with the snapshot inventory replaced by its commit, digest, file count, and at most 64 entries under owned paths or named in the objective, never under prohibited paths, plus the packet's <code>work_packet_digest</code>. Every result is still validated and rebound against the full packet. The cursor, github-copilot, native Codex, and Antigravity host-bridge lanes still receive the full packet or the Antigravity closed directive.</p>
+<p><strong>Compact view schema (2026-09-24).</strong> The adapter detail above is unchanged. The <code>director-compact-work-view/v1</code> document is defined by <code>docs/schemas/director-compact-work-view-v1.schema.json</code>, whose fields reference this contract's work-packet schema, and every view is validated against it before a transport sends it. For a small read-only task only (<code>docs/human-out-of-the-loop-operation.html</code>), the view also carries a bounded <code>contents</code> array: the text of each path the request names, read from the git blob the packet's snapshot binds and bound by that blob hash. Results are still rebound to the full packet.</p>
+<h2 id="required-work-packet-fields">Required work-packet fields</h2>
+<ul>
+<li><code>schema_version</code></li>
+<li><code>task_id</code> and <code>assignment_id</code></li>
+<li>project, repository, and starting ref</li>
+<li>objective and explicit non-goals</li>
+<li>authority snapshot: canonical paths plus commit/blob digests and one deterministic snapshot digest</li>
+<li>dependencies and accepted upstream outcomes</li>
+<li>constraints and prohibited actions</li>
+<li>allowed tools and allowed external effects</li>
+<li>acceptance checks and evidence requirements</li>
+<li>approval requirements</li>
+<li>budget, timeout, hop, and revision ceilings, including an immutable
+assignment retry limit of exactly 3</li>
+<li>idempotency key and correlation identifiers</li>
+</ul>
+<p>A packet missing its authority snapshot, acceptance checks, or repository boundary is invalid and must not dispatch.
+The retry limit is a ceiling of three total attempts, never a requirement to
+perform three calls. Stop on success. Attempt two requires a classified temporary
+failure. Attempt three requires materially new information or a substantially
+different underlying transport; a corrected approach alone is insufficient.
+Every attempt remains subject to resource and authority gates. After three
+recorded failures the assignment route is unavailable. An ambiguous paid dispatch
+is never repeated, including through a fallback; reconcile it first.
+For v1 paid revisions, the additional attempt also requires authenticated,
+durable assignment token accounting; primary attempts are unaffected. The
+current runtime has no generic token authority and therefore fails paid
+revisions closed rather than treating pre-stage <code>budget_units</code> or optional
+provider telemetry as token accounting.</p>
+<h2 id="required-result-fields">Required result fields</h2>
+<ul>
+<li>matching schema, task, assignment, and idempotency identifiers;</li>
+<li>provider and run reference;</li>
+<li>the authority-snapshot digest and matching correlation identifiers;</li>
+<li>terminal status;</li>
+<li>concise outcome;</li>
+<li>artifacts with repository path/URL and digest where available;</li>
+<li>commands/checks performed and their exact results;</li>
+<li>acceptance-check disposition;</li>
+<li>detected risks, blockers, and requested decisions;</li>
+<li>side effects attempted or performed;</li>
+<li>usage metadata when the provider returns it;</li>
+<li>whether another revision is recommended.</li>
+</ul>
+<p>Free-form prose may accompany these fields but cannot replace them.</p>
+<h2 id="shared-status-vocabulary">Shared status vocabulary</h2>
+<p><code>QUEUED</code>, <code>READY</code>, <code>RUNNING</code>, <code>WAITING_CALLBACK</code>, <code>WAITING_APPROVAL</code>, <code>REVIEWING</code>, <code>REVISION_REQUIRED</code>, <code>SUCCEEDED</code>, <code>FAILED</code>, <code>CANCELLED</code>, and <code>OWNER_DECISION_REQUIRED</code>.</p>
+<p>Adapters translate provider-native states into this vocabulary. Unknown states fail closed.</p>
+<h2 id="handoff-rules">Handoff rules</h2>
+<ol>
+<li>Dependencies are named by assignment ID, never implied by conversation order.</li>
+<li>Only accepted outcomes enter a downstream packet.</li>
+<li>Upstream content is wrapped as untrusted data.</li>
+<li>Agents do not address each other through uncontrolled chat loops.</li>
+<li>Questions return as a structured blocker or decision request.</li>
+<li>Parallel local analysis and read-only work are allowed only when dependency
+analysis marks the assignments independent. Parallel external provider
+dispatch additionally requires its separately accepted LangGraph graduation
+gate, bounded concurrency, idempotency, budgets, cancellation, recovery,
+deterministic aggregation, and an active kill switch.</li>
+<li>The orchestrator records which canon snapshot each agent saw.</li>
+<li>Later canon changes invalidate or rebase affected queued assignments.</li>
+<li>Results never silently mutate the work packet.</li>
+<li>The Director resolves cross-agent disagreement using evidence and repository authority.</li>
+</ol>
+<h2 id="repository-behavior">Repository behavior</h2>
+<ul>
+<li>Work occurs on isolated branches/worktrees.</li>
+<li>A work packet may authorize creation of a draft PR; it never implies merge authority.</li>
+<li>Commits, PRs, comments, Slack posts, and provider runs are external side effects and require ledger entries.</li>
+<li>Remote readback is required before an external write is considered complete.</li>
+<li>A provider that cannot access a named system must report that limitation; it must not claim the system was updated.</li>
+</ul>
+<h2 id="context-discipline">Context discipline</h2>
+<p>Agents receive:</p>
+<ol>
+<li>the minimal canonical files relevant to the assignment;</li>
+<li>the pinned Project Uppercut transition bridge;</li>
+<li>accepted dependency outcomes;</li>
+<li>the task-specific evidence and tool boundaries.</li>
+</ol>
+<p>They do not receive unrestricted secrets, unrelated user data, or unlimited repository history.</p>
+<h2 id="formal-v1-authority-decision">Formal v1 authority decision</h2>
+<p><strong>Decision:</strong> ACCEPTED for documentation and JSON Schema authority, effective when PR #18 merges.</p>
+<p>The accepted schemas fail closed on unknown fields and require:</p>
+<ul>
+<li>task, assignment, idempotency, correlation, and authority-snapshot identifiers;</li>
+<li>exact canonical file commit/blob references plus a deterministic snapshot digest;</li>
+<li>explicit dependencies, boundaries, approvals, acceptance checks, evidence, and resource ceilings;</li>
+<li>a terminal result with acceptance dispositions, risks, blockers, requested decisions, normalized usage, and a revision recommendation;</li>
+<li>an idempotency key for every reported external side effect.</li>
+</ul>
+<p>The checked examples validate against JSON Schema Draft 2020-12, while negative validation cases prove that omitted dependencies, authority blob identity, correlation, and revision recommendation are rejected.</p>
+<p>This decision does not accept an adapter implementation. Phase 1 still requires fixture-based conformance tests for each adapter before any runtime packet dispatch is enabled.</p>
+<h2 id="compatibility">Compatibility</h2>
+<p>Schema versions use semantic major versions. Additive optional fields may remain within v1. Removing, renaming, or changing the meaning of a required field creates a new major version. During transition, the orchestrator must read both the last accepted legacy record and v1 packets, but it writes only the configured canonical version.</p>
+<h2 id="replay-run-documents">Replay-run documents</h2>
+<p>Offline replay fixtures bind one validated work packet to its validated result packet in a <code>director-replay-run</code> document. The v1 replay schema is <code>docs/schemas/model-replay-run-v1.schema.json</code>.</p>
+<p><code>director_orchestrator.packet_contracts</code> writes and loads these documents symmetrically. It canonicalizes JSON with RFC 8785, records SHA-256 digests for both packets and the replay envelope, rejects duplicate keys and documents over 1 MiB, verifies task/assignment/idempotency/authority/correlation linkage, and can compare the envelope against an independently trusted digest. The <code>replay_run_digest</code> is calculated over the canonical envelope with that field omitted, avoiding a self-referential hash.</p>
+<p>A self-contained digest detects accidental or unsynchronized modification; it is not a signature and grants no authority. Acceptance, dispatch, external writes, and merge decisions remain governed by deterministic policy and separately trusted evidence.</p>
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | END]] -->
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:42 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Director R1 preparation, doctor and sibling rehearsal · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#descriptor-and-protected-inputs">Descriptor and protected inputs</a></li><li class="top"><a href="#one-owner-descriptor">One owner descriptor</a></li><li class="top"><a href="#commands-and-exit-status">Commands and exit status</a></li><li class="top"><a href="#resume-and-uncertain-work">Resume and uncertain work</a></li><li class="top"><a href="#sibling-rehearsal-interface">Sibling rehearsal interface</a></li><li class="top"><a href="#upstream-integration-dependencies">Upstream integration dependencies</a></li><li class="top"><a href="#offline-verification">Offline verification</a></li></ul></details></nav>
+<main id="content">
+<h1 id="director-r1-preparation-doctor-and-sibling-rehearsal">Director R1 preparation, doctor and sibling rehearsal</h1>
+<p><code>scripts/director-release.py</code> inspects pinned inputs, prepares a Compose artifact,
+recovers an interrupted local receipt without replay, and produces a command plan
+for a sibling Compose rehearsal. It executes no activation or provider command.
+Every result reports <code>release_ready: false</code>; a generated plan is not a completed
+drill, accepted generation, paid admission or deployment.</p>
+<p><strong>A2 integration:</strong> W2/#313 owns the OS-root locator and installed descriptor
+reader. This runner consumes its <code>owner_root</code>, <code>release_descriptor</code> and
+<code>read_descriptor</code> API directly. The focused suite loads the production A2 source
+in temporary owner roots, replacing only its OS account lookup. A missing
+A2 locator or installation fails with <code>trusted_descriptor_consumer_unavailable</code>;
+missing or invalid owner evidence also blocks before profile reads, platform
+probes or preparation writes. The tests perform no real owner installation.</p>
+<h2 id="descriptor-and-protected-inputs">Descriptor and protected inputs</h2>
+<p>The closed schema is
+<a href="schemas/director-release-descriptor-v1.schema.json"><code>schemas/director-release-descriptor-v1.schema.json</code></a>.
+The accompanying <a href="schemas/director-release-descriptor-v1.example.json">example</a>
+uses illustrative paths and zero hashes; it grants no authority and cannot prepare
+a release until replaced with verified inputs and an owner's exact-byte pin.
+Unknown fields, duplicate JSON keys, and non-finite numbers are rejected. Supply
+a protected descriptor with these inputs; no secrets belong in the descriptor:</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>schema_version</code>, <code>release_id</code></td>
+<td><code>director-release-descriptor/v1</code>; unique local preparation name</td>
+</tr>
+<tr>
+<td><code>source</code>, <code>candidate</code></td>
+<td>Absolute checkout containing this runner; exact Git commit and tree</td>
+</tr>
+<tr>
+<td><code>compose_project</code>, <code>image_id</code></td>
+<td>Existing project image alias and immutable <code>sha256:</code> image identity</td>
+</tr>
+<tr>
+<td><code>runtime_env</code>, <code>bridge_env</code></td>
+<td><code>{path, sha256}</code> pins for protected environment files</td>
+</tr>
+<tr>
+<td><code>compose_files</code></td>
+<td>Ordered <code>{path, sha256}</code> pins passed explicitly to Compose; every raw file must satisfy the supported input contract below</td>
+</tr>
+<tr>
+<td><code>generation_manifest</code>, <code>validation_manifest</code></td>
+<td><code>{path, sha256}</code> pins; no generation is created or reserved</td>
+</tr>
+<tr>
+<td><code>bridge_url</code>, <code>bridge_ca</code></td>
+<td>HTTPS configuration-digest endpoint; pinned CA file</td>
+</tr>
+<tr>
+<td><code>snapshot</code></td>
+<td>Absolute path, repository, starting ref, remote, exact commit/tree</td>
+</tr>
+<tr>
+<td><code>reviewers</code></td>
+<td>Planned independent and security actor names, checked against configured allowlists</td>
+</tr>
+<tr>
+<td><code>executables</code></td>
+<td>Existing absolute <code>python</code>, <code>powershell</code>, <code>git</code>, <code>docker</code> and <code>gh</code> paths outside both checkout and snapshot</td>
+</tr>
+<tr>
+<td><code>output_directory</code></td>
+<td>Existing protected directory disjoint from the checkout and snapshot, including ancestors</td>
+</tr>
+<tr>
+<td><code>timeout_seconds</code></td>
+<td>Shared whole-doctor subprocess deadline, 1-900 seconds</td>
+</tr>
+<tr>
+<td><code>rehearsal</code></td>
+<td>Optional sibling descriptor pin, acceptance-artifact pin, fresh backup path and loopback host port</td>
+</tr>
+</tbody>
+</table>
+<p>The descriptor and executables are operator inputs, authenticated for preparation
+only by the owner's exact-byte pin described below.
+All five tool paths must be unlinked, existing files. The runner validates them
+before its first native invocation and uses the selected absolute executable,
+without searching the checkout or ambient command path. Emitted launchers recheck
+them and pass the Git, Docker and GitHub CLI selections to the control script;
+the snapshot helper receives the same Git selection. Standalone helper defaults
+remain compatible, but the explicit release path never uses those defaults.
+The actor-name check is not a review verdict, provider-family check, or signed
+acceptance check. Runtime and bridge profiles must already contain every
+prerequisite; this script neither defaults missing values nor edits profiles.
+The bridge must already be running with its explicit pinned process environment.</p>
+<p>The rendered Compose file can contain credentials interpolated from the runtime
+environment. Its output directory must already have appropriate owner-only
+permissions. Creation requests mode <code>0600</code> on POSIX; it does not create or modify
+Windows ACLs. Do not commit or post the rendered file. Reports and journal records
+contain digests, fixed reason codes, and check names instead of raw subprocess
+output, DSNs, environment values, or HTTP bodies.</p>
+<p>Before invoking Compose, the runner safely parses every pinned raw YAML file.
+The supported top-level fields are <code>name</code>, <code>version</code>,
+<code>services</code>, <code>networks</code> and <code>volumes</code>; service fields are
+limited to the reviewed stock graph. Recursive <code>include</code>, service
+<code>extends</code>, <code>label_file</code>, file-backed configs/secrets and other
+unsupported input features are refused before Compose can read them. Duplicate
+mapping keys, YAML aliases/merges and custom tags are unsupported.</p>
+<p>A service <code>env_file</code> may reference only that descriptor's existing
+protected <code>runtime_env</code> input. Literal absolute paths or paths relative
+to the first Compose file must resolve to that exact unlinked input; a separate
+file with identical contents is insufficient. The fixed
+<code>$DIRECTOR_ENV_FILE</code>, <code>${DIRECTOR_ENV_FILE}</code> and stock
+<code>${DIRECTOR_ENV_FILE:-.env}</code> selectors are supported. Every planning and
+emitted consumer sets that variable to the bound runtime path, including the
+direct <code>StartDatabase</code> command. Other unresolved interpolation, optional
+env files and alternate formats are refused. List entries may use
+<code>{path: ..., required: true}</code>. The existing immutable Compose pins and
+runtime byte/expected-transition checks remain the authority before each action;
+the runner does not discover or pin a recursive input graph.</p>
+<h2 id="one-owner-descriptor">One owner descriptor</h2>
+<p>Start the runner with Python <code>-I -B</code>. It requires both flags and refuses ordinary interpreter startup
+before importing filesystem modules: an unverified checkout cannot supply a
+shadow <code>argparse</code>, <code>ctypes</code>, <code>uuid</code>, or other imported dependency. Isolation
+excludes the script/current directories, user site and <code>PYTHON*</code> overrides from
+Python's startup search path. After owner authentication and the exact clean
+source check, the runner adds only that checkout's <code>src</code> for candidate helpers.
+Emitted launchers also use both flags, so importing the verified containment
+helper cannot create checkout bytecode before the next source check.</p>
+<p>The runner uses A2's same OS account anchor (Windows Known Folder API or POSIX
+effective-UID account record) without executing a checkout locator. It locates the
+OS account's
+<code>.director-scorecard</code> directory (Windows <code>SHGetKnownFolderPath(FOLDERID_Profile)</code>;
+POSIX <code>pwd.getpwuid(os.geteuid()).pw_dir</code>). The runner loads the exact source
+bytes of <code>launcher.py</code> from that directory without reading or writing bytecode,
+then uses only the installed copy's <code>release_descriptor()</code> and
+<code>read_descriptor(path) -&gt; (whole_file_sha256, document) | None</code>. Both copies must
+agree on the fixed root and descriptor path. Missing installations never fall
+back to a checkout reader. All path components must be free of symlinks and
+Windows reparse points before the installed file is loaded or evidence is read.</p>
+<p>Add this mapping to the existing <code>director-cli-release-descriptor/v1</code> owner
+descriptor, retaining its evaluator, CLI releases and other pins:</p>
+<pre><code class="language-json">&quot;release_preparations&quot;: {
+  &quot;r1-final&quot;: &quot;&lt;64 lowercase hex: SHA256 of exact final preparation JSON bytes&gt;&quot;,
+  &quot;r1-sibling&quot;: &quot;&lt;64 lowercase hex: SHA256 of exact sibling preparation JSON bytes&gt;&quot;
+}
+</code></pre>
+<p>The keys must equal the existing preparation <code>release_id</code> fields. Both the final
+and sibling need entries. A missing, malformed or different digest refuses.
+The complete preparation file already binds its candidate, image, executable
+paths, protected profiles, output location and sibling reference; these values
+need not be duplicated in the owner mapping. Regenerate preparation pins when
+adding the required Git, Docker and GitHub CLI paths to an older descriptor.</p>
+<p>No evaluator environment, nonce or pending scorecard receipt is created or
+consumed. <code>HOME</code>, <code>USERPROFILE</code> and all <code>DIRECTOR_SCORECARD_*</code> claims cannot select
+owner authority. This checks the owner's configuration under the existing
+protected-file trust boundary; it does not authenticate a scorecard run or
+protect against an actor who can rewrite the reviewed runner or owner installation.</p>
+<p>The W5 bootstrap, interpreter and dependency search paths must themselves be
+trusted. This is an owner-pin and source-identity boundary, not an OS sandbox.
+Only captured installed-launcher bytes execute during bootstrap. Its real A2
+reader authenticates the exact preparation descriptor before its candidate is
+trusted. The checkout commit/tree and cleanliness are then checked before reading
+the checkout schema or importing candidate helpers. No checkout
+<code>scorecard-launcher.py</code> is executed. Doctor stops on an owner or source failure;
+each checkout child and helper also rechecks those boundaries before use. The
+owner must protect these files against concurrent writers during execution.</p>
+<p>In the already-approved setup slot, the owner installs <code>launcher.py</code> from the
+reviewed evaluator commit and verifies its exact bytes, installs the single
+<code>release-descriptor.json</code> including these pins and the finalized R1 bindings,
+and places the final/sibling preparation JSON at the agreed protected paths.
+The preparation files may live in the same <code>.director-scorecard</code> directory.
+Compute their pins from final bytes; subsequent formatting changes invalidate
+them. Existing protected profiles, output directories, snapshot and image are
+prerequisites. The owner also verifies headroom and approves per-call caps.
+This code performs none of those installation or authorization actions.</p>
+<h2 id="commands-and-exit-status">Commands and exit status</h2>
+<p>From the candidate checkout, with the repository virtual environment:</p>
+<pre><code class="language-powershell">python -I -B scripts/director-release.py doctor --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py prepare --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py resume --descriptor C:\protected\r1-descriptor.json
+python -I -B scripts/director-release.py rehearsal --descriptor C:\protected\r1-descriptor.json
+</code></pre>
+<p>These are templates for the reviewed owner setup and require the A2 installation
+above. <code>doctor</code> performs read-only configuration, Git, Docker image/configuration,
+bridge GET, and database SELECT checks. It does not start Docker services, pull
+images, create database tables, reserve attempts, or call a model. It currently
+exits <strong>2 even when <code>preparation_ready</code> is true</strong>, because release authority remains
+unwired. Read <code>checks</code> to distinguish a diagnostic failure from the separately
+reported capability dependencies.</p>
+<p><code>prepare</code> runs the same diagnostics and writes only the local preparation
+artifact and its journal. It exits 0 only for that completed operation. <code>resume</code>
+on a complete receipt verifies pinned input and output bytes, without repeating
+platform checks. It is <strong>not a fresh readiness check</strong>; run <code>doctor</code> explicitly
+when fresh observations are required. <code>resume</code> with no prior intent behaves like
+<code>prepare</code>.</p>
+<p>After the owner binding passes, the doctor verifies:</p>
+<ol>
+<li>A clean source checkout at the exact descriptor commit/tree and an already
+present project image with matching source labels and immutable image ID.
+The actual Git child disables fsmonitor, hooks and untracked-cache execution;
+executable clean/smudge/process filters and submodule checkouts are refused
+before status. It does not change the operator's Git configuration.</li>
+<li>Matching runtime, bridge, generation, and validation selectors; validation
+expiration inside the existing 24-hour limit. This is a selector check, not
+full fresh-generation authority validation. The snapshot repository/ref and
+effective execution commit/tree must match the runtime profile: explicit
+project-execution pins take precedence, otherwise candidate pins apply.
+Selected generations require an explicit supported acceptance mode, its
+required paths and a correctly formed registry/adoption digest. A missing
+mode defaults to <code>github-v1</code> in the control script and is refused here.</li>
+<li>The existing <code>resolved_deployment_digest</code> contract, including the Slack
+gateway's exact image, explicit <code>pull_policy: never</code>, and the nonempty read-only
+<code>/repository</code> snapshot mount. Every service in the resolved final graph,
+including n8n and both database dependencies, must select an immutable image
+reference with <code>pull_policy: never</code>. The doctor observes each cached image ID;
+a reviewed reference string alone is insufficient. These image checks do not
+require the final project's resources to be fresh.</li>
+<li><code>windows-primary-snapshot.ps1 -Action Verify</code> and the planned reviewer
+allowlists, without adding actors or issuing acceptance.</li>
+<li><code>windows-host-provider-bridge.ps1 -Action Preflight</code>, followed by the existing
+authenticated GET <code>/v1/provider/configuration-digest</code>. Its running lane digests
+and <code>pinned_environment</code> must match the supplied validation manifest. The same
+endpoint's closed <code>configured_selection</code> object must match the selected
+candidate commit/tree and generation, canonical workspace digest, and exact
+validation-store configuration digest. These values are captured from the
+serving process after pinned environment and service initialization. Neither
+raw paths nor DSNs are returned. Missing, old or mismatched selection metadata
+fails closed. This proves configured selection, not generation acceptance or
+live database-instance identity.</li>
+<li>Existing database identity and instance UUID through <code>database_binding</code>
+with its default <code>bootstrap=False</code>, then a read-only query for occupied
+validation slots. Every observed slot blocks preparation; successful,
+unfinished, and ambiguous slots are never treated as unused.</li>
+<li>The existing read-only <code>live-dispatch-preflight.py</code> checks a hypothetical live
+target: only that validator child's environment enables its four target
+switches and disables offline simulation. Protected profiles, Compose
+rendering, the parent environment and the emitted sibling plan retain their
+selected unpaid settings. Real validator failures remain failures. This is
+followed by exact-byte
+rereads of the descriptor itself and all pinned files before writing anything.</li>
+</ol>
+<p>Platform children use closed stdin, a shared deadline, bounded captured output,
+and no shell. Raw probe inputs go through temporary stdin, not command-line
+arguments. Inherited provider keys, Git overrides, <code>COMPOSE_FILE</code>, and
+<code>DOCKER_HOST</code> are not forwarded. The doctor resolves the configured Docker context,
+refuses remote/TLS endpoints, and pins its local Unix socket or Windows named pipe
+and daemon ID. Later Docker checks use that endpoint with ambient Docker selectors
+removed. Windows Program Files
+variables are retained because Docker discovers its Compose plugin there. The descriptor's
+protected profiles and explicit executable paths remain trusted local inputs.</p>
+<p>The current host doctor requires host-readable profile paths and a database DSN
+whose canonical identity matches the manifest. Container-only paths or a host
+port alias producing a different storage identity fail; the script never
+rewrites those inputs or claims the identities are interchangeable. A fresh
+database without its existing validation tables also fails. These conditions
+need the bootstrap follow-up below before first-generation preparation can pass.</p>
+<h2 id="resume-and-uncertain-work">Resume and uncertain work</h2>
+<p>The output directory receives <code>&lt;release_id&gt;.activation.compose.json</code>,
+<code>&lt;release_id&gt;.jsonl</code>, and an OS-held <code>&lt;release_id&gt;.lock</code>. One writer acquires the
+lock, writes and flushes an intent bound to preparation, whole owner descriptor
+and installed-launcher digests with the intended output digest, creates the artifact
+exclusively, verifies its bytes, and flushes a digest-bound completion receipt.</p>
+<p>If interruption leaves a complete artifact whose bytes match the flushed intent,
+<code>resume</code> can append the missing receipt after verifying every input. It does not
+rerun the doctor, render again, overwrite the artifact or execute any effect.
+The installed launcher bytes and complete owner descriptor are reread before
+completion. Every field and whitespace byte in the owner descriptor participates
+in the binding. A new process or <code>Release</code> instance must match both owner
+descriptor and installed-launcher digests against the intent and receipt;
+rotation, even with the same evaluator and preparation pins, remains held.
+Old journal records without <code>owner_descriptor_sha256</code> or <code>owner_launcher_sha256</code> are refused without
+migration or replay. Both sibling and final bindings must come from the same
+owner descriptor bytes.
+An absent, partial or different artifact after intent, a truncated or changed
+journal, an existing unrecorded output, or changed inputs requires reconciliation.
+None is automatically replayed or overwritten. The journal hashes detect accidental
+changes; they do not authenticate an operator or authorize a release. This
+journal covers <strong>only Compose preparation</strong>. Symlinks and Windows reparse points
+are refused along the complete input/output paths. It neither imports old provider
+receipts nor resolves any uncertain paid or GitHub action.</p>
+<h2 id="sibling-rehearsal-interface">Sibling rehearsal interface</h2>
+<p>The final descriptor's optional <code>rehearsal</code> object pins a second complete
+descriptor and its acceptance artifact, and names <code>host_port</code> and <code>backup_path</code>.
+The sibling must have the same candidate/image, a different project/release ID,
+generation and database instance, separate protected profiles and output directory,
+and explicitly unpaid switches. It cannot contain another rehearsal descriptor.
+Its image, database identity and generation must already have been provisioned
+through the existing approved controls; this interface does not bootstrap them.</p>
+<p><code>rehearsal</code> verifies the available final database through the existing read-only
+probe. The complete backup/restore rehearsal requires the stock
+<code>langgraph-primary-db</code> service and the orchestrator's corresponding container-local
+DSN, database and user; an external-only database has no supported backup contract.
+The primary database must retain its enabled stock <code>pg_isready</code> healthcheck;
+an absent, empty or disabled check cannot satisfy <code>up --wait</code> readiness.
+The sibling's previously provisioned identity is <strong>DEFERRED</strong>, with
+<code>preparation_ready: false</code>, until its planned database-only start succeeds.
+<code>StartDatabase</code> uses the pinned Compose inputs and cached image, no build/pull or
+dependency startup, and a 120-second readiness bound. Immediately afterward,
+before any existing control action, a read-only probe in the candidate image
+checks the actual database identity/instance against the sibling manifest and
+the observed final identity. A host read-only query also requires unused
+validation slots. These checks repeat before subsequent controls. They never
+bootstrap an identity or validation schema. A failed start or proof stops the
+plan for reconciliation; planning itself starts nothing and reports no DB PASS.</p>
+<p>Each container database probe runs detached with a fresh request-owned name and
+label, using the pinned Docker executable, context and image. Its 30-second
+deadline includes cleanup, with time reserved to stop and reap the host client
+tree. Bounded inspection authenticates the exact container ID, name, ownership
+label, Compose project/service and image before waiting or removing that object.
+The created probe must also have restart disabled. Success, timeout and failure
+all require reconciliation of that owned object and a successful bounded daemon
+query proving its current absence. An unrelated or mismatched object is never
+removed, and an unavailable absence query is not proof of cleanup. A failed or
+ambiguous create remains failed even if the name is currently absent, because
+the daemon might complete that request later. The name and ownership label are
+reported for reconciliation; the launcher does not retry or issue a new probe
+identity after that uncertain action. Killing a Docker client does not reverse
+daemon effects. No database or provider write is part of this probe.</p>
+<p>The runner compares the resolved graphs <strong>and all actual final-project containers</strong>,
+including stopped containers, using Docker inspection. Their bind sources, volume
+names, attached networks and configured published ports participate in isolation.
+The launcher rechecks this inventory's digest before each action; a replaced
+container or changed resource requires a new plan. It refuses shared/external
+volumes or networks, driver options, host namespaces or Docker API socket
+delegation, reused effective Slack tokens/channels (including Compose overrides),
+non-loopback ports and final-project or sibling-internal port collisions. Writable sibling
+binds cannot overlap either release's checkout, snapshot, output, authority root,
+descriptor, pinned inputs or selected process-environment file, or any final
+Compose or observed container bind. Docker socket binds, parent
+directory binds exposing the selected/default engine socket, and named-pipe
+mounts are refused even when marked read-only; read-only filesystem access does
+not make the Docker API read-only. Effective sibling Compose paid/live switches must remain false
+and its kill switch true even if an override replaces profile values. The backup
+path must be new and directly inside the sibling output directory. Each output
+directory must also be disjoint from the other release's protected paths,
+including its snapshot. Published ports are limited to one loopback TCP mapping
+each for orchestrator target 8080 and n8n target 5678, using the host ports in the
+selected runtime profile. Database services and slackbot cannot publish ports;
+the databases retained after the final stop therefore have no supported host
+listener. Alternate targets, UDP and extra mappings are refused.</p>
+<p>The supported complete rehearsal graph is orchestrator, slackbot, n8n,
+<code>langgraph-primary-db</code>, and optional <code>n8n-db</code>. Slackbot may depend on both
+orchestrator and n8n. Extra services, alternate gateway commands, auxiliary
+startup commands, external gateway routes and unsupported n8n/Postgres settings
+are refused. Both application services require explicit unpaid/live/kill
+switches; the separate ChatGPT bridge must be disabled. All startable images
+must be immutable, already cached and explicitly <code>pull_policy: never</code>. Builds
+are forbidden on auxiliary services; the existing control uses <code>--no-build</code> for
+the application starts. Auxiliary n8n/Postgres images must use the sanctioned
+image repositories without command/entrypoint overrides. Every service must be
+a singleton: both <code>scale</code> and <code>deploy.replicas</code>, when present, must be integer 1;
+global replication is unsupported. Health commands are limited to the checked-in
+orchestrator HTTP check and stock Postgres readiness checks, or disabled/absent
+checks where permitted. PostgreSQL-backed n8n requires a nonoptional
+<code>n8n-db</code> dependency with <code>condition: service_healthy</code> and the
+enabled stock <code>pg_isready -U n8n -d n8n</code> check; a missing dependency,
+start-only condition or disabled readiness check is refused. The orchestrator also
+requires a nonoptional <code>langgraph-primary-db</code> dependency with
+<code>condition: service_healthy</code>; missing, start-only and
+<code>service_completed_successfully</code> conditions are unsupported for this
+long-running database. Dependency restart propagation is unsupported. The stock
+local database route requires the effective
+<code>LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES=true</code> setting before
+planning; the runtime transport validator and subsequent read-only identity
+probe still apply. Image-inherited health commands are checked too, including when Compose
+overrides only their timing. Arbitrary healthcheck commands are refused.
+Only the reviewed service fields and network/deployment shapes are supported;
+additional execution settings such as capabilities, security options, devices
+and custom labels are refused. Networks support only the isolated generated name
+and stock default flags: nonexternal, noninternal, nonattachable, IPv4 enabled and
+IPv6 disabled. Compose's inert <code>ipam: {}</code> default is accepted; nonempty
+or nonobject IPAM values, labels and other network attributes are refused.
+Restart policy must be disabled or
+<code>unless-stopped</code>; <code>always</code> could restart intake after the completed stop.</p>
+<p>The orchestrator must resolve to the stock <code>uvicorn</code> argument list
+for the selected main or staging ASGI app, listening on <code>0.0.0.0:8080</code>,
+with no executable entrypoint wrapper. Missing Compose fields are checked against
+the cached image's effective command and entrypoint before any candidate probe
+or service can launch. An image-declared mount cannot add an executable overlay.
+For both application services, the combined image and Compose environment must
+retain <code>PYTHONPATH=/app/src</code>, <code>PYTHONDONTWRITEBYTECODE=1</code>,
+<code>PYTHONUNBUFFERED=1</code>, stock executable search directories and
+<code>/app</code> as the effective working directory. Alternate Python startup
+controls and native-loader overrides are refused, including inherited image values.
+Nonempty <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code> and <code>ALL_PROXY</code>
+are refused regardless of case, so an HTTP client cannot redirect the internal
+gateway request and bearer header through an environment-selected proxy.
+The orchestrator image's defaults must independently satisfy these same checks:
+the control script's direct digest probe does not apply Compose overrides, so
+Compose cannot mask an unsafe image environment or working directory.</p>
+<p>Every sibling service must explicitly select the local <code>local</code> or
+<code>json-file</code> logging driver. Only the reviewed <code>max-size</code>,
+<code>max-file</code> and <code>compress</code> options are accepted. Omitted logging is
+refused because the daemon default could export logs. The owner supplies these
+settings in the pinned sibling Compose inputs; the runner changes neither the
+daemon nor the live graph. The control's direct, network-disabled digest probe
+explicitly uses <code>--log-driver none</code>; attached output returns to its caller
+without inheriting the daemon's logging driver.</p>
+<p>Planning also resolves the three intentional staging, offline activation and
+rollback profile states without writing the profile. Each must retain the pinned
+graph digest and exact intended ASGI command and switches; interpolation cannot
+introduce a new command, entrypoint or mount after the initial check.</p>
+<p>Mounts are limited to exact stock targets: orchestrator state at <code>/data</code>,
+the read-only snapshot at <code>/repository</code>, an optional read-only acceptance
+registry at <code>/run/director-acceptance-registry</code>, n8n state at
+<code>/home/node/.n8n</code>, and each PostgreSQL service's
+<code>/var/lib/postgresql/data</code>. Slackbot has no mounts. Additional targets,
+parent mounts, bind or volume overlays on executable paths, duplicate targets,
+volume subpaths and aliases are refused. Each state volume uses its stock Compose
+key and exact <code>&lt;sibling-project&gt;_&lt;stock-key&gt;</code> name.
+Read-only bind sources must already exist, have no linked path components and
+explicitly use <code>bind.create_host_path: false</code>. The acceptance-registry bind
+must be the exact directory named by the protected sibling runtime profile.
+Planning and execution do not implicitly create missing host directories.</p>
+<p>The sibling project must have no existing containers, named networks, prior-image record
+or generation/image-specific offline-attempt marker. A fresh plan also checks the
+offline-attempt marker immediately before <code>ActivateOffline</code>, after its
+database probe, so an interrupted activation cannot select the existing control's
+retry path. Reconciliation is required; standalone activation/resume rules are unchanged.
+n8n and its optional PostgreSQL state volumes must be new, project-scoped named
+volumes. The first emitted action, <code>InitializeIntakeVolumes</code>, checks freshness,
+then creates only these exact stock local volumes with the Compose project/key
+labels and a plan-specific nonce. This is a launcher-owned action: its
+<code>control_argv</code> is empty, and <code>initialize_argvs</code> lists the pinned Docker
+commands executed by <code>argv</code>; it is not a primary-control action.
+A create-only receipt in the protected sibling output directory binds the nonce,
+candidate, descriptors, daemon, project and names. Its intent is flushed before
+the first create. Completion is appended through the same open file only after
+each returned name and full observed volume identity is verified. The native
+calls share a 35-second deadline, within the unchanged 1,499-second operator allowance.
+An occupied name, partial or uncertain creation, incomplete receipt or missing
+identity stops for reconciliation; nothing is adopted, deleted or replayed.
+Every later action requires the bounded, regular, unlinked receipt and matching
+current identities both before its database probe and immediately before its
+control. This permits legitimate Compose reuse, including volumes retained by
+dependency selection, without silently accepting state that appeared later.
+Reused databases/workflows, bind-mounted n8n state
+and alternate database hosts are refused because Director paid switches cannot
+constrain arbitrary stored workflows. These restrictions require explicit sibling
+Compose overrides for the stock graph's pull policies, local logging, bind creation
+policy and gateway unpaid flags;
+the runner never rewrites the production graph or profile. Previously provisioned
+isolated primary database storage remains subject to the existing identity checks.
+The orchestrator and primary database state volumes must already be provisioned
+with the stock Compose project/volume labels and local driver, without driver
+options. Their observed identities, including creation time and mountpoint, are
+pinned and checked before each action. The runner never creates or deletes these
+previously provisioned orchestrator/primary-database volumes. The nonce and receipt
+operate within the protected-owner/daemon trust model; they do not authenticate a
+privileged operator or protect against one changing volume contents in place.
+For the PostgreSQL n8n topology, effective host, port, database, user and password
+must match the stock n8n database service; errors contain no secret values.
+The effective n8n settings must also retain the stock values:
+<code>N8N_HOST=localhost</code>, <code>N8N_PORT=5678</code>,
+<code>N8N_PROTOCOL=http</code>, <code>N8N_SECURE_COOKIE=false</code>,
+<code>N8N_DIAGNOSTICS_ENABLED=false</code>,
+<code>N8N_PERSONALIZATION_ENABLED=false</code> and
+<code>N8N_BLOCK_ENV_ACCESS_IN_NODE=true</code>. Missing or altered values are refused.</p>
+<p>Complete rehearsal also requires nonempty isolated effective Slack bot token,
+app token and channel settings. The comparison includes both resolved final
+configuration and every actual final-project container, running or stopped.
+The sibling comparison uses each application's combined image and Compose values.
+Only per-plan keyed digests of these three fields enter the resource binding;
+raw inspected environment values are not retained in plans or receipts. Missing
+or malformed environment representations and duplicate entries fail closed.
+The existing final-resource check detects identity changes before later actions.
+After offline activation and rollback start the
+gateway, bounded inspection must prove exactly one intended sibling gateway
+running on the pinned image, without a paused or restarting state. This proves
+process liveness only; it does not prove Slack authentication or message delivery.
+No live Slack probe is added and credential values are never written to receipts.</p>
+<p>Offline rehearsal supports only <code>provider-v2</code> and <code>provider-v3-two-party</code>, exactly
+as <code>PrepareOfflineHandoff</code> does. <code>owner-local-evidence-v1</code> can satisfy doctor
+selector checks but cannot emit this offline plan. The sibling profile must also
+set <code>DIRECTOR_PROVIDER_VALIDATION_ENABLED=false</code> before the plan is produced.</p>
+<p>The result contains executable launcher <code>argv</code> arrays and separate inspection-only
+<code>control_argv</code> arrays for the database-only Compose start, final Compose stop and existing control
+script, in gate order:
+<code>StartDatabase</code>, <code>Preflight</code>, <code>Accept</code>, <code>Migrate</code>, <code>Backup</code>, <code>RestoreDrill</code>, <code>StageRuntime</code>,
+<code>PrepareOfflineHandoff</code>, <code>ActivateOffline</code>, <code>Health</code>, <code>Rollback</code>, <code>Health</code>, <code>Stop</code>.
+The restore proof precedes activation as the existing acceptance chain requires.
+The separately pinned acceptance artifact is passed to <code>Accept</code>; the runner
+never considers its mere existence or a successful plan to be acceptance.
+Each executable <code>argv</code> invokes a fixed Python launcher which actually replaces
+the control child's environment with the emitted allowlist. The result declares
+<code>environment_mode: replace</code>; it is not an overlay or a promise that JSON null
+unsets a variable. This binds <code>cwd</code>, the local <code>DOCKER_HOST</code>, <code>COMPOSE_FILE</code>, <code>DIRECTOR_ENV_FILE</code>,
+<code>COMPOSE_PATH_SEPARATOR</code>, <code>DIRECTOR_HOST_PORT</code> and unpaid switches.
+Planning, direct Compose actions and the control-script path share a frozen
+sanitized host environment. Its executable search path includes the pinned
+PowerShell directory, matching PowerShell's startup normalization. Only the exact
+selectors copied by the control script are loaded from the verified runtime file
+into the launcher environment, in memory. The complete runtime map and its secrets
+are never serialized into the plan. All other interpolation values come from the
+bound <code>--env-file</code>, using Compose's quoting, expansion and comment rules
+on both paths. Raw control selectors support only unquoted literal values;
+quoting, variable expansion and inline comments in those selectors are refused.
+<code>PSModulePath</code> assignments and interpolation references, including
+escaped and default forms, are unsupported because PowerShell creates that host
+setting at startup. The separate host configuration preflight refuses runtime
+assignments to host paths, loader controls and Git/Docker/Compose redirection
+settings before launching its child. Intended application configuration and
+credentials, including GitHub application tokens, remain supported. Errors use
+fixed reason codes and do not include values. Ambient
+<code>DOCKER_CONTEXT</code>, TLS/certificate/config selectors and provider keys cannot reach
+the control child. Before each action the launcher rechecks exact bytes for both
+descriptors, the owner descriptor and installed launcher, both sets of immutable
+profile/Compose/manifest/CA inputs, and the acceptance artifact. The sibling
+runtime profile retains its original byte pin until <code>StageRuntime</code> changes it.
+Thereafter each step requires the full expected environment-map digest, with
+only the existing successful <code>StageRuntime</code>, <code>ActivateOffline</code> and <code>Rollback</code>
+switch edits included. Formatting changes from the writer are allowed; an edited
+DSN, credential, image, switch or other value is not. Pins are checked again
+immediately before invoking each action. Inputs are not silently re-pinned.</p>
+<p>Immediately before the first mutating step, each declared loopback TCP
+port must be available to bind. The check repeats before <code>StageRuntime</code>
+publishes application ports. No database-port exception applies. The check does
+not reserve a port: another process can claim it
+between checking and starting. A later start failure still stops the plan.</p>
+<p>Before each step the launcher also rechecks the pinned source commit,
+tree and cleanliness, both before probes and immediately before launching the control
+script. It refuses executable Git filters and submodule checkouts. The separate
+snapshot verifier also refuses its own local executable filters and submodules,
+and disables fsmonitor and hooks using an explicit <code>/dev/null</code> hook path for its
+index, content and cleanliness checks. It inventories configuration names without
+loading includes and refuses <code>include.path</code> and
+<code>includeIf.*.path</code>, even inactive or missing includes: a condition or
+absolute path can resolve differently when the snapshot moves to
+<code>/repository</code>. Such indirection is outside the supported snapshot contract.
+It additionally reads every direct <code>core.fsmonitor</code> value, including
+temporarily masked values, and requires absence or values that Git parses as disabled.
+Hook paths, enabled settings,
+malformed values and query errors refuse with a fixed diagnostic. This prevents
+a verifier-only override from certifying a hook that the later repository-authority
+consumer would execute; the check writes no configuration and relies on modern
+Git boolean semantics. Snapshot <code>Create</code> also persists
+<code>core.hooksPath=/dev/null</code> through clone's initial configuration before
+checkout, preventing inherited template hooks from executing before verification.
+Both paths reject hidden index flags and authenticate actual
+tracked file bytes against the pinned Git tree using batched raw hashes. They
+tolerate only UTF-8 text CRLF line endings. The host source gate additionally refuses
+<code>ident</code>, working-tree encoding and filter attributes; the snapshot verifier
+compares raw bytes regardless of those attributes. Status and
+index timestamps do not substitute for file contents. The host source gate also
+refuses bytecode, native extension and untracked Python import artifacts beneath
+<code>src</code> and <code>scripts</code>, including ignored unchecked-hash caches.
+<code>-B</code> alone does not prevent cached imports. Installed dependencies outside
+those checkout import roots remain supported, and the runner never deletes caches.
+These checks retain the trusted
+operator model; they are not an atomic defense against concurrent filesystem replacement.
+The launcher also rechecks daemon identity and the combined cached image IDs from
+the final and sibling graphs before effects, including final-only dependencies;
+inconsistent observations of a shared reference refuse planning. Before the
+first step it rechecks fresh project networks and project/n8n
+state. Any prior-image record must remain within the verified candidate image,
+so rollback cannot select an uninspected older image. Execute <code>argv</code> in order;
+running <code>control_argv</code> directly discards these protections and is unsupported.
+Activation and rollback each have a 260-second child timeout, allowing their
+75-second lease wait or 65-second drain plus the full 120-second health wait
+and command overhead. Other child actions retain a 140-second bound; the database
+proofs each have a separate 30-second read-only subprocess bound. The control
+child uses the existing process containment helper, imported only after source
+authentication. On Windows it starts suspended inside a mandatory kill-on-close
+Job Object; timeout and completion terminate the owned descendants and reap the
+child with a five-second cleanup grace. POSIX uses a process group and cannot
+contain a descendant that creates a new session. A failed cleanup fails the step.
+Killing a Docker client never reverses work already accepted by the daemon.
+Cleanup consumes the same operator-enforced overall budget; it grants no extra
+rehearsal runtime. Plans whose
+serialized launcher or control argument list exceeds Windows' 32,767 UTF-16-unit
+limit (including quoting and the terminating NUL) are refused before emission.
+The fixed launcher uses standard-library compression in its isolated bootstrap;
+the actual emitted argument list, including its payload, remains subject to this limit.
+Shorten the protected paths or inherited command search path and generate a new
+plan; the runner does not create an unpinned fallback launcher file.</p>
+<p>Claude's assigned W6 operator executes this plan only within the separately authorized
+setup/rehearsal slot, preserving the existing control gates and durable command
+receipts. The plan carries a total bound of 1,499 seconds; <strong>the operator must
+enforce that bound</strong>. Timeouts and uncertain outcomes stop the drill for
+reconciliation without replay. This command emits <code>PLANNED</code> and <code>executed: false</code>;
+it does not execute the plan, enforce a running drill's deadline or attest a
+successful sub-25-minute rehearsal.</p>
+<p>Normal successful execution ends with existing Compose stop semantics for
+<code>slackbot</code>, <code>n8n</code> and <code>orchestrator</code>, with a 30-second
+stop timeout and the existing 140-second child bound. Docker inspection must
+then prove all sibling intake containers stopped, including one-off containers;
+paused or restarting intake is not accepted. A stop or proof failure makes the
+final step fail. This adds no time to the 1,499-second overall budget and does not
+touch the final project. Cleanup on an earlier error, timeout or interrupted
+operator is not guaranteed by this unexecuted plan; reconcile that state through
+the authorized operator instead of claiming a completed rehearsal.</p>
+<p>The sibling rollback/restore drill satisfies the owner's #81 rehearsal scope.
+The runner contains no path that recreates the final container. Once the final
+container is activated for evidence collection, the operator must keep its exact
+identity until the final scorecard and owner acceptance; no sibling command may
+be repointed to it.</p>
+<p>The owner's final-window ruling on #81 (comment 5957888004) requires all provider
+lanes: Antigravity, Perplexity, Claude/Cursor implementation, Grok adversarial
+review, OpenAI integration/acceptance, and one non-gating Copilot hygiene pass.
+Lane reachability gaps must be resolved before completion. A subset of provider
+qualifications or this generated command plan does not satisfy that coverage.</p>
+<h2 id="upstream-integration-dependencies">Upstream integration dependencies</h2>
+<p>The smallest follow-up changes are in existing authority owners, outside this
+proposal's four-file scope:</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Dependency</th>
+<th scope="col">Existing owner/callers</th>
+<th scope="col">Required change before a release runner can use it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fresh generation authority</td>
+<td><code>primary_generation.require_generation</code>; <code>primary_generation.main</code> (<code>verify</code>, <code>reserve</code>); <code>windows-langgraph-primary-control.ps1</code> (<code>SelectGeneration</code>)</td>
+<td>Extract/expose read-only validation of a new manifest with its existing acceptance, database, image, and deployment bindings. Current <code>verify</code> requires an already reserved journal; <code>reserve</code> creates it. A selector comparison must never substitute for this authority check.</td>
+</tr>
+<tr>
+<td>Individual paid admission and resume</td>
+<td><code>provider_validation_cli.main</code> (<code>validate</code>), called by <code>primary_generation.main</code> (<code>validate-providers</code>) and control <code>ValidateProviders</code>; <code>PostgresValidationStore</code> and the existing provider budget/meter owners</td>
+<td>Add one-lane admission and capture readback tied to authenticated campaign and daily-dollar reservation/settlement. The current CLI iterates every lane and reports results only at the end; its validation units do not prove campaign dollars. Preserve every occupied or ambiguous slot and conservative hold. Do not treat a mutable campaign JSON or an operator <code>approved=true</code> flag as authority.</td>
+</tr>
+<tr>
+<td>Owner descriptor and trust root</td>
+<td>W2/#313; <code>scorecard-launcher.py</code> and scorecard evidence consumers</td>
+<td>Install the reviewed A2 launcher and single descriptor with exact preparation pins in the owner setup slot. An absent or older API and missing owner evidence fail closed.</td>
+</tr>
+<tr>
+<td>Sibling setup and execution</td>
+<td>W6 operator; existing control <code>PrepareAcceptance</code>, <code>BootstrapDatabaseIdentity</code>, <code>SelectGeneration</code>, snapshot and bridge tools</td>
+<td>Supply accepted sibling project/database identities, the unpaid protected profiles and exact candidate image. Execute and time the generated plan with durable receipts. No real rehearsal is claimed here.</td>
+</tr>
+</tbody>
+</table>
+<p>Actual generation selection, staging, qualification, publication and activation
+stay with those existing controls and the authorized W6/W7 operator. CI,
+security, acceptance, budget, cancellation and sole-writer gates remain intact.
+The owner still installs the trusted launcher/descriptor, verifies headroom and
+approves per-call caps in the setup slot. This preparation descriptor does not
+replace the scorecard's descriptor or attestations.</p>
+<h2 id="offline-verification">Offline verification</h2>
+<pre><code class="language-powershell">$env:PYTHONPATH = 'src'
+python -B -m unittest tests.test_director_release -v
+</code></pre>
+<p>The focused tests use the real <code>ActivationIdentity</code>, resolved Compose digest,
+native validation binding and repository work-packet fixture. Platform I/O is
+mocked. The production A2 launcher bytes are copied unchanged to separate
+temporary locator and installed files. Only <code>account_home()</code> is replaced with
+the temporary account root; <code>owner_root()</code>, <code>release_descriptor()</code> and
+<code>read_descriptor()</code> are the real producer. The tests exercise exact-byte pins,
+environment substitution, missing evidence, root redirection, path links,
+mutation and crash recovery. They do not test the native OS account lookup or
+the installed scorecard execution/attestation path. Real
+<code>docker compose config</code> output exercises resource isolation without starting
+containers, and the actual control script's parameter block is bound by
+PowerShell with its runtime body omitted. A short-lived Python subprocess checks
+deadline cleanup and sanitized failures. A harmless real Git fsmonitor fixture
+first demonstrates marker execution, then proves the source gate suppresses it.
+The emitted launcher's real child records its environment under hostile ambient
+Docker selectors; Docker observations alone are mocked in that test. Negative
+fixtures cover auxiliary services/images, fresh state, TCP mapping, snapshot
+authority and acceptance mode. Additional regressions run the actual profile
+writer in temporary files, reproduce checkout import shadowing and root hook
+resolution, check every input category at the launcher boundary, and cover
+planned stock DB startup, deferred proofs, health commands, singleton counts,
+actual stopped-container resources and the Windows command-line limit.
+No provider, production database or
+live rehearsal is started by the suite. Exact-head full-suite, CI, security and
+independent review evidence remain required.</p>
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

@@ -15,7 +15,7 @@ display_name: "Perplexity"
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -181,15 +181,15 @@ authority:
 
 platform_limitations:
   - limitation: "Every Perplexity assignment requires an owner approval bound to the digest of the exact assignment; the Slack prompt shows the complete outbound query and a later mutation invalidates the approval."
-    source: "docs/provider-setup.md, Perplexity research-only profile"
+    source: "docs/provider-setup.html, Perplexity research-only profile"
   - limitation: "The raw Search API does not accept the search-context-size field; it is validated now for an optional future Agent API lane and not sent."
-    source: "docs/provider-setup.md, Perplexity research-only profile"
+    source: "docs/provider-setup.html, Perplexity research-only profile"
   - limitation: "Provider-reported cost may be incomplete; an API Platform budget control is the authoritative daily spend backstop."
-    source: "docs/provider-setup.md, Perplexity research-only profile"
+    source: "docs/provider-setup.html, Perplexity research-only profile"
   - limitation: "The adapter rejects draft-PR authority and any assignment whose estimated cost exceeds the daily budget; the lane also rejects every external effect."
-    source: "docs/provider-setup.md; src/director_orchestrator/primary_default.py:_PRIMARY_PUBLIC_RESEARCH_LANES"
+    source: "docs/provider-setup.html; src/director_orchestrator/primary_default.py:_PRIMARY_PUBLIC_RESEARCH_LANES"
   - limitation: "Browser provider-UI coordination is prohibited for this lane; Perplexity remains API-only."
-    source: "docs/team-operating-charter.md, Browser communication transport"
+    source: "docs/team-operating-charter.html, Browser communication transport"
 
 transports:
   - transport_id: "perplexity-search-api"
@@ -250,13 +250,13 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "Perplexity may receive only a bounded public research query."
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "Perplexity output is untrusted evidence."
-  - document: "docs/provider-setup.md"
+  - document: "docs/provider-setup.html"
     anchor: "Normal assignments use `POST /search`."
-  - document: "docs/provider-allocation-profiles.md"
+  - document: "docs/provider-allocation-profiles.html"
     anchor: "Perplexity receives only explicitly approved public research, never private"
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
     anchor: "role: \"evidence_only_research_specialist\""

@@ -7,7 +7,7 @@
 """Descriptive provider profile sheets: loader, validator, cross-checks, renderer.
 
 The YAML documents under ``docs/provider-profiles/`` are the single hand-written
-source; the Markdown sheets and the schema example are rendered from them. A
+source; the canonical HTML sheets and the schema example are rendered from them. A
 profile grants no authority: the team operating charter, deterministic policy,
 and adapter code always win, and the drift tests in
 ``tests/test_provider_profiles.py`` fail the moment a mirrored value diverges.
@@ -20,6 +20,8 @@ the API, deterministic policy, or the LangGraph runtime.
 from __future__ import annotations
 
 import json
+import re
+from html import escape
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -37,6 +39,7 @@ from .contribution_tags import (
     validate_inline_contribution_tags,
 )
 from .packet_contracts import load_json_document
+from .documentation import read_document
 
 _ROOT = Path(__file__).resolve().parents[2]
 PROFILE_ROOT = _ROOT / "docs" / "provider-profiles"
@@ -44,8 +47,8 @@ SCHEMA_PATH = _ROOT / "docs" / "schemas" / "director-provider-profile-v1.schema.
 EXAMPLE_PATH = _ROOT / "docs" / "schemas" / "director-provider-profile-v1.example.json"
 EXAMPLE_PROVIDER = "grok"
 CATALOG_FILENAME = "routes.yaml"
-INDEX_FILENAME = "README.md"
-SHEET_SUFFIX = ".profile.md"
+INDEX_FILENAME = "README.html"
+SHEET_SUFFIX = ".profile.html"
 MAX_YAML_BYTES = 262_144
 PROFILE_SCHEMA_VERSION = "director-provider-profile/v1"
 CATALOG_SCHEMA_VERSION = "director-provider-routes/v1"
@@ -252,6 +255,11 @@ def cross_validate(
 
     problems: list[str] = []
     repo_root = root or _ROOT
+    references: dict[Path, str] = {}
+    def reference_text(path: Path) -> str:
+        if path not in references:
+            references[path] = read_document(path)
+        return references[path]
     order = lane_order()
     lanes = set(order)
     if list(catalog["lanes"]) != order:
@@ -271,8 +279,8 @@ def cross_validate(
         for reference in route["charter_basis"]:
             document = repo_root / reference["document"]
             try:
-                text = document.read_text(encoding="utf-8")
-            except OSError:
+                text = reference_text(document)
+            except (OSError, ValueError):
                 problems.append(f"{route['route_id']}: missing document {reference['document']}")
                 continue
             if reference["anchor"] not in text:
@@ -316,8 +324,8 @@ def cross_validate(
         for reference in profile["sources"]:
             document = repo_root / reference["document"]
             try:
-                text = document.read_text(encoding="utf-8")
-            except OSError:
+                text = reference_text(document)
+            except (OSError, ValueError):
                 problems.append(f"{lane}: missing source document {reference['document']}")
                 continue
             if reference["anchor"] not in text:
@@ -1030,6 +1038,93 @@ def compose_tagged_document(
     return "\n".join(begin_lines + [""] + [content] + [""] + end_lines) + "\n"
 
 
+def _html_value(value: Any) -> str:
+    """Render structured source directly, escaping every untrusted scalar."""
+    if isinstance(value, Mapping):
+        return '<dl>' + ''.join(
+            f'<dt>{escape(str(key))}</dt><dd>{_html_value(item)}</dd>'
+            for key, item in value.items()) + '</dl>'
+    if isinstance(value, (list, tuple)):
+        return '<ul>' + ''.join(f'<li>{_html_value(item)}</li>' for item in value) + '</ul>' if value else '<p>None listed.</p>'
+    text = json.dumps(value) if value is None or isinstance(value, (bool, int, float)) else str(value)
+    if isinstance(value, str) and re.fullmatch(r'(?:docs/|prompts/|src/|scripts/)[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_-]+)?', value):
+        return '<a href="../../' + escape(value, quote=True) + '">' + escape(value) + '</a>'
+    return '<span>' + escape(text) + '</span>'
+
+
+def _html_table(caption: str, headers: list[str], rows: list[list[Any]]) -> str:
+    return ('<div class="table-scroll"><table><caption>' + escape(caption) + '</caption><thead><tr>' +
+            ''.join('<th scope="col">' + escape(header) + '</th>' for header in headers) +
+            '</tr></thead><tbody>' + ''.join('<tr>' + ''.join(
+                ('<th scope="row">' + _html_value(cell) + '</th>' if index == 0 else
+                 '<td>' + _html_value(cell) + '</td>') for index, cell in enumerate(row)) + '</tr>' for row in rows) +
+            '</tbody></table></div>')
+
+
+def _html_document(title: str, source: str, sections: list[tuple[str, str, str]]) -> str:
+    # No Markdown source or conversion participates in canonical rendering.
+    navigation = ''.join(f'<li><a href="#{escape(key, quote=True)}">{escape(label)}</a></li>'
+                         for key, label, _ in sections)
+    body = '\n'.join(f'<section aria-labelledby="{key}"><h2 id="{key}">{escape(label)}</h2>{content}</section>'
+                     for key, label, content in sections)
+    return ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'self\'; '
+            'script-src \'self\'; img-src \'self\' data:; base-uri \'none\'; form-action \'none\'">'
+            f'<title>{escape(title)}</title><link rel="stylesheet" href="../assets/documentation.css">'
+            '</head><body><a class="skip-link" href="#main">Skip to content</a>\n' +
+            GENERATED_MARKER.format(source=source) + '\n' +
+            f'<header class="site-header"><h1>{escape(title)}</h1><p>Descriptive guidance; this document grants no authority.</p>'
+            '<a href="README.html">Provider roster</a></header>' +
+            f'<nav class="toc" aria-label="On this page"><ul>{navigation}</ul></nav><main id="main">{body}</main>'
+            '<footer class="site-footer"><p>Edit the canonical YAML and run scripts/render_provider_profiles.py --write. '
+            'Verify with --check. No contribution envelope is required.</p></footer></body></html>\n')
+
+
+def render_profile_html(profile: Mapping[str, Any], catalog: Mapping[str, Any]) -> str:
+    """Lossless field presentation from YAML, with explicit section anchors."""
+    labels = {'identifiers': ('identity-and-aliases', 'Identity and aliases'),
+              'roles': ('team-and-allocation', 'Team and allocation'),
+              'models_and_effort': ('models-and-effort', 'Models and effort'),
+              'source_of_truth': ('source-of-truth', 'Source of truth')}
+    sections = [('authority-notice', 'Authority notice',
+                 '<p>Documenting a route never authorizes it. The charter and code win over a conflicting sheet. '
+                 'No direct provider-to-provider channel exists; route every exchange through the Director.</p>')]
+    for key, value in profile.items():
+        anchor, label = labels.get(key, (key.replace('_', '-'), key.replace('_', ' ').capitalize()))
+        content = _html_value(value)
+        if key == 'execution_modes':
+            content = '<p>The preserved restricted mode remains distinct from team eligibility; eligibility is not live qualification.</p>' + content
+        sections.append((anchor, label, content))
+    routes = [route for route in catalog['routes'] if _route_involves(route, profile['provider_id'])]
+    sections.append(('route-catalog', 'Route catalog', _html_value(routes)))
+    return _html_document(f"Provider profile: {profile['display_name']} ({profile['provider_id']})",
+                          f"docs/provider-profiles/{profile['provider_id']}.yaml", sections)
+
+
+def render_index_html(profiles: Mapping[str, Mapping[str, Any]], catalog: Mapping[str, Any]) -> str:
+    lanes = list(catalog['lanes'])
+    links = '<ul>' + ''.join(f'<li><a href="{escape(lane)}{SHEET_SUFFIX}">{escape(profiles[lane]["display_name"])} ({escape(lane)})</a></li>'
+                            for lane in lanes) + '</ul>'
+    rows = [[lane, profiles[lane]['identifiers']['backend_identity'], profiles[lane]['roles']['team'],
+             profiles[lane]['roles']['lane_class'], profiles[lane]['roles']['committee']['voting_power']]
+            for lane in lanes]
+    sections = [('authority-notice', 'Authority notice',
+                 '<p>These sheets grant no authority. Documenting a route never authorizes it. '
+                 'Every provider exchange is brokered by the Director; route status does not prove live readiness.</p>'),
+                ('roster', 'Roster', links + _html_table('Provider roster', ['Lane', 'Backend', 'Team', 'Lane class', 'Committee weight'], rows)),
+                ('execution-modes', 'Execution modes', '<p>Antigravity has distinct restricted and team modes. '
+                 '<a href="antigravity.profile.html#execution-modes">Read their separate eligibility and qualification boundaries.</a></p>'),
+                ('route-by-lane-matrix', 'Route-by-lane matrix', _html_table('Route membership', ['Route', *lanes],
+                 [[route['route_id'], *['Yes' if _route_involves(route, lane) else 'No' for lane in lanes]] for route in catalog['routes']])),
+                ('peer-matrix', 'Peer matrix', _html_table('Direct channel status', ['From / To', *lanes],
+                 [[lane, *['Same provider' if lane == other else peer_status(lane, other, catalog)[0] for other in lanes]] for lane in lanes]))]
+    # Retain every catalog field, not only the subset visible in summary tables.
+    sections.extend(('catalog-' + key.replace('_', '-'), key.replace('_', ' ').capitalize(), _html_value(value))
+                    for key, value in catalog.items())
+    return _html_document('Provider profile sheets', 'docs/provider-profiles/*.yaml and routes.yaml', sections)
+
+
 def planned_outputs(
     identity: TagIdentity | None, *, root: Path | None = None
 ) -> dict[Path, str]:
@@ -1041,24 +1136,15 @@ def planned_outputs(
         raise ProviderProfileError("; ".join(problems))
     outputs: dict[Path, str] = {}
     for lane, profile in profiles.items():
-        outputs[profile_root / f"{lane}{SHEET_SUFFIX}"] = render_profile_markdown(profile, catalog)
-    outputs[profile_root / INDEX_FILENAME] = render_index_markdown(profiles, catalog)
+        outputs[profile_root / f"{lane}{SHEET_SUFFIX}"] = render_profile_html(profile, catalog)
+    outputs[profile_root / INDEX_FILENAME] = render_index_html(profiles, catalog)
     if EXAMPLE_PROVIDER in profiles:
         outputs[EXAMPLE_PATH] = render_example_json(profiles[EXAMPLE_PROVIDER])
-    if identity is None:
-        return outputs
-    tagged: dict[Path, str] = {}
-    for path, body in outputs.items():
-        if path.suffix != ".md":
-            tagged[path] = body
-            continue
-        existing = path.read_text(encoding="utf-8") if path.exists() else None
-        tagged[path] = compose_tagged_document(body, existing, identity)
-    return tagged
+    return outputs  # Legacy identity argument never adds new contribution tags.
 
 
 def check_outputs(*, root: Path | None = None) -> list[str]:
-    """Return every stale, missing, or mistagged rendered output."""
+    """Return every stale or missing canonical output, with exact HTML drift checks."""
 
     problems: list[str] = []
     for path, body in planned_outputs(None, root=root).items():
@@ -1066,23 +1152,14 @@ def check_outputs(*, root: Path | None = None) -> list[str]:
             problems.append(f"missing rendered output: {path.name}")
             continue
         current = path.read_text(encoding="utf-8")
-        if path.suffix == ".md":
-            if strip_contribution_tag_lines(current) != strip_contribution_tag_lines(body):
-                problems.append(f"stale rendered output: {path.name}")
-            relative = path.relative_to(_ROOT).as_posix()
-            problems.extend(
-                f"{path.name}: {issue}"
-                for issue in validate_inline_contribution_tags(relative, current)
-            )
-        elif _normalize_newlines(current) != body:
+        if _normalize_newlines(current) != body:
             problems.append(f"stale rendered output: {path.name}")
     return problems
 
 
-def write_outputs(identity: TagIdentity, *, root: Path | None = None) -> list[Path]:
+def write_outputs(identity: TagIdentity | None = None, *, root: Path | None = None) -> list[Path]:
     written: list[Path] = []
     for path, text in planned_outputs(identity, root=root).items():
-        _require_ascii(text, label=path.name)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)

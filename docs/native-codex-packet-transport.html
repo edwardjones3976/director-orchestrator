@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Native Codex packet transport · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]] -->
+<h1 id="native-codex-packet-transport">Native Codex packet transport</h1>
+<p>The default remains <code>LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api</code>, using
+existing paid-run and budget gates. Set <code>native-codex-host</code> only when an approved
+Windows host bridge is staged. This selects native Codex exclusively: missing
+bridge evidence, missing account auth, and ambiguous execution do not cause an
+API fallback. Switching back to Responses is an explicit operator decision.</p>
+<p>On the host, add <code>&quot;openai&quot;:[&quot;C:\\absolute\\path\\codex.exe&quot;,&quot;gpt-5.6&quot;]</code> to
+<code>DIRECTOR_HOST_PROVIDER_COMMANDS_JSON</code>. The entry is exactly a native executable
+and an explicit model; shell wrappers and caller-supplied flags are rejected.
+The existing bridge endpoint, TLS, distinct HMAC secret, Postgres writer fence,
+and durable claim store remain required. Linux does not execute the Windows
+binary. The signed host challenge includes OpenAI only after the native command's
+read-only <code>login status</code> confirms ChatGPT authentication. Configuration is not a
+live provider canary or a quota entitlement proof.</p>
+<p>The host performs a single <code>codex exec --json</code> run in a fresh temporary directory.
+It passes only the validated packet, uses read-only sandboxing, ignores user
+configuration, disables shell, web, apps, plugins, hooks, image and agent tools,
+and forces ChatGPT authentication with the OpenAI provider. Native child
+environment contains operating-system essentials only; API and Director secrets
+are excluded. The account's existing protected native auth store is consumed by
+Codex; this transport never reads or copies its credentials.</p>
+<p>This is <strong>packet-only analysis</strong>, equivalent in scope to the previous tool-free
+Responses transport. It does not inspect or modify the packet's repository.
+Acceptance checks default to NOT_RUN; repository or execution evidence requires
+an appropriate independently authorized lane. The parser requires a native
+thread ID and a completed turn, rejects tool/error/incomplete events, binds
+results back to the original packet, and reports actual token counts when given.
+The requested model is recorded as a request in the limitations; actual model
+and dollar cost remain null because the JSONL stream does not attest them.
+ChatGPT login does not prove unlimited usage, available quota, or zero cost.</p>
+<p>Input and output are capped at 1 MiB; runtime is capped at the packet deadline,
+host deadline, and 900 seconds. A timeout, nonzero exit, oversized output, or
+invalid terminal stream is ambiguous and never automatically redispatched.
+The existing host durable claim blocks replay even after a host restart.
+Writer authority is checked immediately before dispatch. As with the current
+bridge contract, there is no asynchronous cancellation callback during a running
+provider request; the bounded deadline remains the in-flight stop mechanism.</p>
+<p>The JSONL fixture follows the official <a href="https://developers.openai.com/codex/noninteractive">non-interactive mode documentation</a>.
+CLI options and feature names were also verified through installed <code>codex exec --help</code>, <code>codex features list</code>, and <code>codex login status</code>. Tests exercise fixture
+normalization, native auth selection, credential filtering, fail-closed routing,
+host configuration, and real local child timeout/output bounds without sending
+a provider request. A separately authorized live canary remains required.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Director Completion Gates · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#purpose">Purpose</a></li><li class="top"><a href="#two-different-authorities">Two different authorities</a></li><li class="top"><a href="#configuration">Configuration</a></li><li class="top"><a href="#construction-is-not-activation-or-authority">Construction is not activation or authority</a></li><li class="top"><a href="#applicability">Applicability</a></li><li class="top"><a href="#companion-contract-boundary">Companion-contract boundary</a></li><li class="top"><a href="#immutable-ledger-lifecycle">Immutable ledger lifecycle</a></li><li class="top"><a href="#gate-ownership">Gate ownership</a></li><li class="top"><a href="#gate-kinds">Gate kinds</a></li><li class="sub"><a href="#runnable">Runnable</a></li><li class="sub"><a href="#manual">Manual</a></li><li class="sub"><a href="#external-ci">External CI</a></li><li class="top"><a href="#digest-rules">Digest rules</a></li><li class="top"><a href="#result-meaning">Result meaning</a></li><li class="top"><a href="#schema-validity-is-not-completion-eligibility">Schema validity is not completion eligibility</a></li><li class="top"><a href="#isolated-runner-boundary">Isolated runner boundary</a></li><li class="top"><a href="#semantic-checks-enforced-beyond-json-schema">Semantic checks enforced beyond JSON Schema</a></li><li class="top"><a href="#default-off-and-rollback-rule">Default-off and rollback rule</a></li><li class="sub"><a href="#worker-graduation">Worker graduation</a></li><li class="sub"><a href="#worker-rollback">Worker rollback</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | BEGIN]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]] -->
+<h1 id="director-completion-gates">Director Completion Gates</h1>
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:16 UTC | BEGIN]] -->
+<p><strong>Status:</strong> Production-capable isolated worker runtime; default off; no completion authority
+<strong>Schema authority:</strong> <code>director-gate-ledger/v1</code> and <code>director-gate-result/v1</code>
+<strong>Frozen starting point:</strong> <code>21c4c70ad4bb1135e82d7b69df9866a1634f3546</code></p>
+<h2 id="purpose">Purpose</h2>
+<p>Director Completion Gates define immutable, provider-neutral evidence contracts for
+substantial assignments. They record what must be observed before work begins and
+what a producer or independent reviewer actually observed at an exact commit.</p>
+<p>Gate evidence supplements the existing work/result packets, independent exact-SHA
+review, Codex Security, trusted CI, and deterministic merge policy. It never grants
+assignment, provider-selection, budget, repository, approval, review, merge,
+deployment, LangGraph, provider-dispatch, or external-write authority.</p>
+<p>The runtime foundation adds deterministic semantic validation, append-only gate
+and worker SQLite stores, a fixed-argument runner registry, bounded <code>shell=False</code>
+execution, aggregate gate-evidence reporting, and a fail-closed readiness surface.
+Production worker construction requires three independent choices: gate evidence,
+isolated proof, and worker execution. It accepts only <code>ISOLATED_PROOF_LANE</code>
+ledgers. It is not wired to provider dispatch, external writes, merge, deployment,
+or project-completion authority.</p>
+<h2 id="two-different-authorities">Two different authorities</h2>
+<p>Aggregate <code>gate_evidence_complete</code> means only that every current required gate has
+authenticated <code>PASS</code> evidence at the current exact head.</p>
+<p><code>assignment_acceptance_authorized</code> is an <strong>assignment-scoped</strong> claim. It is true
+only when gate evidence is complete <em>and</em> at least one required gate carries
+<code>INDEPENDENT_REVIEWER</code> evidence from a principal who is not a material author.
+That is the strongest statement one assignment ledger can make about itself.</p>
+<p><code>project_completion_authorized</code> is always false in the per-ledger aggregate.
+Project completion spans multiple assignments and depends on authorities the gate
+store does not hold. <code>aggregate_project_completion_eligibility</code> answers that
+question separately and fails closed unless every declared assignment reached
+assignment acceptance <strong>and</strong> every one of these is supplied as authenticated
+evidence by the caller:</p>
+<ul>
+<li><code>independent_exact_sha_acceptance</code></li>
+<li><code>codex_security</code></li>
+<li><code>trusted_ci</code></li>
+<li><code>deterministic_merge_policy</code></li>
+<li><code>deployment_or_product_acceptance_when_applicable</code></li>
+</ul>
+<p>Assignment acceptance never widens into project completion. <code>merge_eligibility</code>
+re-checks this and refuses any evidence bundle that claims otherwise.</p>
+<h2 id="configuration">Configuration</h2>
+<p>Both switches default off and both fail startup closed when enabled without an
+isolated store:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COMPLETION_GATES_ENABLED</code></td>
+<td>Records durable gate evidence</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_ISOLATED_PROOF_ENABLED</code></td>
+<td>Additionally permits runner execution</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_STORE_PATH</code></td>
+<td>Must be a distinct file from <code>SQLITE_PATH</code> and every LangGraph shadow or runtime database</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_RESULT_MAX_AGE_SECONDS</code></td>
+<td>Result freshness ceiling (1–2592000)</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_WORKERS_ENABLED</code></td>
+<td>Constructs the explicitly selected worker tiers; defaults off</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_WORKER_STORE_PATH</code></td>
+<td>Append-only worker reservations/events; must be distinct from every other database</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_EXECUTION_TIERS</code></td>
+<td><code>container</code> for the currently activatable production worker; defaults to <code>container</code></td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_HOST_BROKER_PATH</code></td>
+<td>Reserved for the audited-host tier, which remains fail-closed until its OS controls can be independently verified</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_CONTAINER_RUNTIME_PATH</code></td>
+<td>Existing absolute path to the container runtime executable when <code>container</code> is selected</td>
+</tr>
+<tr>
+<td><code>COMPLETION_GATE_CONTAINER_IMAGE</code></td>
+<td>Immutable <code>name@sha256:&lt;64 lowercase hex&gt;</code> image required by the container tier</td>
+</tr>
+</tbody>
+</table>
+<p><code>/health</code> reports these as booleans under <code>completion_gates</code>, including a
+permanently false <code>completion_authority</code>.</p>
+<h2 id="construction-is-not-activation-or-authority">Construction is not activation or authority</h2>
+<p>The normal API startup path now constructs the worker registry, append-only worker
+store, and selected backends when—and only when—all three execution switches and
+every selected-tier binding validate. Health distinguishes:</p>
+<ul>
+<li>configured evidence recording;</li>
+<li>isolated-proof contract enablement;</li>
+<li>worker execution enablement;</li>
+<li>executor construction;</li>
+<li>per-tier backend readiness; and</li>
+<li>the permanently false completion-authority claim.</li>
+</ul>
+<p>The implementation is therefore production-capable, but a repository merge does
+not activate it. The deployed environment must supply the explicit switches,
+distinct database, executable fingerprints, and immutable image, and must then
+show <code>worker_execution_ready=true</code>. No public raw-command endpoint or automatic
+gate scheduler is introduced. An authenticated internal caller must still supply
+the exact ledger, gate, task, assignment, head, registry, worker-spec, and
+idempotency bindings.</p>
+<p>One worker job identity has one durable reservation. A successful redelivery
+replays the stored outcome; a backend exception becomes
+<code>RECONCILIATION_REQUIRED</code> and is not automatically redispatched. This worker lane
+produces evidence only. It cannot become a second provider dispatcher, task-state
+writer, GitHub/Slack writer, merger, deployer, or project-completion authority.</p>
+<p>Windows worker processes are created suspended, assigned to a mandatory
+kill-on-close Job Object, and resumed only after assignment succeeds. POSIX
+workers run in a separately owned session. Both tiers launch from an OS-owned
+neutral directory rather than repository-controlled current working data.
+Orchestrator-account Git probes use that same neutral directory and pass the
+repository only through <code>git -C &lt;repository&gt;</code>. The legacy direct runner refuses
+Python <code>-m</code> profiles; module-based validation runs only through an isolated
+host-broker or disposable-container worker so repository modules cannot shadow
+the selected standard-library module.
+The audited host-broker contract receives the repository path explicitly and a
+literal <code>--env PYTHONPATH=&lt;repository&gt;/src</code> argument; it must apply that value
+inside its low-privilege sandbox without shell interpretation.</p>
+<p>The disposable-container backend always supplies
+<code>PYTHONPATH=/workspace/src</code> and redirects bytecode caches to the <code>/tmp</code> tmpfs.
+The shipped bare Python image is registered only for dependency-free
+<code>compileall</code>; unit tests and <code>pip check</code> remain audited-host specs until a
+separately reviewed dependency-bearing image is configured. Every container has
+a deterministic job-bound name and label. After every CLI outcome—including
+timeout, overflow, or ambiguity—the runtime authenticates the Docker executable,
+forces removal only when the label matches, and verifies daemon-side absence.
+Absence must remain stable across two consecutive reads in a bounded poll, so a
+late daemon-side creation cannot satisfy cleanup with one transient negative read.
+Unverifiable cleanup becomes reconciliation-required evidence, never success.</p>
+<h2 id="applicability">Applicability</h2>
+<p>The Director should propose Completion Gates for medium-or-higher complexity,
+multi-component work, long implementations, new dependencies or persistence,
+recovery/concurrency/idempotency changes, security boundaries, cross-platform
+validation, external-effect boundaries, LangGraph/provider/merge-gate work, or an
+owner request for exhaustive completion discipline.</p>
+<p>Factual replies, formatting changes, spelling corrections, one-line safe edits,
+trivial fixtures, and the existing bounded minimal-integration-fix procedure do not
+receive a gate ledger unless their scope or risk expands.</p>
+<h2 id="companion-contract-boundary">Companion-contract boundary</h2>
+<p>The accepted <code>model-work-packet-v1</code> and <code>model-result-packet-v1</code> contracts remain
+unchanged. Completion Gates are companion documents:</p>
+<ul>
+<li><code>director-gate-ledger/v1</code>: Director-issued immutable gate definitions.</li>
+<li><code>director-gate-result/v1</code>: one immutable observation attempt for one gate.</li>
+</ul>
+<p>Authoritative runtime instances live in a separate append-only,
+Director-controlled SQLite evidence store, outside canonical task tables,
+repository fixtures, and LangGraph checkpoint storage. Checked repository examples
+still prove only the contract; they never become authoritative store records.</p>
+<h2 id="immutable-ledger-lifecycle">Immutable ledger lifecycle</h2>
+<p>An issued ledger is never edited in place.</p>
+<ol>
+<li>A <code>PLANNED</code> revision has <code>expected_head_sha: null</code>.</li>
+<li>A producer may propose additional gates but cannot edit either gate array.</li>
+<li>The Director may adopt those proposals only by issuing a successor ledger with
+a new <code>ledger_id</code>, incremented <code>ledger_revision</code>, and
+<code>predecessor_ledger_digest</code>.</li>
+<li>When implementation returns, the Director issues a <code>HEAD_BOUND</code> successor
+whose <code>expected_head_sha</code> is the exact candidate SHA and whose
+<code>candidate_result_digest</code> binds to the producer result that supplied it.
+The successor also records every authenticated <code>material_author</code>.</li>
+<li>A new commit requires another successor and invalidates all gate, review,
+security, CI, and merge evidence bound to the old head.</li>
+</ol>
+<p><code>ledger_series_id</code> links immutable revisions. Revision 1 has no predecessor and
+must be <code>PLANNED</code>; a <code>HEAD_BOUND</code> ledger must be revision 2 or later with a
+predecessor. Old-head evidence is retained immutably but is
+ineligible for current completion. A <code>PLANNED</code> ledger cannot yield a result
+eligible for aggregate completion; eligible results bind to the current
+<code>HEAD_BOUND</code> ledger whose expected head equals the executed SHA. Cross-document
+lineage, equality, and monotonicity are deterministic semantic checks scheduled
+for the models/binding increment; JSON Schema alone cannot authenticate them.</p>
+<h2 id="gate-ownership">Gate ownership</h2>
+<p><code>director_gates</code> and <code>producer_added_gates</code> are separate arrays.</p>
+<ul>
+<li>Director gates are mandatory policy evidence unless the Director originally
+classified one as advisory.</li>
+<li>A producer may propose additional required or advisory coverage.</li>
+<li>Producer additions cannot remove, replace, waive, reorder, rename, or weaken a
+Director gate.</li>
+<li>A producer proposal becomes authoritative only when the Director issues a new
+immutable ledger revision containing it.</li>
+<li>Once adopted as <code>REQUIRED</code>, a producer-added gate is as completion-blocking as
+a required Director gate, but it still cannot weaken a Director gate.</li>
+<li>Self-declared author fields are provenance data, not authentication.</li>
+</ul>
+<p><code>director_gate_set_digest</code> independently binds the ordered Director gate array;
+<code>producer_gate_set_digest</code> binds the ordered adopted-proposal array. The ledger
+digest changes when any gate, ordering, requiredness, path, runner binding,
+dependency, abandonment rule, author, or expected head changes.</p>
+<p>Every applicable ledger must contain at least one <code>REQUIRED</code> Director gate. An
+empty required set is never vacuous success; the runtime aggregator fails closed
+unless schema validation and semantic binding establish that invariant.</p>
+<h2 id="gate-kinds">Gate kinds</h2>
+<h3 id="runnable">Runnable</h3>
+<p>A runnable gate selects an allowlisted <code>runner_id</code>, a pinned runner-definition
+digest, a pre-registered parameter-profile ID and digest, a repository-relative
+working directory, expected exit code, structured output matcher, timeout, output
+ceiling, risk classification, dependencies, and abandonment policy.</p>
+<p>There is no raw command, shell string, or free-form argument array. The isolated
+runner resolves the exact argument vector from an authenticated
+runner/parameter-profile registry, rejects unknown bindings, and uses
+<code>shell=False</code> with a minimal inherited environment.</p>
+<p><code>repository_owned_script</code> additionally binds a repository-relative path and
+exact Git blob SHA. Changing that script requires a new ledger and fresh approval.</p>
+<h3 id="manual">Manual</h3>
+<p>A manual gate describes the eligible evaluator roles, independence requirement,
+and human or provider evidence required. It is not an executable runner and
+cannot carry executable, argument, or working-directory fields. A manual <code>PASS</code>
+must bind an authenticated evaluator, exact artifact/head, clean review state,
+and evidence digests. The semantic validator derives evaluator eligibility by
+intersecting the authenticated actor roles with the gate's
+<code>eligible_evaluator_roles</code>; the result's <code>evaluator_eligible</code> boolean is only a
+consistency assertion and cannot grant a role.</p>
+<p>Manual evidence enters the Director's authenticated sanitization pipeline before
+persistence. Raw claims and locations are never stored. Each evidence item stores
+only <code>sanitized_claim</code> and <code>sanitized_location</code>, their reproducible digest, the
+authenticated sanitization-record digest, redaction/scanner identities and
+digests, and post-redaction findings. A manual <code>PASS</code> requires passed redaction
+and secret scanning with no retained findings. The semantic validator must read
+back the sanitization record and authenticate the configured redactor and scanner;
+self-asserted scan fields are not completion evidence.</p>
+<h3 id="external-ci">External CI</h3>
+<p>An external-CI gate binds a repository, workflow path, workflow blob SHA and
+definition digest, required check name, and trusted GitHub App identity. A result
+also binds run, suite, and check IDs, exact observed head, terminal conclusion,
+completion/retrieval times, and authenticated API readback. It observes existing
+CI only: this contract does not authorize triggering CI. It is not a
+provider-executed runner and not acceptance by itself.</p>
+<h2 id="digest-rules">Digest rules</h2>
+<p>All contract digests use RFC 8785 canonical JSON and lowercase SHA-256 with the
+<code>sha256:</code> prefix. The exact construction is
+<code>SHA-256(UTF-8(domain) || 0x00 || RFC8785(value))</code>.</p>
+<ul>
+<li><code>gate_definition_digest</code>: domain <code>director-gate-definition/v1</code>; canonical gate
+object with only that field omitted.</li>
+<li><code>director_gate_set_digest</code>: domain <code>director-gate-set/v1</code>; canonical ordered
+Director gate array, including each gate-definition digest.</li>
+<li><code>producer_gate_set_digest</code>: domain <code>producer-gate-set/v1</code>; canonical ordered
+adopted producer gate array, including each gate-definition digest.</li>
+<li><code>ledger_digest</code>: domain <code>director-gate-ledger/v1</code>; canonical ledger object with
+only that field omitted.</li>
+<li><code>result_digest</code>: domain <code>director-gate-result/v1</code>; canonical result object with
+only that field omitted.</li>
+<li><code>sanitized_excerpt_digest</code>: domain <code>director-gate-sanitized-excerpt/v1</code>;
+canonical JSON string value of <code>decisive_output</code>.</li>
+<li><code>sanitized_text_digest</code> for manual evidence: domain
+<code>director-gate-sanitized-manual-evidence/v1</code>; canonical object containing only
+<code>sanitized_claim</code> and <code>sanitized_location</code>.</li>
+<li><code>sanitization_record_digest</code>: domain
+<code>director-gate-sanitization-record/v1</code>; canonical object containing the
+sanitized-text digest, pipeline source, redaction status/identity/digest/counts,
+and secret-scan status/identity/digest/counts.</li>
+<li><code>artifact_binding_digest</code> for manual evaluation: domain
+<code>director-gate-manual-artifact-binding/v1</code>; canonical object containing the
+repository, gate ID/definition digest, expected and executed SHA, worktree
+before/after SHA, authenticated principal, and provider run reference.</li>
+</ul>
+<p>Every other field remains inside its digest, including timestamps, expected head,
+origin, requiredness, registry identity, dependencies, abandonment, environment,
+redaction, and reverification data. Digests detect mutation; they are not
+signatures and grant no authority.</p>
+<h2 id="result-meaning">Result meaning</h2>
+<p>One result document represents one immutable attempt for one gate. It binds:</p>
+<ul>
+<li>task, assignment, work packet, authority snapshot, ledger revision and digest;</li>
+<li>gate ID and gate-definition digest;</li>
+<li>exact executed SHA, every material author, and an authenticated evidence actor;</li>
+<li>producer or independent-review role;</li>
+<li>timestamps, clean-worktree evidence, environment, and exact runner resolution
+where applicable;</li>
+<li>sanitized decisive output, status, and reverification lineage.</li>
+</ul>
+<p>Evidence-actor identity is separate from resolved-runner identity. A provider,
+human evaluator, or trusted external-CI principal cannot be represented as a
+runner. A runnable result binds the runner registry/version/digest, definition and
+implementation digests, executable fingerprint/version, canonical argument-vector
+digest, and sanitized-environment profile digest.</p>
+<p><code>ABANDONED</code> requires a permitted reason code, authenticated actor, timestamp,
+attempt count, last evidence, lost coverage, and one of <code>BLOCKS_ACCEPTANCE</code>,
+<code>OWNER_DECISION_REQUIRED</code>, or <code>RESHAPE_REQUIRED</code>. It is honest terminal evidence
+for that attempt and never acceptance. <code>FAIL</code>, <code>BLOCKED</code>, and <code>ABANDONED</code> never
+contribute to aggregate completion. Aggregate
+completion is derived only when every current required gate has a matching
+<code>PASS</code> on the same HEAD_BOUND ledger and exact SHA. Even then, independent
+acceptance, Codex Security, trusted CI, and deterministic merge policy remain
+separate.</p>
+<p>The <code>full_output_digest</code> uses the domain
+<code>director-gate-sanitized-output/v1</code> and commits to complete sanitized streams
+before persistence truncation. Its byte payload is
+<code>&quot;stdout\0&quot; || uint64be(stdout_length) || stdout_utf8 || &quot;stderr\0&quot; || uint64be(stderr_length) || stderr_utf8</code>. Results record captured, persisted, and
+omitted byte counts, the output ceiling, truncation, sanitized decisive excerpt
+and digest, redaction/scanner identities and digests, counts, and categories.
+Raw output is never persisted or hashed by this contract. Both redaction and secret
+scanning must cover every persisted text field and pass before a result can be
+<code>PASS</code>; the post-redaction secret finding count and categories must be empty.
+Captured, persisted, and omitted byte counts describe sanitized bytes. The semantic
+validator must prove <code>stdout + stderr = total</code>, <code>persisted + omitted = total</code>,
+<code>persisted &lt;= ceiling</code>, and that <code>truncated</code> exactly matches whether bytes were
+omitted. It must also derive <code>exit_code_matches_expected</code> from the observed exit
+code and the ledger's expected exit code, derive <code>expected_output_match</code> by
+applying the ledger matcher to <code>decisive_output</code>, require the result output ceiling
+to equal the ledger limit, and recompute the sanitized-excerpt digest. Result
+booleans never substitute for those comparisons.</p>
+<h2 id="schema-validity-is-not-completion-eligibility">Schema validity is not completion eligibility</h2>
+<p>Every result declares <code>director-gate-result-semantic-binding/v1</code>, but that value is
+not self-authenticating. The deterministic validator loads the authenticated
+current ledger and proves all of the following before append or aggregation:</p>
+<ul>
+<li>task, assignment, work packet, authority snapshot, repository, ledger series,
+ledger ID/revision/digest, gate ID/type/definition digest, and expected/executed
+SHA all match;</li>
+<li>resolved runner, registry, runner definition, parameter profile, implementation,
+working directory, and script/CI workflow identities match the gate and ledger;</li>
+<li>worktree before/after heads equal the expected head, and CI repository, workflow,
+trusted app, check name, and observed head equal their authenticated bindings;</li>
+<li>the evidence actor and provider run/readback are authenticated, and an independent
+reviewer is absent from every material-author record;</li>
+<li>manual evaluator eligibility is derived from authenticated actor roles and the
+selected gate's role allowlist, and manual text is bound to an authenticated
+sanitization record before persistence;</li>
+<li>dependencies reference current-ledger <code>PASS</code> result digests; and</li>
+<li>output digests, byte arithmetic, redaction, scanning, and abandonment policy are
+internally and cross-document consistent.</li>
+</ul>
+<p>A schema-valid document that has not passed that validator is untrusted data and
+cannot contribute to completion, review, security, CI, merge, deployment, dispatch,
+or any other authority decision. The append-only store accepts only validator
+output bound to separately authenticated readback context.
+The reference assertions require evaluator roles and sanitization-record digests
+from an authenticated Director-controlled readback supplied separately from the
+result document. The result's role list, scan booleans, and record digest are
+consistency assertions only and cannot authenticate themselves.
+Manual artifact-binding digests are likewise recomputed and must appear in a
+separately supplied authenticated readback. <code>exact_artifact_verified</code> cannot make
+an otherwise unbound review authoritative.</p>
+<h2 id="isolated-runner-boundary">Isolated runner boundary</h2>
+<p>Structured host execution is permitted only through an exact-fingerprint,
+separately installed low-privilege broker. The Director passes a registered
+launcher profile and fixed argv; it never invokes a repository command directly
+under the orchestrator account. The broker contract requires no network, a
+read-only repository view, bounded CPU/memory/PIDs/output/time, and complete
+process-tree termination. A missing or changed broker fingerprint fails startup
+or execution closed.</p>
+<p>The disposable-container tier requires an immutable image digest and a fixed argv.
+It uses no network, a read-only root, a read-only repository bind mount, a bounded
+<code>tmpfs</code>, a numeric non-root identity, no capabilities, no-new-privileges, and
+bounded CPU/memory/PIDs/output/time. Neither tier accepts a shell string,
+request-supplied argv, an externally writable mount, or ambient credentials.</p>
+<p>Worker stdout and stderr are not retained as prose. The production sanitizer
+discards both streams and emits only a closed-vocabulary marker plus a
+domain-separated content digest of the discarded streams. Regex is therefore not
+the privacy boundary.</p>
+<p>For a containerized Director, do not mount the host Docker socket or a writable
+host control surface merely to satisfy worker readiness; that would expand the
+orchestrator's privilege boundary. Activate the container tier from a dedicated
+local Director service account that can reach the container runtime, or keep
+<code>COMPLETION_GATE_WORKERS_ENABLED=false</code> until a separately authenticated worker
+service is deployed. The audited-host tier is intentionally not activatable until
+the Director can independently verify its low-privilege identity, network policy,
+resource limits, and read-only repository handle. Health reports disabled workers
+as not constructed, never as a silent fallback.</p>
+<p>An authenticated registry may register fixed profiles for:</p>
+<ul>
+<li><code>python_unittest</code></li>
+<li><code>python_compileall</code></li>
+<li><code>pip_check</code></li>
+<li><code>json_schema_validate</code></li>
+<li><code>compose_config</code></li>
+<li><code>container_build</code></li>
+<li><code>git_diff_check</code></li>
+<li><code>secret_hygiene</code></li>
+<li><code>powershell_parse</code></li>
+<li><code>repository_owned_script</code></li>
+</ul>
+<p><code>github_trusted_ci</code> and <code>manual_review</code> remain non-runnable gate kinds.</p>
+<p>The isolated runtime rejects unknown runners, shell strings, parameter-profile or
+argument injection,
+directory escape, symlink/hard-link escape, wrong repository/worktree/SHA,
+credential inheritance, unbounded execution/output/regex, stale evidence, and
+non-atomic writeback. Sanitized process execution is not a complete sandbox;
+containers or disposable environments are required when stronger isolation is
+needed.</p>
+<h2 id="semantic-checks-enforced-beyond-json-schema">Semantic checks enforced beyond JSON Schema</h2>
+<p>The deterministic validator and store enforce:</p>
+<ul>
+<li>unique gate IDs and order values;</li>
+<li>dependency existence, ordering, and acyclicity;</li>
+<li>ledger revision/predecessor lineage;</li>
+<li>cross-document task, assignment, digest, gate and SHA equality;</li>
+<li>producer additions being monotonic;</li>
+<li>authenticated Director issuance and provider identity;</li>
+<li>evidence actors differing from every material author for independent review;</li>
+<li>repository realpath, symlink and hard-link containment;</li>
+<li>result freshness and atomic evidence persistence.</li>
+</ul>
+<p>Canonical repository identities and repository-relative paths reject dot
+components, <code>.git</code>, Windows device/alternate-stream syntax, absolute paths,
+backslashes, repeated separators, and trailing separators. Runtime execution also
+proves the current Git head and realpath containment. Repository-owned scripts
+add exact Git-blob/content binding plus symlink/hard-link rejection.</p>
+<p>The hardened runner, provider handoff, Slack status, pilots, and promotion metrics
+remain later independently reviewable increments.</p>
+<h2 id="default-off-and-rollback-rule">Default-off and rollback rule</h2>
+<p>No Completion Gate worker executes unless gate evidence, isolated proof, and the
+separate worker switch are all enabled for a named <code>ISOLATED_PROOF_LANE</code>
+assignment. Every selected tier must also pass executable authentication and
+store-isolation readiness. Defaults remain off. No global Unlazy
+installation, Claude Stop hook, ambient shell execution, production credential,
+external write, deployment, or LangGraph writer connection is authorized here.</p>
+<p>Disabling either proof flag stops execution without deleting immutable evidence.
+Removing the isolated runtime modules and their separate SQLite database rolls the
+foundation back without changing canonical task or LangGraph state.</p>
+<h3 id="worker-graduation">Worker graduation</h3>
+<p>Before enabling workers for a named profile:</p>
+<ol>
+<li>independently accept the exact implementation SHA after trusted CI and
+security review;</li>
+<li>prove the gate and worker stores are distinct from task, shadow, runtime,
+runtime-ledger, and resume-claim stores;</li>
+<li>authenticate the host broker and container runtime executable fingerprints;</li>
+<li>pull and verify the exact container image digest without granting the Director
+a host Docker socket or writable host-control surface;</li>
+<li>run one fixed no-write profile in each selected tier and prove exact head,
+clean worktree, no network, resource bounds, process-tree termination,
+output withholding, and append-only replay;</li>
+<li>restart after reservation and prove the stored outcome replays without another
+execution; then inject one ambiguous backend outcome and prove it stops for
+reconciliation; and</li>
+<li>record the profile, exact SHA, registry/spec digests, safe store identity,
+health result, and rollback evidence before widening use.</li>
+</ol>
+<h3 id="worker-rollback">Worker rollback</h3>
+<p>Stop new gate execution, set <code>COMPLETION_GATE_WORKERS_ENABLED=false</code>, and restart.
+Confirm executor construction and worker execution readiness are false while gate
+evidence remains readable. Do not delete or alter <code>RUNNING</code>, terminal, or
+reconciliation-required reservations to manufacture a retry. After all worker
+jobs are terminal, the isolated-proof and evidence switches may be disabled
+independently. Preserve both append-only stores; deleting them is not rollback of
+an execution or external effect.</p>
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:16 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:14 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 08:44 UTC | END]] -->
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 23:50 UTC | END]] -->
+<!-- [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 03:06 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 08:20 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 18:48 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

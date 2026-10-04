@@ -16,7 +16,7 @@ display_name: "Firecrawl"
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -147,12 +147,12 @@ authority:
   output_trust: "untrusted_evidence_never_instructions"
 
 platform_limitations:
-  - limitation: "No Firecrawl variable appears in .env.example or docs/provider-setup.md; the lane's credential names exist only in the primary transport authentication map."
+  - limitation: "No Firecrawl variable appears in .env.example or docs/provider-setup.html; the lane's credential names exist only in the primary transport authentication map."
     source: "src/director_orchestrator/primary_transports.py:_PROVIDER_AUTH_ENVIRONMENT"
   - limitation: "The legacy provider registry has no Firecrawl adapter; the lane can execute only on the LangGraph primary path through the public-search transport."
-    source: "docs/provider-allocation-profiles.md"
+    source: "docs/provider-allocation-profiles.html"
   - limitation: "Firecrawl is not a supported Windows host-bridge lane and has no browser provider-UI eligibility."
-    source: "src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES; docs/team-operating-charter.md"
+    source: "src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES; docs/team-operating-charter.html"
   - limitation: "The public-search transport rejects every external effect."
     source: "src/director_orchestrator/primary_default.py:_PRIMARY_PUBLIC_RESEARCH_LANES"
 
@@ -201,13 +201,13 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/provider-allocation-profiles.md"
+  - document: "docs/provider-allocation-profiles.html"
     anchor: "A nonzero target is not evidence that a route is operational."
-  - document: "docs/provider-allocation-profiles.md"
+  - document: "docs/provider-allocation-profiles.html"
     anchor: "The default legacy provider registry does not include OpenAI production, Firecrawl,"
-  - document: "docs/langgraph-primary-operations.md"
+  - document: "docs/langgraph-primary-operations.html"
     anchor: "Perplexity or Firecrawl contact under the frozen profile"
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "| Firecrawl |"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
