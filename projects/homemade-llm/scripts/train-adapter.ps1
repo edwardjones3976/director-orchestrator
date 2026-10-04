@@ -65,7 +65,7 @@ if ($Rows -match '\\secrets\\') { Write-Error "refusing to mount a rows path und
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
 if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
-    $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-14b.json'
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m2-expected-qwen3-14b-v2.json'
 }
 if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-8b.json'
@@ -75,9 +75,9 @@ if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
 # The trainer also requires approved digests for every snapshot file, including
 # tokenizer/config/index metadata; a weights-only list cannot authorize a load.
 $TrustedDigestRoot = ''
-$TrustedDigestRootSHA256 = '832406c6f6675c92b2d1072ffa674c1873a1693a88d53293d8e17942961423ee'
+$TrustedDigestRootSHA256 = 'd1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'
 if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase) {
-    $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v1.json'
+    $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v2.json'
     $rootBytes = [IO.File]::ReadAllBytes($TrustedDigestRoot)
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
