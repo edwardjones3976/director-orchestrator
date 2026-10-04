@@ -4,6 +4,7 @@ from fractions import Fraction
 from dev_selection import (
     evaluate_cell_counts,
     evaluate_primary_score,
+    primary_fraction,
     select_checkpoint,
     evaluate_confirmation,
     whole_group_counts,
@@ -288,6 +289,185 @@ class TestWholeGroupConfirmation(unittest.TestCase):
         res = confirm_whole_groups(roster, before, after)
         self.assertFalse(res["complete"])
         self.assertFalse(res["passes"])
+
+
+class TestExpectedPacketRoster(unittest.TestCase):
+    def _packet(self, packet_id, schema_valid=True, grok_as_is=True, zai_as_is=True):
+        return {"packet_id": packet_id, "schema_valid": schema_valid,
+                "grok_as_is": grok_as_is, "zai_as_is": zai_as_is}
+
+    def _arms(self, roster, after_override=None):
+        """20 groups; g1..g6 flip to passing, the rest fail in both arms."""
+        fail = dict(schema_valid=False, grok_as_is=False, zai_as_is=False)
+        before = {g: [self._packet(f"{g}-p1", **fail), self._packet(f"{g}-p2", **fail)]
+                  for g in roster}
+        after = {g: [self._packet(f"{g}-p1"), self._packet(f"{g}-p2")] for g in roster[:6]}
+        for g in roster[6:]:
+            after[g] = [self._packet(f"{g}-p1", **fail), self._packet(f"{g}-p2", **fail)]
+        if after_override:
+            after.update(after_override)
+        return before, after
+
+    def _expected(self, roster):
+        return {g: [f"{g}-p1", f"{g}-p2"] for g in roster}
+
+    def test_clean_six_flips_pass_with_expected_roster(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        res = confirm_whole_groups(roster, before, after, self._expected(roster))
+        self.assertEqual((res["b"], res["c"]), (6, 0))
+        self.assertTrue(res["complete"])
+        self.assertTrue(res["roster_bound"])
+        self.assertTrue(res["passes"])
+
+    def test_omitted_packet_in_passing_group_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster, {"g3": [self._packet("g3-p1")]})
+        res = whole_group_counts(roster, before, after, self._expected(roster))
+        self.assertTrue(res["roster_bound"])
+        self.assertFalse(res["complete"])
+        self.assertEqual(res["b"], 5)
+        confirm = confirm_whole_groups(roster, before, after, self._expected(roster))
+        self.assertFalse(confirm["passes"])
+
+    def test_substituted_packet_id_blocks_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(
+            roster, {"g5": [self._packet("g5-p1"), self._packet("g5-pX")]})
+        res = whole_group_counts(roster, before, after, self._expected(roster))
+        self.assertFalse(res["complete"])
+        self.assertEqual(res["b"], 5)
+        confirm = confirm_whole_groups(roster, before, after, self._expected(roster))
+        self.assertFalse(confirm["passes"])
+
+    def test_without_expected_roster_never_passes(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        res = confirm_whole_groups(roster, before, after)
+        self.assertTrue(res["complete"])
+        self.assertFalse(res["roster_bound"])
+        self.assertFalse(res["passes"])
+
+    def test_string_false_flags_are_incomplete_not_a_pass(self):
+        roster = ["g1"]
+        before = {"g1": [self._packet("g1-p1", "false", "false", "false")]}
+        after = {"g1": [self._packet("g1-p1")]}
+        res = whole_group_counts(roster, before, after, {"g1": ["g1-p1"]})
+        self.assertFalse(res["complete"])
+        self.assertFalse(confirm_whole_groups(roster, before, after, {"g1": ["g1-p1"]})["passes"])
+        # Real-boolean enforcement applies even without an expected roster.
+        res = whole_group_counts(roster, before, after)
+        self.assertFalse(res["complete"])
+
+    def test_missing_flag_key_is_incomplete(self):
+        roster = ["g1"]
+        bad = {"packet_id": "g1-p1", "schema_valid": True, "grok_as_is": True}
+        res = whole_group_counts(roster, {"g1": [bad]}, {"g1": [self._packet("g1-p1")]},
+                                 {"g1": ["g1-p1"]})
+        self.assertFalse(res["complete"])
+
+    def test_real_false_flag_is_complete_not_a_pass(self):
+        roster = ["g1"]
+        before = {"g1": [self._packet("g1-p1", False, False, False)]}
+        after = {"g1": [self._packet("g1-p1")]}
+        res = whole_group_counts(roster, before, after, {"g1": ["g1-p1"]})
+        self.assertTrue(res["complete"])
+        self.assertEqual(res["b"], 1)
+        self.assertFalse(res["group_results"][0]["before"])
+
+    def test_packet_id_must_be_a_present_string(self):
+        roster = ["g1"]
+        no_id = {"schema_valid": True, "grok_as_is": True, "zai_as_is": True}
+        res = whole_group_counts(roster, {"g1": [self._packet("g1-p1")]},
+                                 {"g1": [no_id]}, {"g1": ["g1-p1"]})
+        self.assertFalse(res["complete"])
+        non_str = dict(no_id, packet_id=7)
+        res = whole_group_counts(roster, {"g1": [self._packet("g1-p1")]},
+                                 {"g1": [non_str]}, {"g1": ["g1-p1"]})
+        self.assertFalse(res["complete"])
+
+
+class TestExpectedPacketsPrimaryScore(unittest.TestCase):
+    def test_dropped_reference_id_zeroes_group(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"])]
+        cands = {"r1": _full_cand(non_goals=["A"])}
+        res = evaluate_primary_score(refs, cands, ["g1"],
+                                     expected_packets={"g1": ["r1", "r2"]})
+        self.assertEqual(res["primary"], 0.0)
+        self.assertTrue(res["incomplete"])
+        self.assertEqual(res["incomplete_groups"], ["g1"])
+        self.assertEqual(res["groups"], 1)  # denominator is never trimmed
+
+    def test_duplicated_reference_id_zeroes_group(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"]),
+                _ref_row("r1", "g1", non_goals=["B"])]
+        cands = {"r1": _full_cand(non_goals=["A"])}
+        res = evaluate_primary_score(refs, cands, ["g1"],
+                                     expected_packets={"g1": ["r1", "r2"]})
+        self.assertEqual(res["primary"], 0.0)
+        self.assertTrue(res["incomplete"])
+        self.assertEqual(res["incomplete_groups"], ["g1"])
+
+    def test_substituted_reference_id_zeroes_group(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"]),
+                _ref_row("r3", "g1", non_goals=["B"])]
+        cands = {"r1": _full_cand(), "r3": _full_cand()}
+        res = evaluate_primary_score(refs, cands, ["g1"],
+                                     expected_packets={"g1": ["r1", "r2"]})
+        self.assertEqual(res["primary"], 0.0)
+        self.assertTrue(res["incomplete"])
+        self.assertEqual(res["incomplete_groups"], ["g1"])
+
+    def test_matching_roster_scores_normally(self):
+        refs = [_ref_row("r1", "g1", non_goals=["A"]),
+                _ref_row("r2", "g1", non_goals=["B"])]
+        cands = {"r1": _full_cand(non_goals=["A"]), "r2": _full_cand(non_goals=["B"])}
+        res = evaluate_primary_score(refs, cands, ["g1"],
+                                     expected_packets={"g1": ["r1", "r2"]})
+        self.assertEqual(res["primary"], 1.0)
+        self.assertFalse(res["incomplete"])
+        self.assertTrue(res["roster_bound"])
+
+    def test_roster_bound_false_when_partial_or_absent(self):
+        refs = [_ref_row("r1", "g1")]
+        cands = {"r1": _full_cand()}
+        res = evaluate_primary_score(refs, cands, ["g1", "g2"])
+        self.assertFalse(res["roster_bound"])
+        res = evaluate_primary_score(refs, cands, ["g1", "g2"],
+                                     expected_packets={"g1": ["r1"]})
+        self.assertFalse(res["roster_bound"])
+
+    def test_primary_exact_one_third_and_fraction_selection(self):
+        # Unequal groups: g1 perfect (4 cells), g2/g3 zero in all four cells
+        # (each reference field is non-empty and missed), so the pooled sum is
+        # 4 over 12 cells -> primary = 1/3 exactly.
+        refs = [
+            _ref_row("r1", "g1", non_goals=["A"], constraints=["B"],
+                     acceptance_checks=["C"], evidence_requirements=["D"]),
+            _ref_row("r2", "g2", non_goals=["X"], constraints=["Y"],
+                     acceptance_checks=["Z"], evidence_requirements=["W"]),
+            _ref_row("r3", "g3", non_goals=["X"], constraints=["Y"],
+                     acceptance_checks=["Z"], evidence_requirements=["W"]),
+        ]
+        cands = {
+            "r1": _full_cand(non_goals=["A"], constraints=["B"],
+                             acceptance_checks=["C"], evidence_requirements=["D"]),
+            "r2": _full_cand(),
+            "r3": _full_cand(),
+        }
+        expected = {"g1": ["r1"], "g2": ["r2"], "g3": ["r3"]}
+        res = evaluate_primary_score(refs, cands, ["g1", "g2", "g3"],
+                                     expected_packets=expected)
+        self.assertFalse(res["incomplete"])
+        self.assertTrue(res["roster_bound"])
+        self.assertEqual(res["primary_exact"], {"numerator": 1, "denominator": 3})
+        frac = primary_fraction(res)
+        self.assertEqual(frac, Fraction(1, 3))
+        self.assertAlmostEqual(res["primary"], float(Fraction(1, 3)))
+        # select_checkpoint accepts the Fraction unchanged; equal exact values
+        # (1/3 vs 2/6) tie-break to the earlier checkpoint.
+        checkpoints = [("later", 2, frac), ("earlier", 1, Fraction(2, 6))]
+        self.assertEqual(select_checkpoint(checkpoints), "earlier")
 
 
 if __name__ == '__main__':

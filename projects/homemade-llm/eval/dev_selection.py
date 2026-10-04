@@ -44,11 +44,28 @@ def _is_valid_prediction(cand: Any) -> bool:
     return True
 
 
+def _ids_match_expected(ids: List[Any], expected: Sequence[str]) -> bool:
+    """Exact roster match: same length, no duplicates, no substitutions."""
+    if len(set(ids)) != len(ids):
+        return False
+    return sorted(ids) == sorted(expected)
+
+
+def _roster_is_bound(
+    expected_packets: Optional[Dict[str, Sequence[str]]],
+    frozen_roster: Sequence[str],
+) -> bool:
+    return expected_packets is not None and all(
+        group in expected_packets for group in frozen_roster
+    )
+
+
 def evaluate_primary_score(
     reference_rows: List[Dict[str, Any]],
     predictions: Dict[str, Any],
     frozen_roster: Sequence[str],
     schema_invalid_row_ids: Iterable[str] = (),
+    expected_packets: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
     invalid_ids = set(schema_invalid_row_ids)
 
@@ -67,6 +84,10 @@ def evaluate_primary_score(
     for group in frozen_roster:
         packets = rows_by_group[group]
         broken = not packets
+        if not broken and expected_packets is not None and group in expected_packets:
+            ref_ids = [row.get("row_id") for row in packets]
+            if not _ids_match_expected(ref_ids, expected_packets[group]):
+                broken = True
         if not broken:
             for row in packets:
                 row_id = row.get("row_id")
@@ -96,9 +117,9 @@ def evaluate_primary_score(
 
     denom = 4 * len(frozen_roster)
     if denom:
-        primary_fraction = sum(cell_fractions, Fraction(0)) / denom
+        primary_frac = sum(cell_fractions, Fraction(0)) / denom
     else:
-        primary_fraction = Fraction(0)
+        primary_frac = Fraction(0)
 
     total_tp = sum(field_tp.values())
     total_fp = sum(field_fp.values())
@@ -111,13 +132,23 @@ def evaluate_primary_score(
     }
 
     return {
-        "primary": float(primary_fraction),
+        "primary": float(primary_frac),
+        "primary_exact": {
+            "numerator": primary_frac.numerator,
+            "denominator": primary_frac.denominator,
+        },
         "micro": float(micro_fraction),
         "per_field": per_field,
         "incomplete": bool(incomplete_groups),
         "incomplete_groups": incomplete_groups,
         "groups": len(frozen_roster),
+        "roster_bound": _roster_is_bound(expected_packets, frozen_roster),
     }
+
+
+def primary_fraction(result: Dict[str, Any]) -> Fraction:
+    exact = result["primary_exact"]
+    return Fraction(exact["numerator"], exact["denominator"])
 
 
 def select_checkpoint(checkpoints: List[Tuple[str, int, Any]]) -> str:
@@ -166,14 +197,35 @@ def evaluate_confirmation(b: int, c: int) -> Dict[str, Any]:
     }
 
 
-def _group_arm_status(packets: Optional[List[Optional[Dict[str, Any]]]]) -> Tuple[bool, bool]:
+_FLAG_KEYS = ("schema_valid", "grok_as_is", "zai_as_is")
+
+
+def _packet_flags_real(packet: Dict[str, Any]) -> bool:
+    return all(type(packet.get(key)) is bool for key in _FLAG_KEYS)
+
+
+def _group_arm_status(
+    packets: Optional[List[Optional[Dict[str, Any]]]],
+    expected: Optional[Sequence[str]] = None,
+) -> Tuple[bool, bool]:
     """Returns (passes, complete) for a single group's packet list in one arm."""
     if not packets:
         return False, False
     if any(p is None for p in packets):
         return False, False
+    if any(not _packet_flags_real(p) for p in packets):
+        return False, False
+    if expected is not None:
+        ids = []
+        for p in packets:
+            packet_id = p.get("packet_id")
+            if not isinstance(packet_id, str):
+                return False, False
+            ids.append(packet_id)
+        if not _ids_match_expected(ids, expected):
+            return False, False
     all_accepted = all(
-        p.get("schema_valid") and p.get("grok_as_is") and p.get("zai_as_is")
+        p["schema_valid"] and p["grok_as_is"] and p["zai_as_is"]
         for p in packets
     )
     return all_accepted, True
@@ -183,6 +235,7 @@ def whole_group_counts(
     frozen_roster: Sequence[str],
     before: Dict[str, List[Optional[Dict[str, Any]]]],
     after: Dict[str, List[Optional[Dict[str, Any]]]],
+    expected_packets: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
     b = 0
     c = 0
@@ -190,8 +243,9 @@ def whole_group_counts(
     group_results: List[Dict[str, Any]] = []
 
     for group in frozen_roster:
-        before_pass, before_complete = _group_arm_status(before.get(group))
-        after_pass, after_complete = _group_arm_status(after.get(group))
+        expected = expected_packets.get(group) if expected_packets is not None else None
+        before_pass, before_complete = _group_arm_status(before.get(group), expected)
+        after_pass, after_complete = _group_arm_status(after.get(group), expected)
         if not (before_complete and after_complete):
             complete = False
         if after_pass and not before_pass:
@@ -205,6 +259,7 @@ def whole_group_counts(
         "c": c,
         "groups": len(frozen_roster),
         "complete": complete,
+        "roster_bound": _roster_is_bound(expected_packets, frozen_roster),
         "group_results": group_results,
     }
 
@@ -213,11 +268,12 @@ def confirm_whole_groups(
     frozen_roster: Sequence[str],
     before: Dict[str, List[Optional[Dict[str, Any]]]],
     after: Dict[str, List[Optional[Dict[str, Any]]]],
+    expected_packets: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
-    counts = whole_group_counts(frozen_roster, before, after)
+    counts = whole_group_counts(frozen_roster, before, after, expected_packets)
     confirmation = evaluate_confirmation(counts["b"], counts["c"])
     result: Dict[str, Any] = dict(counts)
     result.update(confirmation)
-    if not counts["complete"]:
+    if not counts["complete"] or not counts["roster_bound"]:
         result["passes"] = False
     return result
