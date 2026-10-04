@@ -1672,8 +1672,12 @@ $TrustedDigestRoot = ''
         save.assert_called_once()
         self.assertEqual(checkpoints, [entry])
 
-    def _maintenance_epoch_run(self, root: Path, trainer_type, epochs: int):
-        model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION))
+    def _maintenance_epoch_run(
+        self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False,
+    ):
+        base = train_adapter.WINNER_BASE if winner else train_adapter.SMOKE_BASE
+        revision = train_adapter.WINNER_REVISION if winner else train_adapter.SMOKE_REVISION
+        model = mock.Mock(config=types.SimpleNamespace(_commit_hash=revision))
 
         def save(directory):
             Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
@@ -1689,7 +1693,7 @@ $TrustedDigestRoot = ''
                     from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
                     get_peft_model=mock.Mock(return_value=model))),
                 mock.patch.object(train_adapter.torch, "cuda", mock.Mock(
-                    max_memory_reserved=mock.Mock(return_value=1 * 2**30)), create=True),
+                    max_memory_reserved=mock.Mock(return_value=peak_gib * 2**30)), create=True),
                 mock.patch.object(train_adapter, "Dataset", mock.Mock()),
                 mock.patch.object(train_adapter, "encode_rows", return_value=encoded),
                 mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None),
@@ -1697,8 +1701,74 @@ $TrustedDigestRoot = ''
                 mock.patch.object(train_adapter, "SFTTrainer", trainer_type),
             ):
                 stack.enter_context(patch)
-            return train_adapter.train([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
-                                       None, report_path, winner=False, epochs=epochs)
+            return train_adapter.train([row()], base, revision, None, report_path, winner=winner, epochs=epochs)
+
+    def test_completed_epoch_memory_admission_precedes_ready_handoff(self):
+        class CompleteTrainer:
+            def __init__(self, **kwargs):
+                self.callback = kwargs["callbacks"][0]
+                self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
+
+            def train(self):
+                for epoch in (1, 2):
+                    self.state.epoch, self.state.global_step = float(epoch), epoch * 8
+                    self.callback.on_epoch_end(None, self.state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        for winner, peak_gib, admitted, message in (
+            (False, 12.001, False, "exceeds the 12 GiB card"),
+            (True, 11.001, False, "winner probe peak reserved VRAM"),
+            (False, 12.0, True, None),
+            (True, 11.0, True, None),
+        ):
+            with self.subTest(winner=winner, peak=peak_gib), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if admitted:
+                    returned = self._maintenance_epoch_run(
+                        root, CompleteTrainer, epochs=2, peak_gib=peak_gib, winner=winner)
+                    self.assertTrue(returned["export_ready"])
+                else:
+                    with self.assertRaisesRegex(SystemExit, message):
+                        self._maintenance_epoch_run(
+                            root, CompleteTrainer, epochs=2, peak_gib=peak_gib, winner=winner)
+                payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
+                self.assertEqual(payload["peak_reserved_vram_gib"], peak_gib)
+                self.assertEqual(payload["completed_epoch_ids"], [1, 2])
+                self.assertEqual(payload["completed_epochs"], 2)
+                self.assertEqual(payload["trainer_epoch"], 2.0)
+                self.assertEqual(payload["export_ready"], admitted)
+                if admitted:
+                    self.assertEqual(payload["final_adapter"]["dir"], str(root / "models" / "maintenance" / "epoch-02"))
+                else:
+                    self.assertIsNone(payload["final_adapter"])
+                    self.assertIsNone(payload["loss"])
+                for epoch in (1, 2):
+                    leaf = root / "models" / "maintenance" / f"epoch-{epoch:02d}"
+                    self.assertTrue((leaf / "adapter-hashes.json").is_file())
+                    self.assertTrue((leaf / "adapter_model.safetensors").is_file())
+
+    def test_epoch_memory_refusal_preserves_original_exception(self):
+        class CompleteTrainer:
+            def __init__(self, **kwargs):
+                self.callback = kwargs["callbacks"][0]
+                self.state = types.SimpleNamespace(epoch=1.0, global_step=8)
+
+            def train(self):
+                self.callback.on_epoch_end(None, self.state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        refusal = SystemExit("original memory refusal")
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter, "require_vram", side_effect=refusal) as gate:
+            root = Path(tmp)
+            with self.assertRaises(SystemExit) as caught:
+                self._maintenance_epoch_run(root, CompleteTrainer, epochs=1, peak_gib=12.001)
+            self.assertIs(caught.exception, refusal)
+            gate.assert_called_once_with(12.001, winner=False)
+            payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(payload["peak_reserved_vram_gib"], 12.001)
+            self.assertFalse(payload["export_ready"])
+            self.assertIsNone(payload["final_adapter"])
 
     def test_epoch_normal_early_return_cannot_claim_completed_partial_epoch(self):
         for progress in (0.75, 1.75):

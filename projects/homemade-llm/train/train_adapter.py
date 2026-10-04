@@ -1112,6 +1112,7 @@ def train(
     callbacks = [EpochLeafCallback(model, run_dir, checkpoints)] if epochs is not None else []
     trainer = None
     export_ready = False
+    peak = None
     try:
         trainer = SFTTrainer(
             model=model,
@@ -1123,12 +1124,18 @@ def train(
         )
         torch.cuda.reset_peak_memory_stats()
         result = trainer.train()
+        peak = torch.cuda.max_memory_reserved() / 2**30
+        if epochs is not None:
+            # Admit memory before creating any ready adapter handoff. A refusal
+            # follows the same retained-evidence path as a training exception.
+            require_vram(peak, winner=winner)
     except BaseException:
         # Evidence (leaves, partial manifests) stays in run_dir; no success record.
         if epochs is not None:
             report = build_report(
                 run=report_path.stem, base=base, revision=revision, rows=len(rows), steps=steps,
-                mask_coverage=mask_coverage, peak_reserved_gib=torch.cuda.max_memory_reserved() / 2**30,
+                mask_coverage=mask_coverage, peak_reserved_gib=(
+                    peak if peak is not None else torch.cuda.max_memory_reserved() / 2**30),
                 loss=None, wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
                 digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
                 final_adapter=None, export_ready=False, output_dir=str(run_dir),
@@ -1136,7 +1143,6 @@ def train(
             )
             write_report(report_path, report)
         raise
-    peak = torch.cuda.max_memory_reserved() / 2**30
     if epochs is not None:
         # Truthful completion: every requested epoch saved, hashed and retained.
         progress = actual_trainer_epoch(getattr(trainer, "state", None))
@@ -1162,7 +1168,8 @@ def train(
             digest_verification=digest_verification,
         )
     write_report(report_path, report)
-    require_vram(peak, winner=winner)
+    if epochs is None:
+        require_vram(peak, winner=winner)
     return report
 
 
