@@ -122,6 +122,7 @@ from .approvals import (
     record_oracle_recovery,
     record_provider_effect_observation,
     record_task_effect_observation,
+    retire_terminal_revision_authority,
     reset_for_owner_clarification,
     reserve_provider_effect,
     reserve_task_effect,
@@ -1018,7 +1019,7 @@ class OrchestrationEngine:
         runtime_idempotency_key: str | None = None,
         parallel_member_effect_key: str | None = None,
     ) -> bool:
-        """Record pre-submit only after the exact runtime effect is closed."""
+        """Return exact effect closure; workload bookkeeping retains its own hold."""
 
         closed_pre_submit = self._close_failed_pre_submit_after_publication(
             record,
@@ -1029,7 +1030,7 @@ class OrchestrationEngine:
             parallel_member_effect_key=parallel_member_effect_key,
         )
         current = self.store.get(record.task_id) or record
-        finalized = await self._finalize_workload_dispatch(
+        await self._finalize_workload_dispatch(
             current,
             reservation,
             (
@@ -1038,7 +1039,9 @@ class OrchestrationEngine:
                 else WorkloadAttemptOutcome.INVOKED
             ),
         )
-        return closed_pre_submit and finalized
+        # A failed workload write cannot undo a durable no-submission receipt.
+        # Callers use this result for paid-effect classification and settlement.
+        return closed_pre_submit
 
     # [[Claude | Claude Opus 5 | 2026-08-25 | 02:20 UTC | BEGIN]]
     async def _stop_for_owner(
@@ -1252,7 +1255,7 @@ class OrchestrationEngine:
             return None
         if any(
             item.assignment_sequence == assignment.sequence
-            and item.raw.get("packet_result_digest")
+            and self._packet_result_consumed(record, item)
             for item in record.provider_runs
         ):
             return None
@@ -1264,6 +1267,10 @@ class OrchestrationEngine:
         try:
             idempotency_key = router.idempotency_key(record, assignment)
             bound_packet = runtime.bound_work_packet(idempotency_key)
+            if bound_packet is None and any(
+                run.assignment_sequence == assignment.sequence for run in record.provider_runs
+            ):
+                raise CommunicationEvidenceFailure("Existing provider run has no bound runtime packet")
             work_packet = (
                 router.validate_bound_packet(record, assignment, bound_packet)
                 if bound_packet is not None
@@ -1380,6 +1387,8 @@ class OrchestrationEngine:
                     effect_key=task_effect_key,
                     outcome="failed_pre_submit",
                 )
+                self.store.save(record)
+            self._settle_unsubmitted_spend(record, assignment, task_effect_key)
             return False
         published_record = record
         record = self._revalidated_plan_after_publication(published_record)
@@ -1401,6 +1410,7 @@ class OrchestrationEngine:
                     reserved_by_caller=task_effect_reserved_here,
                     runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
+            self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
             return False
         packet_outcome = None
         provably_unsent = False
@@ -1491,7 +1501,7 @@ class OrchestrationEngine:
                 )
                 and item.status != "WAITING_CALLBACK"
                 and item.result
-                and not item.raw.get("packet_result_digest")
+                and not self._packet_result_consumed(latest, item)
             ]
             if authenticated_readbacks:
                 readback = authenticated_readbacks[-1]
@@ -1670,7 +1680,7 @@ class OrchestrationEngine:
                 continue
             if any(
                 item.assignment_sequence == planned.sequence
-                and (item.raw.get("packet_result_digest") or not any(
+                and (self._packet_result_consumed(record, item) or not any(
                     held.get("result_packet_digest") for held in self._spend_settlements(record, item).values()
                 ))
                 for item in record.provider_runs
@@ -1688,6 +1698,11 @@ class OrchestrationEngine:
                     record, assignment
                 )
                 bound_packet = activation.runtime.bound_work_packet(idempotency_key)
+                if bound_packet is None and any(
+                    run.assignment_sequence == assignment.sequence for run in record.provider_runs
+                ):
+                    await self._stop_for_owner(record, "Existing provider run has no bound runtime packet; reconcile before replay.")
+                    return False
                 work = dict(
                     activation.packet_task_router.validate_bound_packet(
                         record, assignment, bound_packet
@@ -2061,6 +2076,8 @@ class OrchestrationEngine:
                             effect_key=task_effect_key,
                             outcome="failed_pre_submit",
                         )
+                        self.store.save(record)
+                    self._settle_unsubmitted_spend(record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -2111,6 +2128,7 @@ class OrchestrationEngine:
                                 parallel_member_effect_key=member.effect_key,
                             )
                         )
+                    self._settle_unsubmitted_spend(published_record, assignment, task_effect_key)
                     ledger.record(
                         batch_id,
                         member.effect_key,
@@ -2412,16 +2430,23 @@ class OrchestrationEngine:
             ),
         )
 
+    @staticmethod
+    def _packet_result_consumed(record: TaskRecord, run: ProviderRun) -> bool:
+        return bool(run.interaction_id and record.consumed_packet_results.get(run.interaction_id))
+
     @classmethod
-    def _run_transport(cls, run: ProviderRun) -> ProviderTransport:
-        raw = run.raw if isinstance(run.raw, dict) else {}
-        return cls._provider_transport(
-            run.provider,
-            repository_capable=(
-                run.provider == ProviderName.GROK
-                and raw.get("transport") == ProviderTransport.GROK_CLI.value
-            ),
-        )
+    def _run_transport(cls, record: TaskRecord, run: ProviderRun) -> ProviderTransport:
+        routes = {
+            event.transport_evidence.transport
+            for event in record.provider_interaction_ledger
+            if event.interaction_id == run.interaction_id
+            and event.provider == run.provider.value
+            and event.plan_generation == record.plan_generation
+            and event.assignment_sequence == run.assignment_sequence
+        }
+        if len(routes) != 1:
+            raise CommunicationEvidenceFailure("provider run has no unique engine-owned transport")
+        return routes.pop()
 
     @staticmethod
     def _interaction_result_text(value: object) -> str:
@@ -2703,7 +2728,7 @@ class OrchestrationEngine:
             provider=run.provider,
             state=state,
             source=source,
-            transport=self._run_transport(run),
+            transport=self._run_transport(record, run),
             run_id=run.run_id,
             session_id=run.session_id,
             native_status=run.status,
@@ -2843,10 +2868,32 @@ class OrchestrationEngine:
 
     async def run(self, task_id: str) -> None:
         async with self._task_locks[task_id]:
-            await self._run_locked(task_id)
+            try:
+                await self._run_locked(task_id)
+            except AcknowledgementPersistencePending:
+                # The bounded read/write attempts were exhausted; do not add another read.
+                return
+            try:
+                held = self.store.get(task_id)
+                if (held is not None and held.status == TaskStatus.OWNER_DECISION_REQUIRED
+                        and held.error and held.error.startswith("spend_settlement_failed:")):
+                    await self._status_post(
+                        held, f"*{task_id} — OWNER DECISION REQUIRED*\n"
+                        "Provider spend reconciliation is pending; dispatch remains stopped.",
+                        client_msg_id=self._slack_client_id(
+                            task_id, str(held.plan_generation), "spend-hold", held.error),
+                    )
+            except (sqlite3.OperationalError, OSError, PrivacyCleanupPending, StaleTaskWrite):
+                # A pending durable hold is retried by the next normal resume.
+                pass
 
     async def _run_locked(self, task_id: str) -> None:
-        record = self.store.get(task_id)
+        try:
+            record = self.store.get(task_id)
+        except (sqlite3.Error, OSError):
+            # No readable task means no authority to dispatch or overwrite its
+            # durable state. A later resume retries the same recovery entry.
+            return
         if record is None:
             return
         try:
@@ -3268,7 +3315,7 @@ class OrchestrationEngine:
         except AcknowledgementPersistencePending:
             # No response persistence means only the durable intent remains.
             # Reconciliation owns it; never reload it and mark the paid task FAILED.
-            return
+            raise
         except (PrivacyCleanupPending, StaleTaskWrite):
             # Another process advanced the task (for example, an owner
             # clarification while a provider callback was in flight). The
@@ -5718,9 +5765,17 @@ class OrchestrationEngine:
                 record.message = "Owner not-created resolution retained; spend reconciliation must finish before dispatch."
                 self._save_spend_hold(record)
                 return False
+            authority = record.revision_authority_by_effect.get(intent.effect_key)
             if not already_closed:
                 record_provider_effect_observation(record, assignment, effect_key=intent.effect_key,
                                                    phase=intent.phase, outcome="failed_pre_submit")
+            record.revision_authority_by_effect.pop(intent.effect_key, None)
+            if intent.phase == "revision" and authority is not None:
+                basis, prompt = authority
+                if basis in record.retry_basis_digests:
+                    record.retry_basis_digests.remove(basis)
+                if prompt in record.revision_prompt_digests:
+                    record.revision_prompt_digests.remove(prompt)
             if record.error == "spend_settlement_failed:" + intent.effect_key:
                 record.error = None
             try:
@@ -5729,6 +5784,41 @@ class OrchestrationEngine:
                 # The accepted resolution is already durable. Let the API queue
                 # run(), which retries this exact ledger update and receipt.
                 return False
+        return True
+
+    def _settle_unsubmitted_spend(self, record: TaskRecord, assignment: Assignment, key: str) -> bool:
+        try:
+            return self._settle_unsubmitted_spend_once(record, assignment, key)
+        except (sqlite3.Error, OSError):
+            # Closure is already durable. Read/hold-cleanup failures must not
+            # turn accounting recovery into a terminal provider failure.
+            return False
+
+    def _settle_unsubmitted_spend_once(self, record: TaskRecord, assignment: Assignment, key: str) -> bool:
+        current = self.store.get(record.task_id)
+        if current is None or current.plan_generation != record.plan_generation:
+            return False
+        intents = [item for item in current.task_effect_ledger
+                   if item.kind == "provider_intent" and item.effect_key == key
+                   and item.provider == assignment.agent
+                   and item.assignment_digest == assignment_approval_digest(assignment)
+                   and item.plan_generation == record.plan_generation]
+        outcomes = {item.outcome for item in current.task_effect_ledger
+                    if item.kind == "provider_observation" and item.effect_key == key}
+        if len(intents) != 1 or outcomes != {"failed_pre_submit"}:
+            return False
+        try:
+            self._charge_spend(assignment.agent, key, 0.0)
+        except (sqlite3.Error, OSError):
+            current.status = TaskStatus.OWNER_DECISION_REQUIRED
+            current.error = "spend_settlement_failed:" + key
+            current.message = "Pre-submit accounting is pending; resume retries the exact zero charge without provider I/O."
+            self._save_spend_hold(current)
+            return False
+        if current.error == "spend_settlement_failed:" + key:
+            current.error = None
+            current.message = "Pre-submit accounting recovered; no provider request was sent."
+            self.store.save(current)
         return True
 
     def _charge_spend(self, provider: ProviderName, effect_key: str, cost: float | None, *,
@@ -5911,6 +6001,48 @@ class OrchestrationEngine:
 
     def _retry_spend_settlements(self, record: TaskRecord) -> bool:
         """Repair durable side records without repeating provider I/O."""
+        try:
+            return self._retry_spend_settlements_once(record)
+        except (sqlite3.Error, OSError):
+            # A hold cannot be required while that same store is unavailable.
+            # Retain the last durable state and reservation; stop this resume
+            # before provider work and rediscover it on the next invocation.
+            return False
+
+    def _retry_spend_settlements_once(self, record: TaskRecord) -> bool:
+        # The zero-charge write and the hold write can both fail. Discover
+        # those retries from the already durable closure and outstanding spend,
+        # rather than requiring a second successfully persisted error marker.
+        retry_keys = set()
+        if record.error and record.error.startswith("spend_settlement_failed:"):
+            retry_keys.add(record.error.split(":", 1)[1])
+        outstanding = {}
+        if self.provider_spend is not None:
+            for intent in record.task_effect_ledger:
+                if (intent.kind != "provider_intent" or intent.plan_generation != record.plan_generation
+                        or intent.provider not in ProviderDailySpendLedger._SUPPORTED):
+                    continue
+                outcomes = {item.outcome for item in record.task_effect_ledger
+                            if item.kind == "provider_observation" and item.effect_key == intent.effect_key}
+                if outcomes != {"failed_pre_submit"}:
+                    continue
+                if intent.provider not in outstanding:
+                    outstanding[intent.provider] = set(self.provider_spend.unreconciled(
+                        intent.provider, stale_after=timedelta(0)))
+                if intent.effect_key in outstanding[intent.provider]:
+                    retry_keys.add(intent.effect_key)
+        for key in sorted(retry_keys):
+            outcomes = {item.outcome for item in record.task_effect_ledger
+                        if item.kind == "provider_observation" and item.effect_key == key}
+            if outcomes == {"failed_pre_submit"}:
+                intent = next((item for item in record.task_effect_ledger
+                               if item.kind == "provider_intent" and item.effect_key == key), None)
+                assignment = self._spend_assignment_for_intent(record, intent) if intent else None
+                if assignment is None or not self._settle_unsubmitted_spend(record, assignment, key):
+                    return False
+                refreshed = self.store.get(record.task_id)
+                record.error, record.message = refreshed.error, refreshed.message
+                record._store_version = refreshed._store_version
         # New acknowledgements are atomic: the task owns the complete run.
         # Only pre-atomic journals need provider-specific legacy recovery.
         if self.provider_spend is not None:
@@ -6276,6 +6408,12 @@ class OrchestrationEngine:
                     "The pending assignment approval changed before provider dispatch"
                 )
             if phase == "revision" and self._workload_policy_applies(current):
+                retire_terminal_revision_authority(current)
+                if any(len(items) >= 20 for items in (
+                    current.revision_authority_by_effect, current.retry_basis_digests,
+                    current.revision_prompt_digests,
+                )):
+                    raise StaleApproval("Provider revision authority capacity reached")
                 if (
                     current.status != TaskStatus.REVIEWING
                     or current.cancellation_requested_at is not None
@@ -6312,6 +6450,8 @@ class OrchestrationEngine:
             if phase == "revision" and self._workload_policy_applies(current):
                 current.retry_basis_digests.append(retry_basis_digest)
                 current.revision_prompt_digests.append(revision_prompt_digest)
+                current.revision_authority_by_effect[reserved_key] = (
+                    retry_basis_digest, revision_prompt_digest)
             current.status = TaskStatus.RUNNING
 
         try:
@@ -6971,6 +7111,7 @@ class OrchestrationEngine:
                         outcome="failed_pre_submit",
                     )
                     self.store.save(record)
+                self._settle_unsubmitted_spend(record, assignment, effect_key)
                 return False
             published_record = record
             record = self._revalidated_plan_after_publication(published_record)
@@ -6988,6 +7129,7 @@ class OrchestrationEngine:
                         assignment,
                         effect_key=effect_key,
                     )
+                self._settle_unsubmitted_spend(published_record, assignment, effect_key)
                 return False
             consumed_artifact_digests = (
                 self._consumed_dependency_artifact_digests(record, assignment)
