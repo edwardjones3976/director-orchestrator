@@ -377,16 +377,16 @@ class ProviderDailySpendLedger:
                 if settled_at is not None or datetime.fromisoformat(recorded_at) <= observed_at - stale_after]
 
     def unsettled_not_proven_bounded(self, provider: ProviderName) -> list[str]:
-        """Outstanding reservations NOT PROVEN BOUNDED (serialized=1, legacy=0,
-        unreleased, without a valid actual charge), across all days, including
-        the migration-defaulted historical rows; legacy rows are covered by unreconciled().
+        """Unreleased reservations without a valid actual charge, across all days,
+        except current bounded reservations (serialized=0, legacy=0).
+        Legacy rows of any age are not proven bounded and count.
         """
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend reconciliation applies only to supplemental providers")
         with self._connect() as connection:
             rows = connection.execute(
                 f"""SELECT effect_key FROM provider_daily_spend_reservations
-                WHERE provider = ? AND serialized = 1 AND legacy = 0
+                WHERE provider = ? AND NOT (serialized = 0 AND legacy = 0)
                 AND released_at IS NULL AND NOT ({_VALID_ACTUAL_CHARGE})""",
                 (provider.value,),
             ).fetchall()

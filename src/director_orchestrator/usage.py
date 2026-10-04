@@ -286,9 +286,9 @@ class UsageMonitor:
             # Settled real requests whose provider reported no cost (review 4112533824): they count at their
             # reservation, a lower bound, so check 15 cannot pass while any exists. None: not ledger-accounted.
             "unreconciled_request_count": self._unreconciled_request_count(provider, records, now),
-            # Outstanding reservations NOT PROVEN BOUNDED (serialized=1, legacy=0, unreleased,
-            # without a valid actual charge), across all days, including the migration-defaulted
-            # historical rows; legacy rows are covered by unreconciled().
+            # Unreleased reservations without a valid actual charge, across all days,
+            # except current bounded reservations (serialized=0, legacy=0).
+            # Legacy rows of any age are not proven bounded and count.
             "unsettled_request_count": self._unsettled_request_count(provider, records),
             "exposure_usd": self._exposure_usd(provider, attempted, now),
             "retry_count": retry_count,

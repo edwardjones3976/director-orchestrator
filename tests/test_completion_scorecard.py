@@ -3401,6 +3401,60 @@ class WorkloadJournalPinTests(unittest.TestCase):
                 _, reads = self.collect(pinned, {"workload_journal": str(pinned)})
                 self.assertEqual(reads, 1)
 
+    def test_hard_link_to_pinned_journal_is_not_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pinned, alias = Path(folder) / "pinned.sqlite3", Path(folder) / "alias.sqlite3"
+            pinned.write_bytes(b"")
+            try:
+                os.link(pinned, alias)
+            except OSError as exc:
+                self.skipTest(f"hard links unavailable: {exc}")
+            self.assertTrue(os.path.samefile(pinned, alias))
+            Path(str(pinned) + "-wal").write_bytes(b"uncheckpointed state")
+            report, reads = self.collect(alias, {"workload_journal": str(pinned)})
+            self.assertEqual(reads, 0)
+            self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
+            self.assertIn("pins as the deployment's workload journal", row(report, "13")["explanation"])
+
+    def test_pinned_journal_with_hard_link_alias_wal_is_not_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pinned, alias = Path(folder) / "pinned.sqlite3", Path(folder) / "alias.sqlite3"
+            pinned.write_bytes(b"")
+            try:
+                os.link(pinned, alias)
+            except OSError as exc:
+                self.skipTest(f"hard links unavailable: {exc}")
+            Path(str(alias) + "-wal").write_bytes(b"uncheckpointed state")
+            report, reads = self.collect(pinned, {"workload_journal": str(pinned)})
+            self.assertEqual(reads, 0)
+            for key in ("13", "14"):
+                self.assertEqual(row(report, key)["status"], "UNKNOWN")
+                self.assertIn("does not have exactly one hard link", row(report, key)["explanation"])
+
+    def test_hard_link_created_during_copy_voids_both_checks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pinned, alias = Path(folder) / "pinned.sqlite3", Path(folder) / "alias.sqlite3"
+            pinned.write_bytes(b"held journal")
+            real_fstat, calls = os.fstat, 0
+
+            def link_before_post_copy_fstat(fd):
+                nonlocal calls
+                calls += 1
+                if calls == 3:  # Initial identity, then before-copy and after-copy metadata.
+                    try:
+                        os.link(pinned, alias)
+                    except OSError as exc:
+                        self.skipTest(f"hard links unavailable: {exc}")
+                    Path(str(alias) + "-wal").write_bytes(b"uncheckpointed state")
+                return real_fstat(fd)
+
+            with patch.object(sc.os, "fstat", side_effect=link_before_post_copy_fstat):
+                report, reads = self.collect(pinned, {"workload_journal": str(pinned)})
+            self.assertEqual(reads, 0)
+            for key in ("13", "14"):
+                self.assertEqual(row(report, key)["status"], "UNKNOWN")
+                self.assertIn("one hard link after copying", row(report, key)["explanation"])
+
     def test_only_the_pinned_journal_is_read(self):
         with tempfile.TemporaryDirectory() as folder:
             pinned, other = Path(folder) / "pinned.sqlite3", Path(folder) / "other.sqlite3"
@@ -3609,7 +3663,7 @@ class WorkloadJournalPinTests(unittest.TestCase):
                     info = real_fstat(fd)
                     calls += 1
                     if calls == 3:  # Initial identity, then before-copy and after-copy metadata.
-                        values = {key: getattr(info, key) for key in ("st_size", "st_mtime_ns")}
+                        values = {key: getattr(info, key) for key in ("st_size", "st_mtime_ns", "st_nlink")}
                         values[field] += 1
                         return types.SimpleNamespace(**values)
                     return info
@@ -6605,36 +6659,65 @@ class ScorecardCollectorTests(unittest.TestCase):
         from director_orchestrator.providers import ProviderDailySpendLedger
         from director_orchestrator.store import TaskStore
 
-        for pre_settlement, age in ((False, timedelta(0)), (False, timedelta(days=1)), (True, timedelta(days=1))):
-            with self.subTest(pre_settlement=pre_settlement, age=age), tempfile.TemporaryDirectory() as folder:
-                path = str(Path(folder) / "tasks.sqlite3")
-                # Reproduce both old schemas before opening any ledger, rather than manually assigning markers.
-                with closing(sqlite3.connect(path)) as db, db:
-                    charge_column = "" if pre_settlement else ", actual_cost_usd REAL"
-                    db.execute(f"""CREATE TABLE provider_daily_spend_reservations (
-                        provider TEXT NOT NULL, effect_key TEXT NOT NULL, utc_day TEXT NOT NULL,
-                        estimated_cost_usd REAL NOT NULL, recorded_at TEXT NOT NULL
-                        {charge_column}, PRIMARY KEY(provider, effect_key))""")
-                    at = NOW - age
-                    db.execute("""INSERT INTO provider_daily_spend_reservations
-                        (provider, effect_key, utc_day, estimated_cost_usd, recorded_at) VALUES (?, ?, ?, ?, ?)""",
-                               ("grok", "a" * 64, at.date().isoformat(), 0.75, at.isoformat()))
-                ledger = ProviderDailySpendLedger(path)
-                with closing(sqlite3.connect(path)) as db:
-                    self.assertEqual(db.execute("""SELECT serialized, legacy, actual_cost_usd, settled_at
-                        FROM provider_daily_spend_reservations""").fetchone(),
-                                     (0, 1, None, None) if pre_settlement else (1, 0, None, None))
-                self.assertEqual(ledger.unsettled_not_proven_bounded(ProviderName.GROK),
-                                 [] if pre_settlement else ["a" * 64])
-                self.assertEqual(ledger.unreconciled(ProviderName.GROK, stale_after=timedelta(seconds=60), now=NOW),
-                                 ["a" * 64] if age else [])
-                monitor, world = self.spend_monitor_world(TaskStore(path), ProviderName.GROK)
-                daily = monitor._daily_accounting("grok", NOW)
-                self.assertEqual((daily["provider_request_count"], daily["unsettled_request_count"],
-                                  daily["unreconciled_request_count"]),
-                                 (int(not age), int(not pre_settlement), int(bool(age))))
-                world.payload["usage_monitor"]["daily_accounting"]["grok"] = daily
-                self.assertEqual(world.state("15"), "UNKNOWN")
+        midnight = NOW.replace(hour=0, minute=0, second=1, microsecond=0)
+        for provider in (ProviderName.GROK, ProviderName.GEMINI, ProviderName.PERPLEXITY):
+            for pre_settlement in (False, True):
+                for observed_at, age in ((NOW, timedelta(0)), (NOW, timedelta(seconds=61)),
+                                         (NOW, timedelta(days=1)), (midnight, timedelta(seconds=2))):
+                    with self.subTest(provider=provider, pre_settlement=pre_settlement,
+                                      observed_at=observed_at, age=age), tempfile.TemporaryDirectory() as folder:
+                        path = str(Path(folder) / "tasks.sqlite3")
+                        # Reproduce both old schemas before opening any ledger, rather than manually assigning markers.
+                        with closing(sqlite3.connect(path)) as db, db:
+                            charge_column = "" if pre_settlement else ", actual_cost_usd REAL"
+                            db.execute(f"""CREATE TABLE provider_daily_spend_reservations (
+                                provider TEXT NOT NULL, effect_key TEXT NOT NULL, utc_day TEXT NOT NULL,
+                                estimated_cost_usd REAL NOT NULL, recorded_at TEXT NOT NULL
+                                {charge_column}, PRIMARY KEY(provider, effect_key))""")
+                            at = observed_at - age
+                            db.execute("""INSERT INTO provider_daily_spend_reservations
+                                (provider, effect_key, utc_day, estimated_cost_usd, recorded_at) VALUES (?, ?, ?, ?, ?)""",
+                                       (provider.value, "a" * 64, at.date().isoformat(), 0.75, at.isoformat()))
+                        ledger = ProviderDailySpendLedger(path)
+                        with closing(sqlite3.connect(path)) as db:
+                            self.assertEqual(db.execute("""SELECT serialized, legacy, actual_cost_usd, settled_at
+                                FROM provider_daily_spend_reservations""").fetchone(),
+                                             (0, 1, None, None) if pre_settlement else (1, 0, None, None))
+                        self.assertEqual(ledger.unsettled_not_proven_bounded(provider),
+                                         ["a" * 64])
+                        self.assertEqual(ledger.unreconciled(provider, stale_after=timedelta(seconds=60), now=observed_at),
+                                         ["a" * 64] if age.total_seconds() >= 60 else [])
+                        monitor, world = self.spend_monitor_world(TaskStore(path), provider)
+                        daily = monitor._daily_accounting(provider.value, observed_at)
+                        self.assertEqual((daily["provider_request_count"], daily["unsettled_request_count"],
+                                          daily["unreconciled_request_count"]),
+                                         (int(at.date() == observed_at.date()), 1, int(age.total_seconds() >= 60)))
+                        world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+                        self.assertEqual(world.state("15"), "UNKNOWN")
+
+                        if pre_settlement:
+                            # A valid charge excludes a migrated legacy row.
+                            ledger.record_charge(provider=provider, effect_key="a" * 64,
+                                                 actual_cost_usd=0.0, request_exists=False, now=observed_at)
+                            self.assertEqual(ledger.unsettled_not_proven_bounded(provider), [])
+                            self.assertEqual(monitor._daily_accounting(provider.value, observed_at)["unsettled_request_count"], 0)
+                            ledger.release_not_created(provider=provider, effect_key="a" * 64)
+                            with closing(sqlite3.connect(path)) as db, db:
+                                # Isolate release exclusion from valid-charge exclusion.
+                                db.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = NULL")
+                            self.assertEqual(ledger.unsettled_not_proven_bounded(provider), [])
+                            self.assertEqual(monitor._daily_accounting(provider.value, observed_at)["unsettled_request_count"], 0)
+                            ledger.reserve(provider=provider, effect_key="b" * 64, estimated_cost_usd=0.25,
+                                           request_limit=10, budget_usd=1.0, serialize=False, now=observed_at)
+                            with closing(sqlite3.connect(path)) as db:
+                                self.assertEqual(db.execute("""SELECT serialized, legacy, actual_cost_usd
+                                    FROM provider_daily_spend_reservations WHERE effect_key = ?""",
+                                                            ("b" * 64,)).fetchone(), (0, 0, None))
+                            self.assertEqual(ledger.unsettled_not_proven_bounded(provider), [])
+                            daily = monitor._daily_accounting(provider.value, observed_at)
+                            self.assertEqual((daily["unsettled_request_count"], daily["unreconciled_request_count"]), (0, 0))
+                            world.payload["usage_monitor"]["daily_accounting"][provider.value] = daily
+                            self.assertEqual(world.state("15"), "PASS")
 
     def test_charge_only_fallback_is_not_outstanding_15(self):
         from director_orchestrator.models import ProviderName

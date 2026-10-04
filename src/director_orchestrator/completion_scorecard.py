@@ -3637,7 +3637,7 @@ def _journal_pinned(path: Path) -> bool:
                 if (stat.S_ISLNK(info.st_mode)
                         or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
                     return False
-        return os.path.samefile(path, pin)
+        return os.path.abspath(str(path)) == os.path.abspath(str(pin)) and os.path.samefile(path, pin)
     except (OSError, ValueError):
         return False
 
@@ -3825,6 +3825,9 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
             fd = os.open(ledger_path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
             with os.fdopen(fd, "rb") as journal:
                 held_stat = os.fstat(journal.fileno())
+                if held_stat.st_nlink != 1:
+                    reason = "The assignment journal does not have exactly one hard link; another link could carry its own SQLite sidecars."
+                    raise ValueError("workload journal link count is not one")
                 identity = (held_stat.st_dev, held_stat.st_ino)
                 before = os.stat(ledger_path)
                 if (not stat.S_ISREG(held_stat.st_mode) or not _journal_pinned(ledger_path)
@@ -3833,6 +3836,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
                 with tempfile.TemporaryDirectory() as folder:
                     snapshot = Path(folder) / "journal.sqlite3"
                     reason = "SQLite sidecars could not be ruled out; the committed state is not fully in the main file."
+                    # _journal_pinned guarantees ledger_path is exactly the pinned pathname.
+                    # A multiply-linked journal is refused because any other link could carry its own sidecars.
                     _require_journal_without_sidecars(ledger_path)
                     reason = "The held assignment journal could not be copied to a stable private snapshot."
                     copy_before = os.fstat(journal.fileno())
@@ -3843,6 +3848,9 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
                             target.write(chunk)
                             digest.update(chunk)
                     copy_after = os.fstat(journal.fileno())
+                    if copy_after.st_nlink != 1:
+                        reason = "The assignment journal does not have exactly one hard link after copying; another link could carry its own SQLite sidecars."
+                        raise ValueError("workload journal link count is not one after snapshot")
                     if ((copy_before.st_size, copy_before.st_mtime_ns)
                             != (copy_after.st_size, copy_after.st_mtime_ns)):
                         raise ValueError("workload journal changed during snapshot")
