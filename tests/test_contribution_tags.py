@@ -442,8 +442,15 @@ class ProviderRoleHandoffTests(unittest.TestCase):
         self.assertEqual(handoff["provider_identity"]["provider"], "claude")
         self.assertIsNone(handoff["provider_identity"]["standing_role"])
         self.assertEqual(handoff["provider_identity"]["provider_label"], "Claude")
-        self.assertIn("human-visible", handoff["contribution_attribution"])
-        self.assertIn("Do not put tags inside JSON", handoff["contribution_attribution"])
+        guidance = handoff["contribution_attribution"]
+        self.assertIn("actual provider identity", guidance)
+        self.assertIn("normal Git Author/Committer", guidance)
+        self.assertIn("authenticated task/run records", guidance)
+        self.assertIn("Do not add contribution tags", guidance)
+        self.assertIn("structured-payload contracts", guidance)
+        self.assertIn("approval, exact-candidate, independent-review", guidance)
+        self.assertIn("contributor/merger-separation gate", guidance)
+        self.assertNotIn("BEGIN/END", guidance)
 
 
 class ContributionPolicySurfaceTests(unittest.TestCase):

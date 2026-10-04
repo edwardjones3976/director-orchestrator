@@ -58,7 +58,9 @@ class HtmlDocumentationTests(unittest.TestCase):
 
     def test_current_handoffs_do_not_restore_retired_attribution_paperwork(self):
         from director_orchestrator.documentation import read_document
-        paths = ['docs/contribution-attribution-policy.html',
+        paths = ['README.html', 'CLAUDE.md', 'prompts/director-system.md',
+                 '.github/pull_request_template.md', 'docs/team-operating-charter.html',
+                 'docs/contribution-attribution-policy.html',
                  'docs/project-bootstrap-protocol.html',
                  'docs/templates/contribution-submission.html',
                  'docs/templates/project-bootstrap/README.html',
@@ -73,11 +75,71 @@ class HtmlDocumentationTests(unittest.TestCase):
                                  'PR sole author and shares:', 'Contributor shares:',
                                  'Reviewed share_record_sha256:',
                                  'Enclose human-readable project messages',
-                                 'recompute its sole author and shares'):
+                                 'recompute its sole author and shares',
+                                 'Format-aware contribution tags for human responses',
+                                 'under the relaying agent\'s own contribution pair',
+                                 'Records say "Sole author:',
+                                 'share-record text, or artifact change',
+                                 'Sole author: <assistant> (<model>)',
+                                 'share_record_sha256: <reviewer-recorded'):
                     self.assertNotIn(obsolete, text)
-        policy = read_document(ROOT/paths[0])
+        policy = read_document(ROOT/'docs/contribution-attribution-policy.html')
         self.assertIn('No contributor may merge that pull request', policy)
         self.assertIn('preserve that gate and report its concrete refusal', policy)
+        for name in ('README.html', 'CLAUDE.md', 'prompts/director-system.md'):
+            text = ' '.join(read_document(ROOT/name).split())
+            self.assertIn('Git Author/Committer', text)
+            self.assertIn('contributor/merger separation', text)
+            self.assertIn('deterministic gate', text)
+        template = read_document(ROOT/'.github/pull_request_template.md')
+        self.assertNotIn('share_record_sha256', template)
+        self.assertIn('reviewer/merger independence', template)
+        for identity in ('base_sha', 'merge_base_sha', 'Head SHA:', 'Tree/artifact digest'):
+            self.assertIn(identity, template)
+
+    def test_bootstrap_metadata_preserves_identity_without_retired_procedures(self):
+        profile = yaml.safe_load((ROOT/'docs/templates/project-bootstrap/project-profile.yaml').read_text(encoding='utf-8'))
+        attribution = profile['contribution_attribution']
+        self.assertEqual(attribution['owner_direction'], '2026-10-01')
+        self.assertFalse(attribution['custom_attribution_procedures'])
+        self.assertTrue(attribution['preserve_historical_records'])
+        self.assertTrue(attribution['verify_actual_identity_and_independence'])
+        self.assertTrue(attribution['preserve_deterministic_gate_inputs'])
+        self.assertIn('normal Git Author/Committer', attribution['provenance'])
+        self.assertEqual(attribution['authentication_or_authority_effect'], 'none')
+        self.assertFalse({'commit_trailer', 'pr_header', 'assistance_required_when_assisted'} & attribution.keys())
+
+    def test_tracked_source_and_config_consumers_cannot_keep_removed_document_paths(self):
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True, capture_output=True, timeout=20)
+        consumers = {
+            'src/lane.py': '"""Read ``docs/guide.md#guide`` before changing the lane."""\n',
+            'scripts/lane.ps1': '# See ../docs/guide.md for operator instructions.\n',
+            'prompts/lane.md': 'Read [the guide](../docs/guide.md).\n',
+            '.env.example': '# Guide: docs/guide.md\n',
+            'docs/lane.yaml': 'operator_guide: docs/guide.md\n',
+        }
+        for name, source in consumers.items():
+            self.write(name, source)
+        subprocess.run(['git', 'add', '--', *consumers], cwd=self.root, check=True, capture_output=True, timeout=20)
+        errors = self.errors()
+        for name, source in consumers.items():
+            self.assertIn(f'{name}:1: removed Markdown reference docs/guide.md; use docs/guide.html', errors)
+            self.write(name, source.replace('guide.md', 'guide.html'))
+        self.assertEqual(guard.check(self.root), [])
+
+    def test_source_inventory_preserves_historical_urls_fixtures_and_separate_project(self):
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True, capture_output=True, timeout=20)
+        files = {
+            'src/lane.py': '# Historical source: https://example.test/commit/old/docs/guide.md\n',
+            'tests/test_fixture.py': 'historical_path = "docs/guide.md"\n',
+            'docs/archive/receipt.txt': 'Original input: docs/guide.md\n',
+            'projects/homemade-llm/README.md': 'A separate project can retain docs/guide.md.\n',
+        }
+        for name, source in files.items():
+            self.write(name, source)
+        subprocess.run(['git', 'add', '--', *files], cwd=self.root, check=True, capture_output=True, timeout=20)
+        self.write('untracked-note.md', 'Unpublished note references docs/guide.md.\n')
+        self.assertEqual(guard.check(self.root), [])
 
     def test_checklist_and_template_placeholders_render_as_text(self):
         from director_orchestrator.documentation import read_document

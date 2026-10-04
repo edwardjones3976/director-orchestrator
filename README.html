@@ -178,8 +178,8 @@ different transport. Never repeat an ambiguous paid dispatch.</li>
 <li>Evidence-first milestone reporting and explicit coordination-quality targets: 95%
 productive coordination, a 5% incident/replanning reserve, and a 33% reduction in
 avoidable micro/fixup commits.</li>
-<li>Format-aware contribution tags for human responses and safely commentable files, with
-structured and syntax-sensitive formats attributed through their submission envelope.</li>
+<li>Actual provider identity from normal Git provenance and authenticated task/run
+records, with independent review and contributor/merger separation.</li>
 <li>A durable periodic provider-prompt monitor recording returned token metadata and posting
 bounded status summaries.</li>
 <li>A local n8n deployment and an importable intake workflow.</li>
@@ -479,8 +479,8 @@ entry or changed file).</p>
 <h3 id="reviews-and-merges-are-not-tool-calls">Reviews and merges are not tool calls</h3>
 <p>Exact-SHA reviews go to a provider as a packet (the CLI's <code>--role review</code>
 preambles), come back as a <code>VERDICT: ACCEPT | CHANGES_REQUIRED | SERIOUS_SAFETY_STOP bound to &lt;40-hex sha&gt;</code> line under an <code>IDENTITY:</code> line, and
-are relayed verbatim into the pull request under the relaying agent's own
-contribution pair. One non-author exact-SHA <code>ACCEPT</code> at the current head is the
+are relayed verbatim into the pull request with their actual reviewer and relay
+identities kept distinct. One non-author exact-SHA <code>ACCEPT</code> at the current head is the
 bar; OpenAI/ChatGPT/Codex are one identity, Direct Grok / the Grok Build CLI /
 Grok Bot are one xAI family, GitHub Copilot is its own lane, and Z.ai and
 Perplexity verdicts never count. A merge is an owner decision executed under the
@@ -499,12 +499,15 @@ once the head moves.</li>
 is a GitHub Actions billing stub - nothing executed - and is neither a code
 failure nor green. When the account is restored, close and reopen the pull
 request to trigger a real run; <code>gh run rerun</code> replays the stale payload.</li>
-<li><strong>Record attribution in Git.</strong> Every commit carries <code>Contributed-by:</code> trailers
-for actual contributors; preserve <code>Co-Authored-By</code> trailers. PR bodies have
-exactly one visible <code>Sole author:</code> header under the #284 sole-author rule.
-Add no in-file tags; historical tags remain until authorized cleanup. Follow
-<code>docs/contribution-attribution-policy.html</code> and run its exact-range checker
-before handoff, using <code>--default-branch-ref github/main</code> for this local remote.</li>
+<li><strong>Preserve actual provenance.</strong> Owner direction, 2026-10-01 retires custom
+commit trailers, contribution headers, envelopes and percentage/share paperwork.
+Use normal Git Author/Committer provenance and existing authenticated task/run
+records to establish actual producers, contributors and reviewer eligibility.
+Preserve historical records. Independent review, contributor/merger separation
+and every existing deterministic gate remain in force. Follow
+<code>docs/contribution-attribution-policy.html</code> and run the exact-range checker
+before handoff, using <code>--default-branch-ref github/main</code> for this local remote;
+the check validates Git revisions and event structure, not authenticated authorship.</li>
 <li><strong>Merge commits only.</strong> Squash and rebase are disabled at the repository
 level, so <code>gh pr merge &lt;n&gt; --merge --match-head-commit &lt;sha&gt;</code> is the only
 form; <code>--match-head-commit</code> binds the merge to the reviewed SHA. <code>--delete-branch</code>

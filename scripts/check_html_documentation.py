@@ -22,6 +22,15 @@ Browse the [HTML documentation library](docs/index.html), [provider profiles](do
 This small file is retained only for GitHub discovery. Open the HTML files in a browser; GitHub source views do not render complete HTML pages.
 """
 
+CONSUMER_SUFFIXES = frozenset({
+    '.py', '.ps1', '.sh', '.md', '.mdc', '.yaml', '.yml', '.toml', '.json',
+    '.txt', '.ini', '.cfg', '.conf', '.xml', '.rst', '.js', '.css',
+})
+DOCUMENT_REFERENCE = re.compile(
+    r'(?<![A-Za-z0-9_./\\])(?:\.\.?[/\\])*(?P<path>docs[/\\][A-Za-z0-9_./\\-]+\.md)'
+    r'(?=$|[^A-Za-z0-9_.-])'
+)
+
 
 def _url_parts(value: str):
     if any(ord(char) < 32 or ord(char) == 127 for char in unquote(value)) or re.search(r'%(?![0-9a-fA-F]{2})', value):
@@ -113,6 +122,52 @@ def _provenance_errors(root: Path, manifest: dict) -> list[str]:
         return ['migration source provenance could not be verified']
 
 
+def _consumer_reference_errors(root: Path, manifest: dict) -> list[str]:
+    """Check tracked active source/config pointers, without rewriting evidence.
+
+    Tests deliberately carry old-path fixtures; migration records and archives
+    retain the original names as evidence. Homemade LLM is separately managed.
+    Remote historical URLs are not local documentation pointers.
+    """
+    try:
+        removed = {
+            old: new for old, new in manifest['mapping'].items()
+            if not _manifest_path(root, old).is_file()
+        }
+        tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=root,
+                                 capture_output=True, timeout=20)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ['active documentation consumer inventory could not be verified']
+    if tracked.returncode:
+        if 'migration_base' in manifest:
+            return ['active documentation consumer inventory could not be verified']
+        return []  # A standalone, non-Git HTML library has no tracked source consumers.
+    errors = []
+    for raw in tracked.stdout.split(b'\0'):
+        if not raw:
+            continue
+        name = raw.decode('utf-8')
+        if name.startswith(('tests/', 'docs/archive/', 'projects/homemade-llm/')) or name == 'docs/html-migration-map.json':
+            continue
+        relative = PurePosixPath(name)
+        if relative.suffix.lower() not in CONSUMER_SUFFIXES and not relative.name.startswith('.env') and relative.name not in {'Dockerfile', 'Makefile'}:
+            continue
+        try:
+            path = _manifest_path(root, name)
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeError, ValueError):
+            errors.append('active documentation consumer is unreadable or unsafe: ' + name)
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            for match in DOCUMENT_REFERENCE.finditer(line):
+                old = match['path'].replace('\\', '/')
+                if old in removed:
+                    errors.append(f'{name}:{number}: removed Markdown reference {old}; use {removed[old]}')
+    return errors
+
+
 class Page(HTMLParser):
     def __init__(self, source: str):
         super().__init__(convert_charrefs=True)
@@ -165,6 +220,7 @@ def check(root: Path) -> list[str]:
                                        if path.relative_to(root).parts[:2] != ('docs', 'archive'))})
     pages: dict[Path, Page] = {}
     errors: list[str] = _provenance_errors(root, manifest)
+    errors.extend(_consumer_reference_errors(root, manifest))
     for path in paths:
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
             errors.append(f'{path}: unsafe or missing document')

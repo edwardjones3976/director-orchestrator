@@ -156,14 +156,13 @@ coordination:
   provider_messages_relay_through_director: true
 
 contribution_attribution:
-  enabled: true
-  commit_trailer: "Contributed-by: <Assistant or Tool> | <Complete Model or System>"
-  preserve_co_authored_by: true
-  pr_header: "Sole author: <assistant> (<model>); assistance: <id>[, <id>...]"
-  assistance_required_when_assisted: true
-  sole_author_rule: "https://github.com/edwardjones3976/director-orchestrator/pull/284"
-  new_in_file_tags: false
-  existing_tags: "historical_pending_mechanical_cleanup"
+  owner_direction: "2026-10-01"
+  custom_attribution_procedures: false
+  provenance: "normal Git Author/Committer and existing authenticated task/run records"
+  policy: "docs/contribution-attribution-policy.html#sole-author-rule"
+  preserve_historical_records: true
+  verify_actual_identity_and_independence: true
+  preserve_deterministic_gate_inputs: true
   authentication_or_authority_effect: "none"
 
 controls:

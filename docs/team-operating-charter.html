@@ -846,8 +846,9 @@ it, under the sole-author rule in
 (PR #284). Reviewer eligibility excludes only that sole author and its
 provider family; OpenAI, ChatGPT, and Codex count as one family. When the sole
 author is in that family, the default reviewer is Cursor, or Grok when funded.
-Records say &quot;Sole author: &lt;X&gt;; maintenance assistance: OpenAI Codex&quot;, never
-&quot;co-author&quot;. Claude may review only PRs it did not author. The one-author,
+Existing Git and authenticated task/run records establish the actual author and
+maintenance assistance; no prescribed author header is required. Do not promote
+assistance into co-authorship. Claude may review only PRs it did not author. The one-author,
 one-non-author-reviewer-who-merges protocol is unchanged.</li>
 <li><strong>It applies to every Director:</strong> the ChatGPT/Codex Director, Claude when
 acting as second in command, Cursor when acting as third in command, and any project Director such as

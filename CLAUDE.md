@@ -42,18 +42,18 @@ simulation proves live provider execution.
 
 ## Contribution attribution
 
-No contribution tags are written into file contents any more. Every commit
-carries `Contributed-by: <Assistant or Tool> | <Complete Model or System>`,
-one trailer per contributor; keep existing `Co-Authored-By` trailers.
-Every PR description carries exactly one header line:
-`Sole author: <assistant> (<model>)`, followed on that line by
-`; assistance: <id>[, <id>...]` when others assisted. Follow the 52% sole-author
-rule defined by [PR #284](https://github.com/edwardjones3976/director-orchestrator/pull/284);
-this policy does not redefine it.
-Existing in-file tags are historical; a later mechanical PR removes them.
-Attribution records acknowledge actual contributions only and never imply
-inherited authorship. They never authenticate provider identity, grant authority,
-or satisfy exact-SHA review, security, CI, budget, approval, merge or deployment gates.
+Owner direction, 2026-10-01: contribution-documentation, tagging and
+acknowledgement procedures are discontinued. Use normal Git Author/Committer
+provenance and existing authenticated task/run records to establish actual
+producers, contributors and reviewer eligibility. Do not add custom commit
+trailers, contribution headers, envelopes or percentage/share paperwork.
+Preserve historical records; this instruction does not authorize their removal.
+Follow `AGENTS.md` and the [current attribution policy](docs/contribution-attribution-policy.html).
+The owner's identity policy, independent review, contributor/merger separation
+and every existing deterministic gate remain in force. Missing or conflicting
+identity evidence must be reconciled before acceptance. Provenance records never
+grant authority or replace exact-SHA review, security, CI, budget, approval,
+merge or deployment evidence.
 
 This file changes project instructions. It does not change your actual model,
 grant credentials, authorize self-acceptance, or start a deployment.

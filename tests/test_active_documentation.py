@@ -233,7 +233,9 @@ class ActiveDocumentationTests(unittest.TestCase):
             "Maintenance goes to OpenAI Codex.",
             "The owner placed no limits on either channel.",
             "Maintenance is assistance, not authorship.",
-            "maintenance assistance: OpenAI Codex",
+            "Existing Git and authenticated task/run records establish the actual author and maintenance assistance",
+            "no prescribed author header is required",
+            "Do not promote assistance into co-authorship",
             "It applies to every Director:",
             "all maintenance from 2026-09-26 onward, including work already in flight",
             "It adds no authority and removes no gate.",
@@ -242,6 +244,7 @@ class ActiveDocumentationTests(unittest.TestCase):
             self.assertIn(clause, section)
         self.assertNotIn("new work only", section.lower().replace('"new work only"', ""))
         self.assertNotIn("co-author's share", section)
+        self.assertNotIn('Records say "Sole author:', section)
         self.assertNotIn("status updates and owner decisions only", section)
         for relative in (
             "AGENTS.md", "CLAUDE.md", "README.html", "docs/project-leadership.html",
