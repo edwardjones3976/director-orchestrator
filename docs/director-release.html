@@ -80,7 +80,7 @@ a protected descriptor with these inputs; no secrets belong in the descriptor:</
 </tr>
 <tr>
 <td><code>executables</code></td>
-<td>Existing absolute <code>python</code> and <code>powershell</code> paths</td>
+<td>Existing absolute <code>python</code>, <code>powershell</code>, <code>git</code>, <code>docker</code> and <code>gh</code> paths outside both checkout and snapshot</td>
 </tr>
 <tr>
 <td><code>output_directory</code></td>
@@ -98,6 +98,12 @@ a protected descriptor with these inputs; no secrets belong in the descriptor:</
 </table>
 <p>The descriptor and executables are operator inputs, authenticated for preparation
 only by the owner's exact-byte pin described below.
+All five tool paths must be unlinked, existing files. The runner validates them
+before its first native invocation and uses the selected absolute executable,
+without searching the checkout or ambient command path. Emitted launchers recheck
+them and pass the Git, Docker and GitHub CLI selections to the control script;
+the snapshot helper receives the same Git selection. Standalone helper defaults
+remain compatible, but the explicit release path never uses those defaults.
 The actor-name check is not a review verdict, provider-family check, or signed
 acceptance check. Runtime and bridge profiles must already contain every
 prerequisite; this script neither defaults missing values nor edits profiles.
@@ -109,12 +115,14 @@ Windows ACLs. Do not commit or post the rendered file. Reports and journal recor
 contain digests, fixed reason codes, and check names instead of raw subprocess
 output, DSNs, environment values, or HTTP bodies.</p>
 <h2 id="one-owner-descriptor">One owner descriptor</h2>
-<p>Start the runner with Python <code>-I -B</code>. It refuses ordinary interpreter startup
+<p>Start the runner with Python <code>-I -B</code>. It requires both flags and refuses ordinary interpreter startup
 before importing filesystem modules: an unverified checkout cannot supply a
 shadow <code>argparse</code>, <code>ctypes</code>, <code>uuid</code>, or other imported dependency. Isolation
 excludes the script/current directories, user site and <code>PYTHON*</code> overrides from
 Python's startup search path. After owner authentication and the exact clean
-source check, the runner adds only that checkout's <code>src</code> for candidate helpers.</p>
+source check, the runner adds only that checkout's <code>src</code> for candidate helpers.
+Emitted launchers also use both flags, so importing the verified containment
+helper cannot create checkout bytecode before the next source check.</p>
 <p>The runner uses A2's same OS account anchor (Windows Known Folder API or POSIX
 effective-UID account record) without executing a checkout locator. It locates the
 OS account's
@@ -137,7 +145,8 @@ descriptor, retaining its evaluator, CLI releases and other pins:</p>
 and sibling need entries. A missing, malformed or different digest refuses.
 The complete preparation file already binds its candidate, image, executable
 paths, protected profiles, output location and sibling reference; these values
-need not be duplicated in the owner mapping. The preparation schema is unchanged.</p>
+need not be duplicated in the owner mapping. Regenerate preparation pins when
+adding the required Git, Docker and GitHub CLI paths to an older descriptor.</p>
 <p>No evaluator environment, nonce or pending scorecard receipt is created or
 consumed. <code>HOME</code>, <code>USERPROFILE</code> and all <code>DIRECTOR_SCORECARD_*</code> claims cannot select
 owner authority. This checks the owner's configuration under the existing
@@ -317,12 +326,32 @@ a singleton: both <code>scale</code> and <code>deploy.replicas</code>, when pres
 global replication is unsupported. Health commands are limited to the checked-in
 orchestrator HTTP check and stock Postgres readiness checks, or disabled/absent
 checks. Image-inherited health commands are checked too, including when Compose
-overrides only their timing. Arbitrary healthcheck commands are refused.</p>
+overrides only their timing. Arbitrary healthcheck commands are refused.
+Only the reviewed service fields and network/deployment shapes are supported;
+additional execution settings such as capabilities, security options, devices
+and custom labels are refused. Restart policy must be disabled or
+<code>unless-stopped</code>; <code>always</code> could restart intake after the completed stop.</p>
 <p>The orchestrator must resolve to the stock <code>uvicorn</code> argument list
 for the selected main or staging ASGI app, listening on <code>0.0.0.0:8080</code>,
 with no executable entrypoint wrapper. Missing Compose fields are checked against
 the cached image's effective command and entrypoint before any candidate probe
-or service can launch. An image-declared mount cannot add an executable overlay.</p>
+or service can launch. An image-declared mount cannot add an executable overlay.
+For both application services, the combined image and Compose environment must
+retain <code>PYTHONPATH=/app/src</code>, <code>PYTHONDONTWRITEBYTECODE=1</code>,
+<code>PYTHONUNBUFFERED=1</code>, stock executable search directories and
+<code>/app</code> as the effective working directory. Alternate Python startup
+controls and native-loader overrides are refused, including inherited image values.
+The orchestrator image's defaults must independently satisfy these same checks:
+the control script's direct digest probe does not apply Compose overrides, so
+Compose cannot mask an unsafe image environment or working directory.</p>
+<p>Every sibling service must explicitly select the local <code>local</code> or
+<code>json-file</code> logging driver. Only the reviewed <code>max-size</code>,
+<code>max-file</code> and <code>compress</code> options are accepted. Omitted logging is
+refused because the daemon default could export logs. The owner supplies these
+settings in the pinned sibling Compose inputs; the runner changes neither the
+daemon nor the live graph. The control's direct, network-disabled digest probe
+explicitly uses <code>--log-driver none</code>; attached output returns to its caller
+without inheriting the daemon's logging driver.</p>
 <p>Planning also resolves the three intentional staging, offline activation and
 rollback profile states without writing the profile. Each must retain the pinned
 graph digest and exact intended ASGI command and switches; interpolation cannot
@@ -334,13 +363,18 @@ registry at <code>/run/director-acceptance-registry</code>, n8n state at
 <code>/var/lib/postgresql/data</code>. Slackbot has no mounts. Additional targets,
 parent mounts, bind or volume overlays on executable paths, duplicate targets,
 volume subpaths and aliases are refused. Each state volume uses its stock Compose
-key and exact <code>&lt;sibling-project&gt;_&lt;stock-key&gt;</code> name.</p>
+key and exact <code>&lt;sibling-project&gt;_&lt;stock-key&gt;</code> name.
+Read-only bind sources must already exist, have no linked path components and
+explicitly use <code>bind.create_host_path: false</code>. The acceptance-registry bind
+must be the exact directory named by the protected sibling runtime profile.
+Planning and execution do not implicitly create missing host directories.</p>
 <p>The sibling project must have no existing containers, named networks or prior-image record.
 n8n and its optional PostgreSQL state volumes must be new, project-scoped named
 volumes. Reused databases/workflows, bind-mounted n8n state
 and alternate database hosts are refused because Director paid switches cannot
 constrain arbitrary stored workflows. These restrictions require explicit sibling
-Compose overrides for the stock graph's pull policies and gateway unpaid flags;
+Compose overrides for the stock graph's pull policies, local logging, bind creation
+policy and gateway unpaid flags;
 the runner never rewrites the production graph or profile. Previously provisioned
 isolated primary database storage remains subject to the existing identity checks.
 The orchestrator and primary database state volumes must already be provisioned
@@ -349,6 +383,12 @@ options. Their observed identities, including creation time and mountpoint, are
 pinned and checked before each action. The runner never creates or deletes them.
 For the PostgreSQL n8n topology, effective host, port, database, user and password
 must match the stock n8n database service; errors contain no secret values.</p>
+<p>Complete rehearsal also requires nonempty isolated effective Slack bot token,
+app token and channel settings. After offline activation and rollback start the
+gateway, bounded inspection must prove exactly one intended sibling gateway
+running on the pinned image, without a paused or restarting state. This proves
+process liveness only; it does not prove Slack authentication or message delivery.
+No live Slack probe is added and credential values are never written to receipts.</p>
 <p>Offline rehearsal supports only <code>provider-v2</code> and <code>provider-v3-two-party</code>, exactly
 as <code>PrepareOfflineHandoff</code> does. <code>owner-local-evidence-v1</code> can satisfy doctor
 selector checks but cannot emit this offline plan. The sibling profile must also
@@ -376,6 +416,11 @@ only the existing successful <code>StageRuntime</code>, <code>ActivateOffline</c
 switch edits included. Formatting changes from the writer are allowed; an edited
 DSN, credential, image, switch or other value is not. Pins are checked again
 immediately before invoking each action. Inputs are not silently re-pinned.</p>
+<p>Immediately before the first mutating step, each declared loopback TCP or UDP
+port must be available to bind. The check repeats before <code>StageRuntime</code>
+publishes application ports, excluding the primary database port already started
+by this plan. The check does not reserve a port: another process can claim it
+between checking and starting. A later start failure still stops the plan.</p>
 <p>Before each step the launcher also rechecks the pinned source commit,
 tree and cleanliness, both before probes and immediately before launching the control
 script. It refuses executable Git filters and submodule checkouts. The separate
@@ -401,7 +446,15 @@ running <code>control_argv</code> directly discards these protections and is uns
 Activation and rollback each have a 260-second child timeout, allowing their
 75-second lease wait or 65-second drain plus the full 120-second health wait
 and command overhead. Other child actions retain a 140-second bound; the database
-proofs each have a separate 30-second read-only subprocess bound. Plans whose
+proofs each have a separate 30-second read-only subprocess bound. The control
+child uses the existing process containment helper, imported only after source
+authentication. On Windows it starts suspended inside a mandatory kill-on-close
+Job Object; timeout and completion terminate the owned descendants and reap the
+child with a five-second cleanup grace. POSIX uses a process group and cannot
+contain a descendant that creates a new session. A failed cleanup fails the step.
+Killing a Docker client never reverses work already accepted by the daemon.
+Cleanup consumes the same operator-enforced overall budget; it grants no extra
+rehearsal runtime. Plans whose
 serialized launcher or control argument list exceeds Windows' 32,767 UTF-16-unit
 limit (including quoting and the terminating NUL) are refused before emission.
 Shorten the protected paths or inherited command search path and generate a new

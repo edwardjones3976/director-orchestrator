@@ -21,6 +21,7 @@ from unittest.mock import patch
 from director_orchestrator.provider_activation import ProviderActivationBinding
 from director_orchestrator.primary_activation_evidence import ActivationIdentity
 from director_orchestrator.primary_generation import resolved_deployment_digest
+from director_orchestrator import process_isolation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,8 @@ SPEC = importlib.util.spec_from_file_location("director_release_under_test", ROO
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 REAL_COMMAND = release.command
+REAL_CONTAINED_LAUNCH = process_isolation.launch_contained_process
+REAL_CONTAINED_STOP = process_isolation.stop_contained_process
 PREFLIGHT_SPEC = importlib.util.spec_from_file_location("preflight_contract_fixture", ROOT / "tests/test_live_dispatch_preflight.py")
 PREFLIGHT_FIXTURE = importlib.util.module_from_spec(PREFLIGHT_SPEC)
 PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT_FIXTURE)
@@ -41,6 +44,23 @@ class ReleasePreparationTests(unittest.TestCase):
         self.source, self.output, self.snapshot = [self.root / name for name in ("source", "output", "snapshot")]
         for path in (self.source, self.output, self.snapshot):
             path.mkdir()
+        tools = self.root / "trusted-tools"
+        tools.mkdir()
+        for name in ("git", "docker", "gh"):
+            (tools / name).write_bytes(b"fixture command; platform calls are mocked")
+        # Most tests fake the native boundary while still executing emitted
+        # launcher logic. The real containment regression restores both helpers.
+        def launch(argv, **kwargs):
+            class Process:
+                def wait(inner, timeout):
+                    result = subprocess.run(argv, **kwargs, check=True, timeout=timeout)
+                    code = getattr(result, "returncode", 0)
+                    return code if isinstance(code, int) else 0
+            return Process(), object()
+        for name, replacement in (("launch_contained_process", launch), ("stop_contained_process", lambda *a, **kw: None)):
+            helper = patch.object(process_isolation, name, replacement)
+            helper.start()
+            self.addCleanup(helper.stop)
         (self.snapshot / "README.md").write_text("fixture snapshot", encoding="utf-8")
         root_patch = patch.object(release, "ROOT", self.source)
         root_patch.start()
@@ -58,7 +78,8 @@ class ReleasePreparationTests(unittest.TestCase):
                     "DIRECTOR_ASGI_APP": "director_orchestrator.main:app", "ALLOW_PAID_RUNS": "false",
                     "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "0" * 64,
                     "ORCHESTRATOR_SHARED_SECRET": "fixture-protected-value"},
-                "volumes": [{"type": "bind", "source": str(self.snapshot), "target": "/repository", "read_only": True}]},
+                "volumes": [{"type": "bind", "source": str(self.snapshot), "target": "/repository", "read_only": True,
+                             "bind": {"create_host_path": False}}]},
             "slackbot": {"image": self.image, "pull_policy": "never",
                 "command": ["python", "-m", "director_orchestrator.slack_bot"],
                 "environment": {"ALLOW_PAID_RUNS": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
@@ -116,7 +137,8 @@ class ReleasePreparationTests(unittest.TestCase):
             # Linux venv launchers are commonly symlinks; pin the real executable.
             # The production consumer must still refuse unresolved linked paths.
             "executables": {"python": str(Path(sys.executable).resolve()),
-                            "powershell": str(Path(sys.executable).resolve())},
+                            "powershell": str(Path(sys.executable).resolve()),
+                            **{name: str(tools / name) for name in ("git", "docker", "gh")}},
             "output_directory": str(self.output), "timeout_seconds": 30}
         self.descriptor = self.root / "descriptor.json"
         self.owner_root = self.root / "owner" / ".director-scorecard"
@@ -210,7 +232,13 @@ class ReleasePreparationTests(unittest.TestCase):
         if argv[:2] == ["docker", "network"]:
             return b""
         if argv[:2] == ["docker", "ps"]:
+            if "label=com.docker.compose.service=slackbot" in argv:
+                return b"fixture-gateway"
             return b""
+        if argv[:2] == ["docker", "inspect"] and argv[-1] == "fixture-gateway":
+            return release.encoded([{"Id": "fixture-gateway", "Image": self.image, "Config": {"Labels": {
+                "com.docker.compose.project": "fixture-sibling", "com.docker.compose.service": "slackbot",
+                "com.docker.compose.oneoff": "False"}}, "State": {"Running": True, "Paused": False, "Restarting": False}}])
         if argv[:2] == ["git", "rev-parse"]:
             return self.reply_changes.get("commit" if argv[-1] == "HEAD^{commit}" else "tree",
                 (self.candidate if argv[-1] == "HEAD^{commit}" else self.tree).encode())
@@ -219,6 +247,8 @@ class ReleasePreparationTests(unittest.TestCase):
         if argv[:3] == ["docker", "image", "inspect"]:
             return release.encoded([{"Id": self.reply_changes.get("image", self.image), "Config": {
                 "Labels": {"org.director.candidate.commit": self.candidate, "org.director.candidate.tree": self.tree},
+                "WorkingDir": "/app", "Env": ["PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONPATH=/app/src",
+                    "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1"],
                 "Entrypoint": None}}])
         if argv[:2] == ["docker", "compose"]:
             if argv[-1] == release.LOCAL_DATABASE_PROBE:
@@ -815,6 +845,10 @@ class ReleasePreparationTests(unittest.TestCase):
             "healthcheck": {"test": ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"]}}
         self.sibling_compose["services"]["orchestrator"].update(
             depends_on={"langgraph-primary-db": {"condition": "service_healthy"}})
+        for service in self.sibling_compose["services"].values():
+            service["logging"] = {"driver": "local", "options": {}}
+        self.sibling_compose["services"]["slackbot"]["environment"].update(
+            SLACK_APP_TOKEN="fixture-app-token", SLACK_BOT_TOKEN="fixture-bot-token", SLACK_DIRECTOR_CHANNEL_ID="fixture-channel")
         manifest = copy.deepcopy(self.manifest)
         manifest["activation"].update(compose_project="fixture-sibling", database_identity="postgres:sha256:" + "d" * 64,
                                        database_instance_id="22222222-2222-4222-8222-222222222222")
@@ -939,6 +973,7 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertTrue(marker.exists(), "fixture must demonstrate executable fsmonitor before testing its suppression")
         marker.unlink()
         tool = release.Release.__new__(release.Release)
+        tool.executables = {"git": str(Path(shutil.which("git")).resolve())}
         tool.source, tool.deadline = self.source, time.monotonic() + 30
         tool.spec = {"candidate": {"commit": git("rev-parse", "HEAD").decode().strip(),
                                     "tree": git("rev-parse", "HEAD^{tree}").decode().strip()}}
@@ -984,7 +1019,8 @@ class ReleasePreparationTests(unittest.TestCase):
                     def read(argv, **kwargs):
                         if argv[0] == "git":
                             return REAL_COMMAND(argv, cwd=kwargs["cwd"], env=kwargs["env"],
-                                                deadline=time.monotonic() + 30, input_bytes=kwargs.get("input"))
+                                                deadline=time.monotonic() + 30, input_bytes=kwargs.get("input"),
+                                                executable=str(Path(shutil.which("git")).resolve()))
                         if argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
@@ -1049,7 +1085,8 @@ class ReleasePreparationTests(unittest.TestCase):
     def test_supported_graph_covers_transitive_services_and_rejects_unsafe_variants(self):
         self.sibling()
         graph = copy.deepcopy(self.sibling_compose)
-        graph["services"].update({name: {"image": "postgres:16@sha256:" + "1" * 64, "pull_policy": "never"}
+        graph["services"].update({name: {"image": "postgres:16@sha256:" + "1" * 64, "pull_policy": "never",
+                                       "logging": {"driver": "local"}}
                                    for name in ("n8n-db", "langgraph-primary-db")})
         for name, key in (("n8n-db", "n8n-db-data"), ("langgraph-primary-db", "langgraph-primary-db-data")):
             graph["volumes"][key] = {"name": "fixture-sibling_" + key}
@@ -1592,6 +1629,7 @@ class ReleasePreparationTests(unittest.TestCase):
         db = graph["services"]["langgraph-primary-db"]
         db.update(pull_policy="never", environment={"POSTGRES_USER": "director_primary",
             "POSTGRES_DB": "director_primary", "POSTGRES_PASSWORD": "fixture-only"},
+            logging={"driver": "local", "options": {}},
             volumes=[{"type": "volume", "source": "langgraph-primary-db-data", "target": "/var/lib/postgresql/data"}])
         graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {"condition": "service_healthy"}}
         graph["services"]["orchestrator"]["environment"].update(
@@ -1652,8 +1690,8 @@ class ReleasePreparationTests(unittest.TestCase):
             graph["services"]["orchestrator"]["command"] = None
             def observe(argv, **kwargs):
                 if argv[:3] == ["docker", "image", "inspect"]:
-                    config = {"Cmd": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
-                              "Entrypoint": None}
+                    config = json.loads(self.platform(argv, **kwargs))[0]["Config"]
+                    config["Cmd"] = ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"]
                     config[field] = ["unreviewed"]
                     return release.encoded([{"Id": self.image, "Config": config}])
                 return self.platform(argv, **kwargs)
@@ -1744,7 +1782,8 @@ class ReleasePreparationTests(unittest.TestCase):
         self.sibling()
         graph = copy.deepcopy(self.sibling_compose)
         graph["services"]["n8n-db"] = {"image": "postgres:17-alpine@sha256:" + "1" * 64,
-            "pull_policy": "never", "environment": {"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture-password"}}
+            "pull_policy": "never", "logging": {"driver": "local"},
+            "environment": {"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture-password"}}
         graph["services"]["n8n"]["environment"] = {"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db",
             "DB_POSTGRESDB_PORT": "5432", "DB_POSTGRESDB_DATABASE": "n8n", "DB_POSTGRESDB_USER": "n8n",
             "DB_POSTGRESDB_PASSWORD": "fixture-password"}
@@ -1811,6 +1850,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 else:
                     self.assertEqual(git("status", "--porcelain=v2"), b"", "real Git must demonstrate the hidden change")
                 tool = release.Release.__new__(release.Release)
+                tool.executables = {"git": str(Path(shutil.which("git")).resolve())}
                 tool.source, tool.deadline = checkout, time.monotonic() + 30
                 tool.spec = {"candidate": {kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip() for kind in ("commit", "tree")}}
                 with patch.object(release, "command", REAL_COMMAND), self.assertRaises(release.ReleaseError):
@@ -1843,22 +1883,288 @@ class ReleasePreparationTests(unittest.TestCase):
             child = """import pathlib,runpy,sys,time
 m=runpy.run_path(sys.argv[1],run_name='verified_runner')
 t=m['Release'].__new__(m['Release']); t.source=pathlib.Path(sys.argv[2]); t.deadline=time.monotonic()+30
+t.executables={'git':sys.argv[5]}
 t.spec={'candidate':{'commit':sys.argv[3],'tree':sys.argv[4]}}
 t.source_check()
 sys.path.insert(0,str(t.source/'src'))
 import fixture_cache,jsonschema
 assert fixture_cache.SAFE and callable(jsonschema.validate)
 """
-            argv = [sys.executable, "-I", "-B", "-c", child, str(ROOT / "scripts/director-release.py"), str(checkout), candidate["commit"], candidate["tree"]]
+            argv = [sys.executable, "-I", "-B", "-c", child, str(ROOT / "scripts/director-release.py"), str(checkout), candidate["commit"], candidate["tree"], str(Path(shutil.which("git")).resolve())]
             guarded = subprocess.run(argv, capture_output=True, timeout=40)
             self.assertFalse(marker.exists(), "unchecked cache executed after the claimed source gate")
             self.assertNotEqual(guarded.returncode, 0)
             Path(cache).unlink()
             # Ordinary Windows CRLF source and installed dependencies stay usable.
-            source.write_bytes(b"SAFE = True\r\n")
             git("config", "core.autocrlf", "true")
+            source.unlink()
+            git("checkout-index", "--force", "-u", "--", "src/fixture_cache/__init__.py")
+            self.assertEqual(source.read_bytes(), b"SAFE = True\r\n")
+            self.assertEqual(git("status", "--porcelain=v2", "--untracked-files=all"), b"")
             clean = subprocess.run(argv, capture_output=True, timeout=40)
             self.assertEqual(clean.returncode, 0, clean.stderr)
+
+    def test_rehearsal_refuses_unreviewed_execution_settings(self):
+        self.sibling()
+        cases = [("environment", {"PYTHONPATH": "/data"}), ("working_dir", "/data"),
+                 ("restart", "always"), ("logging", {"driver": "syslog"}),
+                 ("logging", None), ("cap_add", ["SYS_ADMIN"])]
+        for field, value in cases:
+            graph = copy.deepcopy(self.sibling_compose)
+            service = graph["services"]["orchestrator"]
+            if field == "environment":
+                service[field].update(value)
+            elif value is None:
+                service.pop(field, None)
+            else:
+                service[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(release.ReleaseError):
+                release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_rehearsal_checks_image_loader_environment_and_workdir(self):
+        self.sibling()
+        tool = release.Release(self.root / "sibling.json")
+        for field, value in (("Env", ["PYTHONPATH=/data"]), ("Env", ["LD_PRELOAD=/data/loader.so"]),
+                             ("Env", ["PATH=/data:/usr/local/bin"]), ("WorkingDir", "/data")):
+            def observe(argv, **kwargs):
+                raw = self.platform(argv, **kwargs)
+                if argv[:3] == ["docker", "image", "inspect"]:
+                    rows = json.loads(raw)
+                    rows[0]["Config"][field] = value
+                    return release.encoded(rows)
+                return raw
+            with self.subTest(field=field, value=value), patch.object(release, "command", side_effect=observe), \
+                    self.assertRaises(release.ReleaseError):
+                tool.rehearsal_images(self.sibling_compose)
+
+    def test_rehearsal_refuses_image_defaults_masked_by_compose_for_direct_probe(self):
+        self.sibling()
+        tool = release.Release(self.root / "sibling.json")
+        tool.rehearsal_images(self.sibling_compose)  # Reviewed stock image is usable.
+        stock = json.loads(self.platform(["docker", "image", "inspect", self.image]))[0]["Config"]
+        for key, unsafe, override in (("PYTHONPATH", "/data", "/app/src"),
+                                      ("PATH", "/data:/usr/local/bin", "/usr/local/bin:/usr/bin:/bin"),
+                                      ("PYTHONHOME", "/data", None), ("LD_PRELOAD", "/data/loader.so", None),
+                                      ("WorkingDir", "/data", "/app")):
+            graph = copy.deepcopy(self.sibling_compose)
+            config = copy.deepcopy(stock)
+            # Both services resolve to this same pinned image. Compose masks its
+            # unsafe default, but the control's direct digest probe has no such
+            # override and must be rejected before any candidate launch.
+            for name in ("orchestrator", "slackbot"):
+                service = graph["services"][name]
+                if key == "WorkingDir":
+                    config[key] = unsafe
+                    service["working_dir"] = override
+                else:
+                    config["Env"] = [value for value in config["Env"] if not value.startswith(key + "=")]
+                    config["Env"].append(key + "=" + unsafe)
+                    service["environment"][key] = override
+                release.reviewed_application_environment(service, config)
+            def observe(argv, **kwargs):
+                raw = self.platform(argv, **kwargs)
+                if argv[:3] == ["docker", "image", "inspect"] and argv[-1] == self.image:
+                    rows = json.loads(raw)
+                    rows[0]["Config"] = config
+                    return release.encoded(rows)
+                return raw
+            with self.subTest(masked=key), patch.object(release, "command", side_effect=observe), \
+                    self.assertRaisesRegex(release.ReleaseError, "sibling_(loader_environment|working_directory)_unsupported"):
+                tool.rehearsal_images(graph)
+
+    @unittest.skipUnless(os.name == "nt", "Windows executable search regression")
+    def test_trusted_native_path_prevents_candidate_executable_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "candidate-executed"
+            # A harmless OS command processor stands in for candidate git.exe.
+            shutil.copyfile(Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe", root / "git.exe")
+            child = """import pathlib,runpy,sys,time
+m=runpy.run_path(sys.argv[1],run_name='verified_runner')
+t=m['Release'].__new__(m['Release']); t.source=pathlib.Path.cwd(); t.deadline=time.monotonic()+5
+t.executables={'git':sys.argv[2]}
+try: t.run(['git','/c','echo harmless>candidate-executed'])
+except m['ReleaseError']: pass
+"""
+            result = subprocess.run([sys.executable, "-I", "-B", "-c", child,
+                str(ROOT / "scripts/director-release.py"), str(Path(shutil.which("git")).resolve())],
+                cwd=root, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(marker.exists(), "bare executable lookup ran candidate git.exe")
+
+    def test_emitted_control_timeout_ends_the_child_and_grandchild(self):
+        self.sibling()
+        step = release.Release(self.descriptor).rehearsal()["steps"][0]
+        payload = json.loads(base64.b64decode(step["argv"][-1]))
+        marker = self.root / "escaped-grandchild"
+        ready = self.root / "grandchild-started"
+        grandchild = "import pathlib,sys,time; time.sleep(1); pathlib.Path(sys.argv[1]).write_text('escaped')"
+        detach = "creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.DETACHED_PROCESS" if os.name == "nt" else "close_fds=True"
+        parent = ("import pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-c',sys.argv[3],sys.argv[1]], " +
+                  detach + "); pathlib.Path(sys.argv[2]).write_text('ready'); time.sleep(20)")
+        payload.update(control_argv=[sys.executable, "-I", "-c", parent, str(marker), str(ready), grandchild],
+                       control_timeout_seconds=0.5)
+        with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
+                patch.object(subprocess, "check_output", side_effect=self.platform), \
+                patch.object(process_isolation, "launch_contained_process", REAL_CONTAINED_LAUNCH), \
+                patch.object(process_isolation, "stop_contained_process", REAL_CONTAINED_STOP):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                exec(compile(release.REHEARSAL_LAUNCH, "launcher", "exec"), {})
+        self.assertTrue(ready.exists(), "fixture child must start before the deadline")
+        time.sleep(1.1)
+        self.assertFalse(marker.exists(), "grandchild survived the emitted control timeout")
+
+    def test_rehearsal_refuses_missing_gateway_identity_and_implicit_bind_creation(self):
+        self.sibling()
+        graph = copy.deepcopy(self.sibling_compose)
+        graph["services"]["slackbot"]["environment"].pop("SLACK_APP_TOKEN", None)
+        with self.assertRaises(release.ReleaseError):
+            release.isolated_sibling(self.compose, graph, 18080)
+        graph = copy.deepcopy(self.sibling_compose)
+        graph["services"]["orchestrator"]["volumes"].append({"type": "bind", "source": str(self.root / "missing-registry"),
+            "target": "/run/director-acceptance-registry", "read_only": True, "bind": {"create_host_path": True}})
+        with self.assertRaises(release.ReleaseError):
+            release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_first_mutation_refuses_an_occupied_declared_port(self):
+        import socket
+        self.sibling()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            step = release.Release(self.descriptor).rehearsal()["steps"][0]
+            payload = json.loads(base64.b64decode(step["argv"][-1]))
+            payload["ports"] = [{"host_ip": "127.0.0.1", "published": listener.getsockname()[1], "protocol": "tcp"}]
+            step["argv"][-1] = base64.b64encode(release.encoded(payload)).decode()
+            with self.assertRaisesRegex(SystemExit, "port"):
+                self.launch_fixture(step)
+            self.assertEqual(self.launched, [])
+
+    def test_stage_rechecks_ports_but_does_not_reject_its_started_database(self):
+        import socket
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        step = next(item for item in plan["steps"] if item["action"] == "StageRuntime")
+        for protocol, kind in (("tcp", socket.SOCK_STREAM), ("udp", socket.SOCK_DGRAM)):
+            with socket.socket(socket.AF_INET, kind) as listener:
+                listener.bind(("127.0.0.1", 0))
+                if protocol == "tcp": listener.listen(1)
+                payload = json.loads(base64.b64decode(step["argv"][-1]))
+                payload["ports"] = [{"host_ip": "127.0.0.1", "published": listener.getsockname()[1],
+                    "protocol": protocol, "service": "orchestrator"}]
+                step["argv"][-1] = base64.b64encode(release.encoded(payload)).decode()
+                with self.subTest(protocol=protocol), self.assertRaisesRegex(SystemExit, "port"):
+                    self.launch_fixture(step)
+                self.assertEqual(self.launched, [])
+                payload["ports"][0]["service"] = "langgraph-primary-db"
+                step["argv"][-1] = base64.b64encode(release.encoded(payload)).decode()
+                self.launch_fixture(step)
+                self.assertEqual(len(self.launched), 1)
+
+    def test_registry_bind_requires_existing_exact_owner_directory(self):
+        self.sibling()
+        directory = self.root / "registry"
+        directory.mkdir()
+        mount = {"type": "bind", "source": str(directory), "target": "/run/director-acceptance-registry",
+                 "read_only": True, "bind": {"create_host_path": False}}
+        self.sibling_compose["services"]["orchestrator"]["volumes"].append(mount)
+        release.isolated_sibling(self.compose, self.sibling_compose, 18080, registry_path=str(directory))
+        with self.assertRaisesRegex(release.ReleaseError, "registry_mount_mismatch"):
+            release.isolated_sibling(self.compose, self.sibling_compose, 18080, registry_path=str(self.snapshot))
+        mount["source"] = str(directory / "missing")
+        with self.assertRaisesRegex(release.ReleaseError, "bind_source_unavailable"):
+            release.isolated_sibling(self.compose, self.sibling_compose, 18080, registry_path=mount["source"])
+        self.assertFalse(Path(mount["source"]).exists())
+
+    def test_gateway_start_actions_require_running_pinned_sibling_process(self):
+        sibling = self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        path = Path(sibling["runtime_env"]["path"])
+        original = release.dotenv(path.read_bytes())
+        for action, preceding in (("ActivateOffline", "StageRuntime"), ("Rollback", "ActivateOffline")):
+            runtime = dict(original, **release.RUNTIME_CHANGES[preceding])
+            path.write_bytes("".join(f"{key}={value}\n" for key, value in runtime.items()).encode())
+            step = next(item for item in plan["steps"] if item["action"] == action)
+            for defect in (None, "stopped", "image", "project"):
+                def observe(argv, **kwargs):
+                    if argv[:2] == ["docker", "inspect"] and argv[-1] == "fixture-gateway":
+                        rows = json.loads(self.platform(argv, **kwargs))
+                        if defect == "stopped": rows[0]["State"]["Running"] = False
+                        if defect == "image": rows[0]["Image"] = "unreviewed"
+                        if defect == "project": rows[0]["Config"]["Labels"]["com.docker.compose.project"] = "other"
+                        return release.encoded(rows)
+                    return None
+                with self.subTest(action=action, defect=defect):
+                    if defect:
+                        with self.assertRaisesRegex(SystemExit, "gateway not proved running"):
+                            self.launch_fixture(step, observe=observe)
+                    else:
+                        self.launch_fixture(step, observe=observe)
+                    self.assertEqual(len(self.launched), 1)
+
+    def test_emitted_tools_remain_outside_source_and_snapshot(self):
+        self.sibling()
+        step = release.Release(self.descriptor).rehearsal()["steps"][0]
+        for base in (self.source, self.snapshot):
+            path = base / "substituted-git"
+            path.write_bytes(b"never execute")
+            payload = json.loads(base64.b64decode(step["argv"][-1]))
+            payload["executables"]["git"] = str(path)
+            changed = copy.deepcopy(step)
+            changed["argv"][-1] = base64.b64encode(release.encoded(payload)).decode()
+            with self.subTest(base=base.name), self.assertRaisesRegex(SystemExit, "trusted executable changed"):
+                self.launch_fixture(changed)
+            self.assertEqual(self.launched, [])
+
+    def test_real_emitted_launcher_imports_verified_containment_without_cache_writes(self):
+        self.sibling()
+        step = release.Release(self.descriptor).rehearsal()["steps"][0]
+        checkout = self.root / "real-source"
+        package = checkout / "src" / "director_orchestrator"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        (package / "process_isolation.py").write_bytes((ROOT / "src/director_orchestrator/process_isolation.py").read_bytes())
+        git_path = str(Path(shutil.which("git")).resolve())
+        def git(*args):
+            return subprocess.check_output([git_path, *args], cwd=checkout, env=release.child_environment(), stderr=subprocess.DEVNULL)
+        git("init", "-q")
+        git("add", ".")
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+        marker = self.root / "contained-child-ran"
+        payload = json.loads(base64.b64decode(step["argv"][-1]))
+        payload.update(cwd=str(checkout), first_step=False, action="Fixture", state_volumes={}, images={}, ports=[],
+            candidate={kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip() for kind in ("commit", "tree")},
+            control_argv=[sys.executable, "-I", "-B", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('ran')", str(marker)],
+            final_resources_sha256=release.sha(release.encoded({key: [] for key in ("containers", "binds", "volumes", "networks", "ports")})))
+        payload["executables"]["git"] = git_path
+        payload.pop("local_database", None)
+        # Docker observations alone are replaced. The isolated process uses real
+        # Git twice, imports the actual helper from this pinned tiny checkout,
+        # and launches a real harmless child through the production containment.
+        harness = self.root / "emitted-fixture.json"
+        harness.write_bytes(release.encoded({"code": step["argv"][-2], "payload": payload}))
+        wrapper = """import base64,json,pathlib,subprocess,sys
+fixture=json.loads(pathlib.Path(sys.argv[1]).read_bytes()); v=fixture['payload']
+assert sys.flags.isolated and sys.flags.dont_write_bytecode
+original=subprocess.check_output; checks=[]
+def read(args,**kwargs):
+    if args[0]=='git':
+        if args[1]=='status': checks.append('source')
+        return original(args,**kwargs)
+    if args[:2]==['docker','info']: return v['daemon_id'].encode()
+    if args[:2]==['docker','ps']: return b''
+    raise AssertionError(args)
+subprocess.check_output=read
+sys.argv=['launcher',base64.b64encode(json.dumps(v).encode()).decode()]
+exec(compile(fixture['code'],'emitted-launcher','exec'),{})
+assert checks==['source','source'],checks
+"""
+        argv = [*step["argv"][:-2], wrapper, str(harness)]
+        result = subprocess.run(argv, capture_output=True, timeout=40)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(marker.exists())
+        self.assertEqual(list(checkout.rglob("*.pyc")), [])
+        self.assertEqual(git("status", "--porcelain=v2", "--untracked-files=all"), b"")
 
 
 class ReleaseInputAndProcessTests(unittest.TestCase):
@@ -1876,6 +2182,10 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
             self.assertFalse(marker.exists(), "checkout import executed before the isolation gate")
             self.assertNotEqual(normal.returncode, 0)
             self.assertIn(b"-I", normal.stderr)
+            writes_cache = subprocess.run([sys.executable, "-I", str(script), "--help"], capture_output=True, timeout=20)
+            self.assertNotEqual(writes_cache.returncode, 0)
+            self.assertIn(b"-B", writes_cache.stderr)
+            self.assertEqual(list(root.rglob("*.pyc")), [])
             isolated = subprocess.run([sys.executable, "-I", "-B", str(script), "--help"], capture_output=True, timeout=20)
             self.assertEqual(isolated.returncode, 0, isolated.stderr)
             self.assertFalse(marker.exists())

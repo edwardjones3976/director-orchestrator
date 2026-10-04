@@ -18,7 +18,8 @@
     "image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "runtime_env": {"$ref": "#/$defs/pin"},
     "bridge_env": {"$ref": "#/$defs/pin"},
-    "compose_files": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/pin"}},
+    "compose_files": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/pin"},
+      "description": "Pinned Compose inputs. Every sibling service requires explicit local or json-file logging; read-only binds require existing sources and create_host_path=false."},
     "generation_manifest": {"$ref": "#/$defs/pin"},
     "validation_manifest": {"$ref": "#/$defs/pin"},
     "bridge_url": {"type": "string", "minLength": 12, "maxLength": 512, "pattern": "^https://[^/?#@]+/v1/provider/configuration-digest$"},
@@ -39,8 +40,10 @@
       "properties": {"independent": {"$ref": "#/$defs/actor"}, "security": {"$ref": "#/$defs/actor"}}
     },
     "executables": {
-      "type": "object", "additionalProperties": false, "required": ["python", "powershell"],
-      "properties": {"python": {"$ref": "#/$defs/path"}, "powershell": {"$ref": "#/$defs/path"}}
+      "type": "object", "additionalProperties": false, "required": ["python", "powershell", "git", "docker", "gh"],
+      "description": "Owner-pinned absolute trusted tool paths outside both candidate checkout and snapshot; no PATH or current-directory lookup.",
+      "properties": {"python": {"$ref": "#/$defs/path"}, "powershell": {"$ref": "#/$defs/path"},
+        "git": {"$ref": "#/$defs/path"}, "docker": {"$ref": "#/$defs/path"}, "gh": {"$ref": "#/$defs/path"}}
     },
     "output_directory": {"$ref": "#/$defs/path"},
     "rehearsal": {

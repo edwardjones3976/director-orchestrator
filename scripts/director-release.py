@@ -7,8 +7,8 @@ or manufactures acceptance. The existing control script owns execution and gates
 # directory, current directory or PYTHONPATH could shadow. The operator must use
 # interpreter isolation from process startup; re-exec after imports is too late.
 import sys
-if __name__ == "__main__" and not sys.flags.isolated:
-    raise SystemExit("Run director-release.py with Python -I -B (isolated startup required).")
+if __name__ == "__main__" and not (sys.flags.isolated and sys.flags.dont_write_bytecode):
+    raise SystemExit("Run director-release.py with Python -I -B (isolated startup without cache writes required).")
 
 import argparse
 import base64
@@ -177,15 +177,19 @@ def child_environment():
     return env
 
 
-def command(argv, *, cwd, env, deadline, input_bytes=None):
+def command(argv, *, cwd, env, deadline, input_bytes=None, executable=None, containment=None):
     """One deadline, closed stdin, bounded output, no shell and no raw-output logging."""
     require(time.monotonic() < deadline, "doctor_deadline_exhausted")
+    executable = executable or argv[0]
+    require(Path(executable).is_absolute(), "untrusted_executable")
     with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         if input_bytes:
             stdin.write(input_bytes)
             stdin.seek(0)
         options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
-        process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr, **options)
+        launch = containment[0] if containment else subprocess.Popen
+        launched = launch(argv, executable=executable, cwd=cwd, env=env, stdin=stdin, stdout=stdout, stderr=stderr, **options)
+        process, guard = launched if containment else (launched, None)
         try:
             while process.poll() is None:
                 require(time.monotonic() < deadline, "doctor_deadline_exhausted")
@@ -200,10 +204,15 @@ def command(argv, *, cwd, env, deadline, input_bytes=None):
             require(len(raw) <= MAX_BYTES, "command_output_exceeded")
             return raw
         finally:
-            if process.poll() is None:
+            if containment:
+                containment[1](process, guard, grace_seconds=5)
+            elif process.poll() is None:
                 try:
                     if os.name == "nt":
-                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        import ctypes
+                        directory = ctypes.create_unicode_buffer(32768)
+                        require(ctypes.windll.kernel32.GetSystemDirectoryW(directory, len(directory)), "system_directory_unavailable")
+                        subprocess.run([str(Path(directory.value) / "taskkill.exe"), "/PID", str(process.pid), "/T", "/F"],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        timeout=5, creationflags=subprocess.CREATE_NO_WINDOW)
                     else:
@@ -366,11 +375,11 @@ exec(SOURCE_PROOF)
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
 REHEARSAL_LAUNCH = r"""
-import base64,hashlib,json,pathlib,re,stat,subprocess,sys
+import base64,hashlib,json,pathlib,re,socket,stat,subprocess,sys,time
 v=json.loads(base64.b64decode(sys.argv[1]))
 env=v['environment']
 def read(args,**kwargs):
-    return subprocess.check_output(args,env=env,cwd=v['cwd'],timeout=30,**kwargs)
+    return subprocess.check_output(args,executable=v['executables'].get(args[0],args[0]),env=env,cwd=v['cwd'],timeout=30,**kwargs)
 def digest(raw): return hashlib.sha256(raw).hexdigest()
 def encoded(value): return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 def file_bytes(name):
@@ -393,6 +402,16 @@ def dotenv(raw):
         result[name]=value
     return result
 def input_check():
+    if set(v['executables'])!={'python','powershell','git','docker','gh'}: raise SystemExit('trusted executable changed')
+    for path in v['executables'].values():
+        p=pathlib.Path(path)
+        if not p.is_absolute() or not p.is_file() or any(p.resolve().is_relative_to(pathlib.Path(root).resolve())
+                for root in (v['cwd'],v['snapshot_path'])):
+            raise SystemExit('trusted executable changed')
+        for part in (p,*p.parents):
+            info=part.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0):
+                raise SystemExit('trusted executable changed')
     for pin in v['pins']:
         if digest(file_bytes(pin['path']))!=pin['sha256']: raise SystemExit('pinned input changed')
     pin=v['runtime_pin']
@@ -428,6 +447,8 @@ def source_check():
         raise SystemExit('verified source no longer clean')
 input_check()
 source_check()
+sys.path.insert(0,str(pathlib.Path(v['cwd'])/'src'))
+from director_orchestrator.process_isolation import launch_contained_process,stop_contained_process
 if read(['docker','info','--format','{{.ID}}']).decode().strip()!=v['daemon_id']:
     raise SystemExit('verified Docker daemon changed')
 if digest(encoded(resource_inventory(read,v['final_project'])))!=v['final_resources_sha256']:
@@ -457,10 +478,32 @@ if prior.exists():
 if v['action'] not in ('StartDatabase','Stop'): database_check()
 input_check()
 source_check()
-subprocess.run(v['control_argv'],env=env,cwd=v['cwd'],check=True,timeout=v['control_timeout_seconds'])
+if v['first_step'] or v['action']=='StageRuntime':
+    for port in v['ports']:
+        if not v['first_step'] and port.get('service')=='langgraph-primary-db': continue
+        kind=socket.SOCK_STREAM if port['protocol']=='tcp' else socket.SOCK_DGRAM
+        with socket.socket(socket.AF_INET,kind) as sock:
+            if hasattr(socket,'SO_EXCLUSIVEADDRUSE'): sock.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+            try: sock.bind((port['host_ip'],int(port['published'])))
+            except OSError: raise SystemExit('sibling port is occupied') from None
+process,guard=launch_contained_process(v['control_argv'],env=env,cwd=v['cwd'],stdin=subprocess.DEVNULL,
+    executable=v['executables'].get(v['control_argv'][0],v['control_argv'][0]))
+try:
+    code=process.wait(timeout=v['control_timeout_seconds'])
+    if code: raise subprocess.CalledProcessError(code,v['control_argv'])
+finally: stop_contained_process(process,guard,grace_seconds=5)
 if v['action']=='StartDatabase':
     input_check()
     database_check()
+if v['action'] in ('ActivateOffline','Rollback'):
+    ids=read(['docker','ps','-a','--no-trunc','--filter','label=com.docker.compose.project='+v['project'],
+        '--filter','label=com.docker.compose.service=slackbot','--filter','label=com.docker.compose.oneoff=False','--format','{{.ID}}']).decode().splitlines()
+    if len(ids)!=1: raise SystemExit('sibling gateway not proved running')
+    rows=json.loads(read(['docker','inspect',ids[0]]))
+    if len(rows)!=1: raise SystemExit('sibling gateway not proved running')
+    row=rows[0]; labels=row.get('Config',{}).get('Labels',{}); state=row.get('State',{})
+    if row.get('Image')!=v['runtime_image'] or labels.get('com.docker.compose.project')!=v['project'] or labels.get('com.docker.compose.service')!='slackbot' or labels.get('com.docker.compose.oneoff')!='False' or not state.get('Running') or state.get('Paused') or state.get('Restarting'):
+        raise SystemExit('sibling gateway not proved running')
 if v['action']=='Stop':
     ids=read(['docker','ps','-a','--filter','label=com.docker.compose.project='+v['project'],'--format','{{.ID}}']).decode().splitlines()
     rows=json.loads(read(['docker','inspect',*ids])) if ids else []
@@ -494,6 +537,13 @@ class Release:
         timeout = self.spec.get("timeout_seconds")
         require(type(timeout) is int and 1 <= timeout <= 900, "invalid_release_descriptor")
         self.deadline = time.monotonic() + timeout
+        self.executables = self.spec.get("executables", {})
+        require(isinstance(self.executables, dict) and set(self.executables) == {"python", "powershell", "git", "docker", "gh"} and
+                all(isinstance(value, str) and value for value in self.executables.values()), "trusted_executables_required")
+        for path in self.executables.values():
+            unlinked(Path(path))
+            require(Path(path).is_file() and not paths_overlap(path, self.source) and
+                    not paths_overlap(path, self.spec["snapshot"]["path"]), "trusted_executable_path_invalid")
         # No checkout locator runs. Candidate helpers are imported only after
         # the installed reader has bound this exact input and Git has verified it.
         self.source_check()
@@ -501,6 +551,8 @@ class Release:
         # may be added for the existing candidate helper imports.
         if str(self.source / "src") not in sys.path:
             sys.path.insert(0, str(self.source / "src"))
+        from director_orchestrator.process_isolation import launch_contained_process, stop_contained_process
+        self.containment = (launch_contained_process, stop_contained_process)
         validator = Draft202012Validator(document(bounded_read(SCHEMA)))
         require(not list(validator.iter_errors(self.spec)), "invalid_release_descriptor")
         self.output = Path(self.spec["output_directory"])
@@ -535,13 +587,15 @@ class Release:
             env = {key: value for key, value in env.items() if not key.upper().startswith("DOCKER_")}
             env.update(self.docker_environment)
         return command(arguments, cwd=self.source, env=env or child_environment(),
-                       deadline=self.deadline, input_bytes=input_bytes)
+                       deadline=self.deadline, input_bytes=input_bytes,
+                       executable=self.executables.get(arguments[0], arguments[0]), containment=getattr(self, "containment", None))
 
     def powershell(self, name, arguments):
         self.owner_check()
         self.source_check()
         return self.run([self.spec["executables"]["powershell"], "-NoProfile", "-NonInteractive", "-File",
-                         str(self.source / "scripts" / name), *arguments])
+                         str(self.source / "scripts" / name), *arguments,
+                         *(["-GitExecutable", self.executables["git"]] if name == "windows-primary-snapshot.ps1" else [])])
 
     def source_check(self):
         # Reading config names does not run hooks. Refuse custom executable
@@ -890,7 +944,8 @@ class Release:
         final_resources = resource_inventory(self.run, self.spec["compose_project"])
         isolated_sibling(final_graph, sibling_graph, plan["host_port"],
                          protected_paths=self.protected_paths() + sibling.protected_paths(),
-                         final_resources=final_resources, docker_host=self.docker_environment["DOCKER_HOST"])
+                         final_resources=final_resources, docker_host=self.docker_environment["DOCKER_HOST"],
+                         registry_path=sibling.runtime.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY"))
         require(self.daemon_id == sibling.daemon_id and self.docker_environment == sibling.docker_environment,
                 "sibling_docker_target_mismatch")
         images = sibling.rehearsal_images(sibling_graph)
@@ -904,7 +959,9 @@ class Release:
         base = [sibling.spec["executables"]["powershell"], "-NoProfile", "-NonInteractive", "-File",
                 str(sibling.source / "scripts/windows-langgraph-primary-control.ps1")]
         common = ["-EnvironmentFile", sibling.spec["runtime_env"]["path"], "-ComposeProject",
-                  sibling.spec["compose_project"], "-HostPort", str(plan["host_port"]), "-TimeoutSeconds", "120"]
+                  sibling.spec["compose_project"], "-HostPort", str(plan["host_port"]), "-TimeoutSeconds", "120",
+                  "-GitExecutable", sibling.executables["git"], "-DockerExecutable", sibling.executables["docker"],
+                  "-GitHubExecutable", sibling.executables["gh"]]
         compose = ["docker", "compose", "--project-name", sibling.spec["compose_project"],
                    "--env-file", sibling.spec["runtime_env"]["path"]]
         immutable_pins = self.input_pins() + sibling.input_pins(include_runtime=False)
@@ -928,7 +985,13 @@ class Release:
                 arguments += ["-AcceptanceArtifactPath", plan["acceptance_artifact"]["path"]]
             elif action in ("Backup", "RestoreDrill"):
                 arguments += ["-BackupPath", str(backup)]
+            arguments[0] = sibling.executables.get(arguments[0], arguments[0])
             payload = {"environment": environment, "cwd": str(sibling.source), "daemon_id": sibling.daemon_id,
+                       "executables": sibling.executables,
+                       "snapshot_path": sibling.spec["snapshot"]["path"],
+                       "ports": [{"host_ip": port["host_ip"], "published": str(port["published"]),
+                                  "protocol": port.get("protocol", "tcp"), "service": name}
+                                 for name, service in sibling_graph["services"].items() for port in service.get("ports", [])],
                        "candidate": sibling.spec["candidate"], "action": action, "pins": list(pins.values()),
                        "runtime_pin": ({"path": sibling.spec["runtime_env"]["path"],
                                         "values_sha256": sha(encoded(expected_runtime))}
@@ -951,7 +1014,7 @@ class Release:
                     "generation": sibling.spec["generation_manifest"]["sha256"], "final": self.observed_database,
                     "expected": {key: sibling.manifest["activation"][key] for key in
                                  ("database_identity", "database_instance_id")}}
-            argv = [sibling.spec["executables"]["python"], "-I", "-c", REHEARSAL_LAUNCH,
+            argv = [sibling.spec["executables"]["python"], "-I", "-B", "-c", REHEARSAL_LAUNCH,
                     base64.b64encode(encoded(payload)).decode("ascii")]
             # CreateProcess counts the terminating NUL and UTF-16 code units,
             # including quoting added by Python's actual Windows serializer.
@@ -1016,7 +1079,12 @@ class Release:
             elif "test" in override:
                 healthcheck = override
             reviewed_healthcheck(name, healthcheck)
+            if name in ("orchestrator", "slackbot"):
+                reviewed_application_environment(service, inspected[0].get("Config", {}))
             if name == "orchestrator":
+                # The control's direct digest probe runs this image without
+                # Compose overrides; masking unsafe image defaults is insufficient.
+                reviewed_application_environment({}, inspected[0].get("Config", {}))
                 reviewed_orchestrator(service, inspected[0].get("Config", {}))
             image_mounts = set((inspected[0].get("Config", {}).get("Volumes") or {}))
             require(image_mounts <= {mount["target"] for mount in service.get("volumes", [])} and
@@ -1123,6 +1191,35 @@ def reviewed_orchestrator(service, image=None):
             "sibling_orchestrator_command_unsupported")
 
 
+def reviewed_application_environment(service, image=None):
+    expected = {"PYTHONPATH": "/app/src", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
+    values = {}
+    if image is not None:
+        for entry in image.get("Env", []):
+            key, separator, value = entry.partition("=")
+            require(separator and key not in values, "sibling_loader_environment_unsupported")
+            values[key] = value
+    values.update(service.get("environment", {}))
+    values = {key: value for key, value in values.items() if value is not None}
+    for key, value in values.items():
+        require(not key.startswith(("LD_", "DYLD_")) and key not in
+                {"GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH", "BASH_ENV", "ENV"}, "sibling_loader_environment_unsupported")
+        if key.startswith("PYTHON"):
+            require(key in expected and value == expected[key] or key in {"PYTHON_VERSION", "PYTHON_SHA256"},
+                    "sibling_loader_environment_unsupported")
+    if "PATH" in values:
+        directories = str(values["PATH"]).split(":")
+        require(directories[0] == "/usr/local/bin" and set(directories) <=
+                {"/usr/local/bin", "/usr/local/sbin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"},
+                "sibling_loader_environment_unsupported")
+    directory = service.get("working_dir", (image or {}).get("WorkingDir"))
+    require(directory in (None, "/app") if image is None else directory == "/app",
+            "sibling_working_directory_unsupported")
+    if image is not None:
+        require(all(values.get(key) == value for key, value in expected.items()) and "PATH" in values,
+                "sibling_loader_environment_unsupported")
+
+
 STOCK_MOUNTS = {
     "orchestrator": {"/data": "director-data", "/repository": None, "/run/director-acceptance-registry": None},
     "slackbot": {}, "n8n": {"/home/node/.n8n": "n8n-data"},
@@ -1131,7 +1228,7 @@ STOCK_MOUNTS = {
 }
 
 
-def stock_mounts(graph):
+def stock_mounts(graph, *, registry_path=None):
     allowed = {key for mounts in STOCK_MOUNTS.values() for key in mounts.values() if key}
     require(set(graph.get("volumes", {})) <= allowed, "sibling_mount_unsupported")
     for key, volume in graph.get("volumes", {}).items():
@@ -1149,12 +1246,17 @@ def stock_mounts(graph):
                         set(mount) <= {"type", "source", "target", "read_only", "volume"}, "sibling_mount_unsupported")
             else:
                 require(mount.get("type") == "bind" and mount.get("read_only") is True and
-                        set(mount.get("bind", {})) <= {"create_host_path"} and
+                        mount.get("bind") == {"create_host_path": False} and
                         set(mount) <= {"type", "source", "target", "read_only", "bind"}, "sibling_mount_unsupported")
+                source = Path(mount["source"])
+                unlinked(source)
+                require(source.is_dir(), "sibling_bind_source_unavailable")
+                if target == "/run/director-acceptance-registry":
+                    require(registry_path and source.resolve() == Path(registry_path).resolve(), "sibling_registry_mount_mismatch")
         require({target for target, key in STOCK_MOUNTS[name].items() if key} <= seen, "sibling_mount_unsupported")
 
 
-def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host=""):
+def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host="", registry_path=None):
     """Check resolved Compose resources, not just a different project name."""
     project = sibling["name"]
     allowed_dependencies = {"orchestrator": {"langgraph-primary-db"}, "slackbot": {"orchestrator", "n8n"},
@@ -1162,11 +1264,26 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
     require({"orchestrator", "slackbot", "n8n"} <= set(sibling["services"]) <= set(allowed_dependencies),
             "sibling_service_graph_unsupported")
     for name, service in sibling["services"].items():
+        require(set(service) <= {"image", "build", "command", "entrypoint", "restart", "environment", "ports", "volumes",
+                "depends_on", "healthcheck", "networks", "pull_policy", "deploy", "scale", "working_dir", "logging"},
+                "sibling_service_option_unsupported")
+        require(service.get("restart", "no") in ("no", "unless-stopped") and
+                set(service.get("deploy", {})) <= {"replicas", "mode"}, "sibling_restart_or_deploy_unsupported")
+        require(all(value in (None, {}) for value in service.get("networks", {}).values()), "sibling_network_option_unsupported")
+        logging = service.get("logging", {})
+        require(logging.get("driver") in ("local", "json-file") and set(logging) <= {"driver", "options"} and
+                set(logging.get("options", {})) <= {"max-size", "max-file", "compress"}, "sibling_logging_unsupported")
+        for key, value in logging.get("options", {}).items():
+            require(isinstance(value, str) and bool(re.fullmatch(
+                {"max-size": r"[1-9][0-9]*[kmg]?", "max-file": r"[1-9][0-9]*", "compress": r"true|false"}[key], value)),
+                "sibling_logging_unsupported")
         deploy = service.get("deploy", {})
         require(all(type(value) is int and value == 1 for value in
                     (service.get("scale", 1), deploy.get("replicas", 1))) and
                 deploy.get("mode", "replicated") == "replicated", "sibling_service_not_singleton")
         reviewed_healthcheck(name, service.get("healthcheck", {}))
+        if name in ("orchestrator", "slackbot"):
+            reviewed_application_environment(service)
         if name == "orchestrator":
             reviewed_orchestrator(service)
         require(set(service.get("depends_on", {})) <= allowed_dependencies[name] and
@@ -1234,6 +1351,8 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
         require(effective.get("CHATGPT_BRIDGE_ALLOW_PAID_RUNS", "false") == "false" and
                 effective.get("CHATGPT_BRIDGE_ENABLED", "false") == "false", "sibling_bridge_must_be_disabled")
     gateway = sibling["services"]["slackbot"].get("environment", {})
+    require(all(isinstance(gateway.get(key), str) and gateway[key].strip() and not gateway[key].startswith("REPLACE_WITH_")
+                for key in ("SLACK_APP_TOKEN", "SLACK_BOT_TOKEN", "SLACK_DIRECTOR_CHANNEL_ID")), "sibling_gateway_identity_missing")
     require(gateway.get("ORCHESTRATOR_BASE_URL", "http://orchestrator:8080") == "http://orchestrator:8080" and
             gateway.get("N8N_DIRECTOR_WEBHOOK_URL", "") in ("", "http://n8n:5678/webhook/director-intake"),
             "sibling_gateway_route_not_local")
@@ -1247,7 +1366,8 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
         for port in service.get("ports", []):
             published = str(port.get("published", ""))
             require(port.get("host_ip") == "127.0.0.1" and published.isdigit() and
-                    1024 <= int(published) <= 65535 and published not in final_ports, "sibling_port_not_isolated")
+                    1024 <= int(published) <= 65535 and published not in final_ports and
+                    port.get("protocol", "tcp") in ("tcp", "udp"), "sibling_port_not_isolated")
             binding = (int(published), port.get("protocol", "tcp"))
             require(binding not in sibling_ports, "sibling_port_collision")
             sibling_ports.add(binding)
@@ -1266,7 +1386,7 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
     require(any(str(port.get("published")) == str(host_port) and port.get("target") == 8080 and
                 port.get("protocol", "tcp") == "tcp"
                 for port in sibling["services"]["orchestrator"].get("ports", [])), "sibling_host_port_mismatch")
-    stock_mounts(sibling)
+    stock_mounts(sibling, registry_path=registry_path)
 
 
 @contextmanager

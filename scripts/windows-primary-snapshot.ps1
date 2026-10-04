@@ -13,11 +13,16 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedRepository,
     [Parameter(Mandatory = $true)][string]$StartingRef,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedCommit,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedTree
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedTree,
+    [string]$GitExecutable = "git"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+if ($GitExecutable -cne "git" -and (-not [IO.Path]::IsPathFullyQualified($GitExecutable) -or
+        -not (Test-Path -LiteralPath $GitExecutable -PathType Leaf))) {
+    throw "Explicit Git must be an existing absolute trusted path."
+}
 
 function Get-GitHubRepositoryFromRemoteUrl {
     param([Parameter(Mandatory = $true)][string]$RemoteUrl)
@@ -36,7 +41,7 @@ function Get-GitHubRepositoryFromRemoteUrl {
 
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
 $targetPath = [IO.Path]::GetFullPath($Target)
-$sourceRemoteUrl = [string](@(& git -C $sourcePath remote get-url $SourceRemoteName) | Select-Object -Last 1)
+$sourceRemoteUrl = [string](@(& $GitExecutable -C $sourcePath remote get-url $SourceRemoteName) | Select-Object -Last 1)
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceRemoteUrl)) {
     throw "Snapshot source has no verifiable selected remote."
 }
@@ -54,7 +59,7 @@ if ($Action -eq "Create") {
         throw "Snapshot parent directory must already exist."
     }
     $remoteRef = "refs/heads/$StartingRef"
-    $remoteRows = @(& git ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef)
+    $remoteRows = @(& $GitExecutable ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef)
     if ($LASTEXITCODE -ne 0) {
         throw "Snapshot source starting ref could not be verified on the selected remote."
     }
@@ -86,9 +91,9 @@ if ($Action -eq "Create") {
     # conversion, sees every line as modified, and refuses the authority with
     # "Default primary repository authority must be clean". Certifying a snapshot
     # the consumer rejects is worse than failing to build one.
-    & git clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks --no-tags --branch $StartingRef --single-branch -- $sourceRemoteUrl $targetPath
+    & $GitExecutable clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks --no-tags --branch $StartingRef --single-branch -- $sourceRemoteUrl $targetPath
     if ($LASTEXITCODE -ne 0) { throw "Snapshot clone failed." }
-    & git -C $targetPath remote set-url origin $sourceRemoteUrl
+    & $GitExecutable -C $targetPath remote set-url origin $sourceRemoteUrl
     if ($LASTEXITCODE -ne 0) { throw "Snapshot origin binding failed." }
 }
 
@@ -97,7 +102,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $targetPath ".git"))) {
 }
 # Verify must not execute target-local clean/process filters or fsmonitor hooks.
 # The source checkout's Git policy does not cover this separate repository.
-$configNames = @(& git -C $targetPath config --name-only --list)
+$configNames = @(& $GitExecutable -C $targetPath config --name-only --list)
 if ($LASTEXITCODE -ne 0) { throw "Snapshot Git configuration could not be inspected." }
 if (@($configNames | Where-Object { $_ -match '^filter\..*\.(clean|smudge|process)$' }).Count -ne 0) {
     throw "Snapshot executable Git filters are unsupported."
@@ -108,11 +113,11 @@ if (Test-Path -LiteralPath (Join-Path $targetPath ".gitmodules")) {
 # Status trusts the index's hidden flags and stat cache. Inspect flags first,
 # then hash actual files against the pinned tree in one native batch, without
 # any clean conversion. Only ordinary UTF-8 text CRLF differences are tolerated.
-$indexRows = ((@(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false ls-files -v -z) -join "`n").Split([char]0))
+$indexRows = ((@(& $GitExecutable -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false ls-files -v -z) -join "`n").Split([char]0))
 if ($LASTEXITCODE -ne 0 -or @($indexRows | Where-Object { $_ -and -not $_.StartsWith("H ") }).Count) {
     throw "Snapshot hidden index flags are unsupported."
 }
-$treeRows = ((@(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false ls-tree -r -z $ExpectedTree) -join "`n").Split([char]0))
+$treeRows = ((@(& $GitExecutable -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false ls-tree -r -z $ExpectedTree) -join "`n").Split([char]0))
 if ($LASTEXITCODE -ne 0) { throw "Snapshot pinned tree could not be read." }
 $tracked = [Collections.Generic.List[object]]::new()
 foreach ($row in $treeRows) {
@@ -137,7 +142,7 @@ if ($tracked.Count) {
     try {
         $OutputEncoding = [Text.UTF8Encoding]::new($false)
         $actualHashes = @($tracked | ForEach-Object { ConvertTo-Json -InputObject $_.name -Compress } |
-            & git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false hash-object --no-filters --stdin-paths)
+            & $GitExecutable -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false hash-object --no-filters --stdin-paths)
         if ($LASTEXITCODE -ne 0 -or $actualHashes.Count -ne $tracked.Count) {
             throw "Snapshot actual file hashes could not be read."
         }
@@ -159,15 +164,15 @@ if ($tracked.Count) {
         if ($actual -cne $entry.blob) { throw "Snapshot tracked bytes differ." }
     }
 }
-$dirty = @(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false status --porcelain=v2 --untracked-files=all)
+$dirty = @(& $GitExecutable -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false status --porcelain=v2 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw "Snapshot target is not clean." }
-$head = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
-$tree = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
-$refCommit = [string](@(& git -C $targetPath rev-parse --verify "$StartingRef^{commit}") | Select-Object -Last 1)
+$head = [string](@(& $GitExecutable -C $targetPath rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
+$tree = [string](@(& $GitExecutable -C $targetPath rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
+$refCommit = [string](@(& $GitExecutable -C $targetPath rev-parse --verify "$StartingRef^{commit}") | Select-Object -Last 1)
 if ($head -cne $ExpectedCommit -or $refCommit -cne $ExpectedCommit -or $tree -cne $ExpectedTree) {
     throw "Snapshot commit, tree, or starting ref does not match the frozen authority."
 }
-$origin = [string](@(& git -C $targetPath remote get-url origin) | Select-Object -Last 1)
+$origin = [string](@(& $GitExecutable -C $targetPath remote get-url origin) | Select-Object -Last 1)
 $normalized = Get-GitHubRepositoryFromRemoteUrl -RemoteUrl $origin
 if ($normalized -cne $ExpectedRepository.Trim('/').ToLowerInvariant()) {
     throw "Snapshot origin does not match the repository allowlist."

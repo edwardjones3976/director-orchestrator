@@ -49,7 +49,10 @@
   },
   "executables": {
     "python": "C:/Tools/Python/python.exe",
-    "powershell": "C:/Tools/PowerShell/pwsh.exe"
+    "powershell": "C:/Tools/PowerShell/pwsh.exe",
+    "git": "C:/Program Files/Git/cmd/git.exe",
+    "docker": "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+    "gh": "C:/Program Files/GitHub CLI/gh.exe"
   },
   "output_directory": "C:/Director/protected-output",
   "timeout_seconds": 30

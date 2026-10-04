@@ -180,7 +180,7 @@ Write-Output 'tls-lifecycle-passed'
         self.assertIn("SourceRemoteName", text)
         self.assertIn("remote get-url $SourceRemoteName", text)
         self.assertIn(
-            "git ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef",
+            "$GitExecutable ls-remote --exit-code --refs -- $sourceRemoteUrl $remoteRef",
             text,
         )
         self.assertIn(
@@ -217,7 +217,7 @@ Write-Output 'tls-lifecycle-passed'
         # so the initial checkout uses them and later checkouts keep using them.
         # `git -c ... clone` would apply to the clone only and not persist.
         self.assertIn(
-            "git clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks",
+            "$GitExecutable clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks",
             text,
         )
 
@@ -281,6 +281,29 @@ Write-Output 'tls-lifecycle-passed'
                 "rev-parse", "--git-path", "hooks/post-index-change"], env=env).decode().strip()
             self.assertIn("/dev/null/", hook.replace("\\", "/"))
             self.assertFalse(Path(hook).parent.is_dir())
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows PowerShell native path regression")
+    def test_snapshot_explicit_git_path_ignores_a_candidate_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            executable = str(Path(shutil.which("git")).resolve())
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+            env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            def git(*args):
+                return subprocess.check_output([executable, *args], cwd=repo, env=env, stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q", "-b", "main")
+            (repo / ".gitignore").write_text("git.exe\n")
+            (repo / "tracked.txt").write_text("fixture\n")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+            git("remote", "add", "origin", "https://github.com/example/demo.git")
+            shutil.copyfile(Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe", repo / "git.exe")
+            result = subprocess.run([str(Path(shutil.which("pwsh")).resolve()), "-NoProfile", "-NonInteractive", "-File",
+                str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify", "-Source", str(repo),
+                "-Target", str(repo), "-ExpectedRepository", "example/demo", "-StartingRef", "main",
+                "-ExpectedCommit", git("rev-parse", "HEAD"), "-ExpectedTree", git("rev-parse", "HEAD^{tree}"),
+                "-GitExecutable", executable], cwd=repo, env=env, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_verifies_actual_bytes_despite_hidden_index_flags(self) -> None:
@@ -555,7 +578,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertNotIn("New-TemporaryFile", text)
         # Free-form comments and quoted markers are not review authority. Only an
         # exact canonical JSON body on an APPROVED trusted review can match.
-        github_view = text[text.index("gh pr view") : text.index("$pull =", text.index("gh pr view"))]
+        github_view = text[text.index("& $GitHubExecutable pr view") : text.index("$pull =", text.index("& $GitHubExecutable pr view"))]
         self.assertNotIn("comments", github_view)
         review_parser = text[text.index("function Get-ExactReviewArtifact") : text.index("function Get-GitHubAcceptanceFacts")]
         self.assertIn("[string]$Review.body -cne $canonical", review_parser)
@@ -608,6 +631,105 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         digest = text[text.index("function Get-ResolvedDeploymentDigest"):text.index("function Assert-RunningCandidate")]
         self.assertNotIn("| & docker", digest)
         self.assertIn("Invoke-NativeBytes", digest)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_direct_digest_probe_uses_selected_docker_without_logging_export(self) -> None:
+        harness = r'''
+param($Source, $Output)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-ResolvedDeploymentDigest'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production digest helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$script:ComposeProject = 'fixture-sibling'
+$script:environmentPath = 'fixture-runtime.env'
+$script:runtimeImageId = 'sha256:' + ('8' * 64)
+$DockerExecutable = 'owner-selected-docker'
+$script:calls = [Collections.Generic.List[object]]::new()
+function Invoke-NativeBytes {
+    param($FilePath, $ArgumentList, [byte[]]$InputBytes)
+    $script:calls.Add(@{ executable=$FilePath; argv=@($ArgumentList); input_present=($null -ne $InputBytes) })
+    if ($ArgumentList[0] -eq 'compose') { return ,[Text.Encoding]::UTF8.GetBytes('{"services":{}}') }
+    return ,[Text.Encoding]::UTF8.GetBytes('a' * 64)
+}
+if ((Get-ResolvedDeploymentDigest) -cne ('a' * 64)) { throw 'digest result changed' }
+@($script:calls) | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Output -Encoding utf8
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, runner, output = (root / name for name in ("control.ps1", "harness.ps1", "calls.json"))
+            source.write_text(self.text("windows-langgraph-primary-control.ps1"), encoding="utf-8")
+            runner.write_text(harness, encoding="utf-8")
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(runner),
+                str(source), str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = json.loads(output.read_text(encoding="utf-8-sig"))
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(all(call["executable"] == "owner-selected-docker" for call in calls))
+            self.assertEqual(calls[0]["argv"][:2], ["compose", "--project-name"])
+            argv = calls[1]["argv"]
+            self.assertTrue(calls[1]["input_present"])
+            self.assertIn("--log-driver", argv)
+            self.assertEqual(argv[argv.index("--log-driver") + 1], "none")
+            self.assertEqual(argv[argv.index("--network") + 1], "none")
+            self.assertEqual(argv[argv.index("--entrypoint") + 1], "python")
+            self.assertIn("sha256:" + "8" * 64, argv)
+            self.assertEqual(argv[-5:], ["-m", "director_orchestrator.primary_generation", "compose-digest", "--image-id", "sha256:" + "8" * 64])
+            self.assertNotIn("--volume", argv)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_github_checks_and_invocations_use_explicit_tool_without_path_gh(self) -> None:
+        harness = r'''
+param($Source, $GitHubExecutable)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-GitHubAcceptanceFacts'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production acceptance helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$script:GitHubRepository = 'fixture/project'; $script:PullRequestNumber = 1
+$script:candidateCommit = 'a' * 40
+try { $null = Get-GitHubAcceptanceFacts; throw 'wrong head was accepted' }
+catch { if ($_.Exception.Message -cne 'Pull request head does not match the exact activation candidate.') { throw } }
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, runner, marker = (root / name for name in ("control.ps1", "harness.ps1", "called.json"))
+            source.write_text(self.text("windows-langgraph-primary-control.ps1"), encoding="utf-8")
+            runner.write_text(harness, encoding="utf-8")
+            empty = root / "empty-path"
+            empty.mkdir()
+            fake = root / "owner-selected-gh.ps1"
+            fake.write_text("[IO.File]::WriteAllText('" + str(marker).replace("'", "''") + "', (ConvertTo-Json -InputObject @($args) -Compress))\n"
+                "$global:LASTEXITCODE = 0\n'" + json.dumps({"headRefOid": "b" * 40, "sha": "b" * 40, "tree": {"sha": "c" * 40}}) + "'\n", encoding="utf-8")
+            environment = dict(os.environ, PATH=str(empty))
+            powershell = str(Path(shutil.which("pwsh")).resolve())
+            for mode in ("facts", "prepare"):
+                with self.subTest(mode=mode):
+                    marker.unlink(missing_ok=True)
+                    argv = ([str(runner), str(source), str(fake)] if mode == "facts" else [str(source), "-Action", "PrepareAcceptance",
+                        "-CandidateCommit", "a" * 40, "-GitHubRepository", "fixture/project", "-PullRequestNumber", "1", "-GitHubExecutable", str(fake)])
+                    result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", *argv],
+                        env=environment, capture_output=True, text=True, timeout=30)
+                    if mode == "facts":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("GitHub candidate identity is invalid", result.stderr)
+                    self.assertTrue(marker.exists(), "selected executable was not reached without PATH gh")
+                    called = json.loads(marker.read_text())
+                    self.assertEqual(called[:2], ["pr", "view"] if mode == "facts" else ["api", "--hostname"])
+            # Default gh remains supported for standalone use; the exact-head
+            # rejection above remains the trust gate after a successful lookup.
+            shutil.copyfile(fake, empty / "gh.ps1")
+            result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", str(runner), str(source), "gh"],
+                env=environment, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_native_bytes_transport_is_exact(self) -> None:
