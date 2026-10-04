@@ -178,20 +178,20 @@ procedure overlays, not permission grants.</p>
 <p>Copy only the artifacts the project needs from
 <a href="templates/project-bootstrap/"><code>docs/templates/project-bootstrap/</code></a>:</p>
 <ul>
-<li><a href="templates/project-bootstrap/intake.html"><code>intake.md</code></a> molds a source thread
+<li><a href="templates/project-bootstrap/intake.html"><code>intake.html</code></a> molds a source thread
 into a concise <code>PROJECT_BOOTSTRAP</code> request.</li>
 <li><a href="templates/project-bootstrap/project-profile.yaml"><code>project-profile.yaml</code></a>
 records the living project-local profile.</li>
-<li><a href="templates/project-bootstrap/rollout-packet.html"><code>rollout-packet.md</code></a> records
+<li><a href="templates/project-bootstrap/rollout-packet.html"><code>rollout-packet.html</code></a> records
 deployment identity, allowlists, Slack isolation, activation evidence,
 communication fallback, and rollback for every project presented to the
 Director.</li>
-<li><a href="templates/project-bootstrap/workstream-plan.html"><code>workstream-plan.md</code></a>
+<li><a href="templates/project-bootstrap/workstream-plan.html"><code>workstream-plan.html</code></a>
 composes bounded modules, provider assignments, workflow skills, and
 fallbacks.</li>
-<li><a href="templates/project-bootstrap/review-ready.html"><code>review-ready.md</code></a> carries an
+<li><a href="templates/project-bootstrap/review-ready.html"><code>review-ready.html</code></a> carries an
 exact candidate from its producer to a different eligible reviewer.</li>
-<li><a href="templates/project-bootstrap/project-state-report.html"><code>project-state-report.md</code></a>
+<li><a href="templates/project-bootstrap/project-state-report.html"><code>project-state-report.html</code></a>
 reports bootstrap, milestone, reshaping, pause, or completion state.</li>
 </ul>
 <p>The rollout packet is mandatory for every project presented to the Director.
@@ -330,7 +330,7 @@ project-local fit here and link back for authority boundaries.</p>
 </tbody>
 </table>
 <p>Each row summarizes the canonical role definitions in
-<a href="team-operating-charter.html#responsibility-standard"><code>team-operating-charter.md</code></a>.</p>
+<a href="team-operating-charter.html#responsibility-standard"><code>team-operating-charter.html</code></a>.</p>
 <p>Whichever lane directs a project, maintenance (review-finding fixes, record and
 document inconsistencies, CI fixes, provider connection or plumbing problems)
 goes to OpenAI Codex, through the Codex CLI or the ChatGPT/Codex Director
@@ -469,16 +469,13 @@ channel, thread, credentials, profile, or state namespace.</p>
 worktree, and branch. Never launch a provider from <code>System32</code> or a generic
 directory. Keep repository context, credentials, provider outputs, budgets, and
 Slack threads separated by project.</p>
-<p>Enclose human-readable project messages and safely taggable project artifacts
-in the canonical contribution boundaries defined by
-<a href="contribution-attribution-policy.html"><code>contribution-attribution-policy.md</code></a>.
-Preserve prior valid boundaries when revising an artifact. Do not insert tags
-into structured protocol payloads, JSON, CSV, lock/checksum files, generated
-artifacts, or any format whose behavior they could change; carry attribution in
-the surrounding Slack, commit, pull-request, or handoff envelope instead. A tag
-records authorship only and never grants authority or replaces correlation IDs,
-run IDs, exact SHAs/digests, authenticated callbacks, review, CI, or security
-evidence.</p>
+<p>Owner direction, 2026-10-01: contribution-documentation, tagging and acknowledgement
+procedures are discontinued. Preserve historical records, normal Git provenance
+and actual provider identity; do not add contribution envelopes, custom trailers
+or share worksheets. Keep ordinary correlation IDs, run IDs, exact SHAs/digests,
+authenticated callbacks, review, CI and security evidence. See the
+<a href="contribution-attribution-policy.html">current attribution policy</a>.
+This formatting retirement does not relax any deterministic gate.</p>
 <p>Use one event vocabulary across the protocol, intake template, workstream plan,
 and state report:</p>
 <table>
@@ -491,7 +488,7 @@ and state report:</p>
 <tbody>
 <tr>
 <td><code>PROJECT_BOOTSTRAP</code></td>
-<td>Intake record: the shaping request copied from <a href="templates/project-bootstrap/intake.html"><code>intake.md</code></a>.</td>
+<td>Intake record: the shaping request copied from <a href="templates/project-bootstrap/intake.html"><code>intake.html</code></a>.</td>
 </tr>
 <tr>
 <td><code>BOOTSTRAP</code></td>
@@ -550,7 +547,7 @@ contributions, and a bounded Director revision request; the ordinary work
 contract remains prose-free. Antigravity cannot initiate, self-route, widen, or
 autonomously continue a conversation, and a seat grants no operational or
 acceptance authority—see
-<a href="team-operating-charter.html"><code>team-operating-charter.md</code></a>.</p>
+<a href="team-operating-charter.html"><code>team-operating-charter.html</code></a>.</p>
 <p>Producer votes count at their full configured advisory weight for seated
 members, including Antigravity when the Director invited it. Unavailable or
 abstaining members cast zero without changing the immutable denominator or any
@@ -601,7 +598,7 @@ failures. Never invent or blend missing cost telemetry.</p>
 <h2 id="minimal-integration-fix-lane">Minimal integration fix lane</h2>
 <p>Before opening a new correction assignment, check whether the defect qualifies
 for the up-to-three-attempt minimal-fix procedure in
-<a href="team-operating-charter.html#minimal-integration-fix-procedure"><code>team-operating-charter.md</code></a>.
+<a href="team-operating-charter.html#minimal-integration-fix-procedure"><code>team-operating-charter.html</code></a>.
 Use it only for a tiny, unambiguous, reversible, mechanically correctable
 surface with an already-established expected result and an existing focused
 validation. Use the cheapest eligible method and emit the compact

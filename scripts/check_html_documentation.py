@@ -1,8 +1,10 @@
 """Validate canonical HTML documentation, local links and the narrow Markdown exceptions."""
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
@@ -36,7 +38,7 @@ def _url_parts(value: str):
 
 def _manifest_path(root: Path, name: str) -> Path:
     relative = PurePosixPath(name)
-    if not name or relative.is_absolute() or '..' in relative.parts or '\\' in name or ':' in name:
+    if not name or relative.is_absolute() or '..' in relative.parts or '\\' in name or ':' in name or any(ord(c) < 32 for c in name):
         raise ValueError('manifest paths must be repository-relative')
     path = root / relative
     if path.is_symlink() or not path.resolve().is_relative_to(root):
@@ -68,6 +70,47 @@ def _compatibility_errors(root: Path, old: str, new: str) -> list[str]:
     if len(anchors) != len(set(anchors)) or any(anchor not in target_ids for anchor in anchors):
         errors.append('compatibility pointer has an invalid legacy anchor: ' + old)
     return errors
+
+
+def _provenance_errors(root: Path, manifest: dict) -> list[str]:
+    """Verify retained source digests against Git bytes, independent of CRLF checkout rules."""
+    base = manifest.get('migration_base')
+    if base is None and 'documents' not in manifest:
+        return []  # A standalone HTML fixture/library need not describe a migration.
+    if not isinstance(base, str) or not re.fullmatch(r'[0-9a-f]{40}', base):
+        return ['invalid migration base']
+    records = manifest.get('documents', [])
+    sources = []
+    try:
+        for record in records:
+            source = record['source']
+            _manifest_path(root, source)
+            if manifest['mapping'].get(source) != record['target'] or not re.fullmatch(r'[0-9a-f]{64}', record['source_sha256']):
+                return ['invalid migration source record: ' + source]
+            sources.append(source)
+        if len(sources) != len(set(sources)) or set(sources) != set(manifest['mapping']):
+            return ['migration source records do not match the document mapping']
+        ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], cwd=root,
+                                  capture_output=True, timeout=20)
+        if ancestor.returncode:
+            return ['migration base is unavailable or not an ancestor of HEAD']
+        result = subprocess.run(['git', 'cat-file', '--batch'], cwd=root,
+                                input=''.join(f'{base}:{source}\n' for source in sources).encode('utf-8'),
+                                capture_output=True, timeout=20, check=True)
+        data, offset, errors = result.stdout, 0, []
+        for record in records:
+            end = data.index(b'\n', offset)
+            fields = data[offset:end].split()
+            if len(fields) != 3 or fields[1] != b'blob':
+                return ['missing migration source blob: ' + record['source']]
+            size = int(fields[2])
+            blob = data[end + 1:end + 1 + size]
+            offset = end + 2 + size
+            if len(blob) != size or hashlib.sha256(blob).hexdigest() != record['source_sha256']:
+                errors.append('migration source digest mismatch: ' + record['source'])
+        return errors
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        return ['migration source provenance could not be verified']
 
 
 class Page(HTMLParser):
@@ -121,7 +164,7 @@ def check(root: Path) -> list[str]:
     paths = sorted({root/'README.html', *(path for path in (root/'docs').rglob('*.html')
                                        if path.relative_to(root).parts[:2] != ('docs', 'archive'))})
     pages: dict[Path, Page] = {}
-    errors: list[str] = []
+    errors: list[str] = _provenance_errors(root, manifest)
     for path in paths:
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
             errors.append(f'{path}: unsafe or missing document')

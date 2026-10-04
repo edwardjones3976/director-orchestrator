@@ -111,546 +111,550 @@
       "source": "README.md",
       "target": "README.html",
       "title": "Director Orchestrator",
-      "source_sha256": "bcfd43e4bfd32961c7d2ae0ed72562645edc0e9c65425861edc08704eb2ccbad"
+      "source_sha256": "c8ec3e488e9dff73926caa187759f204198dda6586081284ed69274f520eb6a7"
     },
     {
       "source": "docs/activation-plan-2026-09-13.md",
       "target": "docs/activation-plan-2026-09-13.html",
       "title": "LangGraph-primary + n8n activation plan (v4 — ASAP)",
-      "source_sha256": "d233cc2f82a18e2fe4248cc6f3d08b43a3dd743483fd58fd3b63dae2549af74a"
+      "source_sha256": "d4d9bf666d82b52e5790b896143e198f3ce70a8adf2edfb23165964a652aabd0"
     },
     {
       "source": "docs/always-on-runbook.md",
       "target": "docs/always-on-runbook.html",
       "title": "Always-On Windows Runbook",
-      "source_sha256": "670207ed815dd78cc4a8f5862bb51b29f08e30e432ba4d8fa80b82dc84195a6f"
+      "source_sha256": "b310ec920b736502b83b2db4c8a13f1b9807a029c5a3223842ae46402320a4fd"
     },
     {
       "source": "docs/antigravity-team-engineering.md",
       "target": "docs/antigravity-team-engineering.html",
       "title": "Antigravity team engineering boundary",
-      "source_sha256": "8665825f4bd8487eab523d10226f7443e5fa904e0a69ebe98122c2562172e246"
+      "source_sha256": "9d19b90d6c9363108e62d16d25ca17520429a9ce1c5daa1f98215a74ff344187"
     },
     {
       "source": "docs/cancelled-pending-reconciliation.md",
       "target": "docs/cancelled-pending-reconciliation.html",
       "title": "Reconcile never-started assignments after cancellation",
-      "source_sha256": "1021c19331d013cb33621fa23bc8aafd8d53309f85d56bd9f465ff1db95443bb"
+      "source_sha256": "2de250133fb4080ce1f178214dd332aca6e41a7675ef297928200c1dd1abc3ef"
     },
     {
       "source": "docs/chatgpt-bridge-activation.md",
       "target": "docs/chatgpt-bridge-activation.html",
       "title": "ChatGPT bridge activation",
-      "source_sha256": "6dd6311c35740a01db723162a76dbefddf138eedc6a6eada051a3db02aecb086"
+      "source_sha256": "c75be14916d00083fda34f00546abc29d6ff19b503c056edb4446796bea3a35d"
     },
     {
       "source": "docs/chatgpt-slack-alias-bridge.md",
       "target": "docs/chatgpt-slack-alias-bridge.html",
       "title": "ChatGPT Slack alias bridge",
-      "source_sha256": "8e35f5ae6a043cf56717d5fd60d3d7191b9b7ee376406164ac2f77ef53b87db4"
+      "source_sha256": "a18714adabec4d3841c991cc043292c8b31e0e15d848917953f54b77f4259012"
     },
     {
       "source": "docs/ci-acceptance-issuer.md",
       "target": "docs/ci-acceptance-issuer.html",
       "title": "Isolated CI acceptance issuer",
-      "source_sha256": "9d4eec0dcc34272d2d32c851d4bfe326af1b79a30e7430008b354d45b103f314"
+      "source_sha256": "600751ff76dddd7b094c206b27b5802e75f7ea5bacf61e68e3854528c44c4b2d"
     },
     {
       "source": "docs/close-out-report-2026-09-13.md",
       "target": "docs/close-out-report-2026-09-13.html",
       "title": "Close-out report — LangGraph-primary and n8n delivery",
-      "source_sha256": "73e44a2f3e173293b194197f0110edf4035081147d17d97459a31b1862e5e3ba"
+      "source_sha256": "26f62a7795764aa3c20b0a883c1abc5e1d0dca54ffb745a4c7788b626176a784"
     },
     {
       "source": "docs/cloud-hosting-later.md",
       "target": "docs/cloud-hosting-later.html",
       "title": "Cloud Hosting Later",
-      "source_sha256": "5df6f9fd5c32c1586ded99fd11c681a2b4ad9f5236d513b5a31132718ab24e94"
+      "source_sha256": "bbcfa6d47b246c1df82421180553ed6218dd85030115432e59f372717e4e88ee"
     },
     {
       "source": "docs/collect-offline-slack-trials.md",
       "target": "docs/collect-offline-slack-trials.html",
       "title": "Offline Slack trial evidence",
-      "source_sha256": "3c15edbbdc243c25ccf2383827b12668c209d8c32f5a2ddfd2909c8d0856b281"
+      "source_sha256": "4d00eb8199e5611bedd93c7becb8cccc7c24c547f9d948b1be88538ceb084b37"
     },
     {
       "source": "docs/contribution-attribution-policy.md",
       "target": "docs/contribution-attribution-policy.html",
       "title": "Contribution attribution in Git",
-      "source_sha256": "7d3404d39e66b5fc39fc8f41765998690692a592c0d4a244e189443fa050d27c"
+      "source_sha256": "1d9a3bb85af4a91953404d8deaa20d3655200e430d02179f2fd7d8d57c9f852c"
     },
     {
       "source": "docs/delegation-matrix-2026-09-13.md",
       "target": "docs/delegation-matrix-2026-09-13.html",
       "title": "Delegation matrix — 2026-09-13 delivery (rev 2)",
-      "source_sha256": "daccfec00b43971c20596b5355c4169278f138e81689120f0c40519c859303e6"
+      "source_sha256": "f1a0dd51808ee14a0c9da59169109ff032260c53ab5dc59762773f75a174d512"
     },
     {
       "source": "docs/delegation-round-2026-09-09.md",
       "target": "docs/delegation-round-2026-09-09.html",
       "title": "Delegation round — 2026-09-09, ASAP scope",
-      "source_sha256": "065a4e33e89672d29bc36db232e529ac2ea86c85bfa35a606813827f255a7702"
+      "source_sha256": "07294bf7883852f88aa17c3493f66b1cef28221ed9ab75ccef9bddc0cdf94a1e"
     },
     {
       "source": "docs/director-completion-gates.md",
       "target": "docs/director-completion-gates.html",
       "title": "Director Completion Gates",
-      "source_sha256": "37becf36842b2b00e832b7986ae861d59ab08c82f1666e7545345bcf6bdb2269"
+      "source_sha256": "e26a0fd2eed41bffb72f01848f5cf9b5cc078c3962cd222c9df860ed03e02677"
     },
     {
       "source": "docs/director-decision-rules.md",
       "target": "docs/director-decision-rules.html",
       "title": "Director decision rules",
-      "source_sha256": "09b43b2d2282ed0ea08806eb9b0d357d0660887d4b9776edaffa3d8b3b495a00"
+      "source_sha256": "72ea35b5e8389b60d988242074d624cdc7b166b24da17e43eadf3b105ff48fc0"
     },
     {
       "source": "docs/director-review-handoff-history-2026-09-09.md",
       "target": "docs/director-review-handoff-history-2026-09-09.html",
       "title": "Historical review-handoff correction, 2026-09-09",
-      "source_sha256": "4c8079d85378361a2f92c1ec025e59455e933bd48fc8f44731ca83258fc0e04f"
+      "source_sha256": "a62b503052e29abc36ba835d785f2286cc55b304c31bb44653ca7ac135d1070b"
     },
     {
       "source": "docs/director-user-guide.md",
       "target": "docs/director-user-guide.html",
       "title": "Director-Orchestrator operator guide",
-      "source_sha256": "c30e925e57505fd5ecc23dd08b4f4d9bba80d4d764c33e3f5f1bae46cacf8ce2"
+      "source_sha256": "051568d4821fa1085d4bb4773cf54fd2b72f092650c276769d005a27983b75e6"
     },
     {
       "source": "docs/edge-oracle-operations.md",
       "target": "docs/edge-oracle-operations.html",
       "title": "Edge Oracle isolated operations",
-      "source_sha256": "975c4bc12a0a6323c6e7386d9070affdc94f2bf862444e3e322aa3f9192ddca8"
+      "source_sha256": "956a061125c732fd8d6497274686aa5aab3bcac6b4c751ace86239111cbc2cac"
     },
     {
       "source": "docs/engineering-workload-ledger.md",
       "target": "docs/engineering-workload-ledger.html",
       "title": "External engineering assignment ledger",
-      "source_sha256": "a6ecff6b66eb633e2a95648564556c21fed0e24689c93ce3aa42a3d77867a7cc"
+      "source_sha256": "8cf201e1659e7a7b69db63ed2364923a8bb3fb810a6121c4ed9e54a56bbc6f8c"
     },
     {
       "source": "docs/entitlement-control-plane.md",
       "target": "docs/entitlement-control-plane.html",
       "title": "Entitlement control plane (default off)",
-      "source_sha256": "8e2fbb6e1ca9f34ec96c65c55aef1c223a6097aa1affd7196982c8fe743e6ec7"
+      "source_sha256": "69781363f62f6a06983aa0845751b341274e529d2aee50477bd2836114a4144a"
     },
     {
       "source": "docs/findings-2026-09-09-gate8-and-holds.md",
       "target": "docs/findings-2026-09-09-gate8-and-holds.html",
       "title": "Findings — Gate 8, the two holds, and schedule feasibility",
-      "source_sha256": "518bdf98f9c06911bee7eb0325d61cf0a2253c5ff5088f7c365c4fa2a4b0e960"
+      "source_sha256": "94fb98456baa2188612ef23a0d24765aca696eb24f0a833edf845ffd30d3b561"
     },
     {
       "source": "docs/grok-bot-chat-dispatch.md",
       "target": "docs/grok-bot-chat-dispatch.html",
       "title": "Grok Bot chat dispatch",
-      "source_sha256": "9bc5948ee004f85411375b66f60c45adf8e092656d632fa390caaae1fe8eba07"
+      "source_sha256": "5cc33b51a3ceb858854f68b1afee0f73faf6da72e76b022dc925bebc612305c6"
     },
     {
       "source": "docs/grok-lanes-separation-2026-09-09.md",
       "target": "docs/grok-lanes-separation-2026-09-09.html",
       "title": "Grok, Cursor Grok, and Grok Bot are three different things",
-      "source_sha256": "300c3f53b428d14f42e739c0fd5bc33914c34d1fa94e7f7822d59f0e698eff26"
+      "source_sha256": "e404b9cb1f2cedc12b2a36221d6ecd4c2747c4014a1e618e51bb135ea1159d4e"
     },
     {
       "source": "docs/hotl-execution-predicate.md",
       "target": "docs/hotl-execution-predicate.html",
       "title": "Standing-authorization execution predicate",
-      "source_sha256": "197062e32cc202c63f717b81287c53916bf10062bfe8e739fe81a6eb01d05891"
+      "source_sha256": "e451c031779498128aac3996cca93205db68c1f38077e90610dfe60ed81c8955"
     },
     {
       "source": "docs/human-out-of-the-loop-operation.md",
       "target": "docs/human-out-of-the-loop-operation.html",
       "title": "Human-out-of-the-loop operation",
-      "source_sha256": "bd5055909b9450c79573bc2721c95b6c78386555dfedc7a286f12ecbf41419cf"
+      "source_sha256": "c4a666b5fd14a30efeb32095601e7709aa6ce7499c921cd9b130dddcfa2cf729"
     },
     {
       "source": "docs/intake-lease-recovery.md",
       "target": "docs/intake-lease-recovery.html",
       "title": "Controlled intake lease recovery",
-      "source_sha256": "ecfe6ae52a68ba893d9ff87d0631d032982b229710f37883b5e39ffb511d8790"
+      "source_sha256": "2407eef6963ed702f608e8b8cd450db5f7797380e0b349219f9aaef1dcf1b5fa"
     },
     {
       "source": "docs/langgraph-primary-operations.md",
       "target": "docs/langgraph-primary-operations.html",
       "title": "LangGraph-primary operations authority",
-      "source_sha256": "3a8baaaa854c636ef271eb5ff6e38267dee7776144af48c6d13cbd2a0cff80f9"
+      "source_sha256": "559af464702d660abb1f4eeb096488ae1ccfa4b43ed2f050ee14de95997607e4"
     },
     {
       "source": "docs/langgraph-primary-stage-a-runbook.md",
       "target": "docs/langgraph-primary-stage-a-runbook.html",
       "title": "Stage A: LangGraph primary as intake owner, with simulated providers",
-      "source_sha256": "3ea6331541eafc365e3a2b7efe771e0f5709df0a4689cdc87fb0e02a18bbcfed"
+      "source_sha256": "fb90aa0966f468b0820f2cdbb52b36e788af9de6945f52a7e9ae28462079903e"
     },
     {
       "source": "docs/langgraph-shadow-operations.md",
       "target": "docs/langgraph-shadow-operations.html",
       "title": "LangGraph shadow operations (tombstone)",
-      "source_sha256": "f2443dceb5c940722206373da48ce04b6da41feed9b41216b167b02dee34f2ea"
+      "source_sha256": "1319a98d10413a1cf0fa0f313afbccaec7c3c0bf89503c8db937224649737bfb"
     },
     {
       "source": "docs/langgraph-transition-plan.md",
       "target": "docs/langgraph-transition-plan.html",
       "title": "LangGraph transition plan (tombstone)",
-      "source_sha256": "1e909ebcbe10dad249cb1bf7d350099b56a735562401c67ebb83e4980de40169"
+      "source_sha256": "4f021fa222fcdbc7c3dce404b2b26dc2dcb36e935bcf4dce6a67428fb2fcbdc7"
     },
     {
       "source": "docs/model-interoperability-contract.md",
       "target": "docs/model-interoperability-contract.html",
       "title": "Model interoperability contract",
-      "source_sha256": "b102c35ac003a1ddf72791edb70c2e171affb3019b087d4369540b387eedb711"
+      "source_sha256": "3fdfcd68db82f3fdb52359f43a91329b032fb544a7ba69443ab838f71c68b8a6"
     },
     {
       "source": "docs/n8n-integration-validation-2026-09-09.md",
       "target": "docs/n8n-integration-validation-2026-09-09.html",
       "title": "Director Intake ↔ n8n — integration validation, 2026-09-09",
-      "source_sha256": "c8d15e0c4bceaaff57cd6424821e50e7f583a47ffebbe7432f9d7a759ddb63ee"
+      "source_sha256": "cdf3c0f03a209005ee00eaeea68112a3fae994f71c4d7d44b5632598d0c66ad2"
     },
     {
       "source": "docs/n8n-operations.md",
       "target": "docs/n8n-operations.html",
       "title": "n8n operations",
-      "source_sha256": "aba5c5f73f25d4b93453391af89cd18ce294233fdf641acf2f6e29e02faab82b"
+      "source_sha256": "92a61a142fa4aea9b509fe3aff22559f1484325303e80e5af29dbd9704b42068"
     },
     {
       "source": "docs/native-acceptance-issuers.md",
       "target": "docs/native-acceptance-issuers.html",
       "title": "Native acceptance issuers",
-      "source_sha256": "7d42b3de4c5e8d17dd130205d349958e490e4a0effda8e78e7fd18f13e959fc8"
+      "source_sha256": "4a33904e20ac9d470f05444c86f43edbda5239674137ee96c29c7a758da77a4b"
     },
     {
       "source": "docs/native-auth-enrollment.md",
       "target": "docs/native-auth-enrollment.html",
       "title": "Native AGY issuer authentication evidence",
-      "source_sha256": "5386cfa77a6b028c998f0fbeb0a98477d15bca19754f3c5e435c9091b4eb2838"
+      "source_sha256": "cf9ce5e833ee6943feeab4ad50875142a58b75fe71ed1df3ba2608e6dea62486"
     },
     {
       "source": "docs/native-codex-packet-transport.md",
       "target": "docs/native-codex-packet-transport.html",
       "title": "Native Codex packet transport",
-      "source_sha256": "dc30b1543d0bc6494b9b608636e51385b455c5a95d8f181e2dea8531d7247a68"
+      "source_sha256": "55ab3e28bebf5f4fa939d711b4bbbd6cf22671bba03f08a68329370e858537de"
     },
     {
       "source": "docs/native-issuer-cutover-extensions.md",
       "target": "docs/native-issuer-cutover-extensions.html",
       "title": "Native issuer and GitHub target extensions",
-      "source_sha256": "af09f24229d88f6ad037d56cf32e10ccf8a0686b1aebf7b81e6367a4303c0e42"
+      "source_sha256": "43e74b08d83d7efc9024c10ab7ed88c87cbdf435fb877a539cad2526705d4d51"
     },
     {
       "source": "docs/native-v3-review-issuer.md",
       "target": "docs/native-v3-review-issuer.html",
       "title": "Native v3 independent-review issuer (collect-only)",
-      "source_sha256": "4ce81dd9ef110985a8e7cb137099314625a3b62622732b0e51f99c3e285ee4d4"
+      "source_sha256": "5591ba3f2e69598c2932f35e512c113a79e18f731bce42454c0582c0443b7400"
     },
     {
       "source": "docs/openai-responses-validation.md",
       "target": "docs/openai-responses-validation.html",
       "title": "OpenAI Responses validation route",
-      "source_sha256": "9ca109a9b4e55f1f11e35079439e96e8deec7294666314ff86ce72513105c048"
+      "source_sha256": "4ad50837e3b585b04335ceb6dcee92d9ac37ad82188311aa4ce486a083d5c0c2"
     },
     {
       "source": "docs/paid-safety-recovery-audit.md",
       "target": "docs/paid-safety-recovery-audit.html",
       "title": "PR #326 recovery audit",
-      "source_sha256": "a6d845fc4b3c4fe5e7fda6b6191679295c528a5455c7e70bbc5db0a670d0e26e"
+      "source_sha256": "0f62df3e43df56ca97bbcb5c0b1ece7c22888709290c640fcbc9403d41884487"
     },
     {
       "source": "docs/paid-wave-preflight.md",
       "target": "docs/paid-wave-preflight.html",
       "title": "Paid wave setup preflight",
-      "source_sha256": "db031f63f3e0e90ac02e63a28663c7769f358ea5d842fe9118860c8b34230830"
+      "source_sha256": "94d842087ff3f643801101764e912e6621bd30df1ca04ed2194430b617399815"
     },
     {
       "source": "docs/postgres-test-lane-cap.md",
       "target": "docs/postgres-test-lane-cap.html",
       "title": "Local PostgreSQL test-lane concurrency",
-      "source_sha256": "d3a92f2e3857f087b411c546c6b0ec5a443346d01b1882d53f53f7c79e9db174"
+      "source_sha256": "73ea9d2266cf46877631d93c113356bd2b514f8d4423423bb866bc73d06ce0e6"
     },
     {
       "source": "docs/primary-provider-budget-production.md",
       "target": "docs/primary-provider-budget-production.html",
       "title": "Primary provider budget production: unsigned preparation and already-signed import",
-      "source_sha256": "50b1999bb7ef2bb20d677fe1ffbccf0ef915e0cf3dbf3f613dd5d21665614041"
+      "source_sha256": "5ce0c0899085519728032b11dab0b09421762ec93749b155ee8f93d8df0d219d"
     },
     {
       "source": "docs/primary-slack-delivery.md",
       "target": "docs/primary-slack-delivery.html",
       "title": "Primary Slack lifecycle delivery",
-      "source_sha256": "b803a7195c9f6bcb1d9518307a53b7d7183c2c19caaeaeabfc119d1ba99b6baf"
+      "source_sha256": "c94d2d475d2bafa90311734fc40848c2b427d1a56d9d72c513ff71b29e549612"
     },
     {
       "source": "docs/primary-staging-controls.md",
       "target": "docs/primary-staging-controls.html",
       "title": "Primary staging and generation controls",
-      "source_sha256": "73c421678a4778d622c16cb9bbc1eda57765eaf407001458d3162b07d929f8ea"
+      "source_sha256": "e53915531b56ac4baaec19687382c2c6829eb3bcb0952fb38c8547b57b02f4af"
     },
     {
       "source": "docs/primary-staging-worksheet.md",
       "target": "docs/primary-staging-worksheet.html",
       "title": "Primary lane staging worksheet",
-      "source_sha256": "20112bb59ade606e262c2a5e0e5999c179047d4084412cbcf76824a59b9e08d1"
+      "source_sha256": "bd4014216641074a8655fd6593d23b0bacabefba61a081154c714d39e44e3ec1"
     },
     {
       "source": "docs/project-bootstrap-protocol.md",
       "target": "docs/project-bootstrap-protocol.html",
       "title": "Modular project bootstrap protocol",
-      "source_sha256": "fa8db46c9e6d41486dc56831a5cc9ec44c285daf7c0f263392f22ab5f09b0df6"
+      "source_sha256": "ed11ae016a535910e1d0f3c6ee299be13c50200bbdfde34a15ca73343088b9bd"
     },
     {
       "source": "docs/project-leadership.md",
       "target": "docs/project-leadership.html",
       "title": "Current project leadership",
-      "source_sha256": "426ab1dbfa3ed66670faf560437083941740ebc1104626bb30d39b5cf6022845"
+      "source_sha256": "4076627b46ff5572bd8c0dd4b536cb81955eaf8cee6969a1119abdccc33be740"
     },
     {
       "source": "docs/project-uppercut-reiteration.md",
       "target": "docs/project-uppercut-reiteration.html",
       "title": "Project Uppercut Reiteration",
-      "source_sha256": "1f60ff6b7359ef7247e8f37dbb3a6d771085d324a8080bd5690054a49c43d100"
+      "source_sha256": "9b0a347ad580c6578418c151bd6c52cf84308562401b1050e455e80fe769429f"
     },
     {
       "source": "docs/protocol-compliance-audit-2026-09-09.md",
       "target": "docs/protocol-compliance-audit-2026-09-09.html",
       "title": "Protocol compliance audit — the 2026-09-13 delivery",
-      "source_sha256": "baec61298f8b4173dd2e6e8ac58277d1ae4ad6bed4948bff96646527c63b8d71"
+      "source_sha256": "9a09402b640bde72531bba0294a26f046e3c93b2e2237ae396e3ca19ed1216a1"
     },
     {
       "source": "docs/provider-acceptance-v2-runtime.md",
       "target": "docs/provider-acceptance-v2-runtime.html",
       "title": "Provider-v2 runtime acceptance",
-      "source_sha256": "abb7ac97426dfcdf28fda74091a763c4ebe0e301f1acd17c1ebf881fc4da05f4"
+      "source_sha256": "6f9ad48661c2446e61320d8a97697ec5a186c001c82d6c524b80cc4cebb900ed"
     },
     {
       "source": "docs/provider-acceptance-v2.md",
       "target": "docs/provider-acceptance-v2.html",
       "title": "Provider acceptance v2 verification core",
-      "source_sha256": "dbf68e46c7c63104bf2f6abd911b302eac1348378b7881dab19d5a3f55dedd7c"
+      "source_sha256": "420a1f2b9e8d243d45f3067776830a7aa45ae151bb6225577c4400ac747e8a99"
     },
     {
       "source": "docs/provider-allocation-profiles.md",
       "target": "docs/provider-allocation-profiles.html",
       "title": "Provider allocation profiles",
-      "source_sha256": "3b8768ae081d7d6a4a9d0d3ffdd57d4ff693e1470653f8cdd6ca7a66587cd8f9"
+      "source_sha256": "a01ea972a4ad309a4df27c155efacbac37b80b191f485af2587d0632dbf47d48"
     },
     {
       "source": "docs/provider-connection-audit-2026-09-09.md",
       "target": "docs/provider-connection-audit-2026-09-09.html",
       "title": "Provider connection audit — 2026-09-09",
-      "source_sha256": "0b75eed7a1bad5249cc94a8af99fab9b5598516fc87c8cb63312b03577d85a28"
+      "source_sha256": "f54c2785fa2fc34430372b118ae10e958fb7a6dea23ceecdbc1ea9b1dd90fa53"
     },
     {
       "source": "docs/provider-evidence-run-spec.md",
       "target": "docs/provider-evidence-run-spec.html",
       "title": "Provider activation evidence: mechanism and blockers",
-      "source_sha256": "6cdcd2489ee9021117cfd62f051e9686ed52fed8ffe708d9b55bcded7a4ea4d7"
+      "source_sha256": "6cb1c56a55564dc0b9e3fa50553d9658e9749b3dab67aa59077529c74e743140"
     },
     {
       "source": "docs/provider-profiles/README.md",
       "target": "docs/provider-profiles/README.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "7370f45b4679e3ce51e003fec70e3014777c9262d556b742127f780425cc300d"
+      "source_sha256": "58753cfae2b55e008680d16a7004961d2a429b6e5b0c9b0ab17827100996a2c6"
     },
     {
       "source": "docs/provider-profiles/antigravity.profile.md",
       "target": "docs/provider-profiles/antigravity.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "cd493efa15647e54f37826c4ce8d577b19c30427d292ef0345556ba33cd58ffd"
+      "source_sha256": "035c48e517bbf49cd4ba460634d2d1322ae24ff015240db327a7dd4b7e1f6fc5"
     },
     {
       "source": "docs/provider-profiles/claude.profile.md",
       "target": "docs/provider-profiles/claude.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "8ed71c049cb6bb45be3a84c36b3b3534a101217f991d5b797fd2bd0194337564"
+      "source_sha256": "2eb7ee23610ede8d11733ea3c9699e98702ffc2848ae47f8b802ec3ebab25a5c"
     },
     {
       "source": "docs/provider-profiles/cursor.profile.md",
       "target": "docs/provider-profiles/cursor.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "b78f9cf322f87356521960f4e4e3847ee2159cfa8d1889ea9dd391534f49c4eb"
+      "source_sha256": "eb642506134aaf6f9165cda69b68b9a021d253aa1d413e137d5118d7bb500600"
     },
     {
       "source": "docs/provider-profiles/firecrawl.profile.md",
       "target": "docs/provider-profiles/firecrawl.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "3e997c5451d5109b20d6e901827c709bb0860717a2937b7e52dccb1bc02bd872"
+      "source_sha256": "6ed2961d0c5eeba74658e7808862046e4a7849ebb96ed68f3dd9f1a8d5a62c05"
     },
     {
       "source": "docs/provider-profiles/github-copilot.profile.md",
       "target": "docs/provider-profiles/github-copilot.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "8013757903756a342b045c8356d4f22f29b1b434504d92a142c24d4353467979"
+      "source_sha256": "4bfed4acc5a09388aa3b30db745dc11e9c41ba6434bd3b630158bc92e1fecb71"
     },
     {
       "source": "docs/provider-profiles/grok.profile.md",
       "target": "docs/provider-profiles/grok.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "4bc9b609962095527a2aca94ef48d29723008e628acbefee56b0cd0b9f9d68cb"
+      "source_sha256": "b81f2009826b5922a99ccbca68e2adb51f4f417ed79ea427d8ea957f320648f2"
     },
     {
       "source": "docs/provider-profiles/openai.profile.md",
       "target": "docs/provider-profiles/openai.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "144d9d99bc944d42493776725af6d672845ccfc6e4a34d65fedd965ffe97e08f"
+      "source_sha256": "29af8969b83959764bd440bcf6ba7327390d4a15191e90037280fc133cd858d3"
     },
     {
       "source": "docs/provider-profiles/perplexity.profile.md",
       "target": "docs/provider-profiles/perplexity.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "da5ca7de6b630b8223d8f82f911eff07be4267e9df137143fea2984e233a7f33"
+      "source_sha256": "f8605e3fa942d8eb947c8d65bc999ab0aa178812a0e7b0fdbbf524d34370f489"
     },
     {
       "source": "docs/provider-profiles/zai.profile.md",
       "target": "docs/provider-profiles/zai.profile.html",
       "producer": "provider-profile renderer",
-      "source_sha256": "8cff2d0a939bcfaa69290e1c8fec2d2bce9b3a7fcd3e61c41dca08c1559f97cb"
+      "source_sha256": "b4a9dc294fea3e560e4c5806eba31d93c63d67370c2a20d364eb3534ebbeeb67"
     },
     {
       "source": "docs/provider-setup.md",
       "target": "docs/provider-setup.html",
       "title": "Provider Setup Matrix",
-      "source_sha256": "9e1dbc90e171dd79289074f470513d76a0bec806a0dd870d1b72b6712f5f562f"
+      "source_sha256": "5e333d43a987956ff56575dbf74b58b689d5a271ecf33e3e102aefc88df4d40f"
     },
     {
       "source": "docs/provider-transport-configuration.md",
       "target": "docs/provider-transport-configuration.html",
       "title": "Provider transport configuration",
-      "source_sha256": "43ebf306bcf9d5e0026b881797adb9c32dc246f4b269b85c97e85e898cab5653"
+      "source_sha256": "3ad981a68cb0a6ee07ebaa053217fa0c3645ba822935379ddc8e7b095a7a5406"
     },
     {
       "source": "docs/provider-validation-harness.md",
       "target": "docs/provider-validation-harness.html",
       "title": "Provider validation harness checkpoint",
-      "source_sha256": "96eac0d958d3e37159b1f48df5d4a47948c1f91eea4cfab8e9f6e4b39442475c"
+      "source_sha256": "9c7c30829293b092c2cab7fdcf53e85e46de5a2681af0fd20d468b990d70098e"
     },
     {
       "source": "docs/providers/vscode-contact-methods.md",
       "target": "docs/providers/vscode-contact-methods.html",
       "title": "VS Code contact methods and Director integration",
-      "source_sha256": "54a5c470b6dc53020e945ae78b3a2598746fe5ea6b387418da324fa5d64c46d5"
+      "source_sha256": "eb45e752a0f514df22bcdf7cb378eeb7bc1da229ca35184a97e2b54103eb9b3d"
     },
     {
       "source": "docs/responses-team-readiness-composition.md",
       "target": "docs/responses-team-readiness-composition.html",
       "title": "Responses and team readiness composition",
-      "source_sha256": "bbf28c21b1bf692b196b290ddf7bcd549be0abaf9cdf05b279351c65bc565ddd"
+      "source_sha256": "08ed67de72f23b290a46d586019bdd67bcc4b0f7237a7778c85dc2a3afac137b"
     },
     {
       "source": "docs/site-coordination.md",
       "target": "docs/site-coordination.html",
       "title": "Site coordination",
-      "source_sha256": "c805c394440a2fede007e6add9ee09f988613b1cb74d5f1f07631b0381086807"
+      "source_sha256": "b722b8e1b9e83b4e12ceb3aed2775446be06a4be8c5242daeb211ed873ee6fdf"
     },
     {
       "source": "docs/slack-collaboration-bus.md",
       "target": "docs/slack-collaboration-bus.html",
       "title": "Slack collaboration bus",
-      "source_sha256": "8742d18b40b9a3263858e6a318993d2ba8b011756655c88128dffd4670b22498"
+      "source_sha256": "9e49f29ceb92670113847ebfcacd1833b27aa232f974496203d60dc7e8415f6f"
     },
     {
       "source": "docs/slack-status-receipts.md",
       "target": "docs/slack-status-receipts.html",
       "title": "Slack status receipts (Issue #230)",
-      "source_sha256": "7cac31c7322e499af83bbce36ef91ac6434ff1da115329ec6da8d074d6721f27"
+      "source_sha256": "d797aa0cd10a98af3cb1a361dee92695441a095c8f8a9656bb611a27df84eb88"
     },
     {
       "source": "docs/stage-a-evidence-worksheet.md",
       "target": "docs/stage-a-evidence-worksheet.html",
       "title": "Stage A evidence worksheet — profile S",
-      "source_sha256": "70e8550baabdd302af5c42a4bcb0cbd3ac197b44c71cae8219f4669e952e6229"
+      "source_sha256": "b4cd55a2036fb483ebc9b2b158693ab071216ee242e5791eb91f9377a938fcf0"
     },
     {
       "source": "docs/state-witness.md",
       "target": "docs/state-witness.html",
       "title": "No receipt, no state: the Witness Ledger",
-      "source_sha256": "c3517fc9357e207e3fdd230bcea93d5c913810c050031ba2f4aef3f63b9aad05"
+      "source_sha256": "9e2e2f149ce29e2930c0186b08519e1e96cc0276af17aa77db6015e56ff24668"
     },
     {
       "source": "docs/team-operating-charter.md",
       "target": "docs/team-operating-charter.html",
       "title": "Director team operating charter",
-      "source_sha256": "79721a885edb6c45ca820eaf01bf535515b482aca20353539a5880a22ca6633a"
+      "source_sha256": "e3fcc568768f52fd7ee349b74d3d7e298cd6f45796e84c523561c14dfcead043"
     },
     {
       "source": "docs/team-staff-and-briefings.md",
       "target": "docs/team-staff-and-briefings.html",
       "title": "Staff register, contacts and nightly briefings",
-      "source_sha256": "0e6b4fd2d36f03f3926ea9d5b79412d40344c44b48dac60c599da82b5c55071a"
+      "source_sha256": "424c25d348d43c7bc39e239d313407f02c97e485b95e389379a762624e4cc792"
     },
     {
       "source": "docs/templates/contribution-submission.md",
       "target": "docs/templates/contribution-submission.html",
       "title": "Contribution Submission",
-      "source_sha256": "537f3c8a5ffa28a6ca356a624ac12a9bf6ae308ca3d57bfa5bdfbe942c180713"
+      "source_sha256": "774562460630c2701aed881aef6e67d62d87f85d79bf489b912af40e0d179fb1"
     },
     {
       "source": "docs/templates/project-bootstrap/README.md",
       "target": "docs/templates/project-bootstrap/README.html",
       "title": "Project bootstrap template kit",
-      "source_sha256": "a1cd312a11c94aebc43fc5fb57c4c0ea39036291c4c0d88603b9a1540b927bfe"
+      "source_sha256": "5f610366acbaee764c839abfeecf532c66b283896f31b2e32e0798f8ae898cd4"
     },
     {
       "source": "docs/templates/project-bootstrap/intake.md",
       "target": "docs/templates/project-bootstrap/intake.html",
       "title": "PROJECT_BOOTSTRAP",
-      "source_sha256": "964715a45dbcfb36e274724643ce9e16ec105b8b9c8bb0e5c18d5586de7d8a53"
+      "source_sha256": "e5ed84689a268275f387e05a853164900a8a5cbcc38c619e302b6644d05712f7"
     },
     {
       "source": "docs/templates/project-bootstrap/minimal-fix.md",
       "target": "docs/templates/project-bootstrap/minimal-fix.html",
       "title": "Minimal integration fix record",
-      "source_sha256": "1ba63210eace69e6f348a40e0425a79b2f482694596fa0912ef54cad7a345576"
+      "source_sha256": "475589c5aa6fd8640691e8a787cdda201afa95bf1275e80cbde50580d2a580eb"
     },
     {
       "source": "docs/templates/project-bootstrap/project-state-report.md",
       "target": "docs/templates/project-bootstrap/project-state-report.html",
       "title": "Project state report",
-      "source_sha256": "81f47c206ca2223d8ddc02d447541e1f43977926d8d236f95293fb6f4acefa02"
+      "source_sha256": "eaf867caf717cc68a63789a2ec8ea3917cc481e71ec2898a86abaf7eab41b1a9"
     },
     {
       "source": "docs/templates/project-bootstrap/review-ready.md",
       "target": "docs/templates/project-bootstrap/review-ready.html",
       "title": "REVIEW_READY",
-      "source_sha256": "c565c9c16abc5e49eefec7f7d54edfdbb4afe721293e601def254681ca25a694"
+      "source_sha256": "4b5a5e778fd929d1a8bcc17159a7fa4cfd8f440692501544935868c93ac3a04d"
     },
     {
       "source": "docs/templates/project-bootstrap/rollout-packet.md",
       "target": "docs/templates/project-bootstrap/rollout-packet.html",
       "title": "Project rollout packet",
-      "source_sha256": "a41e19e268ec15d3e754cf60720a0b7cbd2d92bef74fa3d77d4bf8b86d3b53f8"
+      "source_sha256": "fd53b53b752d44c162b26f4a887235b2f0aa3298233304d9d3bee312823bd1fa"
     },
     {
       "source": "docs/templates/project-bootstrap/workstream-plan.md",
       "target": "docs/templates/project-bootstrap/workstream-plan.html",
       "title": "Project workstream plan",
-      "source_sha256": "6fa5cde5a9063dc30adf2b595b520c0da485bd5640cb399059796d3a47994ada"
+      "source_sha256": "6847815c5acb72bbaccf968d64d5b6a22fb5dedf7cbf0c296bf4c8f85eb15d57"
     },
     {
       "source": "docs/third-party/unlazy-provenance.md",
       "target": "docs/third-party/unlazy-provenance.html",
       "title": "Unlazy provenance for Director Completion Gates",
-      "source_sha256": "7cfac74351dd981eeeaf364aca59a5fafb2a7d8e81f0add9b1e6add650a67f76"
+      "source_sha256": "8d7d87e69a1216ad9d0e12c51c499e90a56770970dec49bdfb9cf7220489872d"
     },
     {
       "source": "docs/twenty-check-completion-scorecard.md",
       "target": "docs/twenty-check-completion-scorecard.html",
       "title": "Twenty checks for a completed Director",
-      "source_sha256": "c3daa3aacf0259e261e0b5e664e697c9a0b0efd7e2a82d72d74ebcb9deafb42f"
+      "source_sha256": "909daa755251f5ad6ad0153c3e8f919f09db6245d891c8a454955d486a91d85f"
     },
     {
       "source": "docs/twenty-point-system.md",
       "target": "docs/twenty-point-system.html",
       "title": "The two twenty-point controls",
-      "source_sha256": "1bc63a9edb869010ca28e46c9684cfa826edb473351ee863b870c7bc5e904428"
+      "source_sha256": "a57105f65dc72ed86ffc7bd3ca0c14195c987b03d50d38f8047b0498b78e0054"
     },
     {
       "source": "docs/two-party-activation-v3.md",
       "target": "docs/two-party-activation-v3.html",
       "title": "Two-party activation acceptance v3",
-      "source_sha256": "9510494e2281dd491d9c739f55c209cb7054c81338f83cab4430a16bdc1418d6"
+      "source_sha256": "6e811d3483f7b290283a74f8ac57112f95c7e3682f73a3350bfed509fea0d0cd"
     }
   ],
   "compatibility_pointers": [
     "docs/contribution-attribution-policy.md",
     "docs/project-bootstrap-protocol.md",
-    "docs/team-operating-charter.md"
-  ]
+    "docs/team-operating-charter.md",
+    "docs/project-leadership.md",
+    "docs/human-out-of-the-loop-operation.md",
+    "docs/templates/project-bootstrap/review-ready.md"
+  ],
+  "source_hash_convention": "SHA256 of exact raw Git blob bytes at migration_base, without checkout newline translation"
 }

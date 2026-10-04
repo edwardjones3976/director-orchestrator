@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -57,6 +59,7 @@ class HtmlDocumentationTests(unittest.TestCase):
     def test_current_handoffs_do_not_restore_retired_attribution_paperwork(self):
         from director_orchestrator.documentation import read_document
         paths = ['docs/contribution-attribution-policy.html',
+                 'docs/project-bootstrap-protocol.html',
                  'docs/templates/contribution-submission.html',
                  'docs/templates/project-bootstrap/README.html',
                  'docs/templates/project-bootstrap/project-state-report.html',
@@ -69,6 +72,7 @@ class HtmlDocumentationTests(unittest.TestCase):
                 for obsolete in ('trailers on every commit', 'Every commit carries',
                                  'PR sole author and shares:', 'Contributor shares:',
                                  'Reviewed share_record_sha256:',
+                                 'Enclose human-readable project messages',
                                  'recompute its sole author and shares'):
                     self.assertNotIn(obsolete, text)
         policy = read_document(ROOT/paths[0])
@@ -90,6 +94,33 @@ class HtmlDocumentationTests(unittest.TestCase):
                                          '<a href="has%20space.html#section%20one">Space</a>'))
         self.write('docs/has space.html', page('<h2 id="section one">Section</h2>'))
         self.assertEqual(guard.check(self.root), [])
+
+    def test_migration_provenance_uses_reachable_git_blobs_and_detects_changed_records(self):
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false',
+                                            '-c', 'user.name=Documentation test', '-c', 'user.email=test@example.invalid',
+                                            *args], cwd=self.root, stderr=subprocess.STDOUT, timeout=20)
+        git('init', '-q')
+        (self.root/'README.md').write_bytes(b'# Overview\n')
+        (self.root/'docs/guide.md').write_bytes(b'# Guide\n')
+        git('add', 'README.md', 'docs/guide.md')
+        git('commit', '-qm', 'Original documentation')
+        self.manifest['migration_base'] = git('rev-parse', 'HEAD').decode().strip()
+        self.manifest['documents'] = [
+            {'source': source, 'target': target,
+             'source_sha256': hashlib.sha256(git('show', 'HEAD:' + source)).hexdigest()}
+            for source, target in self.manifest['mapping'].items()]
+        (self.root/'docs/guide.md').write_bytes(b'# Guide\r\n')
+        self.assertEqual(guard._provenance_errors(self.root, self.manifest), [])
+        original = json.loads(json.dumps(self.manifest))
+        self.manifest['documents'][1]['source_sha256'] = hashlib.sha256(b'# Guide\r\n').hexdigest()
+        self.assertIn('digest mismatch', '\n'.join(guard._provenance_errors(self.root, self.manifest)))
+        self.manifest = json.loads(json.dumps(original))
+        self.manifest['migration_base'] = '0' * 40
+        self.assertIn('unavailable or not an ancestor', '\n'.join(guard._provenance_errors(self.root, self.manifest)))
+        self.manifest = json.loads(json.dumps(original))
+        self.manifest['documents'].pop()
+        self.assertIn('do not match', '\n'.join(guard._provenance_errors(self.root, self.manifest)))
 
     def test_new_and_competing_markdown_are_refused(self):
         self.write('docs/new.md', '# New canonical policy\n')
