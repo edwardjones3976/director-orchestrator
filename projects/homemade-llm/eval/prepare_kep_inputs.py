@@ -94,9 +94,9 @@ def next_clock(clock, after):
 
 
 def guard_path(path, reason="PROTECTED_PATH"):
-    """Refuse protected components and ambiguous Win32/8.3 spellings before access."""
+    """Refuse protected components and ambiguous Win32 spellings before access."""
     for part in Path(path).parts:
-        if part.endswith((".", " ")) or re.search(r"~[0-9]", part) or part.casefold() == "heldout":
+        if part.endswith((".", " ")) or part.casefold() == "heldout":
             raise Refusal(reason)
 
 

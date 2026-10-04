@@ -690,7 +690,7 @@ class PrepareKepInputsTests(unittest.TestCase):
 
     def test_windows_lexical_aliases_refused_before_artifact_or_output_access(self):
         fixture = Fixture(self.root)
-        for component in ("heldout", "HELDOUT", "heldout.", "heldout ", "HELDOU~1", "benign~2"):
+        for component in ("heldout", "HELDOUT", "heldout.", "heldout "):
             with self.subTest(component=component):
                 alias = self.root / component
                 with patch.object(tool, "_read_artifact", side_effect=AssertionError("artifact access")), self.assertRaisesRegex(tool.Refusal, "PROTECTED_PATH"):
@@ -701,6 +701,17 @@ class PrepareKepInputsTests(unittest.TestCase):
                     with tool._Publication(alias / "out"):
                         self.fail("protected publication allowed")
                 self.assertFalse(alias.exists())
+
+    def test_nonprotected_tilde_digit_path_reads_and_publishes(self):
+        benign = self.root / "RUNNER~1"
+        benign.mkdir()
+        fixture = Fixture(benign)
+        self.assertEqual(tool.pinned_file(fixture.paths["tree"], fixture.pins["tree"]), tool.json_bytes(fixture.tree))
+        result = tool.prepare(**fixture.args())
+        self.assertEqual(result["usable_inputs"], 1)
+        _, rows, manifest = self.load(benign / "out")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(manifest["summary"]["usable_inputs"], 1)
 
     def test_native_acquired_normalized_heldout_name_is_refused(self):
         # Only this temporary synthetic heldout directory is touched, never real custody.
@@ -717,7 +728,9 @@ class PrepareKepInputsTests(unittest.TestCase):
         self.assertEqual(list(protected.iterdir()), [])
 
     def test_native_resolved_alias_refused_before_read_or_publication(self):
-        artifact = self.root / "safe-artifact"
+        alias = self.root / "HELDOU~1"
+        alias.mkdir()
+        artifact = alias / "safe-artifact"
         artifact.write_bytes(b"synthetic")
         fixture = Fixture(self.root)
         def protected_name(_handle, buffer, _size, flags):
@@ -733,9 +746,9 @@ class PrepareKepInputsTests(unittest.TestCase):
                 tool.pinned_file(artifact, tool.digest(b"synthetic"))
         with patch.object(tool._WindowsDirectories, "__init__", init), patch.object(tool._WindowsDirectories, "create_directory", side_effect=AssertionError("publication access")):
             with self.assertRaisesRegex(tool.Refusal, "PROTECTED_PATH"):
-                with tool._Publication(self.root / "out"):
+                with tool._Publication(alias / "out"):
                     self.fail("protected acquired object allowed")
-        self.assertFalse((self.root / "out").exists())
+        self.assertFalse((alias / "out").exists())
         self.assertEqual(artifact.read_bytes(), b"synthetic")
 
     def test_native_final_name_resizes_and_failure_closes_without_fallback(self):
