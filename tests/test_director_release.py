@@ -184,7 +184,7 @@ class ReleasePreparationTests(unittest.TestCase):
             return release.encoded([{"Endpoints": {"docker": {"Host": "npipe:////./pipe/docker_engine"}}}])
         if argv[:2] == ["docker", "info"]:
             return b"fixture-daemon"
-        if argv[:2] == ["docker", "volume"]:
+        if argv[:2] in (["docker", "volume"], ["docker", "network"]):
             return b""
         if argv[:2] == ["docker", "ps"]:
             return b""
@@ -835,9 +835,11 @@ class ReleasePreparationTests(unittest.TestCase):
             observed_calls = []
             def read(argv, **kwargs):
                 observed_calls.append((argv, kwargs))
+                if argv[0] == "git":
+                    return self.platform(argv, **kwargs)
                 if argv[1] == "info":
                     return payload["daemon_id"].encode()
-                if argv[1] in ("ps", "volume"):
+                if argv[1] in ("ps", "volume", "network"):
                     return b""
                 return release.encoded([{"Id": payload["images"][argv[-1]]}])
             # Only Docker observation is mocked. The emitted launcher invokes a
@@ -854,9 +856,11 @@ class ReleasePreparationTests(unittest.TestCase):
             for change in ("daemon", "image", "rollback"):
                 with self.subTest(change=change):
                     def drift(argv, **kwargs):
+                        if argv[0] == "git":
+                            return self.platform(argv, **kwargs)
                         if argv[1] == "info":
                             return b"different-daemon" if change == "daemon" else payload["daemon_id"].encode()
-                        if argv[1] in ("ps", "volume"):
+                        if argv[1] in ("ps", "volume", "network"):
                             return b""
                         return release.encoded([{"Id": "sha256:" + "0" * 64 if change == "image" else payload["images"][argv[-1]]}])
                     if change == "rollback":
@@ -896,6 +900,90 @@ class ReleasePreparationTests(unittest.TestCase):
                 tool.source_check()
         self.assertFalse(marker.exists())
 
+    def test_emitted_launcher_rechecks_real_git_before_every_control_step(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        real_read = subprocess.check_output
+        for defect in (None, "dirty", "dirty_after_probe", "commit", "tree", "filter", "submodule", "network"):
+            for first_step in (True, False):
+                with self.subTest(defect=defect, first_step=first_step), tempfile.TemporaryDirectory() as directory:
+                    checkout = Path(directory)
+                    def git(*args):
+                        return real_read(["git", *args], cwd=checkout, env=release.child_environment(),
+                                         stderr=subprocess.DEVNULL)
+                    git("init", "-q")
+                    control = checkout / "control.ps1"
+                    control.write_text("# original control\n")
+                    git("add", "control.ps1")
+                    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "commit", "-qm", "fixture")
+                    payload = json.loads(base64.b64decode(plan["steps"][0]["argv"][-1]))
+                    payload.update(cwd=str(checkout), first_step=first_step,
+                        candidate={kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip()
+                                   for kind in ("commit", "tree")})
+                    if defect == "dirty":
+                        control.write_text("# changed control\n")
+                    elif defect in ("commit", "tree"):
+                        payload["candidate"][defect] = "0" * 40
+                    elif defect == "filter":
+                        git("config", "filter.fixture.clean", "never-execute-this")
+                    elif defect == "submodule":
+                        (checkout / ".gitmodules").write_text("# unsupported\n")
+                    def read(argv, **kwargs):
+                        if argv[0] == "git":
+                            return REAL_COMMAND(argv, cwd=kwargs["cwd"], env=kwargs["env"],
+                                                deadline=time.monotonic() + 30)
+                        if argv[1] == "info":
+                            if defect == "dirty_after_probe":
+                                control.write_text("# changed during Docker observations\n")
+                            return payload["daemon_id"].encode()
+                        if argv[1] == "image":
+                            return release.encoded([{"Id": payload["images"][argv[-1]]}])
+                        if argv[1] == "network" and defect == "network":
+                            return payload["fresh_networks"][0].encode()
+                        return b""
+                    with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
+                            patch.object(subprocess, "check_output", side_effect=read), \
+                            patch.object(subprocess, "run") as child:
+                        if defect and not (defect == "network" and not first_step):
+                            with self.assertRaises(SystemExit):
+                                exec(compile(release.REHEARSAL_LAUNCH, "launcher", "exec"), {})
+                            child.assert_not_called()
+                        else:
+                            exec(compile(release.REHEARSAL_LAUNCH, "launcher", "exec"), {})
+                            child.assert_called_once()
+
+    def test_control_timeout_preserves_quiescence_and_full_health_wait(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        for step in plan["steps"]:
+            payload = json.loads(base64.b64decode(step["argv"][-1]))
+            health = int(step["control_argv"][step["control_argv"].index("-TimeoutSeconds") + 1])
+            quiescence = {"Rollback": 65, "ActivateOffline": 75}.get(step["action"], 0)
+            self.assertGreater(payload["control_timeout_seconds"], health + quiescence)
+            self.assertLessEqual(payload["control_timeout_seconds"], 260)
+            if quiescence:
+                def read(argv, **kwargs):
+                    return self.platform(argv, **kwargs)
+                with patch.object(sys, "argv", ["launcher", step["argv"][-1]]), \
+                        patch.object(subprocess, "check_output", side_effect=read), \
+                        patch.object(subprocess, "run") as child:
+                    exec(compile(step["argv"][-2], "launcher", "exec"), {})
+                    self.assertGreater(child.call_args.kwargs["timeout"], health + quiescence)
+
+    def test_sibling_rejects_duplicate_host_bindings_but_allows_distinct_protocols(self):
+        self.sibling()
+        graph = copy.deepcopy(self.sibling_compose)
+        port = copy.deepcopy(graph["services"]["orchestrator"]["ports"][0])
+        graph["services"]["n8n"]["ports"] = [dict(port, target=5678, protocol="tcp")]
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_collision"):
+            release.isolated_sibling(self.compose, graph, 18080)
+        graph["services"]["n8n"]["ports"][0]["protocol"] = "udp"
+        release.isolated_sibling(self.compose, graph, 18080)
+        graph["services"]["orchestrator"]["ports"].append(copy.deepcopy(port))
+        with self.assertRaisesRegex(release.ReleaseError, "sibling_port_collision"):
+            release.isolated_sibling(self.compose, graph, 18080)
+
     def test_supported_graph_covers_transitive_services_and_rejects_unsafe_variants(self):
         self.sibling()
         graph = copy.deepcopy(self.sibling_compose)
@@ -917,6 +1005,11 @@ class ReleasePreparationTests(unittest.TestCase):
             ("n8n", "environment", {"NODE_OPTIONS": "--require malicious"}),
             ("n8n", "environment", {"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "production"}),
             ("n8n-db", "environment", {"POSTGRES_INITDB_ARGS": "unapproved"}),
+            ("n8n", "use_api_socket", True),
+            ("orchestrator", "use_api_socket", True),
+            ("slackbot", "use_api_socket", True),
+            ("n8n-db", "use_api_socket", True),
+            ("langgraph-primary-db", "use_api_socket", True),
         ]
         for name, key, value in changes:
             with self.subTest(service=name, key=key):
@@ -1025,7 +1118,7 @@ class ReleasePreparationTests(unittest.TestCase):
         graph = self.sibling_compose
         graph["services"]["n8n"]["volumes"] = [{"type": "volume", "source": "data", "target": "/home/node/.n8n"}]
         tool.rehearsal_images(graph)
-        for defect in ("container", "image", "volume", "prior"):
+        for defect in ("container", "image", "volume", "network", "prior"):
             with self.subTest(defect=defect):
                 def platform(argv, **kwargs):
                     if defect == "container" and argv[:2] == ["docker", "ps"]:
@@ -1034,6 +1127,8 @@ class ReleasePreparationTests(unittest.TestCase):
                         raise release.ReleaseError("platform_check_failed")
                     if defect == "volume" and argv[:2] == ["docker", "volume"]:
                         return b"fixture-sibling_data"
+                    if defect == "network" and argv[:2] == ["docker", "network"]:
+                        return b"fixture-sibling_default"
                     return self.platform(argv, **kwargs)
                 if defect == "prior":
                     Path(tool.prior_images_path()).write_text("{}")

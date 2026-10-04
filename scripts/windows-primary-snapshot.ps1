@@ -95,7 +95,17 @@ if ($Action -eq "Create") {
 if (-not (Test-Path -LiteralPath (Join-Path $targetPath ".git"))) {
     throw "Snapshot target is not a Git checkout."
 }
-$dirty = @(& git -C $targetPath status --porcelain=v2 --untracked-files=all)
+# Verify must not execute target-local clean/process filters or fsmonitor hooks.
+# The source checkout's Git policy does not cover this separate repository.
+$configNames = @(& git -C $targetPath config --name-only --list)
+if ($LASTEXITCODE -ne 0) { throw "Snapshot Git configuration could not be inspected." }
+if (@($configNames | Where-Object { $_ -match '^filter\..*\.(clean|smudge|process)$' }).Count -ne 0) {
+    throw "Snapshot executable Git filters are unsupported."
+}
+if (Test-Path -LiteralPath (Join-Path $targetPath ".gitmodules")) {
+    throw "Snapshot submodules are unsupported."
+}
+$dirty = @(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath= -c core.untrackedCache=false status --porcelain=v2 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw "Snapshot target is not clean." }
 $head = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
 $tree = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)

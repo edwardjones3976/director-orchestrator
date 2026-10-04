@@ -237,8 +237,8 @@ through the existing approved controls; this interface does not bootstrap them.
 read-only probe, then compares the observed identities and instance UUIDs. Stale
 manifest claims cannot substitute for either observation. It compares the
 resolved graphs and refuses shared/external volumes or networks, driver options,
-host namespaces, reused effective Slack tokens/channels (including Compose
-overrides), non-loopback ports and final-project port collisions. Writable sibling
+host namespaces or Docker API socket delegation, reused effective Slack tokens/channels (including Compose
+overrides), non-loopback ports and final-project or sibling-internal port collisions. Writable sibling
 binds cannot overlap either release's checkout, snapshot, output, authority root,
 descriptor, pinned inputs or selected process-environment file, or any final
 Compose bind. Effective sibling Compose paid/live switches must remain false
@@ -259,7 +259,7 @@ are forbidden on auxiliary services; the existing control uses `--no-build` for
 the application starts. Auxiliary n8n/Postgres images must use the sanctioned
 image repositories without command/entrypoint overrides.
 
-The sibling project must have no existing containers or prior-image record.
+The sibling project must have no existing containers, named networks or prior-image record.
 n8n state must be fresh: only new, project-scoped named volumes or ephemeral
 image state are supported. Reused databases/workflows, bind-mounted n8n state
 and alternate database hosts are refused because Director paid switches cannot
@@ -286,11 +286,20 @@ the control child's environment with the emitted allowlist. The result declares
 unsets a variable. This binds `cwd`, the local `DOCKER_HOST`, `COMPOSE_FILE`,
 `COMPOSE_PATH_SEPARATOR`, `DIRECTOR_HOST_PORT` and unpaid switches. Ambient
 `DOCKER_CONTEXT`, TLS/certificate/config selectors and provider keys cannot reach
-the control child. Before each step the launcher rechecks daemon identity and
-every cached image ID; before the first step it also rechecks fresh project/n8n
+the control child. Before each step the launcher rechecks the pinned source commit,
+tree and cleanliness, both before probes and immediately before launching the control
+script. It refuses executable Git filters and submodule checkouts. The separate
+snapshot verifier also refuses its own local executable filters and submodules,
+and disables fsmonitor for its cleanliness check. These checks retain the trusted
+operator model; they are not an atomic defense against concurrent filesystem replacement.
+The launcher also rechecks daemon identity and every cached image ID; before the
+first step it rechecks fresh project networks and project/n8n
 state. Any prior-image record must remain within the verified candidate image,
 so rollback cannot select an uninspected older image. Execute `argv` in order;
 running `control_argv` directly discards these protections and is unsupported.
+Activation and rollback each have a 260-second child timeout, allowing their
+75-second lease wait or 65-second drain plus the full 120-second health wait
+and command overhead. Other child actions retain a 140-second bound.
 
 Claude's assigned W6 operator executes this plan only within the separately authorized
 setup/rehearsal slot, preserving the existing control gates and durable command

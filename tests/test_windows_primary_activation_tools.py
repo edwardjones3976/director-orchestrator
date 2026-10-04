@@ -220,6 +220,54 @@ Write-Output 'tls-lifecycle-passed'
         )
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_verify_refuses_local_filters_and_suppresses_fsmonitor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "snapshot"
+            repo.mkdir()
+            env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+            env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=repo, env=env, stderr=subprocess.DEVNULL)
+            git("init", "-q", "-b", "main")
+            (repo / ".gitattributes").write_text("data filter=fixture\n")
+            (repo / "data").write_text("original\n")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+            git("remote", "add", "origin", "https://github.com/example/demo.git")
+            command = ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify",
+                "-Source", str(repo), "-Target", str(repo), "-ExpectedRepository", "example/demo",
+                "-StartingRef", "main", "-ExpectedCommit", git("rev-parse", "HEAD").decode().strip(),
+                "-ExpectedTree", git("rev-parse", "HEAD^{tree}").decode().strip()]
+            baseline = subprocess.run(command, env=env, capture_output=True, timeout=30)
+            self.assertEqual(baseline.returncode, 0, baseline.stderr.decode(errors="replace"))
+            marker, hook = root / "executed", root / "filter-hook"
+            hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() + '"\ncat\n')
+            hook.chmod(0o700)
+            git("config", "filter.fixture.clean", hook.as_posix())
+            # Same byte length forces content comparison, rather than Git's
+            # size-only dirty shortcut; a later mtime avoids stat-cache reuse.
+            data = repo / "data"
+            timestamp = data.stat().st_mtime + 2
+            data.write_text("modified\n")
+            os.utime(data, (timestamp, timestamp))
+            git("status", "--porcelain=v2")
+            self.assertTrue(marker.exists(), "fixture must demonstrate a real executable filter")
+            marker.unlink()
+            blocked = subprocess.run(command, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn(b"executable Git filters", blocked.stderr)
+            self.assertFalse(marker.exists())
+            git("config", "--unset", "filter.fixture.clean")
+            hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() + '"\nprintf "token\\0"\n')
+            git("config", "core.fsmonitor", hook.as_posix())
+            blocked = subprocess.run(command, env=env, capture_output=True, timeout=30)
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn(b"not clean", blocked.stderr)
+            self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_creation_binds_content_to_the_selected_remote(self) -> None:
         commit = "a" * 40
         tree = "b" * 40
@@ -271,7 +319,7 @@ function global:git {
         New-Item -ItemType Directory -Path (Join-Path $arguments[-1] ".git") -Force | Out-Null
         return
     }
-    if ($arguments -contains "set-url" -or $arguments -contains "status") { return }
+    if ($arguments -contains "set-url" -or $arguments -contains "status" -or $arguments -contains "config") { return }
     if ($arguments -contains "rev-parse") {
         if ($arguments[-1] -eq 'HEAD^{tree}') { Write-Output "__TREE__" } else { Write-Output "__COMMIT__" }
         return

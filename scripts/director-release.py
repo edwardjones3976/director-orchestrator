@@ -241,12 +241,24 @@ print(json.dumps({'database_identity':binding[0],'database_instance_id':binding[
 
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
-REHEARSAL_LAUNCH = """
-import base64,json,pathlib,subprocess,sys
+REHEARSAL_LAUNCH = r"""
+import base64,json,pathlib,re,subprocess,sys
 v=json.loads(base64.b64decode(sys.argv[1]))
 env=v['environment']
 def read(args):
     return subprocess.check_output(args,env=env,cwd=v['cwd'],timeout=30)
+def source_check():
+    names=read(['git','config','--null','--name-only','--list']).decode().split(chr(0))
+    if any(re.match(r'filter\..*\.(clean|smudge|process)$',name,re.I) for name in names):
+        raise SystemExit('executable Git filter refused')
+    for kind in ('commit','tree'):
+        if read(['git','rev-parse','--verify','HEAD^{'+kind+'}']).decode().strip()!=v['candidate'][kind]:
+            raise SystemExit('verified source identity changed')
+    if (pathlib.Path(v['cwd'])/'.gitmodules').exists():
+        raise SystemExit('source submodules unsupported')
+    if read(['git','status','--porcelain=v2','--untracked-files=all']).strip():
+        raise SystemExit('verified source no longer clean')
+source_check()
 if read(['docker','info','--format','{{.ID}}']).decode().strip()!=v['daemon_id']:
     raise SystemExit('verified Docker daemon changed')
 for reference,expected in v['images'].items():
@@ -259,12 +271,16 @@ if v['first_step']:
     names=set(read(['docker','volume','ls','--format','{{.Name}}']).decode().splitlines())
     if names.intersection(v['fresh_volumes']):
         raise SystemExit('n8n state no longer fresh')
+    networks=set(read(['docker','network','ls','--format','{{.Name}}']).decode().splitlines())
+    if networks.intersection(v['fresh_networks']):
+        raise SystemExit('sibling network no longer fresh')
 prior=pathlib.Path(v['prior_images'])
 if prior.exists():
     saved=json.loads(prior.read_text(encoding='utf-8-sig'))
     if any(saved.get(key)!=v['runtime_image'] for key in ('orchestrator_image_id','gateway_image_id')):
         raise SystemExit('rollback image outside verified rehearsal')
-subprocess.run(v['control_argv'],env=env,cwd=v['cwd'],check=True,timeout=140)
+source_check()
+subprocess.run(v['control_argv'],env=env,cwd=v['cwd'],check=True,timeout=v['control_timeout_seconds'])
 """
 
 
@@ -672,9 +688,14 @@ class Release:
             elif action in ("Backup", "RestoreDrill"):
                 arguments += ["-BackupPath", str(backup)]
             payload = {"environment": environment, "cwd": str(sibling.source), "daemon_id": sibling.daemon_id,
+                       "candidate": sibling.spec["candidate"],
+                       # Activation can wait 75s for leases; rollback drains for
+                       # 65s. Preserve their full 120s health wait plus overhead.
+                       "control_timeout_seconds": 260 if action in ("ActivateOffline", "Rollback") else 140,
                        "images": images, "control_argv": arguments, "runtime_image": sibling.spec["image_id"],
                        "prior_images": sibling.prior_images_path(), "first_step": action == "Preflight",
                        "project": sibling.spec["compose_project"],
+                       "fresh_networks": [item["name"] for item in sibling_graph["networks"].values()],
                        "fresh_volumes": [sibling_graph["volumes"][mount["source"]]["name"]
                            for name in ("n8n", "n8n-db")
                            for mount in sibling_graph["services"].get(name, {}).get("volumes", [])]}
@@ -698,6 +719,9 @@ class Release:
                               "label=com.docker.compose.project=" + self.spec["compose_project"],
                               "--format", "{{.ID}}"]).strip(), "sibling_project_already_exists")
         require(not Path(self.prior_images_path()).exists(), "sibling_prior_images_exist")
+        networks = set(self.run(["docker", "network", "ls", "--format", "{{.Name}}"]).decode().splitlines())
+        require(not networks.intersection(item["name"] for item in graph["networks"].values()),
+                "sibling_network_not_fresh")
         images = {}
         for service in graph["services"].values():
             reference = service["image"]
@@ -826,14 +850,18 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=()):
             "sibling_gateway_route_not_local")
     require(sibling["services"]["slackbot"].get("command") == ["python", "-m", "director_orchestrator.slack_bot"] and
             not sibling["services"]["slackbot"].get("entrypoint"), "sibling_gateway_command_unsupported")
+    sibling_ports = set()
     for service in sibling["services"].values():
         require(not any(service.get(key) for key in ("network_mode", "pid", "ipc", "privileged", "devices",
                                                     "volumes_from", "container_name", "configs", "secrets",
-                                                    "extra_hosts", "develop")), "sibling_host_resource_refused")
+                                                    "extra_hosts", "develop", "use_api_socket")), "sibling_host_resource_refused")
         for port in service.get("ports", []):
             published = str(port.get("published", ""))
             require(port.get("host_ip") == "127.0.0.1" and published.isdigit() and
                     1024 <= int(published) <= 65535 and published not in final_ports, "sibling_port_not_isolated")
+            binding = (int(published), port.get("protocol", "tcp"))
+            require(binding not in sibling_ports, "sibling_port_collision")
+            sibling_ports.add(binding)
         for mount in service.get("volumes", []):
             if mount.get("type") == "bind" and not mount.get("read_only"):
                 unlinked(Path(mount["source"]))
