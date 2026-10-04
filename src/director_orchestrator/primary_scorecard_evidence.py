@@ -1460,6 +1460,8 @@ def cli_release_descriptor():
                        "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...],
          "ci_workflow_sha256": "<optional: 64 lowercase hex, the owner-pinned .github/workflows/ci.yml content>",
          "security_base_sha": "<optional: 40 lowercase hex, check 18's reviewed security base commit>",
+         "reviewed_release": {"candidate_commit": "<40 hex>", "candidate_tree": "<40 hex>",
+                              "director_image_id": "sha256:<64 hex>"},
          "evaluator_sha": "<40 lowercase hex: the scorecard revision that grades; required to grade at all>"}
 
     ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
@@ -1514,6 +1516,23 @@ def security_base_pin(descriptor):
             or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)):
         return None
     return value
+
+
+_REVIEWED_RELEASE_FIELDS = {"candidate_commit": r"[0-9a-f]{40}", "candidate_tree": r"[0-9a-f]{40}",
+                            "director_image_id": r"sha256:[0-9a-f]{64}"}
+
+
+def reviewed_release_pin(descriptor):
+    """The owner-pinned reviewed release (``reviewed_release``): the candidate commit and tree and the Director image
+    digest whose behaviour the owner reviewed. Exactly these three fields, each fully matching, or None. Director-written
+    evidence is admitted only for a runtime that is exactly this release (owner ruling 2026-10-02, #313)."""
+    value = descriptor.get("reviewed_release") if isinstance(descriptor, dict) else None
+    if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
+            or not isinstance(value, dict) or set(value) != set(_REVIEWED_RELEASE_FIELDS)
+            or any(not isinstance(value[key], str) or not re.fullmatch(pattern, value[key])
+                   for key, pattern in _REVIEWED_RELEASE_FIELDS.items())):
+        return None
+    return {key: value[key] for key in _REVIEWED_RELEASE_FIELDS}
 
 
 def cli_release_product(provider, executable_sha256, descriptor):

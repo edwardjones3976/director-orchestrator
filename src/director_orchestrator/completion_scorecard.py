@@ -127,7 +127,8 @@ from .process_isolation import (
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    ci_workflow_pin, cli_release_descriptor, evaluator_pin, owner_home, security_base_pin, decision_follows_prompt,
+    ci_workflow_pin, cli_release_descriptor, evaluator_pin, owner_home, reviewed_release_pin, security_base_pin,
+    decision_follows_prompt,
     delivery_settled as _delivery_settled,
     lifecycle_error, missing_result_packets,
     ordered as _ordered,
@@ -1544,8 +1545,22 @@ def _intake_authority_observation(at: datetime, runtime: _Runtime, consistency: 
                             _CONSISTENCY_SOURCE, facts, at, **binding)
     owned = (authority.get("intake_owner") == "langgraph" and authority["legacy_new_intake_disabled"]
              and authority["lease_live"] and authority["owner_token_matches"] and fence > 0 and expires > at)
+    if owned:
+        # Cross-check (reviewed-image trust, owner ruling 2026-10-02): the store shows the fence owned, and the
+        # Director's own health says whether THIS process holds that same fence (writer_lease_ready is true only when
+        # its in-memory generation equals the stored one). Health alone never promotes 05; a disagreement is a FAIL.
+        primary = runtime.health.get("langgraph_primary", {}) if isinstance(runtime.health, dict) else {}
+        process_ready, process_fence = primary.get("writer_lease_ready"), primary.get("intake_fencing_generation")
+        facts = {**facts, "process_writer_lease_ready": process_ready, "process_fence": process_fence}
+        if type(process_ready) is not bool or type(process_fence) is not int:
+            return _observation("05", None, "The store shows the fence owned, but the Director's health does not say "
+                                "whether this process holds it.", _CONSISTENCY_SOURCE, facts, at, **binding)
+        if not process_ready or process_fence != fence:
+            return _observation("05", False, "The store shows the fence owned, but this Director process reports that "
+                                "it does not hold that same fence.", _CONSISTENCY_SOURCE, facts, at, **binding)
     return _observation("05", owned, "The persisted intake authority read in the evaluator's snapshot "
-                        + ("shows LangGraph owning intake under this deployment's live writer lease with a positive fence."
+                        + ("shows LangGraph owning intake under this deployment's live writer lease with a positive "
+                           "fence, and this process reports holding it."
                            if owned else "does not show LangGraph owning intake under this deployment's live writer "
                            "lease with legacy intake disabled and a positive fence."),
                         _CONSISTENCY_SOURCE, facts, at, **binding,
@@ -3016,12 +3031,101 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                         "request-correlated meter rows; unknown cost is not zero.", source, facts, at, **runtime.binding)
 
 
+@dataclass
+class _Held:
+    """What the deployment phase graded before containment overwrote it, for the reviewed-image admission gate.
+
+    ``observations`` are the real graded results of the contained checks and ``identity`` is what the running
+    Director and its gateway are; both stay empty when the runtime could not be discovered, so nothing is admitted.
+    """
+    observations: dict = field(default_factory=dict)
+    identity: dict = field(default_factory=dict)
+
+
+ADMISSION_RULING = "Admitted under reviewed-image trust (owner ruling 2026-10-02, #313)"
+ADMISSION_NOTE = (" [" + ADMISSION_RULING + ": the running image, candidate and tree equal the owner-pinned reviewed "
+                  "release and checks 16, 17 and 18 passed for it. Director-written inputs are not independent proof.]")
+
+
+def _relabel(item: Observation, extra: dict, suffix: str = "") -> Observation:
+    """The same observation with ``extra`` merged into its facts (digest recomputed) and ``suffix`` appended to a
+    PASS or FAIL explanation; an UNKNOWN keeps its own reason."""
+    facts = item.facts if isinstance(item.facts, dict) else {"collected": item.facts}
+    facts = {**facts, **extra}
+    digest = hashlib.sha256(json.dumps(facts, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    explanation = item.explanation + suffix if suffix and item.passed is not None else item.explanation
+    return replace(item, facts=facts, digest=digest, explanation=explanation)
+
+
+def _reviewed_image_gate(candidate_sha: str, held: _Held, others: list[Observation]) -> tuple[str | None, dict]:
+    """(None, facts) when every admission condition holds, else (the first unmet condition, facts compared).
+
+    Director-written evidence is admitted only for a runtime that is exactly the release the owner reviewed:
+    the Director's image digest, commit and tree equal the descriptor's ``reviewed_release``, the gateway was bound
+    to that same image, and checks 16 (exact-head CI), 17 (independent adoption) and 18 (Security scan) passed for
+    this candidate in the same collection. Otherwise containment stands unchanged.
+    """
+    pin = reviewed_release_pin(cli_release_descriptor())
+    if pin is None:
+        return "the owner release descriptor pins no valid reviewed_release (candidate commit, tree, Director image)", {}
+    identity = held.identity
+    running = {key: identity.get(key) for key in ("runtime_sha", "runtime_tree", "director_image_id")}
+    required: dict[str, str] = {}
+    for key in ("16", "17", "18"):
+        item = held.observations.get(key) if key == "17" else next((o for o in others if o.check_id == key), None)
+        required[key] = ("missing" if item is None else "PASS" if item.passed is True and item.candidate_sha == candidate_sha
+                         else "not PASS")
+    facts = {"ruling": ADMISSION_RULING, "pinned": pin, "running": running,
+             "gateway_bound": identity.get("gateway_bound") is True, "required_checks": required}
+    if identity.get("gateway_bound") is not True:
+        return "the gateway was not shown to run the Director's image (--gateway)", facts
+    if running["director_image_id"] != pin["director_image_id"]:
+        return "the running Director image is not the pinned reviewed image", facts
+    if not (candidate_sha == running["runtime_sha"] == pin["candidate_commit"]):
+        return "the candidate, the running commit and the pinned reviewed commit are not one commit", facts
+    if running["runtime_tree"] != pin["candidate_tree"]:
+        return "the running image's tree is not the pinned reviewed tree", facts
+    unmet = [key for key, state in required.items() if state != "PASS"]
+    if unmet:
+        return "checks " + ", ".join(unmet) + " did not pass for this candidate in this collection", facts
+    return None, facts
+
+
+def _apply_reviewed_image_admission(candidate_sha: str, held: _Held, deployed: list[Observation],
+                                    others: list[Observation], started: datetime) -> list[Observation]:
+    """Release the held originals over the containment UNKNOWNs when the gate holds; otherwise record why not."""
+    if not held.observations:
+        # No runtime was discovered (or collection stopped before one was read): nothing to release, but the
+        # report still says why the contained checks were not admitted.
+        reason, facts = "no Director runtime evidence was held; the runtime was not discovered", {}
+    else:
+        reason, facts = _reviewed_image_gate(candidate_sha, held, others)
+    contained = set(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)
+    out = []
+    for item in deployed:
+        if item.check_id not in contained:
+            out.append(item)
+        elif reason is not None:
+            out.append(_relabel(item, {"reviewed_image_admission": "refused: " + reason}))
+        elif item.check_id in held.observations:
+            out.append(_relabel(replace(held.observations[item.check_id], _made=started),
+                                {"reviewed_image_trust": facts}, ADMISSION_NOTE))
+        else:
+            # Not admitted: `reviewed_image_trust` is the marker _containment_limitations reads as admission, so
+            # a placeholder with no collected source must not carry it and stays reported as contained.
+            out.append(_relabel(replace(item, explanation="No source was collected for this check in this run."),
+                                {"reviewed_image_admission": "not admitted: no source was collected",
+                                 "reviewed_image_gate": facts}))
+    return out
+
+
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
                              owner: str | None = None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
                              paid_rubric_path: Path | None,
-                             collection_end: Any = None) -> tuple[list[Observation], tuple | None]:
+                             collection_end: Any = None,
+                             held: _Held | None = None) -> tuple[list[Observation], tuple | None]:
     try:
         runtime_rows, runtime = _runtime(at, project, collection_end)
     except _SOURCE_ERRORS:
@@ -3160,6 +3264,12 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     finally:
         if t is not None:
             t.close()
+    if held is not None:  # kept for the reviewed-image admission gate before containment overwrites them
+        held.observations = {key: found[key] for key in
+                             _CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE if key in found}
+        held.identity = {"runtime_sha": director_runtime.runtime_sha, "runtime_tree": director_runtime.runtime_tree,
+                         "director_image_id": director_runtime.image_id,
+                         "gateway_bound": gateway is not None and not gateway_unbound}
     # Trusted reports do not remove candidate inputs used by the same check.
     unknown(_CONTAINED_RUNTIME, "collector not yet trusted", _CONSISTENCY_SOURCE)
     unknown(_CONTAINED_CAPTURES, "collector not yet trusted", _CAPTURES_SOURCE)
@@ -3621,6 +3731,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
     result: list[Observation] = []
     deployed: list[Observation] = []
     state = None
+    held = _Held()
+    deployment_started = at
 
     def since(started: datetime, items: list[Observation]) -> list[Observation]:
         # A composite (health, Slack, consistency, captures, ...) is stamped when its source phase began reading,
@@ -3636,8 +3748,9 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
             at, candidate_sha, deployment, channel=channel, owner=owner, gateway=gateway, topology=topology,
             drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
-            paid_rubric_path=paid_rubric_path, collection_end=collection_end)
+            paid_rubric_path=paid_rubric_path, collection_end=collection_end, held=held)
         deployed = since(started, deployed)
+        deployment_started = started
     if github:
         started = datetime.now(timezone.utc)
         try:
@@ -3661,6 +3774,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
     if deployment is not None:
+        # After 16 and 18 exist, before the restart check, so released evidence is re-inspected like any other.
+        deployed = _apply_reviewed_image_admission(candidate_sha, held, deployed, result, deployment_started)
         deployed = _still_deployed(deployed, state, deployment, gateway)
     return _finalize(deployed + result, collection_end(), live=now is None)
 
@@ -3875,6 +3990,25 @@ def report_is_attested(report: dict[str, Any]) -> bool:
     return _launcher().report_is_attested(report)
 
 
+def _containment_limitations(rows: list[dict]) -> list[str]:
+    everything = set(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)
+    admitted = sorted(row["id"] for row in rows if row["id"] in everything and any(
+        isinstance(evidence.get("facts"), dict) and "reviewed_image_trust" in evidence["facts"]
+        for evidence in row["evidence"]))
+    contained = sorted(everything - set(admitted))
+    lines = []
+    if contained:
+        lines.append("Checks " + ", ".join(contained) + " are contained by the trusted-collection follow-up "
+                     "(#313 / PR #327); other missing selections or unavailable sources also stay UNKNOWN.")
+    if admitted:
+        lines.append("Checks " + ", ".join(admitted) + " were admitted under reviewed-image trust (owner ruling "
+                     "2026-10-02, #313): their Director-written inputs count only because the running image, commit "
+                     "and tree equal the owner-pinned reviewed release and checks 16, 17 and 18 passed for it. That "
+                     "is evidence about the reviewed image's behaviour, not independent proof of execution or "
+                     "authorship, and a cross-check that contradicts it reports FAIL.")
+    return lines
+
+
 def score(candidate_sha: str, observations: list[Observation] | None = None, *,
           now: datetime | None = None, runtime_sha: str | None = None,
           image_id: str | None = None, evidence_dir: Path | None = None) -> dict[str, Any]:
@@ -3933,9 +4067,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Checks " + ", ".join(sorted(_CONTAINED_RUNTIME + _CONTAINED_CAPTURES + _CONTAINED_CANDIDATE)) +
-                            " are contained by the trusted-collection follow-up (#313 / PR #327); "
-                            "other missing selections or unavailable sources also stay UNKNOWN.",
+                            *_containment_limitations(rows),
                             "Trusted collection verifies store consistency and signatures with evaluator code. Rows and HMAC keys the candidate can write are not independent proof of execution or authorship; missing owner bindings or snapshots remain UNKNOWN.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
