@@ -14,6 +14,8 @@ import sys
 import tarfile
 import tempfile
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
 import prompt_template
 
@@ -118,11 +120,22 @@ def safe_archive_name(name):
     return not name.startswith("/") and all(part not in ("", ".", "..") for part in name.rstrip("/").split("/"))
 
 
-def source_sections(text):
-    """Original Unicode offsets; comments and fenced-code headings are ignored."""
-    headings = []
+def visible_lines(text):
+    """Mask comments at original offsets; fence literals cannot open comments."""
     offset, in_comment, fence = 0, False, None
     for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1] and not marker[2].strip():
+                fence = None
+            yield offset, line, True
+            offset += len(line)
+            continue
+        if not in_comment and marker and not (marker[1][0] == "`" and "`" in marker[2]):
+            fence = (marker[1][0], len(marker[1]))
+            yield offset, line, True
+            offset += len(line)
+            continue
         visible = list(line)
         index = 0
         while index < len(line):
@@ -140,19 +153,34 @@ def source_sections(text):
             index += 1
         clean = "".join(visible).rstrip("\r\n")
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", clean)
-        if fence:
-            if marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1] and not marker[2].strip():
-                fence = None
-        elif marker:
+        if marker and not (marker[1][0] == "`" and "`" in marker[2]):
             fence = (marker[1][0], len(marker[1]))
+            yield offset, "".join(visible), True
         else:
-            match = re.match(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$", clean)
-            if match:
-                start, end = match.span(2)
-                # A title containing removed comment syntax is ambiguous, not rewritten.
-                headings.append((len(match[1]), match[2].strip(), offset, offset + len(line),
-                                 {"start": offset + start, "end": offset + end}))
+            yield offset, "".join(visible), False
         offset += len(line)
+
+
+def heading_name(name):
+    return re.sub(r"\s+\(optional\)$", "", name.casefold())
+
+
+def source_sections(text):
+    """Original Unicode offsets; comments and fenced-code headings are ignored."""
+    headings = []
+    for offset, visible, fenced in visible_lines(text):
+        if not fenced:
+            clean = visible.rstrip("\r\n")
+            match = re.match(r"^ {0,3}(#{1,6})[ \t]+(.*)$", clean)
+            if match:
+                name = re.sub(r"[ \t]+#+[ \t]*$", "", match[2]).strip(" \t")
+                if not name:
+                    continue
+                start = match.start(2) + len(match[2]) - len(match[2].lstrip(" \t"))
+                end = start + len(name)
+                # A title containing removed comment syntax is ambiguous, not rewritten.
+                headings.append((len(match[1]), name, offset, offset + len(visible),
+                                 {"start": offset + start, "end": offset + end}))
     sections = {}
     title = None
     mapping = {name.casefold(): name for name in CONTEXT_SECTIONS}
@@ -160,11 +188,12 @@ def source_sections(text):
         if level == 1 and title is None:
             if text[title_span["start"]:title_span["end"]] == name:
                 title = title_span
-        key_name = re.sub(r"\s+\(optional\)$", "", name.casefold())
+                continue  # The document title is not also an input section.
+        key_name = heading_name(name)
         key = mapping.get(key_name)
         if key_name == "alpha":
             parent = next((head for head in reversed(headings[:index]) if head[0] < level), None)
-            if parent and parent[1].casefold() == "graduation criteria":
+            if parent and heading_name(parent[1]) == "graduation criteria":
                 key = "Alpha Graduation Criteria"
         if key:
             if key in sections:
@@ -175,7 +204,28 @@ def source_sections(text):
 
 
 def visibly_nonempty(text):
-    return any(char.isalnum() for char in re.sub(r"<!--.*?-->", "", text, flags=re.S))
+    return any(char.isalnum() for _, visible, _ in visible_lines(text) for char in visible)
+
+
+def metadata_identity(raw):
+    """Inspect YAML nodes only; no constructors, implicit dates or merge keys."""
+    try:
+        node = yaml.compose(raw.decode("utf-8"), Loader=yaml.BaseLoader)
+        if not isinstance(node, yaml.MappingNode):
+            raise Refusal("INVALID_METADATA")
+        fields = {}
+        for key, value in node.value:
+            if not isinstance(key, yaml.ScalarNode) or key.value in fields or key.value == "<<":
+                raise Refusal("INVALID_METADATA")
+            fields[key.value] = value
+        number, status = fields.get("kep-number"), fields.get("status")
+        if any(not isinstance(value, yaml.ScalarNode) or value.style in ("|", ">") for value in (number, status)):
+            raise Refusal("INVALID_METADATA")
+        if re.fullmatch(r"[0-9]+", number.value) is None:
+            raise Refusal("INVALID_METADATA")
+        return int(number.value), status.value
+    except (UnicodeError, yaml.YAMLError, RecursionError):
+        raise Refusal("INVALID_METADATA") from None
 
 
 def trim_span(text, span):
@@ -273,22 +323,25 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         decision = {"path": path, "sig": sig, "status": entry.get("status"), "kep_number": None,
                     "selection_rank": None, "section_qualified": False, "disposition": "refused", "reason": None}
         decisions.append(decision)
-        if entry.get("status") not in ("implemented", "implementable"):
-            decision["reason"] = "INELIGIBLE_STATUS"
-            continue
         number = entry.get("kep_id")
         if type(number) is int:
             number = str(number)
-        if not isinstance(number, str) or not number.isascii() or not number.isdigit() or int(number) < 1:
+        directory_number = re.match(r"([0-9]+)(?:-|$)", path.split("/")[2])
+        if not isinstance(number, str) or not number.isascii() or not number.isdigit() or directory_number is None or int(directory_number[1]) != int(number):
+            raise Refusal("CENSUS_IDENTITY_MISMATCH")
+        number = int(number)
+        if re.fullmatch(r"[0-9a-f]{64}", str(entry.get("metadata_sha256"))) is None:
+            raise Refusal("INVALID_CENSUS")
+        if entry.get("status") not in ("implemented", "implementable"):
+            decision["reason"] = "INELIGIBLE_STATUS"
+            continue
+        if number < 1:
             decision["reason"] = "NONPOSITIVE_ID"
             continue
-        number = int(number)
         if number in seen_ids:
             raise Refusal("DUPLICATE_KEP_ID")
         seen_ids.add(number)
         decision["kep_number"] = number
-        if re.fullmatch(r"[0-9a-f]{64}", str(entry.get("metadata_sha256"))) is None:
-            raise Refusal("INVALID_CENSUS")
         eligible.append((entry, decision))
     buckets = defaultdict(list)
     for pair in eligible:
@@ -327,11 +380,17 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         archive_license, _ = read_member("LICENSE")
         if digest(archive_license) != pins["license"]:
             raise Refusal("LICENSE_MISMATCH")
+        # Authenticate census semantics for every entry before reading bodies;
+        # a false ineligible status must not silently remove a pinned source.
+        for entry in metadata["items"]:
+            metadata_raw, _ = read_member(entry["path"])
+            if digest(metadata_raw) != entry["metadata_sha256"]:
+                raise Refusal("METADATA_PIN_MISMATCH")
+            number, status = metadata_identity(metadata_raw)
+            if number != int(entry["kep_id"]) or status != entry["status"]:
+                raise Refusal("CENSUS_METADATA_MISMATCH")
         for entry, decision in ordered:
             try:
-                metadata_raw, _ = read_member(entry["path"])
-                if digest(metadata_raw) != entry["metadata_sha256"]:
-                    raise Refusal("METADATA_PIN_MISMATCH")
                 path = str(PurePosixPath(entry["path"]).parent / "README.md")
                 raw, blob = read_member(path)
                 source_total += len(raw)

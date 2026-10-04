@@ -241,6 +241,105 @@ class PrepareKepInputsTests(unittest.TestCase):
             tool.prepare(**fixture.args())
         self.assertFalse((self.root / "out").exists())
 
+    def test_census_number_must_match_directory_prefix_including_ineligible(self):
+        for status in ("implemented", "provisional"):
+            with self.subTest(status=status):
+                root = self.root / status
+                root.mkdir()
+                fixture = Fixture(root, [dict(number=19, sig="sig-example", status=status, text=source())])
+                fixture.census["items"][0]["kep_id"] = "29"
+                fixture.refresh()
+                with self.assertRaisesRegex(tool.Refusal, "CENSUS_IDENTITY_MISMATCH"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((root / "out").exists())
+
+    def test_pinned_metadata_semantics_not_just_hash_including_ineligible(self):
+        for index, (status, raw) in enumerate((
+            ("implemented", b"kep-number: 29\nstatus: implemented\n"),
+            ("implemented", b"kep-number: 19\nstatus: provisional\n"),
+            ("provisional", b"kep-number: 19\nstatus: implemented\n"),
+        )):
+            with self.subTest(status=status, case=index):
+                root = self.root / str(index)
+                root.mkdir()
+                fixture = Fixture(root, [dict(number=19, sig="sig-example", status=status, text=source())])
+                path = fixture.census["items"][0]["path"]
+                fixture.files[path] = raw
+                fixture.make_archive()
+                next(item for item in fixture.tree["tree"] if item["path"] == path)["sha"] = fixture.blob(raw)
+                fixture.census["items"][0]["metadata_sha256"] = tool.digest(raw)
+                fixture.census["archive_sha256"] = tool.digest(fixture.paths["archive"].read_bytes())
+                fixture.refresh()
+                with self.assertRaisesRegex(tool.Refusal, "CENSUS_METADATA_MISMATCH"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((root / "out").exists())
+
+    def test_yaml_nodes_refuse_ambiguous_identity_without_constructing_dates(self):
+        self.assertEqual(tool.metadata_identity(b"kep-number: '19'\nstatus: \"implemented\"\ncreation-date: 2025-15-01\n"), (19, "implemented"))
+        for raw in (b"kep-number: 19\nstatus: implemented\nstatus: provisional\n",
+                    b"kep-number: 19\nstatus: |\n  implemented\n",
+                    b"kep-number: 19\nstatus: [implemented]\n",
+                    b"kep-number: 19\nstatus: implemented\n<<: {status: provisional}\n",
+                    b"kep-number: 19\nstatus: !!python/object:unknown {}\n"):
+            with self.subTest(raw=raw), self.assertRaisesRegex(tool.Refusal, "INVALID_METADATA"):
+                tool.metadata_identity(raw)
+
+    def test_fence_comment_literals_do_not_hide_later_sections(self):
+        for fence in ("```", "~~~~"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(fence=fence, newline=newline):
+                    root = self.root / (str(len(list(self.root.iterdir()))))
+                    root.mkdir()
+                    text = source(newline=newline).replace("## Summary", newline.join((fence, "<!--", "## Non-Goals", fence, "## Summary")))
+                    fixture = Fixture(root, [dict(number=19, sig="sig-example", status="implemented", text=text)])
+                    self.assertEqual(tool.prepare(**fixture.args())["usable_inputs"], 1)
+                    _, rows, _ = self.load(root / "out")
+                    tool.validate_record(rows[0], text)
+        self.assertFalse(tool.visibly_nonempty("<!--\n```\n-->"))
+        self.assertTrue(tool.visibly_nonempty("```\n<!-- literal text\n```\n"))
+        _, sections = tool.source_sections("```html <!-- literal\ncode\n```\n## Goals\nReal objective\n")
+        self.assertIn("Goals", sections)
+
+    def test_unterminated_actual_comments_are_invisible_through_eof(self):
+        self.assertFalse(tool.visibly_nonempty("<!-- secret comment\n### fake heading"))
+        text = source().replace(f"Test synthetic endpoints. {SENTINEL}", "<!-- hidden comment without close")
+        fixture = Fixture(self.root, [dict(number=19, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaises(tool.Refusal) as raised:
+            tool.prepare(**fixture.args())
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"MISSING_OR_EMPTY_SUPPORT_SECTION": 1})
+        _, sections = tool.source_sections("# Title\n<!--\n## Goals\nHidden objective\n")
+        self.assertNotIn("Goals", sections)
+
+    def test_optional_graduation_parent_preserves_original_spans(self):
+        text = source().replace("## Graduation Criteria", "## Graduation Criteria (Optional) ###")
+        fixture = Fixture(self.root, [dict(number=19, sig="sig-example", status="implemented", text=text)])
+        self.assertEqual(tool.prepare(**fixture.args())["usable_inputs"], 1)
+        _, rows, _ = self.load()
+        tool.validate_record(rows[0], text)
+
+    def test_closing_hashes_require_whitespace_and_title_is_exact(self):
+        for suffix, qualifies in (("#", False), ("###", False), (" ###", True), ("\t##\t", True)):
+            with self.subTest(suffix=suffix):
+                text = source().replace("## Goals\n", "## Goals" + suffix + "\n")
+                _, sections = tool.source_sections(text)
+                self.assertEqual("Goals" in sections, qualifies)
+        text = "# Title# ###\n## Goals\nObjective\n"
+        title, _ = tool.source_sections(text)
+        self.assertEqual(text[title["start"]:title["end"]], "Title#")
+
+    def test_selected_title_is_not_a_goals_or_summary_section(self):
+        for title_name in ("Goals", "Summary"):
+            with self.subTest(title_name=title_name):
+                text = source().replace("# Synthetic KEP 19 – café", "# " + title_name)
+                title, sections = tool.source_sections(text)
+                self.assertEqual(text[title["start"]:title["end"]], title_name)
+                self.assertGreater(sections[title_name]["start"], title["end"])
+        text = source().replace("# Synthetic KEP 19 – café", "# Goals").replace("## Goals\nBound synthetic scope 19.\n", "")
+        fixture = Fixture(self.root, [dict(number=19, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaises(tool.Refusal) as raised:
+            tool.prepare(**fixture.args())
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"INPUT_GOALS_MISSING": 1})
+
     def test_heading_and_input_refusals_with_reconciled_zero_count(self):
         cases = {
             "missing": (source().replace("## Non-Goals", "## Other"), "MISSING_OR_EMPTY_SUPPORT_SECTION"),

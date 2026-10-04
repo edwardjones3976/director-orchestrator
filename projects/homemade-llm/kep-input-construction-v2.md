@@ -19,10 +19,20 @@ uniquely named regular members after validating their paths and evidence pins.
 Rule v2 accepts exact metadata statuses `implemented` and `implementable` and
 does not filter by creation date. A positive unique KEP number identifies one
 source group. Duplicate identities and conflicting evidence are refused.
+Each census number must match its directory's numeric prefix. Before any README
+read, every census entry (including ineligible entries) must match the number
+and exact status in its independently pinned `kep.yaml` bytes and Git blob.
+Metadata is inspected as YAML nodes with the existing PyYAML dependency; no YAML
+object constructors run. Duplicate top-level keys, merge keys and ambiguous or
+non-scalar identity fields are refused rather than reinterpreted.
 All four original support sections must be present and visibly nonempty:
 Non-Goals, Notes/Constraints/Caveats, Alpha Graduation Criteria, and Test Plan.
 The `(Optional)` heading annotation is editorial, not a separate section.
 Fake headings in comments or code fences do not qualify a source.
+Comment literals inside fences do not open HTML comments; a real unterminated
+comment remains invisible through EOF. Optional annotations also normalize the
+Graduation Criteria parent. Closing heading hashes require preceding whitespace,
+and the selected H1 title cannot also supply a mapped input section.
 
 Inputs also need a genuine first H1 title and a nonempty original Goals section
 for the objective. Missing input facts are refused, never invented. Context
@@ -119,7 +129,9 @@ qualification includes the frozen-order digest and census but no record
 generation timestamps, so there is no cyclic record hash. Source capture is the
 new v2 archive-member read, not a backdated claim about historical capture.
 
-Only the shared, standard-library `prompt_template` input helpers are imported.
+The shared, standard-library `prompt_template` input helpers and the repository's
+existing PyYAML dependency are imported; metadata node parsing executes no YAML
+object constructors.
 The constructor never imports the target-bearing generator or held-out validator.
 Literal secret-marker screening is conservative and does not constitute a full
 secret scan or admission verdict. The authorized host performs remaining scan,
