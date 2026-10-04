@@ -97,7 +97,7 @@ outputs are refused without replacement. No usable input means no successful
 published input artifact. Errors and stdout contain counts and reasons only,
 never source excerpts. A dry run qualifies and validates without publishing.
 
-The two-file output format is retained. Publication is qualified on Windows only;
+The two-file output format is retained. Native publication mechanics are tested on Windows only;
 other platforms, including POSIX, refuse `OUTPUT_PLATFORM_UNQUALIFIED` before
 creating output directories. Dry-run qualification publishes nothing and does not
 claim publication compatibility. The previous POSIX mkdir/stat/open sequence did
@@ -127,20 +127,75 @@ There is no pathname `mkdir` followed by a first snapshot of a possibly
 substituted object. The returned birth handle already denies rename before its
 first identity query. An object inserted before creation is refused rather than
 opened; an unexpected new ancestor is `OUTPUT_PATH_RACE`, and an occupied output
-is `OUTPUT_EXISTS`. Staging files retain handles without delete sharing until
+is `OUTPUT_EXISTS`. Staging files retain handles without write or delete sharing until
 publication completes. Unsupported native/identity/filesystem APIs fail closed;
 the actual synthetic Windows test does not qualify other filesystems or hosts.
 
 Files are written exclusively through opened handles, flushed, and installed
-without replacement using hard links. `manifest.json` is linked last as a
-complete atomic commit marker; consumers ignore a directory lacking it. This
+without replacement using hard links. `manifest.json` is linked last without
+replacement. The legacy complete-marker contract is **unresolved**: a foreign
+actor can insert that filename before the final link, causing refusal but leaving
+foreign bytes beside the inputs. An exclusive directory handle does not prevent
+child insertion. Manifest presence alone is therefore not qualified as proof of
+successful construction. The completion result and external receipt boundary
+below are a proposed strengthening, pending Claude's independent review and
+actual consumer enforcement. This pass does not release the constructor, claim
+namespace exclusivity, or establish downstream admission. This
 does not claim an atomic two-file directory rename, nor protection against an
 actor authorized to modify file contents after successful publication. An
 interruption may leave an incomplete reserved directory; later invocation refuses
 it instead of deleting or replacing it. Cleanup concerns only constructor-owned
-temporary filenames through the acquired destination, never recursive pathname
-cleanup. Hard-link and handle API failures have no weaker pathname fallback.
+temporary objects: `SetFileInformationByHandle(FileDispositionInfo)` marks the
+still-open owned handle for deletion before it closes. No pathname unlink follows
+the close; a foreign replacement is preserved. Failure preserves the temporary
+instead of using a pathname fallback. The final hardlink remains after deletion
+of the temporary name in the actual Windows regression. Hard-link and handle API
+failures have no weaker pathname fallback.
 Protected held-out paths and symlink/reparse artifact/output paths are refused.
+
+Pinned artifact reads are also Windows-qualified only; other platforms refuse
+`ARTIFACT_PLATFORM_UNQUALIFIED`. Each ancestor is opened one component at a time
+relative to an acquired directory handle with `NtCreateFile`, `FILE_OPEN` and
+`FILE_OPEN_REPARSE_POINT`; reparse attributes are checked before advancing or
+reading. The leaf is a non-directory object opened without write/delete sharing;
+the bounded read uses that same held leaf handle. No artifact pathname is reopened
+after validation, and junctions refuse before reading their targets. The exact
+byte hash remains mandatory. Dry-run permits an ordinary occupied output directory
+without creating, replacing or deleting anything there; protected paths and reparse
+outputs remain refused.
+
+### Proposed completion result and mandatory external receipt boundary
+
+Only after successful two-file publication does the constructor return and its
+CLI print one JSON object with `protocol: kep-input-completion/v1`,
+`completion_status: completed`, `dry_run: false`, `inputs_sha256`,
+`manifest_sha256`, `policy_sha256`, and the existing aggregate summary fields.
+The two artifact hashes cover the exact supplied/written bytes, including each
+final LF. The constructor does not self-hash its source through a mutable pathname.
+Dry-run explicitly returns `completion_status: not_completed`, `dry_run: true`
+and counts, with no publication hashes. A refused or interrupted publication
+never returns/prints completed output: the CLI exits nonzero with a refusal.
+A foreign manifest collision remains a refusal; foreign bytes are not deleted.
+
+This JSON does **not** authenticate itself. Before ANY real use, the existing
+Local LLM setup harness writer must implement a consumer gate that verifies an
+authenticated host receipt from the actual approved constructor invocation.
+That receipt must bind the trusted constructor code identity, actual argv and
+approved execution/output root, observed terminal exit 0, the whole strict JSON
+stdout, and both exact artifact hashes. The host records the actual invocation;
+a row caller cannot substitute a dictionary, paths, code pins, or receipt.
+The consumer must require the completed protocol/status and `dry_run: false`,
+validate the policy binding and independently compare the actual input and
+manifest bytes against the receipt's exact hashes before admitting any inputs.
+Fabricated caller output, exit 0 alone, manifest presence, stale or missing
+receipts, and changed artifacts cannot admit inputs. A dry-run result cannot be
+promoted into a publication receipt.
+
+No current rr consumer is asserted to implement this boundary. The strengthened
+constructor result is reviewable engineering, not an owner or milestone waiver,
+sixth-finding end-to-end clearance, or run release. Real construction/admission
+remains blocked until independent review and the responsible harness writer's
+actual enforcement evidence exist. The two-file layout is unchanged.
 
 ## Constructor interface
 
@@ -168,6 +223,10 @@ The citation binds the declared policy; it is not a signed owner-approval receip
 Source/group identity and external admission still require the normal independent
 review and recorded work-order gates. Goals and the four supporting sections are
 context; visibly nonempty Summary and Motivation are included when present.
+Context spans include the authenticated original role heading; nested Alpha
+also includes its original Graduation Criteria parent heading. Each section's
+body is separately required to be genuinely nonempty, so a heading alone cannot
+qualify it. The objective is still the trimmed Goals body, not its heading.
 Missing title or Goals are input-usability refusals distinct from section
 qualification. A zero-usable-input result exits nonzero and prints only its
 aggregate census counts/reasons. Successful manifests retain every metadata

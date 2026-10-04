@@ -97,15 +97,10 @@ def pinned_file(path, pin, limit=MAX_ARTIFACT):
     path = Path(path).absolute()
     if "heldout" in {part.casefold() for part in path.parts}:
         raise Refusal("PROTECTED_PATH")
-    if any(parent.is_symlink() for parent in (path, *path.parents)):
-        raise Refusal("ARTIFACT_SYMLINK")
     if not isinstance(pin, str) or re.fullmatch(r"[0-9a-f]{64}", pin) is None:
         raise Refusal("INVALID_PIN")
     try:
-        if not path.is_file():
-            raise Refusal("MISSING_ARTIFACT")
-        with path.open("rb") as handle:
-            raw = handle.read(limit + 1)
+        raw = _read_artifact(path, limit)
     except OSError:
         raise Refusal("UNREADABLE_ARTIFACT") from None
     if len(raw) > limit or digest(raw) != pin:
@@ -199,7 +194,9 @@ def source_sections(text):
             if key in sections:
                 raise Refusal("AMBIGUOUS_SECTION")
             end = next((head[2] for head in headings[index + 1:] if head[0] <= level), len(text))
-            sections[key] = {"start": body, "end": end}
+            # Context preserves the source role, including Alpha's parent role.
+            context_start = parent[2] if key == "Alpha Graduation Criteria" and key_name == "alpha" else start
+            sections[key] = {"start": context_start, "body_start": body, "end": end}
     return title, sections
 
 
@@ -252,6 +249,9 @@ class _WindowsDirectories:
         self.info.restype = wintypes.BOOL
         self.close = kernel.CloseHandle
         self.close.argtypes, self.close.restype = [wintypes.HANDLE], wintypes.BOOL
+        self.disposition = kernel.SetFileInformationByHandle
+        self.disposition.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        self.disposition.restype = wintypes.BOOL
         native = ctypes.WinDLL("ntdll")
         self.native_create = native.NtCreateFile
         self.native_create.argtypes = [ctypes.POINTER(wintypes.HANDLE), wintypes.ULONG,
@@ -284,6 +284,43 @@ class _WindowsDirectories:
         finally:
             self.close(handle)
 
+    def open_relative(self, parent, name, *, directory):
+        """Open one child of an acquired object; never follow its reparse point."""
+        if not name or name in (".", "..") or any(char in name for char in "/\\:\0"):
+            raise Refusal("PROTECTED_PATH")
+        buffer = self.ctypes.create_unicode_buffer(name)
+        length = len(name.encode("utf-16-le"))
+        if length + 2 > 65535:
+            raise Refusal("PROTECTED_PATH")
+        string = self.UnicodeString(length, length + 2, self.ctypes.cast(buffer, self.ctypes.c_wchar_p))
+        attributes = self.ObjectAttributes(self.ctypes.sizeof(self.ObjectAttributes), parent,
+            self.ctypes.pointer(string), 0x40, None, None)
+        handle, status = self.Handle(), self.IoStatus()
+        access = 0x00100081 if directory else 0x80100080
+        options = 0x00200021 if directory else 0x00200060
+        code = self.native_create(self.ctypes.byref(handle), access, self.ctypes.byref(attributes),
+            self.ctypes.byref(status), None, 0, 3 if directory else 1, 1, options, None, 0)
+        if code != 0:
+            if handle.value:
+                self.close(handle.value)
+            raise self.ctypes.WinError(self.native_error(code))
+        try:
+            info = self.Attributes()
+            if not self.info(handle.value, 9, self.ctypes.byref(info), self.ctypes.sizeof(info)):
+                raise self.ctypes.WinError(self.ctypes.get_last_error())
+            if info.attributes & 0x400 or bool(info.attributes & 0x10) != directory:
+                raise Refusal("ARTIFACT_REPARSE")
+            return handle.value
+        except BaseException:
+            self.close(handle.value)
+            raise
+
+    def delete_owned(self, handle):
+        # FILE_DISPOSITION_INFO contains a one-byte BOOLEAN, not a Win32 BOOL.
+        value = self.ctypes.c_ubyte(1)
+        if not self.disposition(handle, 4, self.ctypes.byref(value), self.ctypes.sizeof(value)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+
     def create_directory(self, parent, name):
         """FILE_CREATE returns the birth handle; never mkdir then authenticate a pathname."""
         if not parent or not name or name in (".", "..") or any(char in name for char in "\\/:\0"):
@@ -309,6 +346,39 @@ class _WindowsDirectories:
                 self.close(handle.value)
             raise Refusal("OUTPUT_BIRTH_NOT_CREATED")
         return handle.value
+
+
+def _read_artifact(path, limit):
+    """Read through held no-follow objects; hashes authenticate the resulting bytes."""
+    if os.name != "nt":
+        raise Refusal("ARTIFACT_PLATFORM_UNQUALIFIED")
+    import msvcrt
+    windows, directories, leaf, fd = _WindowsDirectories(), [], None, None
+    try:
+        parent = windows.open(Path(path.anchor))
+        directories.append(parent)
+        windows.identity(parent)
+        for name in path.parts[1:-1]:
+            parent = windows.open_relative(parent, name, directory=True)
+            directories.append(parent)
+        leaf = windows.open_relative(parent, path.name, directory=False)
+        fd = msvcrt.open_osfhandle(leaf, os.O_RDONLY | os.O_BINARY)
+        leaf = None  # fd owns this same held leaf object until after the read.
+        chunks, remaining = [], limit + 1
+        while remaining:
+            chunk = os.read(fd, min(remaining, 65536))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if leaf is not None:
+            windows.close(leaf)
+        for handle in reversed(directories):
+            windows.close(handle)
 
 
 class _Publication:
@@ -379,7 +449,7 @@ class _Publication:
     def _write_temp(self, raw):
         name = ".kep-" + os.urandom(16).hex()
         import msvcrt
-        handle = self.windows.open(self.out / name, access=0x40000000, creation=1, flags=0x00200080)
+        handle = self.windows.open(self.out / name, sharing=1, access=0x40010000, creation=1, flags=0x00200080)
         try:
             fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
         except BaseException:
@@ -404,11 +474,13 @@ class _Publication:
 
     def __exit__(self, *_exc):
         for name, fd in reversed(self.files):
-            os.close(fd)
             try:
-                (self.out / name).unlink()
+                import msvcrt
+                self.windows.delete_owned(msvcrt.get_osfhandle(fd))
             except OSError:
-                pass  # Preserve partial output; no pathname-based recursive cleanup/retry.
+                pass  # Preserve the owned temporary; never delete by a mutable pathname.
+            finally:
+                os.close(fd)
         self.files.clear()
         for handle in reversed(self.directories):
             self.windows.close(handle)
@@ -487,9 +559,9 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
     """_pins injects only synthetic fixture identities; the CLI uses frozen PINS."""
     pins = PINS if _pins is None else _pins
     out = Path(out).absolute()
-    if "heldout" in {part.casefold() for part in out.parts} or any(parent.is_symlink() for parent in (out, *out.parents)):
+    if "heldout" in {part.casefold() for part in out.parts} or any(parent.is_symlink() or parent.is_junction() for parent in (out, *out.parents)):
         raise Refusal("PROTECTED_OUTPUT_PATH")
-    if out.exists() or out.is_symlink():
+    if not dry_run and (out.exists() or out.is_symlink()):
         raise Refusal("OUTPUT_EXISTS")
     raw_archive = pinned_file(archive, pins["archive"], MAX_ARCHIVE)
     raw_tree = pinned_file(tree, pins["tree"])
@@ -616,15 +688,15 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 captured = next_clock(clock, last_time)
                 last_time = captured
                 title_span, sections = source_sections(text)
-                if any(name not in sections or not visibly_nonempty(text[sections[name]["start"]:sections[name]["end"]]) for name in SUPPORT_SECTIONS):
+                if any(name not in sections or not visibly_nonempty(text[sections[name]["body_start"]:sections[name]["end"]]) for name in SUPPORT_SECTIONS):
                     raise Refusal("MISSING_OR_EMPTY_SUPPORT_SECTION")
                 decision["section_qualified"] = True
                 if title_span is None:
                     raise Refusal("INPUT_TITLE_MISSING")
-                if "Goals" not in sections or not visibly_nonempty(text[sections["Goals"]["start"]:sections["Goals"]["end"]]):
+                if "Goals" not in sections or not visibly_nonempty(text[sections["Goals"]["body_start"]:sections["Goals"]["end"]]):
                     raise Refusal("INPUT_GOALS_MISSING")
-                objective_span = trim_span(text, sections["Goals"])
-                spans = sorted((sections[name] for name in CONTEXT_SECTIONS if name in sections and visibly_nonempty(text[sections[name]["start"]:sections[name]["end"]])), key=lambda span: span["start"])
+                objective_span = trim_span(text, {"start": sections["Goals"]["body_start"], "end": sections["Goals"]["end"]})
+                spans = sorted(({"start": sections[name]["start"], "end": sections[name]["end"]} for name in CONTEXT_SECTIONS if name in sections and visibly_nonempty(text[sections[name]["body_start"]:sections[name]["end"]])), key=lambda span: span["start"])
                 source_sha = digest(raw)
                 item = {"objective": text[objective_span["start"]:objective_span["end"]], "title": text[title_span["start"]:title_span["end"]], "repository": REPOSITORY,
                         "context": [{"kind": "assignment_packet", "source_ref": path, "source_sha256": source_sha, "text": text[span["start"]:span["end"]]} for span in spans]}
@@ -668,10 +740,15 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 "qualified_selection_sha256": qualification_sha, "qualification": qualification, "summary": summary,
                 "inputs_sha256": digest(data), "records": [{"source_group": record["source_group"], "selection_rank": record["selection_rank"], "sha256": digest(payload)} for record, payload in zip(records, payloads)]}
     if dry_run:
-        return {"dry_run": True, **summary}
+        return {"completion_status": "not_completed", "dry_run": True, **summary}
+    manifest_data = json_bytes(manifest) + b"\n"
     with _Publication(out) as publication:
-        publication.publish(data, json_bytes(manifest) + b"\n")
-    return {"dry_run": False, **summary}
+        publication.publish(data, manifest_data)
+    # These hashes bind the bytes supplied to successful publication. Authenticity
+    # comes from the external host receipt, never this caller-visible dictionary.
+    return {"protocol": "kep-input-completion/v1", "completion_status": "completed",
+            "dry_run": False, "inputs_sha256": digest(data),
+            "manifest_sha256": digest(manifest_data), "policy_sha256": policy_sha256, **summary}
 
 
 def main(argv=None):

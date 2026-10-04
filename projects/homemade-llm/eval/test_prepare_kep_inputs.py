@@ -664,6 +664,114 @@ class PrepareKepInputsTests(unittest.TestCase):
             tool.prepare(**fixture.args(out=junction / "out"))
         self.assertEqual(list(foreign.iterdir()), [])
 
+    def test_artifact_junction_refused_before_target_read(self):
+        import subprocess
+        foreign, junction = self.root / "artifact-foreign", self.root / "artifact-junction"
+        foreign.mkdir()
+        raw = b"foreign synthetic artifact"
+        (foreign / "artifact").write_bytes(raw)
+        creation = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(foreign)],
+                                  capture_output=True, text=True)
+        self.assertEqual(creation.returncode, 0, creation.stderr)
+        with patch.object(tool.os, "read", side_effect=AssertionError("must not read foreign target")), self.assertRaisesRegex(tool.Refusal, "ARTIFACT_REPARSE"):
+            tool.pinned_file(junction / "artifact", tool.digest(raw))
+        self.assertEqual((foreign / "artifact").read_bytes(), raw)
+
+    def test_artifact_reads_hold_ancestors_and_deny_leaf_writers(self):
+        parent = self.root / "artifact-parent"
+        parent.mkdir()
+        raw, path = b"synthetic pinned artifact", parent / "artifact"
+        path.write_bytes(raw)
+        original = tool.os.read
+        attempts = []
+        def checked_read(fd, count):
+            with self.assertRaises(OSError):
+                parent.rename(self.root / "displaced-artifact-parent")
+            with self.assertRaises(OSError):
+                with path.open("r+b") as writer:
+                    writer.write(b"FOREIGN")
+            attempts.append(True)
+            return original(fd, count)
+        with patch.object(tool.os, "read", side_effect=checked_read):
+            self.assertEqual(tool.pinned_file(path, tool.digest(raw)), raw)
+        self.assertTrue(attempts)
+        self.assertEqual(path.read_bytes(), raw)
+
+    def test_staged_files_deny_writers_and_preserve_final_hardlink(self):
+        out = self.root / "staged-output"
+        with tool._Publication(out) as publication:
+            name = publication._write_temp(b"owned bytes")
+            with self.assertRaises(OSError):
+                with (out / name).open("r+b") as writer:
+                    writer.write(b"FOREIGN")
+            os.link(out / name, out / "inputs.jsonl")
+        self.assertFalse((out / name).exists())
+        self.assertEqual((out / "inputs.jsonl").read_bytes(), b"owned bytes")
+
+    def test_cleanup_does_not_unlink_foreign_post_close_replacement(self):
+        out = self.root / "cleanup-output"
+        publication = tool._Publication(out)
+        publication.__enter__()
+        name = publication._write_temp(b"owned temporary")
+        fd = publication.files[0][1]
+        os.link(out / name, out / "inputs.jsonl")
+        original_close = tool.os.close
+        def inject_after_close(value):
+            original_close(value)
+            if value == fd:
+                self.assertFalse((out / name).exists())
+                (out / name).write_bytes(b"foreign replacement retained")
+        with patch.object(tool.os, "close", side_effect=inject_after_close):
+            publication.__exit__(None, None, None)
+        self.assertEqual((out / name).read_bytes(), b"foreign replacement retained")
+        self.assertEqual((out / "inputs.jsonl").read_bytes(), b"owned temporary")
+
+    def test_foreign_manifest_collision_is_refused_without_foreign_deletion(self):
+        # The completion-authority defect is deliberately unresolved, not qualified.
+        out = self.root / "foreign-marker-output"
+        original_link = tool.os.link
+        foreign = b'{"foreign_complete":true}\n'
+        def inject_manifest(src, dst, *args, **kwargs):
+            if Path(dst).name == "manifest.json":
+                Path(dst).write_bytes(foreign)
+            return original_link(src, dst, *args, **kwargs)
+        with self.assertRaises(FileExistsError):
+            with tool._Publication(out) as publication:
+                with patch.object(tool.os, "link", side_effect=inject_manifest):
+                    publication.publish(b"owned input\n", b'{"state":"complete"}\n')
+        self.assertEqual((out / "manifest.json").read_bytes(), foreign)
+        self.assertEqual((out / "inputs.jsonl").read_bytes(), b"owned input\n")
+
+    def test_dry_run_occupied_destination_remains_unchanged(self):
+        fixture = Fixture(self.root)
+        out = self.root / "occupied"
+        out.mkdir()
+        (out / "sentinel").write_bytes(b"retained foreign bytes")
+        result = tool.prepare(**fixture.args(out=out, dry_run=True))
+        self.assertTrue(result["dry_run"])
+        self.assertEqual({path.name for path in out.iterdir()}, {"sentinel"})
+        self.assertEqual((out / "sentinel").read_bytes(), b"retained foreign bytes")
+
+    def test_context_includes_original_roles_but_objective_is_body_only(self):
+        fixture = Fixture(self.root)
+        tool.prepare(**fixture.args())
+        row = json.loads((self.root / "out" / "inputs.jsonl").read_text().splitlines()[0])
+        original = source()
+        contexts = [block["text"] for block in row["input"]["context"]]
+        for name in ("Summary", "Motivation", "Goals", "Non-Goals", "Test Plan"):
+            self.assertTrue(any(text.startswith("## " + name + "\n") for text in contexts), name)
+        self.assertTrue(any(text.startswith("## Notes/Constraints/Caveats (Optional)\n") for text in contexts))
+        alpha = next(text for text in contexts if text.startswith("## Graduation Criteria\n"))
+        self.assertIn("### Alpha\n", alpha)
+        self.assertNotIn("### Beta", alpha)
+        self.assertEqual(row["input"]["objective"], "Bound synthetic scope 19.")
+        for block, span in zip(row["input"]["context"], row["context_spans"]):
+            self.assertEqual(block["text"], original[span["start"]:span["end"]])
+        empty = source().replace("Do not expand unrelated work.", "")
+        title, sections = tool.source_sections(empty)
+        span = sections["Non-Goals"]
+        self.assertFalse(tool.visibly_nonempty(empty[span["body_start"]:span["end"]]))
+
     def test_dry_run_has_no_outputs_network_subprocess_or_protected_imports(self):
         fixture = Fixture(self.root)
         before = {path.name: path.read_bytes() for path in fixture.paths.values()}
@@ -675,6 +783,67 @@ class PrepareKepInputsTests(unittest.TestCase):
         self.assertEqual(before, {path.name: path.read_bytes() for path in fixture.paths.values()})
         self.assertNotIn("generate_rows", tool.__dict__)
         self.assertNotIn("validate_rows", tool.__dict__)
+
+    def test_actual_main_completed_result_binds_exact_two_file_bytes(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        fixture = Fixture(self.root)
+        argv = [part for key, path in fixture.paths.items() for part in ("--" + key, str(path))]
+        argv += ["--policy-sha256", fixture.policy_sha, "--out", str(self.root / "out")]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(tool, "PINS", fixture.pins), redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(tool.main(argv), 0)
+        result = tool.strict_json(stdout.getvalue().encode("utf-8"))
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(result["protocol"], "kep-input-completion/v1")
+        self.assertEqual(result["completion_status"], "completed")
+        self.assertFalse(result["dry_run"])
+        self.assertEqual(result["policy_sha256"], fixture.policy_sha)
+        out = self.root / "out"
+        self.assertEqual({p.name for p in out.iterdir()}, {"inputs.jsonl", "manifest.json"})
+        for name, field in (("inputs.jsonl", "inputs_sha256"), ("manifest.json", "manifest_sha256")):
+            raw = (out / name).read_bytes()
+            self.assertTrue(raw.endswith(b"\n"))
+            self.assertEqual(result[field], tool.digest(raw))
+            self.assertNotEqual(result[field], tool.digest(raw[:-1]))
+        self.assertEqual(result["usable_inputs"], 1)
+        # A caller-fabricated/modified artifact does not match the returned binding.
+        (out / "inputs.jsonl").write_bytes(b"foreign changed bytes\n")
+        self.assertNotEqual(result["inputs_sha256"], tool.digest((out / "inputs.jsonl").read_bytes()))
+
+    def test_actual_main_dry_run_never_returns_publication_hashes(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        fixture = Fixture(self.root)
+        argv = [part for key, path in fixture.paths.items() for part in ("--" + key, str(path))]
+        argv += ["--policy-sha256", fixture.policy_sha, "--out", str(self.root / "out"), "--dry-run"]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(tool, "PINS", fixture.pins), redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(tool.main(argv), 0)
+        result = tool.strict_json(stdout.getvalue().encode("utf-8"))
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["completion_status"], "not_completed")
+        self.assertNotIn("inputs_sha256", result)
+        self.assertNotIn("manifest_sha256", result)
+        self.assertFalse((self.root / "out").exists())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_actual_main_foreign_marker_collision_has_no_completion_output(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        fixture = Fixture(self.root)
+        out = self.root / "out"
+        argv = [part for key, path in fixture.paths.items() for part in ("--" + key, str(path))]
+        argv += ["--policy-sha256", fixture.policy_sha, "--out", str(out)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        original_link, foreign = tool.os.link, b'{"foreign_complete":true}\n'
+        def inject_manifest(src, dst, *args, **kwargs):
+            if Path(dst).name == "manifest.json":
+                Path(dst).write_bytes(foreign)
+            return original_link(src, dst, *args, **kwargs)
+        with patch.object(tool, "PINS", fixture.pins), patch.object(tool.os, "link", side_effect=inject_manifest), redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(tool.main(argv), 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(tool.strict_json(stderr.getvalue().encode("utf-8")), {"refused": "INVALID_CONSTRUCTION_EVIDENCE"})
+        self.assertEqual((out / "manifest.json").read_bytes(), foreign)
+        self.assertTrue((out / "inputs.jsonl").exists())
 
     def test_policy_is_exact_and_cli_errors_are_sanitized(self):
         fixture = Fixture(self.root)
