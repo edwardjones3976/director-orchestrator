@@ -105,6 +105,60 @@ if (@($configNames | Where-Object { $_ -match '^filter\..*\.(clean|smudge|proces
 if (Test-Path -LiteralPath (Join-Path $targetPath ".gitmodules")) {
     throw "Snapshot submodules are unsupported."
 }
+# Status trusts the index's hidden flags and stat cache. Inspect flags first,
+# then hash actual files against the pinned tree in one native batch, without
+# any clean conversion. Only ordinary UTF-8 text CRLF differences are tolerated.
+$indexRows = ((@(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false ls-files -v -z) -join "`n").Split([char]0))
+if ($LASTEXITCODE -ne 0 -or @($indexRows | Where-Object { $_ -and -not $_.StartsWith("H ") }).Count) {
+    throw "Snapshot hidden index flags are unsupported."
+}
+$treeRows = ((@(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false ls-tree -r -z $ExpectedTree) -join "`n").Split([char]0))
+if ($LASTEXITCODE -ne 0) { throw "Snapshot pinned tree could not be read." }
+$tracked = [Collections.Generic.List[object]]::new()
+foreach ($row in $treeRows) {
+    if (-not $row) { continue }
+    if ($row -notmatch '^(100644|100755) blob ([0-9a-f]{40})\t([^\x00-\x1f]+)$') {
+        throw "Snapshot file type or path is unsupported."
+    }
+    $name = [string]$matches[3]
+    $expectedBlob = [string]$matches[2]
+    $file = Join-Path $targetPath $name
+    $part = $file
+    while ($part) {
+        if ([IO.File]::GetAttributes($part) -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Snapshot linked paths are unsupported."
+        }
+        $part = [IO.Path]::GetDirectoryName($part)
+    }
+    $tracked.Add(@{ name = $name; file = $file; blob = $expectedBlob })
+}
+if ($tracked.Count) {
+    $previousOutputEncoding = $OutputEncoding
+    try {
+        $OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $actualHashes = @($tracked | ForEach-Object { ConvertTo-Json -InputObject $_.name -Compress } |
+            & git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false hash-object --no-filters --stdin-paths)
+        if ($LASTEXITCODE -ne 0 -or $actualHashes.Count -ne $tracked.Count) {
+            throw "Snapshot actual file hashes could not be read."
+        }
+    }
+    finally { $OutputEncoding = $previousOutputEncoding }
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    for ($index = 0; $index -lt $tracked.Count; $index++) {
+        $entry = $tracked[$index]
+        if ($actualHashes[$index] -ceq $entry.blob) { continue }
+        if ((Get-Item -LiteralPath $entry.file).Length -gt 4194304) { throw "Snapshot tracked bytes differ." }
+        $raw = [IO.File]::ReadAllBytes($entry.file)
+        if ($raw -contains 0) { throw "Snapshot tracked bytes differ." }
+        try { $normalized = $utf8.GetBytes($utf8.GetString($raw).Replace("`r`n", "`n")) }
+        catch { throw "Snapshot tracked bytes differ." }
+        $header = [Text.Encoding]::ASCII.GetBytes("blob $($normalized.Length)`0")
+        $algorithm = [Security.Cryptography.SHA1]::Create()
+        try { $actual = [BitConverter]::ToString($algorithm.ComputeHash([byte[]]($header + $normalized))).Replace("-", "").ToLowerInvariant() }
+        finally { $algorithm.Dispose() }
+        if ($actual -cne $entry.blob) { throw "Snapshot tracked bytes differ." }
+    }
+}
 $dirty = @(& git -C $targetPath -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false status --porcelain=v2 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw "Snapshot target is not clean." }
 $head = [string](@(& git -C $targetPath rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)

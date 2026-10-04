@@ -181,11 +181,33 @@ class ReleasePreparationTests(unittest.TestCase):
             self.calls.append((argv, kwargs))
         if argv[:2] == ["git", "config"]:
             return b""
+        if argv[:2] in (["git", "ls-files"], ["git", "ls-tree"], ["git", "check-attr"], ["git", "hash-object"]):
+            root = Path(kwargs.get("cwd", self.source))
+            files = sorted(path for path in root.rglob("*") if path.is_file())
+            def blob(path):
+                raw = path.read_bytes()
+                return release.hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+            if argv[1] == "ls-files":
+                return b"".join(b"H " + path.relative_to(root).as_posix().encode() + b"\0" for path in files)
+            if argv[1] == "ls-tree":
+                return b"".join(("100644 blob " + blob(path) + "\t" + path.relative_to(root).as_posix() + "\0").encode() for path in files)
+            raw = kwargs.get("input_bytes", kwargs.get("input"))
+            if argv[1] == "check-attr":
+                return b"".join(name + b"\0" + key.encode() + b"\0unspecified\0" for name in raw.split(b"\0") if name
+                                for key in ("text", "eol", "ident", "working-tree-encoding", "filter"))
+            return "\n".join(blob(root / json.loads(name)) for name in raw.decode().splitlines()).encode()
         if argv[:2] == ["docker", "context"]:
             return release.encoded([{"Endpoints": {"docker": {"Host": "npipe:////./pipe/docker_engine"}}}])
         if argv[:2] == ["docker", "info"]:
             return b"fixture-daemon"
-        if argv[:2] in (["docker", "volume"], ["docker", "network"]):
+        if argv[:3] == ["docker", "volume", "inspect"]:
+            key = argv[-1].removeprefix("fixture-sibling_")
+            return release.encoded([{"Name": argv[-1], "Driver": "local", "Options": None,
+                "Labels": {"com.docker.compose.project": "fixture-sibling", "com.docker.compose.volume": key},
+                "Mountpoint": "/fixture/" + key, "CreatedAt": "2026-01-01T00:00:00Z", "Scope": "local"}])
+        if argv[:3] == ["docker", "volume", "ls"]:
+            return b"fixture-sibling_director-data\nfixture-sibling_langgraph-primary-db-data\n"
+        if argv[:2] == ["docker", "network"]:
             return b""
         if argv[:2] == ["docker", "ps"]:
             return b""
@@ -203,7 +225,14 @@ class ReleasePreparationTests(unittest.TestCase):
                 return release.encoded(self.sibling_activation)
             self.assertEqual(argv[-3:], ["config", "--format", "json"])
             self.assertIn(str(self.root / "compose.yml"), argv)
-            graph = self.sibling_compose if argv[3] == "fixture-sibling" else self.compose
+            graph = copy.deepcopy(self.sibling_compose if argv[3] == "fixture-sibling" else self.compose)
+            # Model the stock Compose interpolation for the three intentional
+            # future profile modes without changing the pinned on-disk profile.
+            environment = kwargs.get("env", {})
+            if argv[3] == "fixture-sibling" and "DIRECTOR_ASGI_APP" in environment:
+                service = graph["services"]["orchestrator"]
+                service["environment"].update({key: environment[key] for key in release.RUNTIME_CHANGES["StageRuntime"]})
+                service["command"][1] = environment["DIRECTOR_ASGI_APP"]
             return release.encoded(graph)
         if "-File" in argv:
             self.assertIn(argv[argv.index("-Action") + 1], ("Verify", "Preflight"))
@@ -767,17 +796,22 @@ class ReleasePreparationTests(unittest.TestCase):
         self.sibling_compose.update(name="fixture-sibling", networks={"default": {"name": "fixture-sibling_default"}})
         self.sibling_compose["services"]["orchestrator"]["environment"].update(
             ALLOW_PAID_RUNS="false", LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false",
-            LANGGRAPH_PARALLEL_KILL_SWITCH="true",
+            LANGGRAPH_PARALLEL_KILL_SWITCH="true", LANGGRAPH_PRIMARY_ENABLED="false",
+            LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED="false", LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED="false",
             LANGGRAPH_PRIMARY_POSTGRES_DSN="postgresql://director_primary:fixture-only@langgraph-primary-db:5432/director_primary?sslmode=disable",
             LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES="true")
         self.sibling_compose["services"]["orchestrator"]["ports"] = [{"host_ip": "127.0.0.1", "published": "18080", "target": 8080}]
-        self.sibling_compose["volumes"] = {"data": {"name": "fixture-sibling_data"},
-                                           "primary": {"name": "fixture-sibling_primary"}}
+        self.sibling_compose["volumes"] = {key: {"name": "fixture-sibling_" + key} for key in
+            ("director-data", "langgraph-primary-db-data", "n8n-data")}
+        self.sibling_compose["services"]["orchestrator"]["volumes"].append(
+            {"type": "volume", "source": "director-data", "target": "/data"})
+        self.sibling_compose["services"]["n8n"]["volumes"] = [
+            {"type": "volume", "source": "n8n-data", "target": "/home/node/.n8n"}]
         self.sibling_compose["services"]["langgraph-primary-db"] = {
             "image": "postgres:17-alpine@sha256:" + "1" * 64, "pull_policy": "never",
             "environment": {"POSTGRES_USER": "director_primary", "POSTGRES_DB": "director_primary",
                             "POSTGRES_PASSWORD": "fixture-only"},
-            "volumes": [{"type": "volume", "source": "primary", "target": "/var/lib/postgresql/data"}],
+            "volumes": [{"type": "volume", "source": "langgraph-primary-db-data", "target": "/var/lib/postgresql/data"}],
             "healthcheck": {"test": ["CMD-SHELL", "pg_isready -U director_primary -d director_primary"]}}
         self.sibling_compose["services"]["orchestrator"].update(
             depends_on={"langgraph-primary-db": {"condition": "service_healthy"}})
@@ -824,9 +858,9 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertLess(report["timeout_seconds"], 1500)
         actions = [row["action"] for row in report["steps"]]
         self.assertEqual(actions, ["StartDatabase", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
-                                   "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"])
+                                   "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health", "Stop"])
         for step in report["steps"]:
-            if step["action"] == "StartDatabase":
+            if step["action"] in ("StartDatabase", "Stop"):
                 continue
             argv = step["control_argv"]
             self.assertEqual(argv[argv.index("-ComposeProject") + 1], "fixture-sibling")
@@ -853,7 +887,7 @@ class ReleasePreparationTests(unittest.TestCase):
             observed_calls = []
             def read(argv, **kwargs):
                 observed_calls.append((argv, kwargs))
-                if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[-1] == release.VALIDATION_PROBE:
+                if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                     return self.platform(argv, **kwargs)
                 if argv[1] == "info":
                     return payload["daemon_id"].encode()
@@ -874,7 +908,7 @@ class ReleasePreparationTests(unittest.TestCase):
             for change in ("daemon", "image", "rollback"):
                 with self.subTest(change=change):
                     def drift(argv, **kwargs):
-                        if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[-1] == release.VALIDATION_PROBE:
+                        if argv[0] == "git" or argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
                             return b"different-daemon" if change == "daemon" else payload["daemon_id"].encode()
@@ -909,7 +943,7 @@ class ReleasePreparationTests(unittest.TestCase):
         tool.spec = {"candidate": {"commit": git("rev-parse", "HEAD").decode().strip(),
                                     "tree": git("rev-parse", "HEAD^{tree}").decode().strip()}}
         with patch.object(release, "command", REAL_COMMAND):
-            with self.assertRaisesRegex(release.ReleaseError, "source_not_clean"):
+            with self.assertRaisesRegex(release.ReleaseError, "source_(not_clean|import_artifact_refused)"):
                 tool.source_check()
         self.assertFalse(marker.exists())
         git("config", "filter.fixture.clean", hook.as_posix())
@@ -950,8 +984,8 @@ class ReleasePreparationTests(unittest.TestCase):
                     def read(argv, **kwargs):
                         if argv[0] == "git":
                             return REAL_COMMAND(argv, cwd=kwargs["cwd"], env=kwargs["env"],
-                                                deadline=time.monotonic() + 30)
-                        if argv[:2] == ["docker", "compose"] or argv[-1] == release.VALIDATION_PROBE:
+                                                deadline=time.monotonic() + 30, input_bytes=kwargs.get("input"))
+                        if argv[:2] == ["docker", "compose"] or argv[:3] == ["docker", "volume", "inspect"] or argv[-1] == release.VALIDATION_PROBE:
                             return self.platform(argv, **kwargs)
                         if argv[1] == "info":
                             if defect == "dirty_after_probe":
@@ -977,7 +1011,7 @@ class ReleasePreparationTests(unittest.TestCase):
         self.sibling()
         plan = release.Release(self.descriptor).rehearsal()
         for step in plan["steps"]:
-            if step["action"] == "StartDatabase":
+            if step["action"] in ("StartDatabase", "Stop"):
                 continue
             payload = json.loads(base64.b64decode(step["argv"][-1]))
             health = int(step["control_argv"][step["control_argv"].index("-TimeoutSeconds") + 1])
@@ -1017,10 +1051,15 @@ class ReleasePreparationTests(unittest.TestCase):
         graph = copy.deepcopy(self.sibling_compose)
         graph["services"].update({name: {"image": "postgres:16@sha256:" + "1" * 64, "pull_policy": "never"}
                                    for name in ("n8n-db", "langgraph-primary-db")})
+        for name, key in (("n8n-db", "n8n-db-data"), ("langgraph-primary-db", "langgraph-primary-db-data")):
+            graph["volumes"][key] = {"name": "fixture-sibling_" + key}
+            graph["services"][name].update(environment={"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture"},
+                volumes=[{"type": "volume", "source": key, "target": "/var/lib/postgresql/data"}])
         graph["services"]["slackbot"]["depends_on"] = {"orchestrator": {}, "n8n": {}}
         graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {}}
         graph["services"]["n8n"].update(depends_on={"n8n-db": {}},
-            environment={"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db"})
+            environment={"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db", "DB_POSTGRESDB_DATABASE": "n8n",
+                         "DB_POSTGRESDB_USER": "n8n", "DB_POSTGRESDB_PASSWORD": "fixture", "DB_POSTGRESDB_PORT": "5432"})
         release.isolated_sibling(self.compose, graph, 18080)
         changes = [
             ("n8n", "image", "n8n:latest"), ("n8n-db", "pull_policy", "always"),
@@ -1144,7 +1183,7 @@ class ReleasePreparationTests(unittest.TestCase):
         sibling = self.sibling()
         tool = release.Release(self.root / "sibling.json")
         graph = self.sibling_compose
-        graph["services"]["n8n"]["volumes"] = [{"type": "volume", "source": "data", "target": "/home/node/.n8n"}]
+        graph["services"]["n8n"]["volumes"] = [{"type": "volume", "source": "n8n-data", "target": "/home/node/.n8n"}]
         tool.rehearsal_images(graph)
         for defect in ("container", "image", "volume", "network", "prior"):
             with self.subTest(defect=defect):
@@ -1154,7 +1193,7 @@ class ReleasePreparationTests(unittest.TestCase):
                     if defect == "image" and argv[:3] == ["docker", "image", "inspect"] and "n8n" in argv[-1]:
                         raise release.ReleaseError("platform_check_failed")
                     if defect == "volume" and argv[:2] == ["docker", "volume"]:
-                        return b"fixture-sibling_data"
+                        return b"fixture-sibling_n8n-data"
                     if defect == "network" and argv[:2] == ["docker", "network"]:
                         return b"fixture-sibling_default"
                     return self.platform(argv, **kwargs)
@@ -1253,7 +1292,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 elif field == "network":
                     graph["networks"]["default"]["name"] = "fixture-director_default"
                 elif field == "volume":
-                    graph["volumes"]["data"]["driver_opts"] = {"device": "/production"}
+                    graph["volumes"]["director-data"]["driver_opts"] = {"device": "/production"}
                 elif field == "bind":
                     service["volumes"][0]["read_only"] = False
                 else:
@@ -1290,7 +1329,7 @@ class ReleasePreparationTests(unittest.TestCase):
         harness = self.root / "control-parameters-only.ps1"
         harness.write_text(parameters + '\n$PSBoundParameters | ConvertTo-Json -Compress\n', encoding="utf-8")
         for step in plan["steps"]:
-            if step["action"] == "StartDatabase":
+            if step["action"] in ("StartDatabase", "Stop"):
                 continue
             arguments = step["control_argv"][step["control_argv"].index("-File") + 2:]
             result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(harness), *arguments],
@@ -1553,8 +1592,7 @@ class ReleasePreparationTests(unittest.TestCase):
         db = graph["services"]["langgraph-primary-db"]
         db.update(pull_policy="never", environment={"POSTGRES_USER": "director_primary",
             "POSTGRES_DB": "director_primary", "POSTGRES_PASSWORD": "fixture-only"},
-            volumes=[{"type": "volume", "source": "primary", "target": "/var/lib/postgresql/data"}])
-        graph["volumes"]["primary"] = {"name": "fixture-sibling_primary"}
+            volumes=[{"type": "volume", "source": "langgraph-primary-db-data", "target": "/var/lib/postgresql/data"}])
         graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {"condition": "service_healthy"}}
         graph["services"]["orchestrator"]["environment"].update(
             LANGGRAPH_PRIMARY_POSTGRES_DSN="postgresql://director_primary:fixture-only@langgraph-primary-db:5432/director_primary?sslmode=disable",
@@ -1599,6 +1637,228 @@ class ReleasePreparationTests(unittest.TestCase):
                 self.assertNotIn("-File", self.launched[0].args[0])
                 if defect == "readiness":
                     self.assertEqual(events, ["start"])
+
+    def test_orchestrator_rejects_unreviewed_command_and_effective_image_entrypoint(self):
+        self.sibling()
+        for field, value in (("command", ["python", "-c", "unreviewed"]),
+                             ("entrypoint", ["sh", "-c", "unreviewed"])):
+            graph = copy.deepcopy(self.sibling_compose)
+            graph["services"]["orchestrator"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(release.ReleaseError, "sibling_orchestrator_command_unsupported"):
+                release.isolated_sibling(self.compose, graph, 18080)
+        tool = release.Release(self.spec["rehearsal"]["descriptor"]["path"])
+        for field in ("Entrypoint", "Cmd"):
+            graph = copy.deepcopy(self.sibling_compose)
+            graph["services"]["orchestrator"]["command"] = None
+            def observe(argv, **kwargs):
+                if argv[:3] == ["docker", "image", "inspect"]:
+                    config = {"Cmd": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
+                              "Entrypoint": None}
+                    config[field] = ["unreviewed"]
+                    return release.encoded([{"Id": self.image, "Config": config}])
+                return self.platform(argv, **kwargs)
+            with self.subTest(inherited=field), patch.object(release, "command", side_effect=observe), \
+                    self.assertRaisesRegex(release.ReleaseError, "sibling_orchestrator_command_unsupported"):
+                tool.rehearsal_images(graph)
+
+    def test_sibling_only_allows_stock_mount_targets_and_unaliased_state(self):
+        self.sibling()
+        for name, mount in (
+            ("orchestrator", {"type": "bind", "source": str(self.snapshot), "target": "/app", "read_only": True}),
+            ("orchestrator", {"type": "bind", "source": str(self.snapshot), "target": "/", "read_only": True}),
+            ("orchestrator", {"type": "volume", "source": "data", "target": "/app"}),
+            ("orchestrator", {"type": "volume", "source": "primary", "target": "/data"}),
+            ("orchestrator", {"type": "volume", "source": "data", "target": "/data", "volume": {"subpath": "other"}}),
+            ("slackbot", {"type": "volume", "source": "data", "target": "/app/src"}),
+            ("n8n", {"type": "volume", "source": "data", "target": "/usr/local/bin"}),
+            ("langgraph-primary-db", {"type": "volume", "source": "data", "target": "/docker-entrypoint-initdb.d"})):
+            graph = copy.deepcopy(self.sibling_compose)
+            graph["services"][name].setdefault("volumes", []).append(mount)
+            with self.subTest(service=name, mount=mount), self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                release.isolated_sibling(self.compose, graph, 18080)
+
+    def test_future_runtime_modes_cannot_change_the_reviewed_command_or_mounts(self):
+        self.sibling()
+        for mode, switches in release.RUNTIME_CHANGES.items():
+            for defect in ("command", "entrypoint", "mount"):
+                with self.subTest(mode=mode, defect=defect):
+                    def future(argv, **kwargs):
+                        raw = self.platform(argv, **kwargs)
+                        env = kwargs.get("env", {})
+                        if argv[:4] == ["docker", "compose", "--project-name", "fixture-sibling"] and \
+                                all(env.get(key) == value for key, value in switches.items()):
+                            graph = json.loads(raw)
+                            service = graph["services"]["orchestrator"]
+                            if defect == "command":
+                                service["command"] = ["python", "-c", "unreviewed"]
+                            elif defect == "entrypoint":
+                                service["entrypoint"] = ["unreviewed"]
+                            else:
+                                service["volumes"].append({"type": "bind", "source": str(self.snapshot),
+                                    "target": "/app", "read_only": True})
+                            raw = release.encoded(graph)
+                        return raw
+                    with patch.object(release, "command", side_effect=future), self.assertRaisesRegex(
+                            release.ReleaseError, "sibling_runtime_graph_changed"):
+                        release.Release(self.descriptor).rehearsal()
+
+    def test_future_stock_modes_are_rendered_without_mutating_the_runtime_profile(self):
+        spec = self.sibling()
+        profile = Path(spec["runtime_env"]["path"])
+        original = profile.read_bytes()
+        plan = release.Release(self.descriptor).rehearsal()
+        rendered = [kwargs["env"] for argv, kwargs in self.calls
+            if argv[:4] == ["docker", "compose", "--project-name", "fixture-sibling"]
+            and "DIRECTOR_ASGI_APP" in kwargs.get("env", {})]
+        self.assertEqual([{key: env[key] for key in release.RUNTIME_CHANGES["StageRuntime"]}
+                          for env in rendered], list(release.RUNTIME_CHANGES.values()))
+        self.assertEqual(profile.read_bytes(), original)
+        self.assertEqual(plan["timeout_seconds"], 1499)
+        self.assertEqual(plan["steps"][-1]["action"], "Stop")
+
+    def test_state_volume_identity_and_freshness_are_pinned_until_execution(self):
+        self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        step = plan["steps"][0]
+        def changed(argv, **kwargs):
+            if argv[:3] == ["docker", "volume", "inspect"]:
+                rows = json.loads(self.platform(argv, **kwargs))
+                rows[0]["CreatedAt"] = "replacement-volume"
+                return release.encoded(rows)
+            return None
+        with self.assertRaisesRegex(SystemExit, "state volume changed"):
+            self.launch_fixture(step, observe=changed)
+        self.assertEqual(self.launched, [])
+        tool = release.Release(self.spec["rehearsal"]["descriptor"]["path"])
+        def foreign(argv, **kwargs):
+            if argv[:3] == ["docker", "volume", "inspect"]:
+                rows = json.loads(self.platform(argv, **kwargs))
+                rows[0]["Labels"]["com.docker.compose.project"] = "other-project"
+                return release.encoded(rows)
+            return self.platform(argv, **kwargs)
+        with patch.object(release, "command", side_effect=foreign), self.assertRaisesRegex(
+                release.ReleaseError, "state_volume_identity_mismatch"):
+            tool.rehearsal_images(self.sibling_compose)
+
+    def test_n8n_database_configuration_must_match_its_stock_postgres_service(self):
+        self.sibling()
+        graph = copy.deepcopy(self.sibling_compose)
+        graph["services"]["n8n-db"] = {"image": "postgres:17-alpine@sha256:" + "1" * 64,
+            "pull_policy": "never", "environment": {"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture-password"}}
+        graph["services"]["n8n"]["environment"] = {"DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db",
+            "DB_POSTGRESDB_PORT": "5432", "DB_POSTGRESDB_DATABASE": "n8n", "DB_POSTGRESDB_USER": "n8n",
+            "DB_POSTGRESDB_PASSWORD": "fixture-password"}
+        for key in ("DB_POSTGRESDB_PORT", "DB_POSTGRESDB_DATABASE", "DB_POSTGRESDB_USER", "DB_POSTGRESDB_PASSWORD"):
+            changed = copy.deepcopy(graph)
+            changed["services"]["n8n"]["environment"][key] = "unmatched-sensitive-fixture"
+            with self.subTest(key=key), self.assertRaisesRegex(release.ReleaseError, "^sibling_n8n_database_mismatch$"):
+                release.isolated_sibling(self.compose, changed, 18080)
+
+    def test_successful_rehearsal_ends_with_bounded_stop_and_proof_for_all_intake(self):
+        sibling = self.sibling()
+        plan = release.Release(self.descriptor).rehearsal()
+        self.assertEqual([step["action"] for step in plan["steps"][-3:]], ["Rollback", "Health", "Stop"])
+        self.assertEqual(plan["timeout_seconds"], 1499)
+        stop = plan["steps"][-1]
+        self.assertEqual(stop["control_argv"][-3:], ["slackbot", "n8n", "orchestrator"])
+        self.assertIn("--timeout", stop["control_argv"])
+        runtime = release.dotenv(Path(sibling["runtime_env"]["path"]).read_bytes())
+        runtime.update(release.RUNTIME_CHANGES["Rollback"])
+        Path(sibling["runtime_env"]["path"]).write_bytes("".join(f"{key}={value}\n" for key, value in runtime.items()).encode())
+        for active in (None, "slackbot", "n8n", "orchestrator", "orchestrator-oneoff"):
+            calls = []
+            def observe(argv, **kwargs):
+                calls.append(argv)
+                if argv[:2] == ["docker", "ps"] and "label=com.docker.compose.project=fixture-sibling" in argv:
+                    return b"sibling-container"
+                if argv[:2] == ["docker", "inspect"]:
+                    return release.encoded([{"Id": "sibling-container", "Config": {"Labels": {
+                        "com.docker.compose.project": "fixture-sibling",
+                        "com.docker.compose.service": (active or "orchestrator").replace("-oneoff", "")}},
+                        "State": {"Running": active is not None, "Paused": False, "Restarting": False, "Status": "running" if active else "exited"}}])
+                return None
+            with self.subTest(active=active):
+                if active:
+                    with self.assertRaisesRegex(SystemExit, "intake.*stopped"):
+                        self.launch_fixture(stop, observe=observe)
+                else:
+                    self.launch_fixture(stop, observe=observe)
+                self.assertEqual(len(self.launched), 1)
+                self.assertIn("fixture-sibling", self.launched[0].args[0])
+                self.assertNotIn("fixture-director", self.launched[0].args[0])
+                self.assertLessEqual(self.launched[0].kwargs["timeout"], 140)
+
+    def test_real_git_rejects_hidden_index_flags_and_non_eol_clean_transformations(self):
+        for defect in ("assume-unchanged", "skip-worktree", "ident"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                checkout = Path(directory)
+                def git(*args, input=None):
+                    return subprocess.check_output(["git", *args], cwd=checkout, env=release.child_environment(),
+                                                   input=input, stderr=subprocess.DEVNULL)
+                git("init", "-q")
+                (checkout / "tracked.py").write_bytes(b"VALUE = '$Id$'\n")
+                (checkout / ".gitattributes").write_text("tracked.py ident\n" if defect == "ident" else "*.py text\n")
+                git("add", ".")
+                git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+                if defect != "ident":
+                    git("update-index", "--" + defect, "tracked.py")
+                else:
+                    git("checkout-index", "-f", "-u", "--", "tracked.py")
+                (checkout / "tracked.py").write_bytes(b"VALUE = '$Id: " + b"a" * 40 + b" $'\n" if defect == "ident" else b"VALUE = 'unreviewed'\n")
+                if defect == "ident":
+                    self.assertEqual(git("hash-object", "tracked.py"), git("rev-parse", "HEAD:tracked.py"))
+                    self.assertNotEqual(git("hash-object", "--no-filters", "tracked.py"), git("rev-parse", "HEAD:tracked.py"))
+                else:
+                    self.assertEqual(git("status", "--porcelain=v2"), b"", "real Git must demonstrate the hidden change")
+                tool = release.Release.__new__(release.Release)
+                tool.source, tool.deadline = checkout, time.monotonic() + 30
+                tool.spec = {"candidate": {kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip() for kind in ("commit", "tree")}}
+                with patch.object(release, "command", REAL_COMMAND), self.assertRaises(release.ReleaseError):
+                    tool.source_check()
+
+    def test_isolated_child_refuses_ignored_unchecked_hash_cache_and_keeps_dependencies(self):
+        import py_compile
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            package = checkout / "src" / "fixture_cache"
+            package.mkdir(parents=True)
+            source = package / "__init__.py"
+            source.write_text("SAFE = True\n")
+            (checkout / ".gitignore").write_text("__pycache__/\n")
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=checkout, env=release.child_environment(), stderr=subprocess.DEVNULL)
+            git("init", "-q")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+            candidate = {kind: git("rev-parse", "HEAD^{" + kind + "}").decode().strip() for kind in ("commit", "tree")}
+            marker = checkout / "sentinel"
+            source.write_text("from pathlib import Path\nPath(" + repr(str(marker)) + ").write_text('executed')\nSAFE = False\n")
+            cache = py_compile.compile(str(source), invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+            source.write_text("SAFE = True\n")
+            self.assertEqual(git("status", "--porcelain=v2", "--untracked-files=all"), b"")
+            unsafe = "import sys; sys.path.insert(0,sys.argv[1]); import fixture_cache"
+            subprocess.run([sys.executable, "-I", "-B", "-c", unsafe, str(checkout / "src")], check=True, timeout=20)
+            self.assertTrue(marker.exists(), "-I/-B alone must demonstrate stale unchecked bytecode execution")
+            marker.unlink()
+            child = """import pathlib,runpy,sys,time
+m=runpy.run_path(sys.argv[1],run_name='verified_runner')
+t=m['Release'].__new__(m['Release']); t.source=pathlib.Path(sys.argv[2]); t.deadline=time.monotonic()+30
+t.spec={'candidate':{'commit':sys.argv[3],'tree':sys.argv[4]}}
+t.source_check()
+sys.path.insert(0,str(t.source/'src'))
+import fixture_cache,jsonschema
+assert fixture_cache.SAFE and callable(jsonschema.validate)
+"""
+            argv = [sys.executable, "-I", "-B", "-c", child, str(ROOT / "scripts/director-release.py"), str(checkout), candidate["commit"], candidate["tree"]]
+            guarded = subprocess.run(argv, capture_output=True, timeout=40)
+            self.assertFalse(marker.exists(), "unchecked cache executed after the claimed source gate")
+            self.assertNotEqual(guarded.returncode, 0)
+            Path(cache).unlink()
+            # Ordinary Windows CRLF source and installed dependencies stay usable.
+            source.write_bytes(b"SAFE = True\r\n")
+            git("config", "core.autocrlf", "true")
+            clean = subprocess.run(argv, capture_output=True, timeout=40)
+            self.assertEqual(clean.returncode, 0, clean.stderr)
 
 
 class ReleaseInputAndProcessTests(unittest.TestCase):

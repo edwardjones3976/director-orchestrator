@@ -318,23 +318,46 @@ global replication is unsupported. Health commands are limited to the checked-in
 orchestrator HTTP check and stock Postgres readiness checks, or disabled/absent
 checks. Image-inherited health commands are checked too, including when Compose
 overrides only their timing. Arbitrary healthcheck commands are refused.</p>
+<p>The orchestrator must resolve to the stock <code>uvicorn</code> argument list
+for the selected main or staging ASGI app, listening on <code>0.0.0.0:8080</code>,
+with no executable entrypoint wrapper. Missing Compose fields are checked against
+the cached image's effective command and entrypoint before any candidate probe
+or service can launch. An image-declared mount cannot add an executable overlay.</p>
+<p>Planning also resolves the three intentional staging, offline activation and
+rollback profile states without writing the profile. Each must retain the pinned
+graph digest and exact intended ASGI command and switches; interpolation cannot
+introduce a new command, entrypoint or mount after the initial check.</p>
+<p>Mounts are limited to exact stock targets: orchestrator state at <code>/data</code>,
+the read-only snapshot at <code>/repository</code>, an optional read-only acceptance
+registry at <code>/run/director-acceptance-registry</code>, n8n state at
+<code>/home/node/.n8n</code>, and each PostgreSQL service's
+<code>/var/lib/postgresql/data</code>. Slackbot has no mounts. Additional targets,
+parent mounts, bind or volume overlays on executable paths, duplicate targets,
+volume subpaths and aliases are refused. Each state volume uses its stock Compose
+key and exact <code>&lt;sibling-project&gt;_&lt;stock-key&gt;</code> name.</p>
 <p>The sibling project must have no existing containers, named networks or prior-image record.
-n8n state must be fresh: only new, project-scoped named volumes or ephemeral
-image state are supported. Reused databases/workflows, bind-mounted n8n state
+n8n and its optional PostgreSQL state volumes must be new, project-scoped named
+volumes. Reused databases/workflows, bind-mounted n8n state
 and alternate database hosts are refused because Director paid switches cannot
 constrain arbitrary stored workflows. These restrictions require explicit sibling
 Compose overrides for the stock graph's pull policies and gateway unpaid flags;
 the runner never rewrites the production graph or profile. Previously provisioned
-isolated primary database storage remains subject to the existing identity checks.</p>
+isolated primary database storage remains subject to the existing identity checks.
+The orchestrator and primary database state volumes must already be provisioned
+with the stock Compose project/volume labels and local driver, without driver
+options. Their observed identities, including creation time and mountpoint, are
+pinned and checked before each action. The runner never creates or deletes them.
+For the PostgreSQL n8n topology, effective host, port, database, user and password
+must match the stock n8n database service; errors contain no secret values.</p>
 <p>Offline rehearsal supports only <code>provider-v2</code> and <code>provider-v3-two-party</code>, exactly
 as <code>PrepareOfflineHandoff</code> does. <code>owner-local-evidence-v1</code> can satisfy doctor
 selector checks but cannot emit this offline plan. The sibling profile must also
 set <code>DIRECTOR_PROVIDER_VALIDATION_ENABLED=false</code> before the plan is produced.</p>
 <p>The result contains executable launcher <code>argv</code> arrays and separate inspection-only
-<code>control_argv</code> arrays for the database-only Compose start and existing control
+<code>control_argv</code> arrays for the database-only Compose start, final Compose stop and existing control
 script, in gate order:
 <code>StartDatabase</code>, <code>Preflight</code>, <code>Accept</code>, <code>Migrate</code>, <code>Backup</code>, <code>RestoreDrill</code>, <code>StageRuntime</code>,
-<code>PrepareOfflineHandoff</code>, <code>ActivateOffline</code>, <code>Health</code>, <code>Rollback</code>, <code>Health</code>.
+<code>PrepareOfflineHandoff</code>, <code>ActivateOffline</code>, <code>Health</code>, <code>Rollback</code>, <code>Health</code>, <code>Stop</code>.
 The restore proof precedes activation as the existing acceptance chain requires.
 The separately pinned acceptance artifact is passed to <code>Accept</code>; the runner
 never considers its mere existence or a successful plan to be acceptance.
@@ -358,7 +381,17 @@ tree and cleanliness, both before probes and immediately before launching the co
 script. It refuses executable Git filters and submodule checkouts. The separate
 snapshot verifier also refuses its own local executable filters and submodules,
 and disables fsmonitor and hooks using an explicit <code>/dev/null</code> hook path for its
-cleanliness check. These checks retain the trusted
+index, content and cleanliness checks. Both paths reject hidden index flags and authenticate actual
+tracked file bytes against the pinned Git tree using batched raw hashes. They
+tolerate only UTF-8 text CRLF line endings. The host source gate additionally refuses
+<code>ident</code>, working-tree encoding and filter attributes; the snapshot verifier
+compares raw bytes regardless of those attributes. Status and
+index timestamps do not substitute for file contents. The host source gate also
+refuses bytecode, native extension and untracked Python import artifacts beneath
+<code>src</code> and <code>scripts</code>, including ignored unchecked-hash caches.
+<code>-B</code> alone does not prevent cached imports. Installed dependencies outside
+those checkout import roots remain supported, and the runner never deletes caches.
+These checks retain the trusted
 operator model; they are not an atomic defense against concurrent filesystem replacement.
 The launcher also rechecks daemon identity and every cached image ID; before the
 first step it rechecks fresh project networks and project/n8n
@@ -380,6 +413,15 @@ enforce that bound</strong>. Timeouts and uncertain outcomes stop the drill for
 reconciliation without replay. This command emits <code>PLANNED</code> and <code>executed: false</code>;
 it does not execute the plan, enforce a running drill's deadline or attest a
 successful sub-25-minute rehearsal.</p>
+<p>Normal successful execution ends with existing Compose stop semantics for
+<code>slackbot</code>, <code>n8n</code> and <code>orchestrator</code>, with a 30-second
+stop timeout and the existing 140-second child bound. Docker inspection must
+then prove all sibling intake containers stopped, including one-off containers;
+paused or restarting intake is not accepted. A stop or proof failure makes the
+final step fail. This adds no time to the 1,499-second overall budget and does not
+touch the final project. Cleanup on an earlier error, timeout or interrupted
+operator is not guaranteed by this unexecuted plan; reconcile that state through
+the authorized operator instead of claiming a completed rehearsal.</p>
 <p>The sibling rollback/restore drill satisfies the owner's #81 rehearsal scope.
 The runner contains no path that recreates the final container. Once the final
 container is activated for evidence collection, the operator must keep its exact

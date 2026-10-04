@@ -16,6 +16,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import pathlib
 from pathlib import Path
 import re
 import signal
@@ -284,6 +285,8 @@ RUNTIME_CHANGES = {
 # One fixed helper is shared by planning and the emitted launcher so their
 # inventory digests have the same meaning. No container environment is retained.
 RESOURCE_INVENTORY = r"""
+def volume_identity(row):
+    return {key:row.get(key) for key in ('Name','Driver','Options','Labels','Mountpoint','CreatedAt','Scope')}
 def resource_inventory(read,project):
     ids=sorted(read(['docker','ps','-a','--filter','label=com.docker.compose.project='+project,'--format','{{.ID}}']).decode().splitlines())
     result={'containers':ids,'binds':[],'volumes':[],'networks':[],'ports':[]}
@@ -301,6 +304,64 @@ def resource_inventory(read,project):
     return {key:sorted(set(value)) for key,value in result.items()}
 """
 exec(RESOURCE_INVENTORY)
+
+# Shared by the host gate and emitted launcher. Git hashes actual files in one
+# batch with all conversions disabled; only a narrowly checked CRLF difference
+# may be normalized locally. No index stat-cache entry authenticates file bytes.
+SOURCE_PROOF = r"""
+def source_proof(read,root,tree):
+    root=pathlib.Path(root)
+    index=read(['git','ls-files','-v','-z']).split(b'\0')
+    if any(row and not row.startswith(b'H ') for row in index):
+        raise ValueError('source_hidden_index_flags')
+    files={}
+    for row in read(['git','ls-tree','-r','-z',tree]).split(b'\0'):
+        if not row: continue
+        meta,name=row.split(b'\t',1)
+        mode,kind,oid=meta.decode().split()
+        name=name.decode('utf-8')
+        if mode not in ('100644','100755') or kind!='blob' or pathlib.PurePosixPath(name).is_absolute() or '..' in pathlib.PurePosixPath(name).parts:
+            raise ValueError('source_file_type_unsupported')
+        path=root/name
+        for part in (path,*path.parents):
+            info=part.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0):
+                raise ValueError('source_link_refused')
+        files[name]=oid
+    if files:
+        names=list(files)
+        attrs=read(['git','check-attr','-z','--stdin','text','eol','ident','working-tree-encoding','filter'],
+                   input=('\0'.join(names)+'\0').encode()).decode().split('\0')[:-1]
+        attributes={name:{} for name in names}
+        if len(attrs)!=len(names)*15: raise ValueError('source_attributes_unavailable')
+        for pos in range(0,len(attrs),3): attributes[attrs[pos]][attrs[pos+1]]=attrs[pos+2]
+        hashes=read(['git','hash-object','--no-filters','--stdin-paths'],
+                    input=('\n'.join(json.dumps(name,ensure_ascii=False) for name in names)+'\n').encode()).decode().splitlines()
+        if len(hashes)!=len(names): raise ValueError('source_hashes_unavailable')
+        for name,actual in zip(names,hashes):
+            attr=attributes[name]
+            if any(attr[key] not in ('unset','unspecified') for key in ('ident','working-tree-encoding','filter')):
+                raise ValueError('source_transform_unsupported')
+            if actual==files[name]: continue
+            with (root/name).open('rb') as stream: raw=stream.read(4*1024*1024+1)
+            if len(raw)>4*1024*1024 or b'\0' in raw or attr['text']=='unset' or attr['eol'] not in ('unspecified','lf','crlf'):
+                raise ValueError('source_bytes_changed')
+            raw.decode('utf-8')
+            normalized=raw.replace(b'\r\n',b'\n')
+            oid=hashlib.sha1(b'blob '+str(len(normalized)).encode()+b'\0'+normalized).hexdigest()
+            if oid!=files[name]: raise ValueError('source_bytes_changed')
+    # -B prevents writes, not loading unchecked caches. Refuse cache/native or
+    # untracked Python import artifacts only inside the two checkout import roots.
+    for directory in ('src','scripts'):
+        for path in (root/directory).rglob('*'):
+            info=path.lstat()
+            suffix=path.suffix.lower()
+            if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0):
+                raise ValueError('source_import_artifact_refused')
+            if suffix in ('.pyc','.pyo','.pyd','.so') or (suffix in ('.py','.pyw') and path.relative_to(root).as_posix() not in files):
+                raise ValueError('source_import_artifact_refused')
+"""
+exec(SOURCE_PROOF)
 
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
@@ -361,6 +422,8 @@ def source_check():
             raise SystemExit('verified source identity changed')
     if (pathlib.Path(v['cwd'])/'.gitmodules').exists():
         raise SystemExit('source submodules unsupported')
+    try: source_proof(read,v['cwd'],v['candidate']['tree'])
+    except (ValueError,OSError,KeyError): raise SystemExit('verified source bytes or import artifacts changed') from None
     if read(['git','status','--porcelain=v2','--untracked-files=all']).strip():
         raise SystemExit('verified source no longer clean')
 input_check()
@@ -373,6 +436,10 @@ for reference,expected in v['images'].items():
     actual=json.loads(read(['docker','image','inspect',reference]))
     if len(actual)!=1 or actual[0]['Id']!=expected:
         raise SystemExit('verified cached image changed')
+for name,expected in v['state_volumes'].items():
+    rows=json.loads(read(['docker','volume','inspect',name]))
+    if len(rows)!=1 or digest(encoded(volume_identity(rows[0])))!=expected:
+        raise SystemExit('verified state volume changed')
 if v['first_step']:
     if read(['docker','ps','-a','--filter','label=com.docker.compose.project='+v['project'],'--format','{{.ID}}']).strip():
         raise SystemExit('sibling project no longer fresh')
@@ -387,16 +454,27 @@ if prior.exists():
     saved=json.loads(prior.read_text(encoding='utf-8-sig'))
     if any(saved.get(key)!=v['runtime_image'] for key in ('orchestrator_image_id','gateway_image_id')):
         raise SystemExit('rollback image outside verified rehearsal')
-if v['action']!='StartDatabase': database_check()
+if v['action'] not in ('StartDatabase','Stop'): database_check()
 input_check()
 source_check()
 subprocess.run(v['control_argv'],env=env,cwd=v['cwd'],check=True,timeout=v['control_timeout_seconds'])
 if v['action']=='StartDatabase':
     input_check()
     database_check()
+if v['action']=='Stop':
+    ids=read(['docker','ps','-a','--filter','label=com.docker.compose.project='+v['project'],'--format','{{.ID}}']).decode().splitlines()
+    rows=json.loads(read(['docker','inspect',*ids])) if ids else []
+    if len(rows)!=len(ids): raise SystemExit('sibling intake not proved stopped')
+    for row in rows:
+        labels=row.get('Config',{}).get('Labels',{})
+        if labels.get('com.docker.compose.project')!=v['project']: raise SystemExit('sibling intake not proved stopped')
+        if labels.get('com.docker.compose.service') not in ('langgraph-primary-db','n8n-db'):
+            state=row.get('State',{})
+            if state.get('Running') or state.get('Paused') or state.get('Restarting') or state.get('Status') not in ('created','exited','dead'):
+                raise SystemExit('sibling intake not proved stopped')
 """
 REHEARSAL_LAUNCH = ("LOCAL_DATABASE_PROBE=" + repr(LOCAL_DATABASE_PROBE) + "\nVALIDATION_PROBE=" +
-                   repr(VALIDATION_PROBE) + "\n" + RESOURCE_INVENTORY + REHEARSAL_LAUNCH)
+                   repr(VALIDATION_PROBE) + "\n" + RESOURCE_INVENTORY + SOURCE_PROOF + REHEARSAL_LAUNCH)
 
 
 class Release:
@@ -479,6 +557,11 @@ class Release:
         # This release checkout does not support submodules; do not hide their
         # dirtiness with --ignore-submodules.
         require(not (self.source / ".gitmodules").exists(), "source_submodules_unsupported")
+        try:
+            source_proof(lambda args, **kw: self.run(args, input_bytes=kw.get("input")), self.source, expected["tree"])
+        except (ValueError, OSError, KeyError) as error:
+            raise ReleaseError(str(error) if isinstance(error, ValueError) and str(error).startswith("source_")
+                               else "source_bytes_unavailable") from None
         require(not self.run(["git", "status", "--porcelain=v2", "--untracked-files=all"]).strip(), "source_not_clean")
 
     def image_check(self):
@@ -538,20 +621,22 @@ class Release:
                     "validation_configuration_pin_invalid")
         # This is a selector comparison, not acceptance or full manifest verification.
 
-    def compose_check(self):
-        self.owner_check()
-        self.source_check()
-        from director_orchestrator.primary_generation import resolved_deployment_digest
+    def compose_document(self, runtime):
         env = child_environment()
-        env.update(self.runtime)
+        env.update(runtime)
         env.update(DIRECTOR_ENV_FILE=self.spec["runtime_env"]["path"],
                    DIRECTOR_COMPOSE_PROJECT_NAME=self.spec["compose_project"])
         args = ["docker", "compose", "--project-name", self.spec["compose_project"],
                 "--env-file", self.spec["runtime_env"]["path"]]
         for pin in self.spec["compose_files"]:
             args.extend(["-f", pin["path"]])
-        raw = self.run([*args, "config", "--format", "json"], env=env)
-        composed = document(raw)
+        return document(self.run([*args, "config", "--format", "json"], env=env))
+
+    def compose_check(self):
+        self.owner_check()
+        self.source_check()
+        from director_orchestrator.primary_generation import resolved_deployment_digest
+        composed = self.compose_document(self.runtime)
         require(composed.get("name") == self.spec["compose_project"], "compose_project_mismatch")
         require(resolved_deployment_digest(composed, self.spec["image_id"]) == self.manifest["resolved_compose_sha256"],
                 "resolved_compose_mismatch")
@@ -809,6 +894,7 @@ class Release:
         require(self.daemon_id == sibling.daemon_id and self.docker_environment == sibling.docker_environment,
                 "sibling_docker_target_mismatch")
         images = sibling.rehearsal_images(sibling_graph)
+        sibling.rehearsal_modes()
         environment = child_environment()
         environment.update(sibling.docker_environment)
         environment.update(COMPOSE_FILE=os.pathsep.join(pin["path"] for pin in sibling.spec["compose_files"]),
@@ -829,13 +915,15 @@ class Release:
         runtime_changed = False
         actions = (["StartDatabase"] if local_database else []) + [
             "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "StageRuntime",
-            "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health"]
+            "PrepareOfflineHandoff", "ActivateOffline", "Health", "Rollback", "Health", "Stop"]
         steps = []
         for action in actions:
             arguments = [*base, "-Action", action, *common]
             if action == "StartDatabase":
                 arguments = [*compose, "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait",
                              "--wait-timeout", "120", "langgraph-primary-db"]
+            elif action == "Stop":
+                arguments = [*compose, "stop", "--timeout", "30", "slackbot", "n8n", "orchestrator"]
             elif action == "Accept":
                 arguments += ["-AcceptanceArtifactPath", plan["acceptance_artifact"]["path"]]
             elif action in ("Backup", "RestoreDrill"):
@@ -851,6 +939,7 @@ class Release:
                        # 65s. Preserve their full 120s health wait plus overhead.
                        "control_timeout_seconds": 260 if action in ("ActivateOffline", "Rollback") else 140,
                        "images": images, "control_argv": arguments, "runtime_image": sibling.spec["image_id"],
+                       "state_volumes": sibling.state_volumes,
                        "prior_images": sibling.prior_images_path(), "first_step": not steps,
                        "project": sibling.spec["compose_project"],
                        "fresh_networks": [item["name"] for item in sibling_graph["networks"].values()],
@@ -886,6 +975,24 @@ class Release:
                 "release_ready": False, "provider_calls": 0,
                 "dependencies": DEPENDENCIES, "on_uncertain_effect": "STOP_RECONCILE_WITHOUT_REPLAY"}
 
+    def rehearsal_modes(self):
+        # The control actions intentionally change these switches. Resolve each
+        # future graph before emission: a pinned template can interpolate them
+        # into commands or mounts that are absent from its initial render.
+        from director_orchestrator.primary_generation import resolved_deployment_digest
+        from director_orchestrator.primary_activation_evidence import ActivationEvidenceError
+        runtime = dict(self.runtime)
+        for changes in RUNTIME_CHANGES.values():
+            runtime.update(changes)
+            graph = self.compose_document(runtime)
+            try:
+                require(all(graph["services"]["orchestrator"]["environment"].get(key) == value
+                            for key, value in changes.items()) and
+                        resolved_deployment_digest(graph, self.spec["image_id"]) == self.manifest["resolved_compose_sha256"],
+                        "sibling_runtime_graph_changed")
+            except (ActivationEvidenceError, KeyError, TypeError):
+                raise ReleaseError("sibling_runtime_graph_changed") from None
+
     def rehearsal_images(self, graph):
         require(not self.run(["docker", "ps", "-a", "--filter",
                               "label=com.docker.compose.project=" + self.spec["compose_project"],
@@ -909,6 +1016,11 @@ class Release:
             elif "test" in override:
                 healthcheck = override
             reviewed_healthcheck(name, healthcheck)
+            if name == "orchestrator":
+                reviewed_orchestrator(service, inspected[0].get("Config", {}))
+            image_mounts = set((inspected[0].get("Config", {}).get("Volumes") or {}))
+            require(image_mounts <= {mount["target"] for mount in service.get("volumes", [])} and
+                    image_mounts <= set(STOCK_MOUNTS[name]), "sibling_mount_unsupported")
             images[reference] = inspected[0]["Id"]
         # n8n must start without persisted workflows or credentials. The caller
         # may provision fresh isolated volumes; reused n8n state is unsupported.
@@ -917,6 +1029,17 @@ class Release:
             for mount in graph["services"].get(name, {}).get("volumes", []):
                 require(mount.get("type") == "volume" and mount["source"] in graph.get("volumes", {}) and
                         graph["volumes"][mount["source"]]["name"] not in existing, "sibling_n8n_state_not_fresh")
+        self.state_volumes = {}
+        for service, key in (("orchestrator", "director-data"), ("langgraph-primary-db", "langgraph-primary-db-data")):
+            if service not in graph["services"]:
+                continue
+            name = graph["volumes"][key]["name"]
+            require(name in existing, "sibling_state_volume_not_provisioned")
+            rows = document(self.run(["docker", "volume", "inspect", name]))
+            require(len(rows) == 1 and rows[0].get("Name") == name and rows[0].get("Driver") == "local" and
+                    not rows[0].get("Options") and rows[0].get("Labels", {}).get("com.docker.compose.project") == graph["name"] and
+                    rows[0].get("Labels", {}).get("com.docker.compose.volume") == key, "sibling_state_volume_identity_mismatch")
+            self.state_volumes[name] = sha(encoded(volume_identity(rows[0])))
         return images
 
     def input_pins(self, *, include_runtime=True):
@@ -986,6 +1109,51 @@ def reviewed_healthcheck(name, healthcheck):
     require(test in (None, [], ["NONE"]) or test == tests.get(name), "sibling_healthcheck_unsupported")
 
 
+def reviewed_orchestrator(service, image=None):
+    app = service.get("environment", {}).get("DIRECTOR_ASGI_APP", "director_orchestrator.main:app")
+    require(app in ("director_orchestrator.main:app", "director_orchestrator.primary_staging:app"),
+            "sibling_orchestrator_command_unsupported")
+    entrypoint = service.get("entrypoint")
+    command = service.get("command")
+    if image is not None:
+        entrypoint = image.get("Entrypoint") if entrypoint is None else entrypoint
+        command = image.get("Cmd") if command is None else command
+    require(entrypoint in (None, [], "") and
+            (command is None and image is None or command == ["uvicorn", app, "--host", "0.0.0.0", "--port", "8080"]),
+            "sibling_orchestrator_command_unsupported")
+
+
+STOCK_MOUNTS = {
+    "orchestrator": {"/data": "director-data", "/repository": None, "/run/director-acceptance-registry": None},
+    "slackbot": {}, "n8n": {"/home/node/.n8n": "n8n-data"},
+    "n8n-db": {"/var/lib/postgresql/data": "n8n-db-data"},
+    "langgraph-primary-db": {"/var/lib/postgresql/data": "langgraph-primary-db-data"},
+}
+
+
+def stock_mounts(graph):
+    allowed = {key for mounts in STOCK_MOUNTS.values() for key in mounts.values() if key}
+    require(set(graph.get("volumes", {})) <= allowed, "sibling_mount_unsupported")
+    for key, volume in graph.get("volumes", {}).items():
+        require(volume.get("name") == graph["name"] + "_" + key, "sibling_mount_unsupported")
+    for name, service in graph["services"].items():
+        seen = set()
+        for mount in service.get("volumes", []):
+            target = mount.get("target")
+            require(target in STOCK_MOUNTS[name] and target not in seen, "sibling_mount_unsupported")
+            seen.add(target)
+            key = STOCK_MOUNTS[name][target]
+            if key:
+                require(mount.get("type") == "volume" and mount.get("source") == key and
+                        key in graph.get("volumes", {}) and not mount.get("read_only") and not mount.get("volume") and
+                        set(mount) <= {"type", "source", "target", "read_only", "volume"}, "sibling_mount_unsupported")
+            else:
+                require(mount.get("type") == "bind" and mount.get("read_only") is True and
+                        set(mount.get("bind", {})) <= {"create_host_path"} and
+                        set(mount) <= {"type", "source", "target", "read_only", "bind"}, "sibling_mount_unsupported")
+        require({target for target, key in STOCK_MOUNTS[name].items() if key} <= seen, "sibling_mount_unsupported")
+
+
 def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_resources=None, docker_host=""):
     """Check resolved Compose resources, not just a different project name."""
     project = sibling["name"]
@@ -999,6 +1167,8 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
                     (service.get("scale", 1), deploy.get("replicas", 1))) and
                 deploy.get("mode", "replicated") == "replicated", "sibling_service_not_singleton")
         reviewed_healthcheck(name, service.get("healthcheck", {}))
+        if name == "orchestrator":
+            reviewed_orchestrator(service)
         require(set(service.get("depends_on", {})) <= allowed_dependencies[name] and
                 set(service.get("depends_on", {})) <= set(sibling["services"]) and
                 not any(service.get(key) for key in ("links", "external_links", "extends", "post_start", "pre_stop")),
@@ -1022,6 +1192,13 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
             (n8n.get("DB_TYPE", "sqlite") != "postgresdb" or
              (n8n.get("DB_POSTGRESDB_HOST") == "n8n-db" and "n8n-db" in sibling["services"])),
             "sibling_n8n_configuration_unsupported")
+    if n8n.get("DB_TYPE", "sqlite") == "postgresdb":
+        database = sibling["services"]["n8n-db"].get("environment", {})
+        require(str(n8n.get("DB_POSTGRESDB_PORT", "5432")) == "5432" and
+                n8n.get("DB_POSTGRESDB_DATABASE") == database.get("POSTGRES_DB") == "n8n" and
+                n8n.get("DB_POSTGRESDB_USER") == database.get("POSTGRES_USER") == "n8n" and
+                bool(database.get("POSTGRES_PASSWORD")) and
+                n8n.get("DB_POSTGRESDB_PASSWORD") == database["POSTGRES_PASSWORD"], "sibling_n8n_database_mismatch")
     for name in ("n8n-db", "langgraph-primary-db"):
         if name in sibling["services"]:
             require(set(sibling["services"][name].get("environment", {})) <=
@@ -1089,6 +1266,7 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
     require(any(str(port.get("published")) == str(host_port) and port.get("target") == 8080 and
                 port.get("protocol", "tcp") == "tcp"
                 for port in sibling["services"]["orchestrator"].get("ports", [])), "sibling_host_port_mismatch")
+    stock_mounts(sibling)
 
 
 @contextmanager

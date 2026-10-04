@@ -266,7 +266,7 @@ Write-Output 'tls-lifecycle-passed'
             git("config", "core.fsmonitor", hook.as_posix())
             blocked = subprocess.run(command, env=env, capture_output=True, timeout=30)
             self.assertNotEqual(blocked.returncode, 0)
-            self.assertIn(b"not clean", blocked.stderr)
+            self.assertRegex(blocked.stderr, b"not clean|tracked bytes differ")
             self.assertFalse(marker.exists())
 
     def test_snapshot_hook_override_resolves_to_a_non_directory(self) -> None:
@@ -281,6 +281,30 @@ Write-Output 'tls-lifecycle-passed'
                 "rev-parse", "--git-path", "hooks/post-index-change"], env=env).decode().strip()
             self.assertIn("/dev/null/", hook.replace("\\", "/"))
             self.assertFalse(Path(hook).parent.is_dir())
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_verifies_actual_bytes_despite_hidden_index_flags(self) -> None:
+        for flag in ("assume-unchanged", "skip-worktree"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                repo = Path(directory)
+                env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+                env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+                def git(*args):
+                    return subprocess.check_output(["git", *args], cwd=repo, env=env, stderr=subprocess.DEVNULL).decode().strip()
+                git("init", "-q", "-b", "main")
+                path = repo / "run.py"
+                path.write_bytes(b"SAFE = True\n")
+                git("add", ".")
+                git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+                git("remote", "add", "origin", "https://github.com/example/demo.git")
+                command = ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts/windows-primary-snapshot.ps1"),
+                    "-Action", "Verify", "-Source", str(repo), "-Target", str(repo), "-ExpectedRepository", "example/demo",
+                    "-StartingRef", "main", "-ExpectedCommit", git("rev-parse", "HEAD"), "-ExpectedTree", git("rev-parse", "HEAD^{tree}")]
+                git("update-index", "--" + flag, "run.py")
+                path.write_bytes(b"SAFE = False\n")
+                self.assertEqual(git("status", "--porcelain=v2"), "")
+                result = subprocess.run(command, env=env, capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0, "snapshot accepted changed bytes hidden by the index")
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_creation_binds_content_to_the_selected_remote(self) -> None:
@@ -334,7 +358,8 @@ function global:git {
         New-Item -ItemType Directory -Path (Join-Path $arguments[-1] ".git") -Force | Out-Null
         return
     }
-    if ($arguments -contains "set-url" -or $arguments -contains "status" -or $arguments -contains "config") { return }
+    if ($arguments -contains "set-url" -or $arguments -contains "status" -or $arguments -contains "config" -or
+        $arguments -contains "ls-files" -or $arguments -contains "ls-tree") { return }
     if ($arguments -contains "rev-parse") {
         if ($arguments[-1] -eq 'HEAD^{tree}') { Write-Output "__TREE__" } else { Write-Output "__COMMIT__" }
         return
