@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Native issuer and GitHub target extensions · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]] -->
+<h1 id="native-issuer-and-github-target-extensions">Native issuer and GitHub target extensions</h1>
+<p>This source implements additional capture routes; it neither enrolls an issuer nor activates LangGraph. The existing Claude security and Cursor independent-review installer defaults are unchanged. Explicit <code>-Provider openai</code> is eligible only for security; <code>-Provider gemini</code> is eligible for security or independent review. Nondefault providers use separate installation directories, preserving existing keys and state. Registry adoption remains a separate, owner-controlled operation after exact-release review and CI by already trusted eligible authorities. A new issuer cannot approve its initial adoption, and two Gemini issuers cannot supply independent provider families.</p>
+<p>The native workers retain protected broker/worker identities, executable pins, complete runtime ACL verification, create-once claims and protected captures. Codex uses ChatGPT login status and bounded ephemeral JSON execution with the installed transport's disabled tool/config flags. AGY uses the installed 1.1.27 stream shape and documented stdin user event. Both reject mismatched challenge, packet digest, nonce, native session, duplicated terminal events, tools, unsupported event categories and non-ACCEPT verdicts before signing. Requested models are recorded separately; observed model and account remain unknown in these streams.</p>
+<p>AGY requires separately provisioned <code>-NativeHome</code>, <code>-NativeProject</code> and <code>-NativeDenyHook</code>, all inside protected runtime roots. The deny-all permission settings and wildcard hook must match the protected policy. The installer does not create authentication, copy account files or pretend that valid JSON proves native enforcement. Initial enrollment must establish the actual native account mode from the authenticated native UI, prove this exact runtime enforces the hook, and verify native state writes do not allow policy/launcher replacement. Current CLI exposes no machine-readable account/project observation endpoint. An operator cannot close this gap by copying a requested project or supplying an invented observed account. If protected home/state separation fails, no issuer enrollment is valid. The installer ancestry/mask correction remains a separate Antigravity-authored package.</p>
+<p>Native protocol sources: <a href="https://antigravity.google/docs/cli/headless/">AGY headless stream</a>, <a href="https://antigravity.google/docs/cli-install?app=antigravity">AGY installation and authentication</a>, <a href="https://antigravity.google/docs/cli/projects/">AGY project request binding</a>, and the existing pinned <code>native_codex_transport.py</code> integration. Preserved native-attempt-001 is evidence of the AGY 1.1.27 event shape, not qualified host containment. No new paid provider run was performed for this implementation.</p>
+<p>The Linux engineering worker additionally requires a root-protected, nondelegated <code>cgroup_root</code> on a cgroup v2 mount with kernel <code>cgroup.kill</code> support. Each command joins a fresh child group before UID reduction and execution. Every exit kills that whole group and verifies <code>populated 0</code>; escaping the original session or process group cannot escape this boundary. A changed worker configuration digest requires new host qualification. The real Linux regression executes these production helpers against new disposable groups; it does not qualify the production guest, native authentication or network isolation.</p>
+<p>GitHub mark-ready authority now requires <code>LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_BASE_SHA</code> and <code>LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_HEAD_SHA</code>, alongside the existing single repository allowlist and positive <code>LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER</code>. These are actual PR coordinates captured and approved by the owner, independent of the deployed candidate or task source revision. They enter the existing effect approval digest. Missing or malformed coordinates fail closed. The existing gateway rechecks both revisions immediately before mutation and in terminal readback; no merge authority is added. The underlying GitHub mark-ready API has no atomic expected-head parameter, so readback remains essential when a concurrent branch update races the preflight GET.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

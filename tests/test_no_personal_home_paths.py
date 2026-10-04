@@ -7,7 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED = {ROOT / "projects" / "homemade-llm" / "decision-log.md"}
 TEXT_SUFFIXES = {
-    ".md", ".py", ".ps1", ".example", ".yaml", ".yml", ".txt", ".toml", ".ini", ".sh",
+    ".html", ".md", ".py", ".ps1", ".example", ".yaml", ".yml", ".txt", ".toml", ".ini", ".sh",
 }
 HOME = ("Users" + "/edwar").encode()
 HOME_WIN = ("Users" + "\\edwar").encode()

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Provider connection audit — 2026-09-09 · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#result">Result</a></li><li class="top"><a href="#the-one-real-defect-grok-is-enabled-without-a-credential--resolved">The one real defect: Grok is enabled without a credential — RESOLVED</a></li><li class="top"><a href="#transports-that-are-entirely-unconfigured">Transports that are entirely unconfigured</a></li><li class="top"><a href="#why-delegations-do-not-get-picked-up--corrected-2026-09-09-2100-utc">Why delegations do not get picked up — corrected 2026-09-09 21:00 UTC</a></li><li class="top"><a href="#what-was-not-done">What was not done</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
+<blockquote>
+<p><strong>Historical record restored on 2026-09-12.</strong> The observations and corrections below
+describe the author's 2026-09-09 session. They are not a current health check,
+route qualification, allocation decision, authorization, or activation receipt.
+Retained Microsoft 365 references describe the retired historical deployment;
+PR #161 retired that integration. Current authority is the
+<a href="team-operating-charter.html">team operating charter</a>,
+<a href="provider-allocation-profiles.html">provider allocation profiles</a>, and
+<a href="langgraph-primary-operations.html">LangGraph primary operations</a>.
+Verify current state through the <a href="state-witness.html">Witness Ledger</a> rather
+than treating a historical readiness claim as evidence of today's deployment.</p>
+</blockquote>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | BEGIN]] -->
+<h1 id="provider-connection-audit--2026-09-09">Provider connection audit — 2026-09-09</h1>
+<blockquote>
+<p><strong>Four findings in this audit were corrected. At 21:00 UTC: Read the corrections before relying on anything below:</strong> Grok is now ready, the ChatGPT bridge row was wrong, and the nonresponse section was wrong. At 21:35 UTC: the Grok credential variable was named wrongly. Each is marked in place.</p>
+</blockquote>
+<p>Evaluated <code>Settings.readiness()</code> and each lane's readiness function against the
+deployment environment file. Presence and length only; no credential value was
+read into output, and nothing was changed — every remediation below is
+owner-reserved.</p>
+<h2 id="result">Result</h2>
+<p><code>readiness()</code> is the repository's own definition of &quot;connected&quot;. Six of seven listed readiness keys
+keys were true at 17:40 UTC.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>State</th>
+<th>Basis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>slack</code></td>
+<td><strong>READY</strong></td>
+<td>app token, bot token, and a gateway secret ≥32 chars distinct from the shared secret</td>
+</tr>
+<tr>
+<td><code>openai_director</code></td>
+<td><strong>READY</strong></td>
+<td><code>OPENAI_API_KEY</code> present</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td><strong>READY</strong></td>
+<td><code>CURSOR_API_KEY</code> present; repository and project allowlists set</td>
+</tr>
+<tr>
+<td><code>claude</code></td>
+<td><strong>READY</strong></td>
+<td><code>CLAUDE_ROUTINE_URL</code> and <code>CLAUDE_ROUTINE_TOKEN</code> present — the two fields <code>readiness()</code> actually reads</td>
+</tr>
+<tr>
+<td><code>gemini</code></td>
+<td><strong>READY</strong></td>
+<td>all eleven <code>gemini_supplemental_readiness</code> checks pass</td>
+</tr>
+<tr>
+<td><code>perplexity</code></td>
+<td><strong>READY</strong></td>
+<td>enabled, credential present, <code>research_only</code> mode by default</td>
+</tr>
+<tr>
+<td>~~<code>grok</code>~~</td>
+<td><strong>SUPERSEDED — now READY</strong></td>
+<td>See the correction below</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Grok correction, 21:00 UTC.</strong> <code>/health</code> on the running deployment reports
+<code>providers.grok: true</code>. <strong>All six listed provider lanes and Slack were reported ready.</strong> The Grok defect
+recorded below was real when measured and has since been remediated by the
+owner; it is retained for the record, not as a live finding.</p>
+<p><strong>A near-miss worth recording.</strong> <code>ANTHROPIC_API_KEY</code> is present but empty, which
+looks like a broken Claude lane and is not one. <code>readiness()[&quot;claude&quot;]</code> reads
+<code>claude_routine_url</code> and <code>claude_routine_token</code>, because the Claude lane
+dispatches through the Claude Code Routine rather than the raw Anthropic API.
+The empty key is unused by that path. This audit initially recorded it as a
+defect and corrected before reporting — the same restrictive-reading error
+pattern recorded in the compliance audit.</p>
+<h2 id="the-one-real-defect-grok-is-enabled-without-a-credential--resolved">The one real defect: Grok is enabled without a credential — RESOLVED</h2>
+<pre><code>GROK_ENABLED           = true
+GROK_DAILY_BUDGET_USD  = [historical value omitted]
+XAI_API_KEY            = absent      &lt;- present and non-empty as of 21:00 UTC
+(repository transport)               &lt;- not required; see the correction below
+</code></pre>
+<p><code>grok_primary_readiness</code> therefore fails on <code>credential_configured</code>; with repository transport not required,
+<code>repository_transport_ready</code> does not independently fail, so <code>readiness()[&quot;grok&quot;]</code> is false. The lane is
+switched on and budgeted while being unable to execute. Failing closed is
+correct behaviour; the inconsistency is that the roster advertises a lane that
+cannot act.</p>
+<p><strong>Variable-name correction, 21:35 UTC.</strong> This section originally named
+<code>GROK_API_KEY</code> and <code>GROK_REPOSITORY_TRANSPORT</code>. <strong>Neither is the API credential setting used by <code>Settings</code>.</strong> The primary
+child-environment allowlist does recognize <code>GROK_API_KEY</code> as a transport alias.
+The credential is <code>XAI_API_KEY</code> (<code>config.py</code>: <code>grok_api_key = os.getenv(&quot;XAI_API_KEY&quot;, &quot;&quot;)</code>),
+and repository transport is computed from the <code>GROK_CLI_*</code> group and is required
+only when <code>GROK_ALLOW_REPOSITORY_WRITE</code> or <code>GROK_ALLOW_REVIEW_VERDICT</code> is true —
+both default false. Acting on the original instruction would have set two
+variables that do not configure API readiness and left the lane closed while appearing to fix it.
+See <a href="grok-lanes-separation-2026-09-09.html">the Grok lane separation note</a>.</p>
+<p><strong>Scope of this finding.</strong> It governs <em>orchestrator-dispatched</em> Grok work. A Grok
+session the owner launches directly is a different surface and is unaffected —
+the same two-surface distinction that applies to Firecrawl.</p>
+<h2 id="transports-that-are-entirely-unconfigured">Transports that are entirely unconfigured</h2>
+<p>Not defects — nothing claims they are configured — but each one closes a path
+that has been discussed as if it were available.</p>
+<table>
+<thead>
+<tr>
+<th>Transport</th>
+<th>Variables absent</th>
+<th>What it closes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Host provider bridge</strong></td>
+<td><code>DIRECTOR_HOST_PROVIDER_BRIDGE_SECRET</code>, <code>..._URL</code>, <code>..._POSTGRES_DSN</code></td>
+<td>Grok's digest-verified CLI contact, the Antigravity team worker, and the Copilot packet wrapper. <strong>D-11 and D-14 are blocked on infrastructure that does not exist yet, not merely on a decision</strong></td>
+</tr>
+<tr>
+<td>~~<strong>ChatGPT Slack alias bridge</strong>~~</td>
+<td>—</td>
+<td><strong>Retracted 2026-09-09 21:00 UTC. This row was wrong.</strong> <code>/health</code> reports <code>chatgpt_bridge.enabled: true</code> with <code>slack_transport_configured</code>, <code>internal_auth_configured</code>, <code>alias_user_configured</code> and <code>channels_allowlisted</code> all true, and every <code>CHATGPT_BRIDGE_*</code> key is present. The bridge is configured</td>
+</tr>
+<tr>
+<td><strong>GitHub credentials</strong></td>
+<td><code>GITHUB_APP_ID</code>, <code>GITHUB_TOKEN</code>, <code>ORACLE_REVIEW_SECRET</code></td>
+<td><strong>The orchestrator cannot read a pull request or post a review.</strong> Every review must therefore be performed by an owner-launched agent; the automated review-to-merge path cannot operate at all</td>
+</tr>
+<tr>
+<td><strong>Firecrawl</strong></td>
+<td><code>FIRECRAWL_API_KEY</code></td>
+<td>The repository research lane. The Director-side MCP surface is separate and works</td>
+</tr>
+<tr>
+<td><strong>GitHub Copilot</strong></td>
+<td><code>COPILOT_GITHUB_TOKEN</code></td>
+<td>The Lite hygiene lane; fails closed as unavailable</td>
+</tr>
+<tr>
+<td><strong>Microsoft 365 Copilot</strong></td>
+<td>tenant and token file</td>
+<td>Already known; blocked on tenant administration</td>
+</tr>
+</tbody>
+</table>
+<h2 id="why-delegations-do-not-get-picked-up--corrected-2026-09-09-2100-utc">Why delegations do not get picked up — corrected 2026-09-09 21:00 UTC</h2>
+<p><strong>The earlier version of this section was wrong, and wrong in the direction that
+makes a working component look broken.</strong> It stated that two Director posts on
+2026-09-09 and the availability check on 2026-09-08 &quot;all went unanswered&quot;, and
+concluded that the Slack identities are not autonomous listeners. That
+conclusion was drawn from the channel's top-level view. <strong>The threads were never
+opened.</strong></p>
+<p>They were not unanswered. Cursor replied to every one of them, in thread, within
+seconds:</p>
+<table>
+<thead>
+<tr>
+<th>Director post</th>
+<th>Cursor reply</th>
+<th>Latency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-09-09 02:58:15 PDT</td>
+<td><code>The agent failed to start. Please try again.</code></td>
+<td>18 s</td>
+</tr>
+<tr>
+<td>2026-09-09 09:18:23 PDT</td>
+<td>same</td>
+<td>7 s</td>
+</tr>
+<tr>
+<td>2026-09-09 09:23:38 PDT</td>
+<td>same</td>
+<td>13 s</td>
+</tr>
+</tbody>
+</table>
+<p>Three for three, the same message, always within seconds. That is not silence
+and it is not nonresponse. <strong>Cursor is wired to this channel, is receiving the
+mentions, and is being triggered by them; the agent process fails to start.</strong></p>
+<p>This inverts the practical reading:</p>
+<ul>
+<li>The Slack bus <strong>is</strong> a live dispatch surface. The mention reaches Cursor.</li>
+<li>A-18 and A-19 were never declined and never ignored. They have never started.</li>
+<li>The failure is a Cursor agent-launch fault, and each reply carries a <strong>Try
+Again</strong> button, so the cheapest next action is an owner press, not a
+reassignment.</li>
+<li>The nonresponse counter in the operating charter must not be advanced for
+these three. A launch failure is a transport fault, not a provider decision,
+and counting it toward &quot;three nonresponses ⇒ mark unavailable&quot; would retire a
+provider that never received the work.</li>
+</ul>
+<p><strong>Method note, recorded because the error is the reusable part.</strong> The claim was
+asserted from a channel listing that shows reply counts but not replies. Reply
+counts were visible on all three posts. The rule that follows: a nonresponse
+finding requires opening the thread, and a thread that shows any reply count is
+not evidence of silence.</p>
+<h2 id="what-was-not-done">What was not done</h2>
+<p>No credential was created, modified or requested. No environment file was edited.
+No value was read into output. Every remediation above requires the owner.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

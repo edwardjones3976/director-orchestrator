@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Primary lane staging worksheet · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#what-is-actually-missing">What is actually missing</a></li><li class="top"><a href="#section-1--the-snapshot-root">Section 1 — the snapshot root</a></li><li class="sub"><a href="#creating-the-snapshot">Creating the snapshot</a></li><li class="top"><a href="#section-2--deferred-provider-activation-bindings">Section 2 — deferred provider activation bindings</a></li><li class="top"><a href="#section-3--deferred-host-provider-bridge">Section 3 — deferred host provider bridge</a></li><li class="sub"><a href="#claude-authentication-status">Claude authentication status</a></li><li class="top"><a href="#pass-2--apply">Pass 2 — apply</a></li><li class="top"><a href="#verification">Verification</a></li><li class="top"><a href="#after-pass-2---activation-staging-inventory-names-only">After Pass 2 - activation staging inventory (names only)</a></li><li class="sub"><a href="#which-control-version-this-inventory-describes">Which control version this inventory describes</a></li><li class="sub"><a href="#generation-image-and-deployment-identities">Generation, image, and deployment identities</a></li><li class="top"><a href="#what-this-does-not-do">What this does not do</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:55 UTC | BEGIN]] -->
+<h1 id="primary-lane-staging-worksheet">Primary lane staging worksheet</h1>
+<p><strong>Purpose:</strong> bring <code>langgraph_primary.configuration_valid</code> from false to true on
+this deployment. This is configuration staging only. No activation switch is
+flipped and no provider is dispatched by these staging steps. They do not transfer
+writer ownership; verify the actual owner from fresh generation-bound health and
+the authoritative writer ledger before proceeding.</p>
+<p><strong>Status of this document:</strong> Pass 2 starts only after explicit owner approval.
+The owner-authorized operator supplies the deployment-specific snapshot path.
+Do not commit filled values, credentials, account metadata, or machine-specific
+user paths.</p>
+<h2 id="what-is-actually-missing">What is actually missing</h2>
+<p>Measured against the running deployment on 2026-09-04. Recheck the sanitized
+<code>/health</code> response immediately before applying the change.</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Current state</th>
+<th>Meaning for Pass 2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>authority_root_configured</code></td>
+<td>false because <code>REPOSITORY_SNAPSHOT_ROOT</code> is absent</td>
+<td>The only currently false input to <code>configuration_valid</code>; fix in Section 1.</td>
+</tr>
+<tr>
+<td><code>provider_activation_bindings_configured</code></td>
+<td>false because the binding map is empty</td>
+<td>Separate live-dispatch readiness signal; leave false during Pass 2.</td>
+</tr>
+</tbody>
+</table>
+<p><code>Settings.langgraph_primary_configuration_readiness()</code> computes
+<code>configuration_valid</code> without provider activation bindings. Exact bindings are
+enforced by <code>Settings.validate_langgraph_primary_configuration()</code> only when
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=true</code>.</p>
+<p>Confirmed already correct, so no action: <code>ALLOW_PAID_RUNS=false</code>, the required
+provider roster is nonempty and unique, and every other input to
+<code>configuration_valid</code> is true. These observations are not authority to enable
+primary execution or paid dispatch.</p>
+<hr />
+<h2 id="section-1--the-snapshot-root">Section 1 — the snapshot root</h2>
+<p>Two variables form the operational pair:</p>
+<pre><code class="language-dotenv">REPOSITORY_SNAPSHOT_ROOT=/repository
+REPOSITORY_SNAPSHOT_HOST_PATH=&lt;FILL IN: absolute Windows path to the snapshot&gt;
+</code></pre>
+<p><code>REPOSITORY_SNAPSHOT_ROOT</code> is the path inside the container. It must be
+<code>/repository</code>, because <code>docker-compose.yml</code> binds the host snapshot to that
+target read-only. <code>REPOSITORY_SNAPSHOT_HOST_PATH</code> is the existing host directory
+bound to it.</p>
+<p><code>Settings.langgraph_primary_configuration_readiness()</code> checks that the
+container-side root is nonempty. At use time, the primary runtime resolves the
+path strictly, so the mounted directory must actually exist. Configuration
+readiness alone does not prove snapshot availability or authority.</p>
+<h3 id="creating-the-snapshot">Creating the snapshot</h3>
+<p><code>scripts/windows-primary-snapshot.ps1 -Action Create</code> creates a clean snapshot
+and refuses to overwrite an existing target. Its parent directory must already
+exist, and the resulting snapshot must remain completely clean for verification.</p>
+<pre><code class="language-powershell">.\scripts\windows-primary-snapshot.ps1 `
+  -Action Create `
+  -Source &lt;GITHUB-ORIGIN-SOURCE&gt; `
+  -Target &lt;REPOSITORY_SNAPSHOT_HOST_PATH&gt; `
+  -ExpectedRepository edwardjones3976/director-orchestrator `
+  -StartingRef main `
+  -ExpectedCommit &lt;FILL IN: accepted 40-hex commit&gt; `
+  -ExpectedTree &lt;FILL IN: matching 40-hex tree&gt;
+</code></pre>
+<p>The source must have a GitHub URL as its <code>origin</code>. Many working checkouts on
+this machine use a Cursor mirror as <code>origin</code>. A dedicated GitHub-origin source
+clone exists, but its local <code>main</code> may be stale; it is not usable until the
+remote, clean state, exact local <code>main</code>, commit, and tree have all been verified
+and, when necessary, updated without rewriting unrelated work. Do not
+substitute a merely similar checkout.</p>
+<p>If GitHub-origin selection must work from a mirrored checkout in the future,
+add an explicit remote-name parameter to the snapshot script in a separate,
+reviewed activation-path change. Do not rewrite a working checkout's remote to
+bypass the current check.</p>
+<hr />
+<h2 id="section-2--deferred-provider-activation-bindings">Section 2 — deferred provider activation bindings</h2>
+<p>The configured roster currently has nine provider lanes. Each
+<code>ProviderActivationBinding</code> contains six required nonempty identifiers:
+<code>workspace_id</code>, <code>provider_version</code>, <code>app_version</code>,
+<code>runtime_adapter_version</code>, <code>workspace_version</code>, and <code>binding_version</code>.
+<code>Settings.primary_provider_activation_bindings()</code> validates the object, and
+<code>Settings.langgraph_primary_configuration_readiness()</code> reports the binding
+signal true only when every bound provider is listed in
+<code>LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS</code> and the bound set satisfies the core
+inventory rule in <code>primary_roster.core_inventory_ready</code>: <code>openai</code> present and
+at least three of <code>openai</code>, <code>claude</code>, <code>cursor</code>, <code>grok</code>.</p>
+<p>This means the binding map is core-pool-or-nothing for
+<code>provider_activation_bindings_configured</code>: an empty map, a map without
+<code>openai</code>, a map with fewer than three core lanes, a provider outside the
+required roster, or any empty field leaves that signal false. A core-pool map
+does not need every roster lane, but every lane it names must later reach
+<code>LIVE_OK</code> on both surfaces, because the combined activation signal is AND-ed
+across all configured bindings. It does <strong>not</strong> mean 54 values are required
+for <code>configuration_valid</code>, and it does not block this staging pass while live
+dispatch remains false.</p>
+<p>Do not paste an empty skeleton or plausible values into <code>.env</code>. These fields are
+configuration identifiers, not attestations and not activation evidence. The
+identifier regex checks only shape and length; it cannot determine whether a
+matching string is a credential. Only independently sourced, nonsecret IDs and
+version metadata belong here. Credentials stay in the approved secret store.</p>
+<p>Before a later live-dispatch gate, generate the complete map from a reviewed
+provider inventory and refuse unknown values. Actual activation remains a
+separate Postgres evidence chain for both the app and runtime-adapter surfaces:
+<code>INSTALLED</code>, <code>AUTHENTICATED</code>, <code>WORKSPACE_BOUND</code>, <code>DRY_RUN_OK</code>, then <code>LIVE_OK</code>.
+Configuration presence cannot advance any of those stages.</p>
+<hr />
+<h2 id="section-3--deferred-host-provider-bridge">Section 3 — deferred host provider bridge</h2>
+<p>Host-bridge command, claim-store, and writer-fence configuration is not an input
+to <code>configuration_valid</code> while primary and live dispatch are disabled. Leave it
+unchanged during Pass 2.</p>
+<p>The bridge preflight resolves configured executables and invokes no provider.
+Run it later from the exact authorized repository root with the complete
+invocation:</p>
+<pre><code class="language-powershell">.\scripts\windows-host-provider-bridge.ps1 `
+  -Action Preflight `
+  -EnvironmentFile .\.env `
+  -Workspace . `
+  -Python (Join-Path (Get-Location) '.venv-win\Scripts\python.exe')
+</code></pre>
+<p>Executable paths in the future command map must be derived on the deployment
+host, for example with <code>(Get-Command claude -ErrorAction Stop).Source</code>; do not
+commit an owner's home-directory path or a literal placeholder argument.
+Preflight also fails closed on incomplete bridge settings, secret collisions,
+unsupported providers, and unresolvable executables. It still invokes no
+provider.</p>
+<h3 id="claude-authentication-status">Claude authentication status</h3>
+<p>The supported command <code>claude auth status --json</code> returned exit code 0 and
+<code>loggedIn=true</code> on 2026-09-04. It returned the same result when launched with
+only the operating-system variables allowed by the bridge and without
+<code>ANTHROPIC_API_KEY</code> or <code>CLAUDE_CODE_OAUTH_TOKEN</code> in that environment.</p>
+<p>Therefore, zero-length fields observed in an internal credentials file are not
+an authoritative sign-out signal and do not block the Claude lane. Do not edit
+the credentials file or run interactive <code>/login</code> while the supported status
+command is green. Raw status output may contain account identifiers; record only
+the exit code and <code>loggedIn</code> boolean.</p>
+<p>Claude authentication is not needed to make <code>configuration_valid</code> true and is
+not tested by the executable-only bridge preflight. Immediately before the
+first real Claude dispatch, rerun the supported status command under the exact
+Windows identity that will host the bridge. If that check is no longer green,
+stop for an owner-controlled credential action rather than guessing from files.</p>
+<hr />
+<h2 id="pass-2--apply">Pass 2 — apply</h2>
+<ol>
+<li>Capture the sanitized <code>langgraph_primary</code> health block. Build a rollback
+payload containing only whether each snapshot variable existed and its prior
+value, then protect that payload with Windows DPAPI for the deployment
+identity. Never write an unprotected rollback payload or a plaintext copy of
+the entire <code>.env</code> file. This is an operator-performed procedure: no committed
+repository helper currently implements the required DPAPI payload.</li>
+<li>Create and verify the exact snapshot. Update the environment through a
+same-directory temporary file and atomic replacement, changing only
+<code>REPOSITORY_SNAPSHOT_ROOT</code> and <code>REPOSITORY_SNAPSHOT_HOST_PATH</code>. Preserve the
+target file's access controls. Leave
+<code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code> and all bridge
+variables unchanged. Do not use an in-place whole-file rewrite path for this
+operation; no committed repository helper currently implements these atomic
+update requirements.</li>
+<li>Keep <code>LANGGRAPH_PRIMARY_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code>, and <code>ALLOW_PAID_RUNS</code>
+false. Restart only the orchestrator service.</li>
+<li>Do not run a provider or advance activation evidence in this pass.</li>
+</ol>
+<h2 id="verification">Verification</h2>
+<ul>
+<li>Diff the sanitized <code>langgraph_primary</code> health block before and after. Expect
+<code>authority_root_configured=true</code> and, if the other measured inputs remain
+true, <code>configuration_valid=true</code>.</li>
+<li>Expect <code>provider_activation_bindings_configured=false</code>; that is valid and
+intentional for this pass.</li>
+<li>Confirm <code>paid_runs_enabled=false</code>, <code>langgraph_primary.enabled=false</code>,
+<code>live_provider_dispatch_requested=false</code>, <code>primary_runtime_active=false</code>, and
+<code>langgraph.legacy_sole_writer=true</code>.</li>
+<li>Confirm the container is healthy, the snapshot is mounted read-only, and no
+provider invocation or activation-evidence write occurred.</li>
+<li>To roll back, decrypt the DPAPI payload under the same deployment identity,
+atomically restore or remove only the two snapshot variables according to
+their recorded prior state, restart the orchestrator, and verify the sanitized
+health block matches the before-capture.</li>
+</ul>
+<h2 id="after-pass-2---activation-staging-inventory-names-only">After Pass 2 - activation staging inventory (names only)</h2>
+<p>Pass 2 ends with <code>configuration_valid=true</code> and nothing else. The control
+script <code>scripts/windows-langgraph-primary-control.ps1</code> refuses every runtime
+action until each name below is present, non-empty, and not a <code>REPLACE_WITH_</code>
+placeholder; it never prints values. Record presence only. Values,
+credentials, and account metadata never enter this document or any commit.</p>
+<h3 id="which-control-version-this-inventory-describes">Which control version this inventory describes</h3>
+<p>This inventory describes <code>scripts/windows-langgraph-primary-control.ps1</code> in
+this revision. It includes <code>BootstrapDatabaseIdentity</code>, <code>SelectGeneration</code>,
+<code>StageRuntime</code>, and <code>ValidateProviders</code>, requires a prepared exact-candidate
+image, and verifies the selected generation. Older checkouts may have different
+actions and requirements; use the control script bound to the reviewed revision.</p>
+<p>Always required by the script:</p>
+<ul>
+<li><code>LANGGRAPH_PRIMARY_POSTGRES_SCHEMA</code>, <code>LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE</code></li>
+<li>Eight internal secrets, each at least 32 characters and pairwise distinct,
+checked by shape without printing: <code>LANGGRAPH_PRIMARY_POSTGRES_PASSWORD</code>,
+<code>LANGGRAPH_PRIMARY_OWNER_TOKEN</code>, <code>LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_INDEPENDENT_REVIEW_EVIDENCE_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_CI_EVIDENCE_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_SECURITY_EVIDENCE_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_EFFECT_RECONCILIATION_SECRET</code>,
+<code>LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET</code></li>
+<li><code>LANGGRAPH_PRIMARY_COMPLETION_EVIDENCE_ACTOR_ALLOWLIST_JSON</code></li>
+<li><code>LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT</code></li>
+<li><code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code>, a core-pool map per
+Section 2; an empty object counts as present but leaves
+<code>provider_activation_bindings_configured</code> false</li>
+<li><code>LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS</code>, which the script also checks for
+<code>openai</code> plus at least three core lanes</li>
+<li><code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> and <code>LANGGRAPH_PRIMARY_PINNED_TREE_SHA</code>,
+each 40 lowercase hexadecimal characters naming the accepted candidate. The
+control script rejects every other shape, empty included, and throws <em>&quot;Primary
+repository authority must have exact commit and tree pins&quot;</em> before it performs
+any runtime action. <code>authority_pins_valid</code> reading true on a deployment where
+both are empty describes a deployment that has pinned nothing; it is not
+permission to run the control script, activate, or dispatch without pins. The
+service pins must equal the control checkout's own commit and tree</li>
+<li>When the registered project uses a different repository, set both
+<code>LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA</code> and
+<code>LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA</code> to its reviewed snapshot.
+These pins govern snapshot verification and task planning; the service pins
+still govern the Director image and acceptance evidence. Both project pins
+must be valid together; leaving both unset reuses the service pins. Generation
+configuration binds both pairs, so changing either invalidates that generation</li>
+<li><code>REPOSITORY_SNAPSHOT_HOST_PATH</code>, <code>REPOSITORY_SNAPSHOT_ROOT</code>,
+<code>REPOSITORY_ALLOWLIST</code>, <code>ALLOWED_STARTING_REFS</code></li>
+</ul>
+<p>Required by acceptance mode. <code>LANGGRAPH_PRIMARY_ACCEPTANCE_MODE</code> defaults to
+<code>github-v1</code> when absent:</p>
+<ul>
+<li><code>github-v1</code>: <code>LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON</code>
+and <code>LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON</code></li>
+<li><code>owner-local-evidence-v1</code>: <code>LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH</code>,
+<code>LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256</code>,
+<code>LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH</code>, and both reviewer allowlists
+named for <code>github-v1</code> above. This mode requires actual signed owner adoption
+of the local QA, independent review and security evidence; it does not turn
+failed hosted CI into success.</li>
+<li><code>provider-v2</code> or explicitly selected <code>provider-v3-two-party</code>:
+<code>LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH</code>,
+<code>LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256</code>,
+<code>LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH</code>,
+<code>LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY</code></li>
+</ul>
+<p>The v3 mode additionally requires signed owner adoption and qualified native
+evidence under <a href="two-party-activation-v3.html">two-party activation v3</a>. This
+inventory grants no adoption or activation. Signed registry/generation pins and
+non-default selected paths are also examined by the legacy-mode refusal guard;
+those guard references are not additional <code>$required</code> entries.</p>
+<p>Not checked by the script, but required before live dispatch:</p>
+<ul>
+<li>An external-effect gateway credential. Slack uses <code>SLACK_BOT_TOKEN</code>. GitHub
+uses either <code>ORACLE_AUTOMERGE_GITHUB_TOKEN</code> or all three of
+<code>ORACLE_AUTOMERGE_GITHUB_APP_ID</code>, <code>ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID</code>,
+and <code>ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64</code>, never both forms, plus
+<code>LANGGRAPH_PRIMARY_EXTERNAL_EFFECT_PULL_NUMBER</code> of at least 1. The default
+of 0 fails every GitHub effect closed.</li>
+<li><code>LANGGRAPH_PRIMARY_OPENAI_TRANSPORT</code>, <code>responses-api</code> when absent. On that
+default the openai lane is the Responses API adapter, and it is built only when
+<code>OPENAI_API_KEY</code> is set and openai authentication is observed
+(<code>primary_transports.py</code>). The key is therefore conditionally required by the
+selected transport rather than unconditionally required. The default is not a
+contradiction that blocks the openai lane: the host-bridge loop skips openai
+unless the transport is <code>native-codex-host</code>, which is what stops a host route
+from overriding the selected API adapter. <code>native-codex-host</code> additionally
+needs the host bridge lane and a ChatGPT login on the host, and it is the
+transport whose native capture the validation store knows how to normalise.</li>
+</ul>
+<h3 id="generation-image-and-deployment-identities">Generation, image, and deployment identities</h3>
+<p>Current control version only. These names are not in the script's presence
+check. They are <em>selected</em> by the control actions and re-verified on every later
+runtime action, so they cannot be filled in by hand during this staging pass:</p>
+<ul>
+<li><code>DIRECTOR_RUNTIME_IMAGE</code> and <code>DIRECTOR_RUNTIME_IMAGE_ID</code>, both the
+content-addressed <code>sha256:</code> identity of an already-built exact-candidate
+image. The script reads it from <code>docker image inspect</code>, requires the image's
+<code>org.director.candidate.commit</code> and <code>org.director.candidate.tree</code> labels to
+equal the control checkout's commit and tree, requires an empty entrypoint,
+and refuses to build the image for you.</li>
+<li><code>DIRECTOR_RESOLVED_DEPLOYMENT_SHA256</code>, the digest of the fully resolved
+Compose graph, computed inside that same image with no network and no host
+mount by <code>primary_generation compose-digest</code>. Operational switches and the
+generation pointers are normalised out before hashing, so this identity pins
+the image, command, mounts and networks, not the execution switches.</li>
+<li><code>DIRECTOR_ASGI_APP</code>, either <code>director_orchestrator.primary_staging:app</code> for
+the evidence-only service or <code>director_orchestrator.main:app</code> for the live
+one. <code>StageRuntime</code> writes the first; <code>Activate</code> writes the second.</li>
+<li><code>LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256</code>, the owner-supplied 64-hex
+digest of the exact manifest bytes, and
+<code>LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH</code>, which <code>SelectGeneration</code>
+rewrites to the content-addressed copy it reserves under the data mount.</li>
+<li><code>LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH</code>, taken from the manifest's
+<code>journal_path</code> and required to be a direct SQLite file in the data mount.
+Selection creates it exclusively with a single-row generation marker, so an
+interrupted selection is preserved rather than overwritten and a retry needs a
+fresh generation.</li>
+</ul>
+<p>The manifest is a closed contract with exactly these fields: <code>version</code>
+(<code>director-primary-generation/v1</code>), <code>activation</code>, <code>journal_path</code>,
+<code>registry_path</code>, <code>registry_sha256</code>, <code>provider_bindings_sha256</code>,
+<code>deployment_configuration_sha256</code>, <code>image_id</code>, <code>resolved_compose_sha256</code>. A
+missing manifest is never treated as an implicit legacy generation, and
+<code>provider_bindings_sha256</code> binds the exact
+<code>LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON</code> bytes, so changing the
+binding map after selection invalidates the generation.</p>
+<p>The staging lifecycle, in order, all of it before any provider is dispatched:</p>
+<ol>
+<li><code>BootstrapDatabaseIdentity</code> is the only action that may establish the durable
+pre-acceptance database identity. It initialises no application or checkpoint
+schema.</li>
+<li><code>SelectGeneration</code> requires <code>provider-v2</code> or <code>provider-v3-two-party</code>. It
+stops and proves every intake surface stopped, reserves the manifest and
+journal, and then writes the six identities above.</li>
+<li><code>Preflight</code>, <code>Accept</code>, <code>Migrate</code>, <code>Backup</code>, <code>RestoreDrill</code> are unchanged in
+intent, but in either signed provider mode each one first re-verifies the
+selected generation.</li>
+<li><code>StageRuntime</code> starts the evidence-only app with <code>ALLOW_PAID_RUNS</code>,
+<code>LANGGRAPH_PRIMARY_ENABLED</code>, <code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code> and
+<code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED</code> written false and
+<code>LANGGRAPH_PARALLEL_KILL_SWITCH</code> written true, then requires <code>staged_ready</code>
+and <code>evidence_only</code> true with <code>primary_runtime_active</code> false.</li>
+<li><code>ValidateProviders</code> runs only against that exact staged service.</li>
+</ol>
+<p><code>ValidateProviders</code> also reads names the control script never checks:
+<code>DIRECTOR_PROVIDER_VALIDATION_MANIFEST</code>, whose <code>generation</code>, <code>candidate</code> and
+<code>tree</code> must equal the staged generation and the pins, and the capture verifier's
+<code>DIRECTOR_PROVIDER_VALIDATION_ENABLED</code>, <code>DIRECTOR_PROVIDER_VALIDATION_CANDIDATE</code>,
+<code>DIRECTOR_PROVIDER_VALIDATION_TREE</code>, <code>DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN</code>,
+<code>DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY</code> and
+<code>DIRECTOR_PROVIDER_VALIDATION_GENERATION</code>. Their values, the validation store's
+own schema creation, and any provider canary are outside this staging pass and
+are not authorised by it. A canary is a real provider invocation and may be
+billable or consume subscription allowance even when it produces no effects.</p>
+<p>Presence of every name changes no switch. <code>LANGGRAPH_PRIMARY_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED</code>,
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code>, and <code>ALLOW_PAID_RUNS</code> stay
+false and <code>LANGGRAPH_PARALLEL_KILL_SWITCH</code> stays true until the accepted
+activation gates in <code>docs/langgraph-primary-operations.html</code> run in order.</p>
+<h2 id="what-this-does-not-do">What this does not do</h2>
+<p>This pass does not configure provider bindings, start the host bridge,
+authenticate providers, grant Grok or any other provider review authority,
+enable the primary lane, change the sole writer, or permit paid/external work.
+Those actions remain behind the separately accepted primary activation gates.</p>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 08:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

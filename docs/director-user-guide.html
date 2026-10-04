@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Director-Orchestrator operator guide · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#investigator-responsibility">INVESTIGATOR responsibility</a></li><li class="top"><a href="#director-maintenance-routing">Director maintenance routing</a></li><li class="top"><a href="#daily-operation">Daily operation</a></li><li class="sub"><a href="#giving-the-director-work">Giving the Director work</a></li><li class="sub"><a href="#opening-a-committee-debate">Opening a committee debate</a></li><li class="sub"><a href="#approving">Approving</a></li><li class="sub"><a href="#reading-health">Reading health</a></li><li class="sub"><a href="#status-posts">Status posts</a></li><li class="top"><a href="#the-control-script">The control script</a></li><li class="top"><a href="#backups">Backups</a></li><li class="top"><a href="#the-kill-switch">The kill switch</a></li><li class="top"><a href="#rollback--read-this-before-you-need-it">Rollback — read this before you need it</a></li><li class="top"><a href="#where-the-evidence-lives">Where the evidence lives</a></li><li class="top"><a href="#when-something-refuses">When something refuses</a></li><li class="top"><a href="#things-that-are-true-and-easy-to-forget">Things that are true and easy to forget</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | BEGIN]] -->
+<h1 id="director-orchestrator-operator-guide">Director-Orchestrator operator guide</h1>
+<p>For the owner running this system day to day. It covers what to do, what the
+output means, and what to do when something refuses.</p>
+<p>One idea underpins everything here: <strong>the system is built to refuse, and a
+refusal is information rather than a fault.</strong> Almost every stop you will hit is
+a gate doing its job. The useful response is to read what it refused on, not to
+retry it.</p>
+<h2 id="investigator-responsibility">INVESTIGATOR responsibility</h2>
+<p>OpenAI/Director members also act as <strong>INVESTIGATOR</strong> under the
+<a href="team-operating-charter.html#openaidirector--investigator">canonical charter</a>: identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue, when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
+If none exists, retain details locally and request an authorized destination;
+never post them to Slack.</p>
+<h2 id="director-maintenance-routing">Director maintenance routing</h2>
+<p>Every Director (the ChatGPT/Codex Director, the owner's current
+deputy/second-in-command Claude, Cursor's third-in-command cover when both
+higher admins are unavailable, and any explicitly owner-appointed project
+Director) sends maintenance, meaning review-finding fixes, record and
+document inconsistencies, CI fixes, and provider connection or plumbing
+problems, to OpenAI Codex, handed over through the Codex CLI (<code>codex exec</code> with a
+written packet) or through the ChatGPT/Codex Director thread, with no limit on
+either channel. The owner hierarchy is Codex #1, Claude #2, then Cursor #3.
+Cursor is an administrator. Claude's 2026-09-22 deputy appointment remains
+current until the owner revokes or replaces it. The owner separately appointed
+Claude as Director-Orchestrator completion lead on 2026-10-02; that project
+assignment excludes Homemade LLM and unrelated projects. Explicitly appointed
+project Directors and their scopes are preserved. For the canonical scope,
+see <a href="project-leadership.html">project leadership</a>. Existing independent-review,
+deterministic policy and deployment gates remain. The Director still verifies, pushes,
+and replies on the review threads. Codex's edits are maintenance assistance and
+do not change authorship: the PR's sole author is whoever wrote at least 52% of
+it (the sole-author rule, PR #284), and only that author's provider family is
+excluded from review. This applies to all
+maintenance from 2026-09-26, including work in flight; it adds no authority and
+removes no gate. The canonical rule is the charter's
+<a href="team-operating-charter.html#director-maintenance-routing">Director maintenance routing</a> section.</p>
+<h2 id="daily-operation">Daily operation</h2>
+<h3 id="giving-the-director-work">Giving the Director work</h3>
+<p>Post in the Director Slack channel, starting the message with <code>DIRECTOR</code>. The
+gateway accepts only your user ID and that channel, ignores bot messages, and
+forwards a stable Slack event ID. n8n normalizes it and posts to the
+orchestrator's <code>/v1/intake</code>, which deduplicates on that event ID, creates a task
+record, applies hard limits, and builds either a preview or a live plan
+depending on whether paid runs are enabled.</p>
+<p>Duplicate posts are safe. The event ID is the idempotency key, so re-sending
+does not create a second task.</p>
+<h3 id="opening-a-committee-debate">Opening a committee debate</h3>
+<pre><code>DIRECTOR debate
+Question: Should the retry budget move to the gateway?
+Options: gateway | worker
+Invite: zai, claude
+Material risk: no
+</code></pre>
+<p>(<code>/director debate</code> with the same lines also works.) The gateway turns only this
+exact form into a signed invitation; any other line, a repeated field, or an
+uninvitable member is refused with the usage text and nothing is forwarded.
+The Director (OpenAI) is always seated for its own independent position and its
+single full-weight vote; <code>Invite</code> may name <code>zai</code>, <code>claude</code>, <code>cursor</code> or <code>grok</code>
+(Antigravity's debate contract is not carried by primary packets). Each seat is
+an ordinary primary assignment: the plan still needs your approval, every seat's
+lane needs a configured budget and must be ready, and the reviewer synthesizes
+the positions without voting. The tally uses the charter weights over the fixed
+10.0 total, records members you did not invite as not seated, and fails closed if
+the Director's contribution is missing. The legacy engine refuses the command.</p>
+<h3 id="approving">Approving</h3>
+<p>Approval-gated plans arrive in Slack with a confirm button. Where the request is
+ambiguous, the button is withheld and you answer in writing:</p>
+<pre><code>/director approve DIR-… &lt;clarification&gt;
+</code></pre>
+<p>An approval is bound to a specific action, scope and candidate. It does not
+widen, and it does not survive a change to what it approved — if the candidate
+moves, the approval is stale and a fresh one is required. This is deliberate.</p>
+<h3 id="reading-health">Reading health</h3>
+<pre><code class="language-powershell">curl.exe http://127.0.0.1:&lt;port&gt;/health
+</code></pre>
+<p><code>/health</code> returns readiness <strong>booleans only</strong> — never secrets, allowlist values
+or DSNs. The fields worth knowing:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>paid_runs_enabled</code></td>
+<td>Whether money can be spent at all</td>
+</tr>
+<tr>
+<td><code>langgraph_primary.new_intake_owner</code></td>
+<td><code>legacy</code> or <code>langgraph</code> — who owns new task intake</td>
+</tr>
+<tr>
+<td><code>intake_fencing_generation</code></td>
+<td>Increments on each authority change; a stale generation is rejected</td>
+</tr>
+<tr>
+<td><code>ambiguous_effect_count</code></td>
+<td><strong>Watch this.</strong> Non-zero blocks rollback and means an effect's outcome is unresolved</td>
+</tr>
+<tr>
+<td><code>paid_off_primary_intake_active</code></td>
+<td>Primary owns intake with the money switched off — the field that measures Stage A</td>
+</tr>
+<tr>
+<td><code>primary_runtime_active</code></td>
+<td>The <strong>live</strong> path. False under Stage A by design</td>
+</tr>
+<tr>
+<td><code>legacy_new_intake_disabled</code></td>
+<td>A database-enforced mirror of the authority row, held by a CHECK constraint and a trigger</td>
+</tr>
+</tbody>
+</table>
+<p>The single most common misreading: expecting <code>primary_runtime_active</code> to be true
+after a successful Stage A pass. It cannot be — it takes live provider dispatch
+as its first conjunct, and live dispatch is mutually exclusive with offline
+simulation. Stage A success is <code>paid_off_primary_intake_active</code> true.</p>
+<h3 id="status-posts">Status posts</h3>
+<p>The n8n status workflow polls <code>/health</code>, diffs the readiness booleans against
+the previous run, and posts to the Director channel <strong>only on change</strong>.
+<strong>It speaks anyway</strong> — regardless of change — on three conditions: the health
+endpoint is unreachable, <code>ambiguous_effect_count</code> is above zero, or the parallel dispatch kill switch is engaged while parallel dispatch is enabled. An engaged switch with parallel dispatch disabled is the expected offline posture: it posts once as a readiness change and is then silent. The ambiguous-effects alarm matters most:
+rollback is refused while that count is non-zero.</p>
+<h2 id="the-control-script">The control script</h2>
+<p><code>scripts\windows-langgraph-primary-control.ps1</code>. Every invocation needs the exact
+environment file, Compose project and host port — profile identity is never
+inferred. Run it from the deployment snapshot, not from a repository checkout
+that may be on a different branch.</p>
+<p>The order, with Slack intake closed:</p>
+<pre><code>build (explicit) → BootstrapDatabaseIdentity → SelectGeneration
+  → PrepareAcceptance → Preflight → Accept → Migrate
+  → Backup → RestoreDrill → Health
+  → [StageRuntime → ValidateProviders] → Activate
+</code></pre>
+<p>Building is not acceptance. Under the default <code>github-v1</code> acceptance mode, <code>Accept</code> reads the canonical GitHub pull request and
+requires the head to equal the frozen candidate, every named CI check completed
+successfully with none skipped, pending or failed, and two distinct non-author
+artifacts — security and independent review — each an <code>APPROVED</code> review whose
+body is exactly the canonical <code>director-activation-review/v1</code> JSON. Comments,
+quoted markers and prose never qualify. This runtime-activation requirement is distinct from ordinary single-reviewer engineering review. Alternative modes apply their own specific evidence rules. See <a href="langgraph-primary-operations.html">langgraph-primary-operations.md</a> for the <code>github-v1</code> path, <a href="provider-acceptance-v2.html">provider-acceptance-v2.md</a> and <a href="provider-acceptance-v2-runtime.html">provider-acceptance-v2-runtime.md</a> for v2, <a href="two-party-activation-v3.html">two-party-activation-v3.md</a> for v3's explicit signed adoption path, and the <code>owner-local-evidence-v1</code> section of <a href="langgraph-primary-operations.html">langgraph-primary-operations.md</a> for owner adoption of retained local evidence. Exact candidate, CI, security, independent identity, owner approvals, and fail-closed requirements remain mandatory where the selected contract imposes them, without imposing v3's signed <code>owner_adoption</code> mechanism on all modes.</p>
+<h2 id="backups">Backups</h2>
+<p>Take them with the activation switches still off.</p>
+<pre><code class="language-powershell">$env:DIRECTOR_ENV_FILE = &quot;.env&quot;
+$backupName = &quot;director-primary-$(Get-Date -Format yyyyMMdd-HHmmss).dump&quot;
+New-Item -ItemType Directory -Force &quot;.\backups&quot; | Out-Null
+docker compose --env-file .env exec -T langgraph-primary-db pg_dump `
+  --username=director_primary --dbname=director_primary `
+  --format=custom --file=&quot;/tmp/$backupName&quot;
+docker compose --env-file .env cp &quot;langgraph-primary-db:/tmp/$backupName&quot; &quot;.\backups\$backupName&quot;
+docker compose --env-file .env exec -T langgraph-primary-db rm -f &quot;/tmp/$backupName&quot;
+</code></pre>
+<p>Restore only in a supervised window, with both primary switches and paid
+execution off, every Director client stopped, and one explicitly named backup.
+n8n is not stopped or restored — it uses a different database and volume.</p>
+<p>Backup files are sensitive operational data. Store them encrypted, verify a
+disposable restore before relying on one, and never commit them.</p>
+<h2 id="the-kill-switch">The kill switch</h2>
+<p><code>LANGGRAPH_PARALLEL_KILL_SWITCH</code> blocks new graph tasks and reconciles in-flight
+effects. It is the fast stop. It does not undo anything already executed.</p>
+<h2 id="rollback--read-this-before-you-need-it">Rollback — read this before you need it</h2>
+<p><strong>Rollback changes who owns new intake. It is not an undo.</strong></p>
+<p>It requires, in order: a valid prior-image record or none (an invalid
+<code>&lt;profile&gt;.prior-images.&lt;generation&gt;.&lt;image&gt;.json</code> refuses before anything
+stops); intake proved closed (it stops <code>slackbot</code>, <code>n8n</code> and <code>orchestrator</code>,
+then re-reads the container lists and throws if any survives); the same
+accepted pins, a clean checkout matching them, and an exact-candidate image;
+<code>ambiguous_effect_count == 0</code>; and quiescence. After the compare-and-swap it
+restores the recorded prior orchestrator and gateway images and reads both
+back before n8n and Slack start; a failed readback or health check closes all
+intake again. With no record it stays on the candidate image and says no image
+was restored.</p>
+<p>The ambiguous-effect and quiescence refusals fire <strong>after</strong> intake has been
+stopped and the switches written false. A refused rollback is
+therefore not a no-op — it leaves the deployment
+with intake down and primary still owning the authority row. The deployed script
+does not yet carry PR #115's correction, and that correction does not change the
+refusal path.</p>
+<p>What it never does: transfer ownership of tasks that already exist, undo a
+merge, a Slack message, a GitHub write or a provider invocation, or clear
+<code>ambiguous_effect_count</code> — it refuses while that count is non-zero, which is
+precisely the situation where an undo would be most wanted.</p>
+<p>Plan on not needing it.</p>
+<h2 id="where-the-evidence-lives">Where the evidence lives</h2>
+<table>
+<thead>
+<tr>
+<th>Evidence</th>
+<th>Location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Acceptance, CI, security, review bundle</td>
+<td>Immutable in the primary Postgres control plane, bound to task, candidate SHA, provider-result digest and gate-ledger digest</td>
+</tr>
+<tr>
+<td>Provider activation rows</td>
+<td>Five stages × two surfaces per bound provider; <code>LIVE_OK</code> expires after 86,400 s with no renewal</td>
+</tr>
+<tr>
+<td>Task and effect state</td>
+<td>Primary Postgres, distinct namespaces per deployment</td>
+</tr>
+<tr>
+<td>Backups</td>
+<td><code>.\backups\</code></td>
+</tr>
+<tr>
+<td>Plan, rules, matrix, findings, audit</td>
+<td><code>docs/</code> on the delivery branch</td>
+</tr>
+</tbody>
+</table>
+<p>Restart readback revalidates canonical content and all three distinct authority
+proofs. Missing or conflicting evidence stays <code>OWNER_DECISION_REQUIRED</code> and can
+never be replaced by a synthetic pass.</p>
+<h2 id="when-something-refuses">When something refuses</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>What it means</th>
+<th>Do this</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Accept</code> refuses</td>
+<td>A check, review or head does not match exactly</td>
+<td>Read which fact failed. Do not retry — fix the fact</td>
+</tr>
+<tr>
+<td>Blank or mismatched pins</td>
+<td>The candidate is not pinned</td>
+<td>Stop. Set the pins to the accepted candidate's commit and tree</td>
+</tr>
+<tr>
+<td><code>combined_live_ready</code> false</td>
+<td>Provider activation evidence incomplete or expired</td>
+<td>Check for a lapsed <code>LIVE_OK</code>; the chain must be redone, not renewed</td>
+</tr>
+<tr>
+<td><code>ambiguous_effect_count &gt; 0</code></td>
+<td>An effect's outcome is unresolved</td>
+<td>Reconciliation, never a blind retry. Rollback is blocked while it is non-zero</td>
+</tr>
+<tr>
+<td>HTTP 503 on every intake</td>
+<td><code>LANGGRAPH_PRIMARY_ENABLED=true</code> with <code>NEW_INTAKE_ENABLED=false</code></td>
+<td>There is no per-request fallback; the flag is read once at import. Set both together</td>
+</tr>
+<tr>
+<td>Snapshot dirty in the container, clean on the host</td>
+<td>Line-ending normalization</td>
+<td>The container's check is the authoritative one</td>
+</tr>
+<tr>
+<td>A provider is silent, out of quota or unauthenticated</td>
+<td>Nothing has been approved</td>
+<td>Absence of evidence is never consent</td>
+</tr>
+</tbody>
+</table>
+<h2 id="things-that-are-true-and-easy-to-forget">Things that are true and easy to forget</h2>
+<p>Configuration is not runtime state — an <code>.env</code> switch records intent, and only
+<code>/health</code> records reality. A merged pull request activates nothing. Green CI
+proves tests passed, not that a provider executed. Coordination creates no
+production credit. No lane, including the Director, may accept or merge its own
+material work. And a gate reading <em>unknown</em> is not a gate reading <em>pass</em>.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:46 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:11 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 10:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:40 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

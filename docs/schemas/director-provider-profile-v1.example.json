@@ -388,11 +388,11 @@
   "platform_limitations": [
     {
       "limitation": "The in-process Responses API contact is synchronous and tool-free; API-only output is never promoted into repository or review authority.",
-      "source": "docs/provider-setup.md, Grok primary Cursor-family profile"
+      "source": "docs/provider-setup.html, Grok primary Cursor-family profile"
     },
     {
       "limitation": "The Grok Build CLI is a native-host capability. A containerized Director cannot use the Windows executable or a host worktree path without an authenticated host runner.",
-      "source": "docs/provider-setup.md, Grok primary Cursor-family profile"
+      "source": "docs/provider-setup.html, Grok primary Cursor-family profile"
     },
     {
       "limitation": "Readiness fails closed unless the endpoint is exactly the official xAI API base, tools stay disabled, every bound is valid, and any elevated authority has a nonempty explicit CLI worktree map.",
@@ -400,11 +400,11 @@
     },
     {
       "limitation": "Draft-PR work requires an isolated grok/* worktree and may create one draft PR but may not merge it.",
-      "source": "docs/provider-setup.md, Grok primary Cursor-family profile"
+      "source": "docs/provider-setup.html, Grok primary Cursor-family profile"
     },
     {
       "limitation": "Grok Bot is named by the charter as a distinct contact but has no adapter, transport enum value, or configuration variable in this repository.",
-      "source": "docs/team-operating-charter.md; src/director_orchestrator/interactions.py:ProviderTransport"
+      "source": "docs/team-operating-charter.html; src/director_orchestrator/interactions.py:ProviderTransport"
     },
     {
       "limitation": "Owner-reported account context: lower-capacity paid service; API billing and quotas must be verified separately.",
@@ -487,7 +487,7 @@
   "schema_version": "director-provider-profile/v1",
   "source_of_truth": {
     "allocation_module": "src/director_orchestrator/allocation_profiles.py",
-    "charter_document": "docs/team-operating-charter.md",
+    "charter_document": "docs/team-operating-charter.html",
     "charter_module": "src/director_orchestrator/team_charter.py",
     "deterministic_policy": "src/director_orchestrator/policy.py",
     "drift_rule": "If this profile and the charter, configuration defaults, or adapter constants disagree, the charter and code win and this file is wrong.",
@@ -497,19 +497,19 @@
   "sources": [
     {
       "anchor": "xAI API, Grok Build CLI, and Grok Bot are separate contacts",
-      "document": "docs/team-operating-charter.md"
+      "document": "docs/team-operating-charter.html"
     },
     {
       "anchor": "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex.",
-      "document": "docs/team-operating-charter.md"
+      "document": "docs/team-operating-charter.html"
     },
     {
       "anchor": "The Grok adapter has two explicit transports.",
-      "document": "docs/provider-setup.md"
+      "document": "docs/provider-setup.html"
     },
     {
       "anchor": "Canonical profile IDs are `mixed`, `engineering`, `public_research`, and",
-      "document": "docs/provider-allocation-profiles.md"
+      "document": "docs/provider-allocation-profiles.html"
     },
     {
       "anchor": "xAI API, Grok Build CLI, and Grok Bot are separate contacts",

@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Stage A evidence worksheet — profile S · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#0-profile-parameters-non-secret-rename-freely">0. Profile parameters (non-secret; rename freely)</a></li><li class="top"><a href="#1-owner-provided-generation-manifest">1. Owner-provided generation manifest</a></li><li class="top"><a href="#2-preconditions">2. Preconditions</a></li><li class="top"><a href="#3-lifecycle-actions">3. Lifecycle actions</a></li><li class="top"><a href="#4-stage-a-switch-write">4. Stage A switch write</a></li><li class="top"><a href="#5-verification--the-nine-fields">5. Verification — the nine fields</a></li><li class="top"><a href="#6-n8n-exercise-against-s">6. n8n exercise against S</a></li><li class="top"><a href="#7-operational-findings-from-a-16-public-research-director-side-surface">7. Operational findings from A-16 (public research, Director-side surface)</a></li><li class="sub"><a href="#checked-against-this-source-2026-09-09">Checked against this source, 2026-09-09</a></li><li class="top"><a href="#8-evidence-bundle--what-the-report-consumes">8. Evidence bundle — what the report consumes</a></li><li class="top"><a href="#9-what-this-worksheet-does-not-establish">9. What this worksheet does not establish</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 11:30 UTC | BEGIN]] -->
+<h1 id="stage-a-evidence-worksheet--profile-s">Stage A evidence worksheet — profile S</h1>
+<p><strong>WO-04 deliverable.</strong> Fill this in <strong>as you run</strong>, not afterwards. Every field
+here is consumed directly by <code>docs/close-out-report-2026-09-13.html</code>, so a
+completed worksheet closes the report with no reconstruction.</p>
+<p><strong>Record names and readiness booleans only.</strong> No secret, DSN, allowlist value,
+token, password or channel ID belongs in this file. It is a repository document.</p>
+<hr />
+<h2 id="0-profile-parameters-non-secret-rename-freely">0. Profile parameters (non-secret; rename freely)</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+<th>Confirmed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compose project</td>
+<td><code>dirsim</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Environment file</td>
+<td><code>.env.simulation</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Host port</td>
+<td><code>8091</code></td>
+<td>☐ free (WO-01)</td>
+</tr>
+<tr>
+<td>Snapshot directory</td>
+<td><code>&lt;snapshot-dir&gt;</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Checkpoint namespace</td>
+<td><code>sim-director-primary-v1</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Postgres schema</td>
+<td><code>director_primary_v1</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Slack</td>
+<td><strong>none</strong> — S never posts</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Secret values</td>
+<td>in the owner's store, <strong>not here</strong></td>
+<td>☐</td>
+</tr>
+</tbody>
+</table>
+<h2 id="1-owner-provided-generation-manifest">1. Owner-provided generation manifest</h2>
+<p>Recorded before <code>SelectGeneration</code>. Names and digests only.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Candidate commit (40 hex)</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Candidate tree (40 hex)</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Image content-addressed ID</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Build args supplied</td>
+<td><code>DIRECTOR_CANDIDATE_COMMIT</code>, <code>DIRECTOR_CANDIDATE_TREE</code></td>
+</tr>
+<tr>
+<td>Generation identifier</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Selected at (UTC)</td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<p><code>LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA</code> and <code>..._PINNED_TREE_SHA</code> set to the
+candidate: ☐. <strong>Blank or mismatched pins are a stop, not a proceed.</strong></p>
+<h2 id="2-preconditions">2. Preconditions</h2>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Where</th>
+<th>Expected</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>configuration_valid</code></td>
+<td><code>/health</code> → <code>langgraph_primary</code></td>
+<td>true</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Snapshot clean <strong>inside the container</strong></td>
+<td><code>git -c safe.directory=/repository status --porcelain=v2</code></td>
+<td>empty</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Snapshot at the intended authority</td>
+<td>same, <code>rev-parse HEAD</code> and <code>HEAD^{tree}</code></td>
+<td>equals the pins</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Primary-plane quiescence</td>
+<td>provider dispatches, assignments, writer claims and reconciliation</td>
+<td>zero / none</td>
+<td>______</td>
+</tr>
+<tr>
+<td>No in-flight legacy work you will strand</td>
+<td>legacy task inventory</td>
+<td>owner's call</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Protected configuration backup taken</td>
+<td>three switch names, prior values, via the protected-payload procedure</td>
+<td>done</td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<p>The host-side <code>git status</code> is <strong>not</strong> the authoritative check. A checkout clean
+to Windows can be entirely dirty to the container.</p>
+<h2 id="3-lifecycle-actions">3. Lifecycle actions</h2>
+<p>Record the exit state and the UTC timestamp for each. Any refusal is
+<code>OWNER_DECISION_REQUIRED</code> — record the exact failing fact and stop; do not retry.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">#</th>
+<th>Action</th>
+<th>Exit</th>
+<th>UTC</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1</td>
+<td><code>docker compose build orchestrator</code> (explicit; building is not acceptance)</td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align:right">2</td>
+<td>start the primary Postgres service</td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align:right">3</td>
+<td><code>BootstrapDatabaseIdentity</code></td>
+<td>______</td>
+<td>______</td>
+<td>identity UUID: ______</td>
+</tr>
+<tr>
+<td style="text-align:right">4</td>
+<td><code>SelectGeneration</code></td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align:right">5</td>
+<td><code>PrepareAcceptance</code></td>
+<td>______</td>
+<td>______</td>
+<td>emits unsigned JSON to stdout</td>
+</tr>
+<tr>
+<td style="text-align:right">6</td>
+<td><code>Preflight</code></td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align:right">7</td>
+<td>obtain acceptance artifact from independent issuers</td>
+<td>______</td>
+<td>______</td>
+<td>artifact path: ______, issuer identities: ______</td>
+</tr>
+<tr>
+<td style="text-align:right">8</td>
+<td><code>Accept -AcceptanceArtifactPath</code></td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align:right">9</td>
+<td><code>Migrate</code></td>
+<td>______</td>
+<td>______</td>
+<td>creates control-plane + team DDL</td>
+</tr>
+<tr>
+<td style="text-align:right">10</td>
+<td><code>Backup</code></td>
+<td>______</td>
+<td>______</td>
+<td>file name: ______</td>
+</tr>
+<tr>
+<td style="text-align:right">11</td>
+<td><code>RestoreDrill</code></td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+<tr>
+<td style="text-align:right">12</td>
+<td><code>Health</code></td>
+<td>______</td>
+<td>______</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-stage-a-switch-write">4. Stage A switch write</h2>
+<p>Backup of prior values recorded (§2) ☐. Then write <strong>exactly</strong> these three, and
+nothing else:</p>
+<pre><code>LANGGRAPH_PRIMARY_ENABLED=true
+LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=true
+LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true
+</code></pre>
+<p>Left untouched and expected to stay false:
+<code>LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED</code>, <code>ALLOW_PAID_RUNS</code>.</p>
+<p>Recreate with <strong>the compose file that matches the running deployment</strong>. A stale
+<code>docker-compose.yml</code> drops the primary DSN and the <code>/repository</code> bind with no
+warning beyond an orphan-container notice.</p>
+<p>The first two switches must move together: <code>ENABLED=true</code> with
+<code>NEW_INTAKE_ENABLED=false</code> returns HTTP 503 on every intake, with no per-request
+fallback — the flag is read once at import.</p>
+<h2 id="5-verification--the-nine-fields">5. Verification — the nine fields</h2>
+<p>All nine true:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>primary_graph_constructed</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>primary_router_wired</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>checkpoint_backend_postgres</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>checkpoint_schema_current</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>claim_store_ready</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>effect_ledger_ready</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>writer_lease_ready</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>reconciliation_worker_ready</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>legacy_new_intake_disabled</code></td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The field that measures Stage A:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Expected</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>paid_off_primary_intake_active</code></td>
+<td><strong>true</strong></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>primary_runtime_active</code></td>
+<td><strong>false</strong></td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<p><code>primary_runtime_active</code> false is <strong>success</strong>, not failure. It takes live
+provider dispatch as its first conjunct, and live dispatch is mutually exclusive
+with offline simulation, so under Stage A it cannot be true. Expecting otherwise
+is the easiest way to misread a good pass as a bad one.</p>
+<p><strong>Ownership proof:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Expected</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>langgraph_primary.new_intake_owner</code></td>
+<td><code>langgraph</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>intake_fencing_generation</code></td>
+<td>incremented from ______ to ______</td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>ambiguous_effect_count</code></td>
+<td><code>0</code></td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Switches that must not have moved:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Expected</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>paid_runs_enabled</code></td>
+<td>false</td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>live_provider_dispatch_requested</code></td>
+<td>false</td>
+<td>______</td>
+</tr>
+<tr>
+<td><code>offline_simulation_requested</code></td>
+<td><strong>true</strong></td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<p><code>legacy_new_intake_disabled</code> is not an independent switch — it is a
+database-enforced mirror of <code>intake_owner = 'langgraph'</code>, held by a CHECK
+constraint and a trigger. If it is true, the authority row genuinely moved.</p>
+<h2 id="6-n8n-exercise-against-s">6. n8n exercise against S</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intake request sent (direct HTTP; S has no Slack)</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Task record created, task ID</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Idempotency: same event ID re-sent creates no second task</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Provider result labelled <code>SIMULATION — NO PROVIDER INTERACTION</code></td>
+<td>______</td>
+</tr>
+<tr>
+<td>Non-2xx mapped to an explicit webhook error response</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Status workflow posted the readiness change</td>
+<td>______</td>
+</tr>
+<tr>
+<td>Bearer auth via credential, <code>httpBearerAuth</code>, not inline</td>
+<td>______</td>
+</tr>
+</tbody>
+</table>
+<h2 id="7-operational-findings-from-a-16-public-research-director-side-surface">7. Operational findings from A-16 (public research, Director-side surface)</h2>
+<p>Recorded as untrusted public evidence, evaluated by the Director. It is <strong>not</strong>
+evidence that the repository Firecrawl lane is enrolled or live.</p>
+<ol>
+<li><strong><code>thread_id</code> has a bounded column length.</strong> LangGraph's Postgres savers store
+<code>thread_id</code> in a limited-length column; values over 255 characters produce a
+database error. Deterministic IDs should be UUIDs or hashes rather than
+concatenated descriptive strings. <strong>Check the Director's generated thread IDs
+against that bound before the first long-running task.</strong></li>
+<li><strong>Checkpoints grow without bound.</strong> Safe pruning is an open feature request
+upstream (<code>langgraph#8531</code>), not a shipped capability — the proposed
+<code>keep_latest</code> would retain the newest checkpoint per
+<code>(thread_id, checkpoint_ns)</code>. Until it exists, the primary database grows
+monotonically. Plan backup sizing and disk headroom accordingly, and do not
+assume a retention policy exists.</li>
+<li><strong><code>(thread_id, checkpoint_ns)</code> is the isolation key.</strong> This matches the
+deployment's per-profile checkpoint namespace design, and it is why a distinct
+<code>LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE</code> per profile is load-bearing rather
+than cosmetic — two profiles sharing a namespace would share checkpoint rows.</li>
+</ol>
+<h3 id="checked-against-this-source-2026-09-09">Checked against this source, 2026-09-09</h3>
+<p>Finding 1 verified, and it is <strong>not a live defect</strong>. <code>thread_id</code> is composed as
+<code>f&quot;{namespace}:{task_id}&quot;</code> (<code>langgraph_primary.py:2188</code>, and identically in
+<code>langgraph_shadow.py:697</code>). At real configured values:</p>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th style="text-align:right">namespace</th>
+<th style="text-align:right">task id</th>
+<th style="text-align:right">composed</th>
+<th style="text-align:right">headroom to 255</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>deployed <code>default-director-primary-v1</code></td>
+<td style="text-align:right">27</td>
+<td style="text-align:right">17</td>
+<td style="text-align:right"><strong>45</strong></td>
+<td style="text-align:right">210</td>
+</tr>
+<tr>
+<td>proposed sim <code>sim-director-primary-v1</code></td>
+<td style="text-align:right">23</td>
+<td style="text-align:right">17</td>
+<td style="text-align:right"><strong>41</strong></td>
+<td style="text-align:right">214</td>
+</tr>
+</tbody>
+</table>
+<p>With this task-id shape a namespace could reach 237 characters before the bound
+is at risk, so current values are safe by a wide margin.</p>
+<p><strong>But there is no length validation on the composed value anywhere in the
+source.</strong> An operator who sets a long checkpoint namespace gets a database error
+at runtime rather than a configuration refusal at startup. Recorded as a latent
+robustness gap for the follow-on, not a blocker: a <code>configuration_valid</code> check
+on <code>len(namespace) + len(task_id) + 1 &lt;= 255</code> would convert a runtime failure
+into a startup refusal, which is the behaviour every other switch in this
+configuration already has.</p>
+<p>Finding 2 also verified. A search of the source for pruning, retention,
+<code>keep_latest</code>, or any checkpoint deletion returns <strong>nothing</strong>. The upstream gap
+applies here unmodified: <strong>the primary database grows monotonically.</strong> Size
+backups and disk headroom on that basis, and do not assume a retention policy
+exists to be tuned.</p>
+<h2 id="8-evidence-bundle--what-the-report-consumes">8. Evidence bundle — what the report consumes</h2>
+<p>Assemble as one folder, redacted, named for the profile and UTC completion.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Captured</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Redacted <code>/health</code> JSON, before and after the switch write</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Every control action, its exit state and UTC timestamp (§3)</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Generation manifest (§1)</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Preconditions results (§2), including the in-container cleanliness check</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>The nine fields, the two Stage A fields, ownership proof, unmoved switches (§5)</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>n8n exercise record (§6)</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Backup file name and <code>RestoreDrill</code> outcome</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Any refusal: the exact failing fact, verbatim</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>Attended minutes actually spent, per block</td>
+<td>☐</td>
+</tr>
+</tbody>
+</table>
+<p>Attended minutes matter: the close-out report compares them against the 3.6-hour
+estimate, and that comparison is the only honest measure of whether R5 helped.</p>
+<h2 id="9-what-this-worksheet-does-not-establish">9. What this worksheet does not establish</h2>
+<p>A completed Stage A pass proves that the primary plane owns intake and runs its
+own lifecycle with the money switched off. It proves <strong>nothing</strong> about live
+provider execution, and its provider results are produced by in-process doubles.
+It satisfies Gate 3 and supplies evidence toward gates 2 and 6 for the ledger
+to record, closes no other gate, and leaves eight of nine outstanding, Gate 8
+among them at <code>F</code>. Do not describe it as an activation.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 11:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

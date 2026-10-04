@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Unlazy provenance for Director Completion Gates · Director Orchestrator</title>
+<link rel="stylesheet" href="../assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../../README.html">Overview</a><a href="../index.html">All documents</a><a href="../project-leadership.html">Leadership</a><a href="../provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#reviewed-upstream">Reviewed upstream</a></li><li class="top"><a href="#relationship">Relationship</a></li><li class="top"><a href="#deliberate-security-differences">Deliberate security differences</a></li><li class="top"><a href="#update-policy">Update policy</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | BEGIN]] -->
+<h1 id="unlazy-provenance-for-director-completion-gates">Unlazy provenance for Director Completion Gates</h1>
+<h2 id="reviewed-upstream">Reviewed upstream</h2>
+<ul>
+<li>Repository: <a href="https://github.com/Leonxlnx/unlazy">https://github.com/Leonxlnx/unlazy</a></li>
+<li>Exact reviewed commit:
+<a href="https://github.com/Leonxlnx/unlazy/commit/754d9a68109e39b836cc72a39fb9a823f9d6b613">https://github.com/Leonxlnx/unlazy/commit/754d9a68109e39b836cc72a39fb9a823f9d6b613</a></li>
+<li>Commit: <code>754d9a68109e39b836cc72a39fb9a823f9d6b613</code></li>
+<li>Commit message: <code>fix: keep hook lock waits within host timeout</code></li>
+<li>Commit timestamp: <code>2026-08-23T04:51:19Z</code></li>
+<li>Package metadata at the pinned commit targets <code>2.1.0</code>; it is not a tagged
+release.</li>
+<li>Exact README:
+<a href="https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/README.md">https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/README.md</a></li>
+<li>Exact package metadata:
+<a href="https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/package.json">https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/package.json</a></li>
+<li>Exact changelog:
+<a href="https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/CHANGELOG.md">https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/CHANGELOG.md</a></li>
+<li>License: MIT, Copyright (c) 2026 Leonxlnx</li>
+<li>Exact license:
+<a href="https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/LICENSE">https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/LICENSE</a></li>
+<li>Exact security model:
+<a href="https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/SECURITY.md">https://github.com/Leonxlnx/unlazy/blob/754d9a68109e39b836cc72a39fb9a823f9d6b613/SECURITY.md</a></li>
+</ul>
+<h2 id="relationship">Relationship</h2>
+<p>Director Completion Gates are independently designed and implemented. They are
+inspired by Unlazy's concepts of recording acceptance expectations before work,
+evidence-backed completion checks, independent re-verification, layered
+integration checks, and remeasurement instead of trusting stale claims.</p>
+<p>No upstream source code, template, hook, command syntax, or <code>Depth Tree</code>
+implementation is included in this increment. Because this is concept-only
+inspiration, the repository does not vendor an upstream license file. If later
+work copies or adapts upstream code, templates, or substantial prose, that change
+must retain the complete applicable MIT copyright and permission notice and
+receive a separate provenance and security review.</p>
+<h2 id="deliberate-security-differences">Deliberate security differences</h2>
+<p>The reviewed upstream security document says its checks execute shell commands
+with the launching user's ambient filesystem, environment, credentials, network,
+and tool access. Approval is consent, not sandboxing or semantic proof; referenced
+scripts are not snapshotted; coordination scopes and leases do not create OS
+isolation; and evidence can expose sensitive output.</p>
+<p>Director Completion Gates therefore:</p>
+<ul>
+<li>define no raw shell-command contract;</li>
+<li>globally install no upstream package, skill, hook, or automatic update;</li>
+<li>enable no Claude Stop hook;</li>
+<li>bind runnable gates to a registered runner definition and structured arguments;</li>
+<li>require <code>shell=False</code>, sanitized environments, bounded resources, exact
+repository/SHA checks, and output redaction in a later runner increment;</li>
+<li>bind repository-owned scripts to exact Git blob SHAs;</li>
+<li>separate manual and external-CI evidence from executable runners;</li>
+<li>keep evidence outside canonical task and LangGraph checkpoint storage;</li>
+<li>never treat gate evidence as review, merge, deployment, or external-write
+authority.</li>
+</ul>
+<h2 id="update-policy">Update policy</h2>
+<p>The reviewed commit is the sole provenance reference for this design. Floating
+<code>main</code>, untagged version text, automatic updates, and production installation
+are prohibited. Any future upstream comparison must pin a new exact commit,
+review its license and security model again, identify copied or adapted material,
+and pass the normal exact-SHA independent review and security gates.</p>
+<!-- [[Codex | GPT-5.6 | 2026-08-24 | 05:14 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

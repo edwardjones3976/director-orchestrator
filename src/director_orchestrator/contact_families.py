@@ -50,7 +50,7 @@ class UnknownContactError(ValueError):
 
 # Every known contact and lane id, as strings. Adding a lane here never grants
 # it a route, a route status, or standing authority; see
-# docs/provider-allocation-profiles.md and docs/project-leadership.md for that.
+# docs/provider-allocation-profiles.html and docs/project-leadership.html for that.
 _CONTACT_LANES: tuple[ContactLane, ...] = (
     # The owner is a ProviderName member (human approval steps), never a provider
     # family: it shares a family with nobody and must not fail closed as unknown.

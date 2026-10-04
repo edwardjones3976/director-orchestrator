@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Native AGY issuer authentication evidence · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]] -->
+<h1 id="native-agy-issuer-authentication-evidence">Native AGY issuer authentication evidence</h1>
+<p>This consumer permits AGY issuer participation only after independent enrollment.
+It does not acquire authentication, enroll an authority, or qualify this host.
+Native AGY stream output does not observe account identity; requested project and
+authentication labels remain requests. Real authenticated profile/project readback
+and a complete credential-state inventory remain operator prerequisites.</p>
+<p>The installer accepts <code>NativeAuthAccountId</code> and <code>NativeAuthRegistrySha256</code> as
+explicit owner pins, creates an empty protected <code>native-auth</code> directory, and records
+the actual accepted Git tree in <code>installation.json</code>. It creates no trust records,
+evidence, credentials, or signatures. Legacy manifests missing the tree need a
+fresh accepted installation; the consumer never infers a tree.</p>
+<p>The protected <code>native-auth/registry.json</code> uses version
+<code>director-native-auth-trust/v1</code>, the existing serialized <code>security</code>,
+<code>independent_review</code>, and <code>ci</code> authorities, <code>revoked_deployments</code>,
+<code>revoked_enrollments</code>, and the existing provider-v2 <code>adoption_context</code>,
+<code>adoption_package</code>, and integer <code>adopted_at</code>. Its canonical SHA256 must match the
+installed configuration pin. Adoption must accept this installed commit/tree and
+repository, include all required activation CI checks, and use earlier independent
+families, principals, and deployments. This is an owner-provisioned trust anchor;
+an untrusted worker cannot supply one. Historical acceptance is verified at its
+pinned adoption time; current enrollment freshness and revocation are checked now.</p>
+<p><code>native-auth/enrollment.json</code> contains exactly <code>evidence</code> and a base64 Ed25519
+<code>signature</code> over <code>director-native-auth-enrollment/v1</code> plus a NUL byte and canonical
+evidence JSON. Evidence has version <code>director-native-auth-enrollment/v1</code>, a unique
+<code>enrollment_id</code>, <code>authority_role</code> (security or independent_review), <code>binding</code>
+from <code>installation_binding</code>, integer <code>issued_at</code>/<code>expires_at</code> (maximum one hour),
+<code>authentication_mode: native-account</code>,
+<code>observation_source: native-authenticated-profile-and-project-readback</code>,
+<code>readback_digest</code>, and <code>credential_files</code> mapping native-home relative paths to
+SHA256 values. The independent existing authority signs only after inspecting
+actual native readback in protected <code>native-auth/readback.bin</code> and all effective
+credential state. Opaque bytes alone prove no identity; the independently trusted
+signature attests the observation. Never substitute owner prose or synthetic test
+artifacts for that inspection.</p>
+<p>The binding covers installed code/config inventory, fixed identities, actual
+executable/entrypoint/hook hashes, native home, project and account. The broker
+checks before source preparation/disclosure and again before signing; the worker
+checks before and after execution. Each request pins the exact enrollment digest.
+Missing, expired, changed, revoked, foreign or self-adopted evidence fails closed.
+Credential refresh requires renewed evidence; ordinary unrelated session-cache
+writes are not credential drift. Revocation/pin updates require the protected
+operator provisioning path, never the provider or coordinator.</p>
+<p>Synthetic Ed25519 tests demonstrate the positive parser path and negative boundary
+checks. No real host enrollment or live issuer acceptance is claimed by those tests.</p>
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 00:56 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

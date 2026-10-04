@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Cloud Hosting Later · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#migration-triggers">Migration triggers</a></li><li class="top"><a href="#target-changes">Target changes</a></li><li class="top"><a href="#cloud-gono-go-gate">Cloud go/no-go gate</a></li></ul></details></nav>
+<main id="content">
+<h1 id="cloud-hosting-later">Cloud Hosting Later</h1>
+<p>Keep the first release on the always-on Windows desktop until the dry-run, approval, restart-recovery, and at least one live specialist flow are proven. Move to cloud hosting only to improve availability, remote callbacks, observability, or isolation—not merely to make the diagram look more sophisticated.</p>
+<h2 id="migration-triggers">Migration triggers</h2>
+<p>Consider cloud hosting when any two of these are true:</p>
+<ul>
+<li>The desktop causes repeated missed tasks or more than one material outage per month.</li>
+<li>A provider requires a public signed callback to close the loop.</li>
+<li>More than one owner or Slack workspace needs the service.</li>
+<li>Task volume requires concurrent workers or queue isolation.</li>
+<li>Centralized secret rotation, audit logs, or formal backups become mandatory.</li>
+<li>Project Uppercut needs a separately governed environment.</li>
+</ul>
+<h2 id="target-changes">Target changes</h2>
+<table>
+<thead>
+<tr>
+<th>Desktop component</th>
+<th>Cloud replacement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQLite</td>
+<td>Managed PostgreSQL with migrations and point-in-time recovery</td>
+</tr>
+<tr>
+<td>Docker Desktop</td>
+<td>Managed containers or a small private VM with health replacement</td>
+</tr>
+<tr>
+<td>Local <code>.env</code></td>
+<td>Managed secret store with workload identity where supported</td>
+</tr>
+<tr>
+<td>Local logs</td>
+<td>Centralized structured logs, alerts, and retention policy</td>
+</tr>
+<tr>
+<td>Socket-only callbacks</td>
+<td>HTTPS ingress with signature verification, rate limits, and allowlists</td>
+</tr>
+<tr>
+<td>Manual volume backup</td>
+<td>Encrypted automated backups plus restore drills</td>
+</tr>
+</tbody>
+</table>
+<p>Retain Slack Socket Mode unless inbound HTTP materially improves the design. Keep the task schema, approval policy, task IDs, and provider adapters stable so the move is operational rather than a rewrite.</p>
+<h2 id="cloud-gono-go-gate">Cloud go/no-go gate</h2>
+<p>Do not migrate until there is a reviewed infrastructure plan, a monthly cost ceiling, a rollback path, secret-rotation procedure, backup/restore test, and explicit owner approval. Do not expose the n8n editor or orchestrator API directly to the public internet.</p>
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>
