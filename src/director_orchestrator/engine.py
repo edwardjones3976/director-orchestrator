@@ -122,6 +122,7 @@ from .approvals import (
     record_oracle_recovery,
     record_provider_effect_observation,
     record_task_effect_observation,
+    retire_terminal_revision_authority,
     reset_for_owner_clarification,
     reserve_provider_effect,
     reserve_task_effect,
@@ -5762,10 +5763,11 @@ class OrchestrationEngine:
                 record.message = "Owner not-created resolution retained; spend reconciliation must finish before dispatch."
                 self._save_spend_hold(record)
                 return False
+            authority = record.revision_authority_by_effect.get(intent.effect_key)
             if not already_closed:
                 record_provider_effect_observation(record, assignment, effect_key=intent.effect_key,
                                                    phase=intent.phase, outcome="failed_pre_submit")
-            authority = record.revision_authority_by_effect.pop(intent.effect_key, None)
+            record.revision_authority_by_effect.pop(intent.effect_key, None)
             if intent.phase == "revision" and authority is not None:
                 basis, prompt = authority
                 if basis in record.retry_basis_digests:
@@ -6404,6 +6406,12 @@ class OrchestrationEngine:
                     "The pending assignment approval changed before provider dispatch"
                 )
             if phase == "revision" and self._workload_policy_applies(current):
+                retire_terminal_revision_authority(current)
+                if any(len(items) >= 20 for items in (
+                    current.revision_authority_by_effect, current.retry_basis_digests,
+                    current.revision_prompt_digests,
+                )):
+                    raise StaleApproval("Provider revision authority capacity reached")
                 if (
                     current.status != TaskStatus.REVIEWING
                     or current.cancellation_requested_at is not None
