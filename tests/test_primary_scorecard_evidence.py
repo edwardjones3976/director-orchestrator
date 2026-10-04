@@ -860,7 +860,9 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
 
     def test_approval_receipt_read_is_capped_per_task_and_reports_truncation(self):
         """#287 item 12: one busy task cannot hide behind a global limit or starve another task's receipts."""
-        busy, quiet = self.intake(), self.intake()
+        busy = self.intake()  # activates intake once; a second activation would be refused as a stale fence
+        quiet = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        self.coordinator.create_intake(self.coordinator_fixtures.request(quiet))
         with self.handle.pool.connection() as connection:
             for task, count in ((busy, 101), (quiet, 3)):
                 for number in range(count):
@@ -897,7 +899,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 ("sha256:" + "a" * 64, json.dumps({"provider_id": "openai", "metering_evidence": metering})))
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
         self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
-                                             "approval_receipts": [], "application": None, "result_artifacts": [],
+                                             "approval_receipts": [], "approval_receipts_truncated": False,
+                                             "application": None, "result_artifacts": [],
                                              "work_packets": [], "effect_approval_bindings": [],
                                              "registered_plan": None,  # no batch: nothing registered to recompute
                                              "terminal_evidence_without_reservation": 0,

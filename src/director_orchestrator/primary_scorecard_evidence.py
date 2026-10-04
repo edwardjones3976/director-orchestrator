@@ -1363,7 +1363,8 @@ def consistency_report(settings, identity, *, tasks=(), connection=None, environ
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
                                          "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
-                                                               for r in receipts if r["task_id"] == task_id]}
+                                                               for r in receipts if r["task_id"] == task_id],
+                                         "approval_receipts_truncated": task_id in truncated_receipts}
     finally:
         if owns_connection:
             connection.close()
