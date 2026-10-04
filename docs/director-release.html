@@ -538,7 +538,18 @@ tree and cleanliness, both before probes and immediately before launching the co
 script. It refuses executable Git filters and submodule checkouts. The separate
 snapshot verifier also refuses its own local executable filters and submodules,
 and disables fsmonitor and hooks using an explicit <code>/dev/null</code> hook path for its
-index, content and cleanliness checks. Snapshot <code>Create</code> also persists
+index, content and cleanliness checks. It inventories configuration names without
+loading includes and refuses <code>include.path</code> and
+<code>includeIf.*.path</code>, even inactive or missing includes: a condition or
+absolute path can resolve differently when the snapshot moves to
+<code>/repository</code>. Such indirection is outside the supported snapshot contract.
+It additionally reads every direct <code>core.fsmonitor</code> value, including
+temporarily masked values, and requires absence or values that Git parses as disabled.
+Hook paths, enabled settings,
+malformed values and query errors refuse with a fixed diagnostic. This prevents
+a verifier-only override from certifying a hook that the later repository-authority
+consumer would execute; the check writes no configuration and relies on modern
+Git boolean semantics. Snapshot <code>Create</code> also persists
 <code>core.hooksPath=/dev/null</code> through clone's initial configuration before
 checkout, preventing inherited template hooks from executing before verification.
 Both paths reject hidden index flags and authenticate actual

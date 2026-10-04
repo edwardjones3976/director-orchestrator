@@ -103,10 +103,25 @@ if (-not (Test-Path -LiteralPath (Join-Path $targetPath ".git"))) {
 }
 # Verify must not execute target-local clean/process filters or fsmonitor hooks.
 # The source checkout's Git policy does not cover this separate repository.
-$configNames = @(& $GitExecutable -C $targetPath config --name-only --list)
-if ($LASTEXITCODE -ne 0) { throw "Snapshot Git configuration could not be inspected." }
+$configNames = @(& $GitExecutable -C $targetPath config --no-includes --name-only --list 2>$null)
+$configNamesExit = $LASTEXITCODE
+if ($configNamesExit -ne 0) { throw "Snapshot Git configuration could not be inspected." }
+# Includes can change meaning when the certified checkout moves to /repository.
+if (@($configNames | Where-Object { $_ -eq 'include.path' -or $_ -match '^includeif\..*\.path$' }).Count) {
+    throw "Snapshot Git includes are unsupported."
+}
 if (@($configNames | Where-Object { $_ -match '^filter\..*\.(clean|smudge|process)$' }).Count -ne 0) {
     throw "Snapshot executable Git filters are unsupported."
+}
+# The runtime consumer does not inherit these commands' fsmonitor override.
+# Inspect every direct value, including temporarily masked hook paths.
+$fsmonitorValues = @(& $GitExecutable -C $targetPath config --includes --type=bool --get-all core.fsmonitor 2>$null)
+$fsmonitorExit = $LASTEXITCODE
+$fsmonitorAbsent = $fsmonitorExit -eq 1 -and $fsmonitorValues.Count -eq 0
+$fsmonitorDisabled = $fsmonitorExit -eq 0 -and $fsmonitorValues.Count -gt 0 -and
+    @($fsmonitorValues | Where-Object { $_ -cne "false" }).Count -eq 0
+if (-not ($fsmonitorAbsent -or $fsmonitorDisabled)) {
+    throw "Snapshot fsmonitor must be disabled in every configuration value."
 }
 if (Test-Path -LiteralPath (Join-Path $targetPath ".gitmodules")) {
     throw "Snapshot submodules are unsupported."

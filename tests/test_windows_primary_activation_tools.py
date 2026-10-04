@@ -271,6 +271,156 @@ Write-Output 'tls-lifecycle-passed'
                             self.assertEqual(invoke("-C", str(target), "config", "--get", "core.hooksPath").strip(), b"/dev/null")
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_fsmonitor_gate_protects_the_real_authority_resolver(self) -> None:
+        from types import SimpleNamespace
+        from director_orchestrator.models import Assignment, ProviderName
+        from director_orchestrator.packet_transports import LocalGitAuthoritySnapshotResolver
+        from unittest.mock import patch
+
+        git = str(Path(shutil.which("git")).resolve())
+        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_SYSTEM=os.devnull,
+                           GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty-template"
+            empty.mkdir()
+            for mode in ("absent", "false", "true", "malformed", "direct", "included", "masked"):
+                with self.subTest(mode=mode):
+                    repo = root / mode
+                    def invoke(*args):
+                        return subprocess.check_output([git, "-C", str(repo), *args], env=environment,
+                                                       stderr=subprocess.STDOUT, timeout=20)
+                    subprocess.run([git, "init", "--template=" + str(empty), "-b", "main", str(repo)],
+                                   env=environment, check=True, capture_output=True, timeout=20)
+                    (repo / "README.md").write_bytes(b"reviewed synthetic authority\n")
+                    invoke("add", "README.md")
+                    invoke("-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+                    invoke("remote", "add", "origin", "https://github.com/example/demo.git")
+                    commit = invoke("rev-parse", "HEAD").decode().strip()
+                    tree = invoke("rev-parse", "HEAD^{tree}").decode().strip()
+                    marker, hook = root / (mode + ".marker"), repo / ".git/hooks/fsmonitor-watchman"
+                    hook.parent.mkdir(exist_ok=True)
+                    hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() +
+                                    '"\nprintf "token\\0"\n', encoding="utf-8")
+                    hook.chmod(0o755)
+                    verify_env = dict(environment)
+                    if mode in ("false", "true", "malformed"):
+                        invoke("config", "core.fsmonitor", mode)
+                    elif mode == "included":
+                        included = repo / ".git/fixture-config"
+                        included.write_text("[core]\n\tfsmonitor = .git/hooks/fsmonitor-watchman\n", encoding="utf-8")
+                        invoke("config", "include.path", str(included))
+                    elif mode in ("direct", "masked"):
+                        invoke("config", "core.fsmonitor", ".git/hooks/fsmonitor-watchman")
+                        if mode == "masked":
+                            verify_env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.fsmonitor", GIT_CONFIG_VALUE_0="false")
+                    command = ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                        str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify",
+                        "-Source", str(repo), "-Target", str(repo), "-ExpectedRepository", "example/demo",
+                        "-StartingRef", "main", "-ExpectedCommit", commit, "-ExpectedTree", tree, "-GitExecutable", git]
+                    result = subprocess.run(command, env=verify_env, capture_output=True, timeout=30)
+                    self.assertFalse(marker.exists(), "verification itself must never execute the hook")
+                    allowed = mode in ("absent", "false")
+                    # If an unsafe path is certified, demonstrate its real later
+                    # consumer before failing the regression. Never enable the
+                    # built-in fsmonitor daemon for the true/malformed controls.
+                    if result.returncode == 0 and mode not in ("true", "malformed"):
+                        resolver = LocalGitAuthoritySnapshotResolver("example/demo", str(repo),
+                            pinned_commit_sha=commit, pinned_tree_sha=tree)
+                        assignment = Assignment(sequence=1, agent=ProviderName.CURSOR, task="inspect",
+                            acceptance=["report"], repository="example/demo", starting_ref=commit)
+                        record = SimpleNamespace(plan=SimpleNamespace(prestage=SimpleNamespace(
+                            worktree=str(repo), base_sha=commit, branch=commit)))
+                        with patch.dict(os.environ, environment, clear=True):
+                            inventory = resolver.resolve(record, assignment)
+                        self.assertEqual([item["path"] for item in inventory], ["README.md"])
+                    if allowed:
+                        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(b"Snapshot Git includes are unsupported" if mode == "included" else
+                                      b"fsmonitor must be disabled", result.stderr)
+                        self.assertNotIn(b"bad boolean", result.stderr)
+                        self.assertNotIn(b"fsmonitor-watchman", result.stderr)
+                    self.assertFalse(marker.exists(), "a certified snapshot must be safe for the unmodified resolver")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_snapshot_rejects_relocation_sensitive_and_missing_git_includes(self) -> None:
+        from types import SimpleNamespace
+        from director_orchestrator.models import Assignment, ProviderName
+        from director_orchestrator.packet_transports import LocalGitAuthoritySnapshotResolver
+        from unittest.mock import patch
+
+        git = str(Path(shutil.which("git")).resolve())
+        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_SYSTEM=os.devnull,
+                           GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty-template"
+            empty.mkdir()
+            for mode in ("conditional", "missing_absolute"):
+                with self.subTest(mode=mode):
+                    producer, consumer = root / (mode + "-producer"), root / "consumer"
+                    def invoke(*args):
+                        return subprocess.check_output([git, "-C", str(producer), *args], env=environment,
+                                                       stderr=subprocess.STDOUT, timeout=20)
+                    subprocess.run([git, "init", "--template=" + str(empty), "-b", "main", str(producer)],
+                                   env=environment, check=True, capture_output=True, timeout=20)
+                    (producer / "README.md").write_bytes(b"reviewed synthetic authority\n")
+                    invoke("add", "README.md")
+                    invoke("-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+                    invoke("remote", "add", "origin", "https://github.com/example/demo.git")
+                    commit, tree = [invoke("rev-parse", value).decode().strip() for value in ("HEAD", "HEAD^{tree}")]
+                    marker = root / "relocated-hook-ran"
+                    if mode == "conditional":
+                        included = producer / ".git/conditional-fsmonitor.inc"
+                        included.write_text("[core]\n\tfsmonitor = .git/hooks/fsmonitor-watchman\n", encoding="utf-8")
+                        hook = producer / ".git/hooks/fsmonitor-watchman"
+                        hook.parent.mkdir(exist_ok=True)
+                        hook.write_text('#!/bin/sh\nprintf invoked > "' + marker.as_posix() +
+                                        '"\nprintf "token\\0"\n', encoding="utf-8")
+                        hook.chmod(0o755)
+                        invoke("config", "includeIf.gitdir:**/consumer/.git.path", "conditional-fsmonitor.inc")
+                        shutil.copytree(producer, consumer)
+                        for path in (".git/config", ".git/conditional-fsmonitor.inc", ".git/hooks/fsmonitor-watchman", "README.md"):
+                            self.assertEqual((producer / path).read_bytes(), (consumer / path).read_bytes())
+                        for path, expected in ((producer, None), (consumer, b".git/hooks/fsmonitor-watchman")):
+                            query = subprocess.run([git, "-C", str(path), "config", "--get-all", "core.fsmonitor"],
+                                                   env=environment, capture_output=True, timeout=20)
+                            self.assertEqual(query.returncode, 1 if expected is None else 0)
+                            self.assertEqual(query.stdout.strip(), expected or b"")
+                    else:
+                        missing = root / "missing-owner-config.inc"
+                        self.assertFalse(missing.exists())
+                        invoke("config", "include.path", str(missing))
+                    command = ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+                        str(ROOT / "scripts/windows-primary-snapshot.ps1"), "-Action", "Verify",
+                        "-Source", str(producer), "-Target", str(producer), "-ExpectedRepository", "example/demo",
+                        "-StartingRef", "main", "-ExpectedCommit", commit, "-ExpectedTree", tree, "-GitExecutable", git]
+                    result = subprocess.run(command, env=environment, capture_output=True, timeout=30)
+                    if result.returncode == 0 and mode == "conditional":
+                        # The baseline certifies identical config bytes whose
+                        # conditional meaning changes in the consumer context.
+                        resolver = LocalGitAuthoritySnapshotResolver("example/demo", str(consumer),
+                            pinned_commit_sha=commit, pinned_tree_sha=tree)
+                        assignment = Assignment(sequence=1, agent=ProviderName.CURSOR, task="inspect",
+                            acceptance=["report"], repository="example/demo", starting_ref=commit)
+                        record = SimpleNamespace(plan=SimpleNamespace(prestage=SimpleNamespace(
+                            worktree=str(consumer), base_sha=commit, branch=commit)))
+                        with patch.dict(os.environ, environment, clear=True):
+                            inventory = resolver.resolve(record, assignment)
+                        self.assertEqual([item["path"] for item in inventory], ["README.md"])
+                        self.assertTrue(marker.exists())
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b"Snapshot Git includes are unsupported", result.stderr)
+                    self.assertNotIn(b"missing-owner-config.inc", result.stderr)
+                    self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_verify_refuses_local_filters_and_suppresses_fsmonitor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -315,7 +465,7 @@ Write-Output 'tls-lifecycle-passed'
             git("config", "core.fsmonitor", hook.as_posix())
             blocked = subprocess.run(command, env=env, capture_output=True, timeout=30)
             self.assertNotEqual(blocked.returncode, 0)
-            self.assertRegex(blocked.stderr, b"not clean|tracked bytes differ")
+            self.assertIn(b"fsmonitor must be disabled", blocked.stderr)
             self.assertFalse(marker.exists())
 
     def test_snapshot_hook_override_resolves_to_a_non_directory(self) -> None:
@@ -428,6 +578,10 @@ function global:git {
     }
     if ($arguments[0] -eq "clone") {
         New-Item -ItemType Directory -Path (Join-Path $arguments[-1] ".git") -Force | Out-Null
+        return
+    }
+    if ($arguments -contains "--get-all" -and $arguments[-1] -eq "core.fsmonitor") {
+        $global:LASTEXITCODE = 1 # Git's absent-key result, not an empty success.
         return
     }
     if ($arguments -contains "set-url" -or $arguments -contains "status" -or $arguments -contains "config" -or
