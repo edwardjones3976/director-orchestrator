@@ -429,6 +429,8 @@ class LangGraphPacketRuntime:
             self._result_store = TaskStore(str(self._legacy_database))
             self._migrate_result_payloads()
 
+    _RESULT_PAYLOAD_BATCH_LIMIT = 1000
+
     def _migrate_result_payloads(self) -> None:
         """Move still-needed legacy content, erase reset/consumed copies before activation."""
         # One activation gets one bounded batch. A remaining backlog refuses
@@ -437,7 +439,8 @@ class LangGraphPacketRuntime:
             rows = connection.execute(
                 "SELECT idempotency_key, task_id, work_packet_json, result_packet_json, "
                 "work_packet_digest, result_packet_digest, assignment_id, provider, authority_snapshot_digest "
-                "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT 1000"
+                "FROM runtime_dispatch_ledger WHERE result_packet_json IS NOT NULL LIMIT ?",
+                (self._RESULT_PAYLOAD_BATCH_LIMIT,),
             ).fetchall()
             if rows:
                 connection.execute(

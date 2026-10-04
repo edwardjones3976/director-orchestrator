@@ -88,6 +88,28 @@ class PacketResultPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     fixture.directory.cleanup()
 
+    def test_stale_generation_cannot_seed_current_recovery(self):
+        with tempfile.TemporaryDirectory() as root:
+            _, store, record, _ = fixtures.ProviderSpendSettlementTests()._world(root)
+            previous = record.plan_generation
+            record.plan_generation = previous + 1
+            store.save(record)
+            stale = {
+                'task_id': record.task_id,
+                'idempotency_key': f'{record.task_id}:{previous}:1:' + 'ab' * 32,
+                'correlation': {'correlation_id': 'stale-correlation'},
+            }
+            with self.assertRaises(ValueError):
+                store.reserve_runtime_result(stale)
+            self.assertIsNone(store.read_runtime_result(stale['idempotency_key']))
+            current = {
+                'task_id': record.task_id,
+                'idempotency_key': f'{record.task_id}:{record.plan_generation}:1:' + 'cd' * 32,
+                'correlation': {'correlation_id': 'current-correlation'},
+            }
+            store.reserve_runtime_result(current)
+            self.assertIsNone(store.read_runtime_result(current['idempotency_key']))
+
     def test_reset_and_consumption_keep_tombstones_against_late_payload_writes(self):
         for consumed in (False, True):
             with self.subTest(consumed=consumed), tempfile.TemporaryDirectory() as root:
