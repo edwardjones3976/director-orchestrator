@@ -94,6 +94,7 @@
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 import dataclasses
+import io
 import json
 import hashlib
 import importlib.util
@@ -101,20 +102,23 @@ import os
 import sqlite3
 import subprocess
 import sys
+import types
 import re
 import tempfile
 import time
 import unittest
-from contextlib import closing, nullcontext
+from contextlib import ExitStack, closing, nullcontext, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
 
 from director_orchestrator import completion_scorecard as sc
 from director_orchestrator import models as sc_models
+from director_orchestrator import primary_scorecard_evidence as pse
 
 
 def _load_trial_fixtures():
@@ -1058,6 +1062,202 @@ def resign(key, envelope):
     return {"document": envelope["document"], "signature": key.sign(signed).hex()}
 
 
+_EVALUATOR_BOOTSTRAP_DIR = tempfile.TemporaryDirectory(prefix="evaluator-bootstrap-")
+
+
+def _write_evaluator_bootstrap():
+    # A plain evaluator-side bootstrap script (hop2): loads an archived director-scorecard.py by path, replaces
+    # only its OS account lookup (and, where present, primary_scorecard_evidence's) with the fixture home, after
+    # exec so the file's own `def account_home():` cannot clobber the fixture, then calls main() the same way the
+    # real launcher's own bootstrap does. Computed once, as a plain file, so no test ever nests multiple levels
+    # of string-escaped Python source.
+    source = ("import importlib\n"
+             "import importlib.util\n"
+             "import sys\n"
+             "from pathlib import Path\n"
+             "\n"
+             "sys.path.insert(0, sys.argv[1])\n"
+             "spec = importlib.util.spec_from_file_location('director_scorecard_cli', sys.argv[2])\n"
+             "cli = importlib.util.module_from_spec(spec)\n"
+             "spec.loader.exec_module(cli)\n"
+             "home = Path(sys.argv[3])\n"
+             "cli.account_home = lambda: home\n"
+             "\n"
+             "try:\n"
+             "    pse = importlib.import_module('director_orchestrator.primary_scorecard_evidence')\n"
+             "except ImportError:\n"
+             "    pse = None\n"
+             "if pse is not None:\n"
+             "    pse.account_home = lambda: home\n"
+             "\n"
+             "# completion_scorecard._launcher() loads a *fresh* scorecard-launcher.py module every call (by\n"
+             "# design, uncached); patch its account_home the same way, right after that fresh module executes.\n"
+             "_real_spec_from_file_location = importlib.util.spec_from_file_location\n"
+             "\n"
+             "\n"
+             "class _PatchedLauncherLoader:\n"
+             "    def __init__(self, real_loader):\n"
+             "        self._real_loader = real_loader\n"
+             "\n"
+             "    def create_module(self, spec):\n"
+             "        return self._real_loader.create_module(spec)\n"
+             "\n"
+             "    def exec_module(self, module):\n"
+             "        self._real_loader.exec_module(module)\n"
+             "        module.account_home = lambda: home\n"
+             "\n"
+             "    def __getattr__(self, name):\n"
+             "        return getattr(self._real_loader, name)\n"
+             "\n"
+             "\n"
+             "def _patched_spec_from_file_location(name, path, *args, **kwargs):\n"
+             "    inner = _real_spec_from_file_location(name, path, *args, **kwargs)\n"
+             "    if name == 'scorecard_launcher':\n"
+             "        inner.loader = _PatchedLauncherLoader(inner.loader)\n"
+             "    return inner\n"
+             "\n"
+             "\n"
+             "importlib.util.spec_from_file_location = _patched_spec_from_file_location\n"
+             "sys.argv = ['director-scorecard.py'] + sys.argv[4:]\n"
+             "if hasattr(cli, 'main'):\n"
+             "    raise SystemExit(cli.main())\n")
+    folder = Path(_EVALUATOR_BOOTSTRAP_DIR.name)
+    script = folder / "evaluator_bootstrap.py"
+    script.write_text(source, encoding="utf-8")
+    return script
+
+
+EVALUATOR_BOOTSTRAP_SCRIPT = _write_evaluator_bootstrap()
+
+
+def evaluator_bootstrap_command(src, script, home, *arguments, isolated=True):
+    """Run the given director-scorecard.py file directly, exactly as the launcher's hop2 would, with only its (and
+    the evidence module's) OS account lookup replaced by the fixture home; proves a boundary strictly inside the
+    launcher-started trust gate (for example nonce reuse), distinct from whether that gate itself was passed."""
+    return [sys.executable, *(["-I"] if isolated else []), "-B", str(EVALUATOR_BOOTSTRAP_SCRIPT),
+            str(src), str(script), str(home), *[str(argument) for argument in arguments]]
+
+
+def installed_launcher_command(installed, home, *arguments, isolated=True):
+    """Run the installed launcher file as its own module with only its OS account lookup replaced by the fixture
+    home; HOME/USERPROFILE cannot move the owner root, so tests never read or write the real one. When the
+    launcher spawns its evaluator subprocess (hop2), this also substitutes EVALUATOR_BOOTSTRAP_SCRIPT for it, so
+    the real launcher -> evaluator flow runs end to end without either hop ever touching the real OS account."""
+    bootstrap = (
+        "import importlib.util, sys\n"
+        "from pathlib import Path\n"
+        "spec = importlib.util.spec_from_file_location('installed_launcher', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "home = Path(sys.argv[2])\n"
+        "module.account_home = lambda: home\n"
+        "real_run = module.subprocess.run\n"
+        "\n"
+        "\n"
+        "def _patched_run(cmd, **options):\n"
+        "    if (isinstance(cmd, list) and len(cmd) > 6 and cmd[3] == '-c' and\n"
+        "            isinstance(cmd[4], str) and 'runpy' in cmd[4]):\n"
+        f"        cmd = [cmd[0], cmd[1], cmd[2], {str(EVALUATOR_BOOTSTRAP_SCRIPT)!r}, cmd[5], cmd[6], str(home),\n"
+        "               *cmd[7:]]\n"
+        "    return real_run(cmd, **options)\n"
+        "\n"
+        "\n"
+        "module.subprocess.run = _patched_run\n"
+        "raise SystemExit(module.main(sys.argv[3:]))\n"
+    )
+    return [sys.executable, *(["-I"] if isolated else []), "-c", bootstrap, str(installed), str(home),
+            *[str(argument) for argument in arguments]]
+
+
+class OwnerAccountLookupTests(unittest.TestCase):
+    """Missing POSIX account records refuse every consumer without trusting environment fallbacks."""
+
+    def setUp(self):
+        self.launcher = sc._launcher()
+        source = Path(__file__).resolve().parents[1] / "scripts" / "director-scorecard.py"
+        spec = importlib.util.spec_from_file_location("missing_uid_scorecard", source)
+        self.cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.cli)
+        self.uid = 424242
+        self.lookup = Mock(side_effect=KeyError(self.uid))
+        stack = self.enterContext(ExitStack())
+        stack.enter_context(patch.dict(sys.modules, {"pwd": SimpleNamespace(getpwuid=self.lookup)}))
+        unavailable = SimpleNamespace(name="posix", geteuid=lambda: self.uid, environ={
+            "HOME": "/caller/home", "USERPROFILE": "/caller/profile",
+            pse.OWNER_HOME_ENV: "/caller/owner", pse.DESCRIPTOR_ENV: "a" * 64,
+        })
+        for module in (self.launcher, self.cli, pse):
+            stack.enter_context(patch.object(module, "os", unavailable))
+
+    def test_missing_uid_normalizes_all_account_lookups(self):
+        for module in (self.launcher, self.cli, pse):
+            with self.subTest(module=module.__name__), self.assertRaisesRegex(OSError, "no passwd entry"):
+                module.account_home()
+        self.assertEqual(self.lookup.call_count, 3)
+        self.lookup.assert_called_with(self.uid)
+
+    def test_missing_uid_leaves_descriptor_and_authority_consumers_unavailable(self):
+        self.assertIsNone(self.cli.release_descriptor())
+        self.assertEqual(self.cli.launch_refusal(), "evaluator revision not pinned")
+        self.assertIsNone(pse.owner_home())
+        self.assertIsNone(pse.cli_release_descriptor())
+        with patch.object(sc, "CI_REPLICA_KEY", None):
+            self.assertIsNone(sc._ci_replica_key())
+
+    def test_missing_uid_leaves_the_score_unattested(self):
+        with patch.object(sc, "_launcher", return_value=self.launcher):
+            report = sc.score("a" * 40, [])
+        self.assertFalse(report["attested"])
+        self.assertEqual(report["passed"], "UNATTESTED")
+        self.assertFalse(report["activation_authorized"])
+
+    def test_missing_uid_launcher_returns_clean_refusal(self):
+        stderr = io.StringIO()
+        with patch.object(self.launcher, "sys", SimpleNamespace(
+                flags=SimpleNamespace(isolated=True), stderr=stderr)):
+            self.assertEqual(self.launcher.main([]), 2)
+        self.assertIn("the owner account home could not be resolved", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+
+class PosixAccountLookupTests(unittest.TestCase):
+    """Copilot review of #420: a POSIX effective UID with no passwd entry (or an unusable home) must fail closed as
+    OSError, which every caller already refuses on, never as a KeyError traceback."""
+
+    def modules(self):
+        import importlib.util
+        root = Path(__file__).resolve().parents[1]
+        from director_orchestrator import primary_scorecard_evidence as evidence
+        found = {"evidence": evidence.account_home}
+        for name, script in (("launcher", "scorecard-launcher.py"), ("evaluator", "director-scorecard.py")):
+            spec = importlib.util.spec_from_file_location("posix_lookup_" + name, root / "scripts" / script)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            found[name] = module.account_home
+        return found
+
+    def lookup(self, function, entry):
+        fake = types.SimpleNamespace(getpwuid=entry)
+        with patch.object(os, "name", "posix"), patch.object(os, "geteuid", create=True, return_value=4242),                 patch.dict(sys.modules, {"pwd": fake}):
+            return function()
+
+    def test_missing_passwd_entry_and_unusable_home_are_oserror(self):
+        def missing(uid):
+            raise KeyError(uid)
+        for name, function in self.modules().items():
+            for label, entry in (("missing", missing),
+                                 ("empty", lambda uid: types.SimpleNamespace(pw_dir="")),
+                                 ("relative", lambda uid: types.SimpleNamespace(pw_dir="home/owner"))):
+                with self.subTest(module=name, case=label), self.assertRaises(OSError):
+                    self.lookup(function, entry)
+
+    def test_a_valid_passwd_entry_is_the_account_home(self):
+        for name, function in self.modules().items():
+            with self.subTest(module=name):
+                home = self.lookup(function, lambda uid: types.SimpleNamespace(pw_dir=os.path.abspath(os.sep + "home")))
+                self.assertEqual(os.path.abspath(os.sep + "home"), str(home))
+
+
 class ScorecardGitTrustTests(unittest.TestCase):
     """Real object databases: replacement siblings must never supply executable evaluator bytes."""
 
@@ -1084,7 +1284,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.script = self.repo / "scripts" / "director-scorecard.py"
         self.script.write_text(
             "import json, os\nfrom pathlib import Path\n"
-            "receipt = Path.home() / '.director-scorecard' / 'attestations' / (os.environ['DIRECTOR_SCORECARD_NONCE'] + '.json')\n"
+            "receipt = Path(os.environ['DIRECTOR_SCORECARD_OWNER_HOME']) / '.director-scorecard' / 'attestations' / (os.environ['DIRECTOR_SCORECARD_NONCE'] + '.json')\n"
             "attestation = json.loads(receipt.read_bytes())['attestation']\n"
             "Path(os.environ['DIRECTOR_SCORECARD_RESULT']).write_text(json.dumps({'attested': True, 'attestation': attestation}))\n"
             "print('clean evaluator reached')\n", encoding="utf-8")
@@ -1111,11 +1311,25 @@ class ScorecardGitTrustTests(unittest.TestCase):
             env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH"]
         return env
 
-    def run_launcher(self, extra_env=None, arguments=()):
-        env = {**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
-               **(extra_env or {})}
-        return subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo), *arguments],
+    def run_launcher(self, extra_env=None, arguments=(), *, target=None):
+        # HOME/USERPROFILE no longer move the owner root (#287 item 34); only an in-process
+        # substitute for the OS lookup does, so the fixture root never touches the real one.
+        env = {**self.python_environment(), **(extra_env or {})}
+        return subprocess.run(installed_launcher_command(self.installed, self.home,
+                                                         str(self.repo) if target is None else target, *arguments),
                               env=env, cwd=self.outside, capture_output=True, text=True, timeout=120)
+
+    def owner_home(self):
+        """This process's launcher module, the scorecard's copy and the evidence module all see the fixture home
+        as the account home."""
+        stack = ExitStack()
+        stack.enter_context(patch.object(self.launcher, "account_home", return_value=self.home))
+        stack.enter_context(patch.object(sc, "_launcher", return_value=self.launcher))
+        stack.enter_context(patch.object(pse, "account_home", return_value=self.home))
+        return stack
+
+    def descriptor_digest(self):
+        return hashlib.sha256(self.descriptor.read_bytes()).hexdigest()
 
     def assert_metadata_refused(self, reason):
         result = self.run_launcher()
@@ -1124,7 +1338,8 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.assertNotIn("clean evaluator reached", result.stdout)
         self.assertFalse(self.marker.exists())
         cli = self.modules["director-scorecard"]
-        launched = {cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo), cli.SHA_ENV: self.pin}
+        launched = {cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo), cli.SHA_ENV: self.pin,
+                    cli.DESCRIPTOR_ENV: self.descriptor_digest()}
         with patch.dict(os.environ, launched):
             self.assertIn(reason, cli.launch_refusal(cli.ROOT, self.descriptor))
         with self.assertRaisesRegex(ValueError, reason):
@@ -1165,10 +1380,73 @@ class ScorecardGitTrustTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "clean evaluator reached")
         cli = self.modules["director-scorecard"]
         with patch.dict(os.environ, {**hostile, cli.TREE_ENV: str(cli.ROOT), cli.REPO_ENV: str(self.repo),
-                                     cli.SHA_ENV: self.pin}):
+                                     cli.SHA_ENV: self.pin, cli.DESCRIPTOR_ENV: self.descriptor_digest()}):
             self.assertIsNone(cli.launch_refusal(cli.ROOT, self.descriptor))
             self.assertEqual(sc._run_bytes(["git", "-C", str(self.repo), "show",
                                            f"{self.pin}:scripts/director-scorecard.py"]), self.script.read_bytes())
+
+    def test_home_environment_cannot_relocate_the_owner_root_287_34(self):
+        real = self.launcher.account_home()
+        with patch.dict(os.environ, {"HOME": str(self.home), "USERPROFILE": str(self.home),
+                                     "HOMEDRIVE": "Z:", "HOMEPATH": "\\attacker"}):
+            self.assertEqual(self.launcher.account_home(), real)
+            self.assertNotEqual(self.launcher.owner_root(), self.home / ".director-scorecard")
+        # A copied launcher, fake descriptor and attestation dir under an attacker HOME is not the installed launcher.
+        copied = subprocess.run([sys.executable, "-I", str(self.installed), str(self.repo)],
+                                env={**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home)},
+                                cwd=self.outside, capture_output=True, text=True, timeout=60)
+        self.assertEqual(copied.returncode, 2, copied.stderr)
+        self.assertIn("use the owner-installed launcher", copied.stderr)
+        self.assertNotIn("clean evaluator reached", copied.stdout)
+
+    def test_any_descriptor_change_during_a_launch_voids_the_report_287_33(self):
+        run = subprocess.run
+        document = json.loads(self.descriptor.read_text())
+
+        def launch(arguments, **options):
+            if arguments[0] == "git":
+                return run(arguments, **options)
+            env = options["env"]
+            self.assertEqual(env[self.launcher.DESCRIPTOR_ENV], digest)
+            self.assertEqual(env[self.launcher.OWNER_HOME_ENV], str(self.home))
+            receipt = json.loads(self.launcher._receipt_path(env[self.launcher.NONCE_ENV]).read_bytes())
+            Path(env["DIRECTOR_SCORECARD_RESULT"]).write_text(json.dumps(
+                {"attested": True, "attestation": receipt["attestation"]}))
+            # Same evaluator pin; only another owner field changes mid-run.
+            self.descriptor.write_text(json.dumps({**document, "security_base_sha": "c" * 40}))
+            return subprocess.CompletedProcess(arguments, 0)
+
+        digest = self.descriptor_digest()
+        with patch.object(self.launcher.subprocess, "run", side_effect=launch), \
+                patch.object(self.launcher.Path, "cwd", return_value=self.outside), \
+                patch.object(self.launcher, "account_home", return_value=self.home), \
+                patch.object(self.launcher, "__file__", str(self.installed)), \
+                redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(self.launcher.launch(self.repo, [], self.descriptor), 2)
+        self.assertIn(self.launcher.UNATTESTED, stderr.getvalue())
+
+    def test_evaluator_reads_owner_files_only_as_the_launcher_pinned_them_287_33(self):
+        from director_orchestrator import primary_scorecard_evidence as evidence
+        cli = self.modules["director-scorecard"]
+        digest = self.descriptor_digest()
+        handed = {evidence.OWNER_HOME_ENV: str(self.home), evidence.DESCRIPTOR_ENV: digest}
+        with self.owner_home(), patch.object(cli, "account_home", return_value=self.home), \
+                patch.dict(os.environ, handed):
+            self.assertEqual(evidence.cli_release_descriptor()["evaluator_sha"], self.pin)
+            self.assertEqual(cli.pinned_evaluator(), self.pin)
+        for broken in ({evidence.DESCRIPTOR_ENV: "0" * 64}, {evidence.OWNER_HOME_ENV: "relative/home"}):
+            with self.subTest(broken=broken), patch.dict(os.environ, {**handed, **broken}):
+                self.assertIsNone(evidence.cli_release_descriptor())
+        with patch.dict(os.environ, {**handed, evidence.DESCRIPTOR_ENV: "0" * 64}):
+            self.assertIsNone(cli.pinned_evaluator())
+        # Without the launcher's hand-over, no owner file is read at all.
+        clean = {key: value for key, value in os.environ.items()
+                 if key not in (evidence.OWNER_HOME_ENV, evidence.DESCRIPTOR_ENV)}
+        with patch.dict(os.environ, clean, clear=True):
+            self.assertIsNone(evidence.owner_home())
+            self.assertIsNone(evidence.cli_release_descriptor())
+            self.assertIsNone(cli.pinned_evaluator())
+            self.assertIsNone(sc._ci_replica_key())
 
     def test_metadata_probe_errors_fail_closed(self):
         for name, module in self.modules.items():
@@ -1194,7 +1472,7 @@ class ScorecardGitTrustTests(unittest.TestCase):
         with patch.object(self.launcher, "_git", wraps=self.launcher._git) as git, \
                 patch.object(self.launcher.subprocess, "run", side_effect=launch), \
                 patch.object(self.launcher.Path, "cwd", return_value=self.outside), \
-                patch.object(self.launcher.Path, "home", return_value=self.home), \
+                patch.object(self.launcher, "account_home", return_value=self.home), \
                 patch.object(self.launcher, "__file__", str(self.installed)):
             self.assertEqual(self.launcher.launch(self.repo, [], self.descriptor), 0)
         git.assert_any_call(self.repo, "rev-parse", "--verify", f"{self.pin}^{{tree}}")
@@ -1238,12 +1516,12 @@ class ScorecardGitTrustTests(unittest.TestCase):
                          self.git("rev-parse", f"{self.pin}^{{tree}}").decode().strip())
         self.assertEqual(report["attestation"]["launcher_sha256"],
                          hashlib.sha256(self.installed.read_bytes()).hexdigest())
-        verify = subprocess.run([sys.executable, "-I", str(self.installed), "--verify-report", str(report_path)],
-                                env={**self.python_environment(), "HOME": str(self.home),
-                                     "USERPROFILE": str(self.home)},
+        verify = subprocess.run(installed_launcher_command(self.installed, self.home, "--verify-report",
+                                                          str(report_path)),
+                                env=self.python_environment(),
                                 cwd=self.outside, capture_output=True, text=True, timeout=30)
         self.assertEqual(verify.returncode, 0, verify.stderr)
-        with patch.object(Path, "home", return_value=self.home):
+        with self.owner_home():
             self.assertTrue(sc.report_is_attested(report))
             self.assertIn("0/20 verified", sc.render_markdown(report))
             for field, value in (("attested", False), ("passed", 20), ("attestation", {})):
@@ -1259,23 +1537,25 @@ class ScorecardGitTrustTests(unittest.TestCase):
             receipt["attestation"]["tree_id"] = "0" * 40
             receipt_path.write_text(json.dumps(receipt))
             self.assertFalse(sc.report_is_attested(report))
-        verify = subprocess.run([sys.executable, "-I", str(self.installed), "--verify-report", str(report_path)],
-                                env={**self.python_environment(), "HOME": str(self.home),
-                                     "USERPROFILE": str(self.home)},
+        verify = subprocess.run(installed_launcher_command(self.installed, self.home, "--verify-report",
+                                                          str(report_path)),
+                                env=self.python_environment(),
                                 cwd=self.outside, capture_output=True, text=True, timeout=30)
         self.assertEqual(verify.returncode, 2, verify.stderr)
         self.assertTrue(verify.stdout.startswith(self.launcher.UNATTESTED))
         script.write_bytes(original)
-        # Candidate supplies all the old environment claims and a completed nonce.
-        # It still cannot turn a direct run into a launcher-attested report.
-        env = {**self.python_environment(), "HOME": str(self.home), "USERPROFILE": str(self.home),
-               "PYTHONPATH": str(self.repo / "src"), self.launcher.TREE_ENV: str(self.repo),
-               self.launcher.REPO_ENV: str(self.repo), self.launcher.SHA_ENV: self.pin,
+        cli = self.modules["director-scorecard"]
+        # Candidate supplies all the old environment claims, a completed nonce, and a true descriptor digest for
+        # the real owner account (not a forged one -- that boundary is tested separately below). It still cannot
+        # replay or forge a nonce the launcher already sealed, or a syntactically invalid one, into attestation.
+        env = {**self.python_environment(), cli.TREE_ENV: str(self.repo), cli.REPO_ENV: str(self.repo),
+               cli.SHA_ENV: self.pin, cli.DESCRIPTOR_ENV: self.descriptor_digest(),
                self.launcher.NONCE_ENV: report["attestation"]["nonce"]}
         for nonce in ("", report["attestation"]["nonce"], "../invalid"):
             env[self.launcher.NONCE_ENV] = nonce
-            direct = subprocess.run([sys.executable, str(self.script), *arguments], env=env,
-                                    cwd=self.outside, capture_output=True, text=True, timeout=120)
+            direct = subprocess.run(evaluator_bootstrap_command(self.repo / "src", self.script, self.home,
+                                                              *arguments),
+                                    env=env, cwd=self.outside, capture_output=True, text=True, timeout=120)
             self.assertEqual(direct.returncode, 0, direct.stderr)
             self.assertTrue(direct.stdout.startswith(self.launcher.UNATTESTED))
             unattested = json.loads(report_path.read_bytes())
@@ -1284,13 +1564,33 @@ class ScorecardGitTrustTests(unittest.TestCase):
             self.assertFalse(unattested["all_checks_verified"])
             self.assertFalse(unattested["activation_authorized"])
             self.assertTrue(all(item["status"] == "UNKNOWN" for item in unattested["checks"]))
+        # A forged owner-home claim, paired with a self-authored descriptor whose digest it supplies itself,
+        # still cannot relocate the trust root: this process's real OS account never matches the attacker's
+        # directory, so the whole run refuses before any repository module is imported (#287 item 34) -- not
+        # merely because some other, unrelated variable happens to be missing.
+        forged_home = self.outside / "forged-home"
+        (forged_home / ".director-scorecard").mkdir(parents=True)
+        forged_descriptor_path = forged_home / ".director-scorecard" / "release-descriptor.json"
+        forged_descriptor_path.write_text(json.dumps({"version": cli.DESCRIPTOR_VERSION,
+                                                      "evaluator_sha": self.pin}))
+        forged_env = {**self.python_environment(),
+                     cli.TREE_ENV: str(self.repo), cli.REPO_ENV: str(self.repo), cli.SHA_ENV: self.pin,
+                     self.launcher.NONCE_ENV: report["attestation"]["nonce"],
+                     cli.OWNER_HOME_ENV: str(forged_home),
+                     cli.DESCRIPTOR_ENV: hashlib.sha256(forged_descriptor_path.read_bytes()).hexdigest()}
+        forged = subprocess.run([sys.executable, str(self.script), *arguments], env=forged_env,
+                               cwd=self.outside, capture_output=True, text=True, timeout=120)
+        self.assertEqual(forged.returncode, 2, forged.stderr)
+        self.assertIn("evaluator revision not pinned", forged.stderr)
 
     def test_score_attestation_and_containment_limitations(self):
         nonce = "a" * 64
         fields = {"nonce": nonce, "evaluator_sha": self.pin, "tree_id": "b" * 40,
+                  "descriptor_sha256": self.descriptor_digest(),
                   "launcher_sha256": hashlib.sha256(self.installed.read_bytes()).hexdigest()}
-        with patch.object(Path, "home", return_value=self.home), patch.dict(os.environ, {
-                self.launcher.NONCE_ENV: nonce, self.launcher.SHA_ENV: self.pin}):
+        with self.owner_home(), patch.dict(os.environ, {
+                self.launcher.NONCE_ENV: nonce, self.launcher.SHA_ENV: self.pin,
+                self.launcher.DESCRIPTOR_ENV: self.descriptor_digest()}):
             receipt_path = self.launcher._receipt_path(nonce)
             receipt_path.parent.mkdir()
             receipt = {"attestation": fields, "tree": str(sc._REPO_ROOT), "report_sha256": None}
@@ -1304,7 +1604,12 @@ class ScorecardGitTrustTests(unittest.TestCase):
             self.assertIn(", ".join(sorted(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE)),
                           limitations)
             self.assertIn("#313 / PR #327", limitations)
-            for key in ("evaluator_sha", "launcher_sha256", "nonce", "tree_id"):
+            for digest in ("", "0" * 64):
+                with self.subTest(descriptor_digest=digest), patch.dict(os.environ, {
+                        self.launcher.DESCRIPTOR_ENV: digest}):
+                    self.assertIsNone(self.launcher.run_attestation(sc._REPO_ROOT))
+                    self.assertIsNone(pse.cli_release_descriptor())
+            for key in ("evaluator_sha", "launcher_sha256", "descriptor_sha256", "nonce", "tree_id"):
                 with self.subTest(field=key):
                     changed = {**receipt, "attestation": {**fields, key: "tampered"}}
                     receipt_path.write_text(json.dumps(changed))
@@ -1312,6 +1617,48 @@ class ScorecardGitTrustTests(unittest.TestCase):
                     self.assertIs(report["attested"], False)
                     self.assertEqual(report["passed"], "UNATTESTED")
                     self.assertTrue(sc.render_markdown(report).startswith(self.launcher.UNATTESTED))
+
+    def test_forged_pending_receipt_cannot_relocate_the_OS_owner_root(self):
+        fake = self.outside / "forged-owner"
+        root = fake / ".director-scorecard"
+        (root / "attestations").mkdir(parents=True)
+        (root / "launcher.py").write_bytes(self.installed.read_bytes())
+        (root / "release-descriptor.json").write_bytes(self.descriptor.read_bytes())
+        nonce = "a" * 64
+        fields = {"nonce": nonce, "evaluator_sha": self.pin, "tree_id": "b" * 40,
+                  "descriptor_sha256": self.descriptor_digest(),
+                  "launcher_sha256": hashlib.sha256(self.installed.read_bytes()).hexdigest()}
+        (root / "attestations" / (nonce + ".json")).write_text(json.dumps({
+            "attestation": fields, "tree": str(sc._REPO_ROOT), "report_sha256": None}))
+        cli = self.modules["director-scorecard"]
+        with self.owner_home(), patch.object(cli, "account_home", return_value=self.home), patch.dict(os.environ, {
+                "HOME": str(fake), "USERPROFILE": str(fake), self.launcher.OWNER_HOME_ENV: str(fake),
+                self.launcher.DESCRIPTOR_ENV: self.descriptor_digest(), self.launcher.NONCE_ENV: nonce,
+                self.launcher.SHA_ENV: self.pin, self.launcher.TREE_ENV: str(sc._REPO_ROOT),
+                self.launcher.REPO_ENV: str(self.repo)}):
+            self.assertIsNone(self.launcher.run_attestation(sc._REPO_ROOT))
+            self.assertIsNone(pse.cli_release_descriptor())
+            self.assertIsNone(cli.pinned_evaluator())
+
+    def test_non_evaluator_descriptor_rotation_prevents_sealing(self):
+        self.script.write_text(self.script.read_text() +
+            "descriptor = receipt.parent.parent / 'release-descriptor.json'\n"
+            "changed = json.loads(descriptor.read_bytes())\n"
+            "changed['security_base_sha'] = '1' * 40\n"
+            "descriptor.write_text(json.dumps(changed))\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "rotate other descriptor field during collection")
+        self.pin = self.git("rev-parse", "HEAD").decode().strip()
+        self.git("update-ref", "refs/remotes/github/main", self.pin)
+        self.descriptor.write_text(json.dumps({"version": self.launcher.DESCRIPTOR_VERSION,
+                                              "evaluator_sha": self.pin}))
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(self.launcher.UNATTESTED, result.stderr)
+        self.assertEqual(json.loads(self.descriptor.read_bytes())["evaluator_sha"], self.pin)
+        receipts = list((self.home / ".director-scorecard" / "attestations").glob("*.json"))
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(json.loads(receipts[0].read_bytes())["report_sha256"], "INVALID")
 
     def test_every_git_transport_disables_replacements_and_uses_minimal_environment(self):
         # Do not let mocks at _run_bytes conceal a missing subprocess-level defense.
@@ -1739,9 +2086,10 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 # even though real approval, restart, offline and metered rows now exist.
                 with patch.object(sc, "_runtime", return_value=([], runtime)), \
                         patch.object(sc, "_deployment_state", return_value=()):
+                    held = sc._Held()
                     collected, _ = sc._deployment_observations(started, SHA, DEPLOYMENT,
                         channel=None, gateway=None, topology=False, drills={}, approval_task=offline_tasks[0],
-                        trials=None, rubric_path=None, paid_thread=None, paid_rubric_path=None)
+                        trials=None, rubric_path=None, paid_thread=None, paid_rubric_path=None, held=held)
                 by_check = {item.check_id: item for item in collected}
                 for check in ("06", "08", "10", "11", "15", "20"):
                     self.assertIsNone(by_check[check].passed, check)
@@ -1751,6 +2099,11 @@ class TrustedCollectionLaneTests(unittest.TestCase):
                 # owner token, live lease) — but it stays contained pending the A3 reviewed-image admission
                 # gate, so the live collection path must still report it as UNKNOWN, never PASS.
                 self.assertIsNone(by_check["05"].passed)
+                # The admission gate is handed the real graded original, not the containment placeholder, and the
+                # running identity it compares with the owner's pin (no gateway was named, so it is not bound).
+                self.assertIs(held.observations["05"].passed, True)
+                self.assertEqual(held.identity["director_image_id"], runtime.image_id)
+                self.assertIs(held.identity["gateway_bound"], False)
             self.primary.coordinator.create_intake(self.primary.coordinator_fixtures.request("DIR-LG-FADE"))
             hostile, _ = sc._trusted_collection(runtime, ["DIR-LG-FADE"])
             verdict = sc._reconciliation_observation(started, runtime, hostile)
@@ -2762,10 +3115,13 @@ class CompletionScorecardTests(unittest.TestCase):
                                                   "evaluator_sha": value}))
 
             def run(*flags, cwd=outside):
-                env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "PYTHONPATH": str(root / "src")}
-                return subprocess.run([sys.executable, *flags, str(launcher), str(root), "--candidate", SHA,
-                                       "--output-dir", str(outside / "out")], capture_output=True, text=True,
-                                      timeout=120, env=env, cwd=cwd)
+                # HOME/USERPROFILE cannot move the owner root (#287 item 34); only the in-process substitute for
+                # the OS lookup that installed_launcher_command() installs does, so the fixture home is the only
+                # root either hop ever sees.
+                return subprocess.run(
+                    installed_launcher_command(launcher, home, str(root), "--candidate", SHA,
+                                              "--output-dir", str(outside / "out"), isolated="-I" in flags),
+                    capture_output=True, text=True, timeout=120, env=dict(os.environ), cwd=cwd)
 
             refused = run("-I")
             self.assertEqual(refused.returncode, 2, refused.stderr)
@@ -2773,7 +3129,7 @@ class CompletionScorecardTests(unittest.TestCase):
             pin("0" * 40)  # not a commit of this repository
             self.assertIn("not on github/main", run("-I").stderr)
             pin(head)
-            self.assertIn("python -I", run().stderr)  # PYTHONPATH names the checkout's src: not isolated, refused
+            self.assertIn("python -I", run().stderr)  # not isolated, refused
             self.assertIn("outside the checkout", run("-I", cwd=root).stderr)
             reached = run("-I")
             self.assertEqual(reached.returncode, 7, reached.stderr)
@@ -2808,7 +3164,8 @@ class CompletionScorecardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             descriptor = Path(folder) / "release-descriptor.json"
             descriptor.write_text(json.dumps(EVALUATED))
-            launched = {"DIRECTOR_SCORECARD_TREE": str(cli.ROOT), "DIRECTOR_SCORECARD_REPO": str(cli.ROOT)}
+            launched = {"DIRECTOR_SCORECARD_TREE": str(cli.ROOT), "DIRECTOR_SCORECARD_REPO": str(cli.ROOT),
+                        cli.DESCRIPTOR_ENV: hashlib.sha256(descriptor.read_bytes()).hexdigest()}
             with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_EVALUATOR_SHA": "1" * 40}):
                 self.assertEqual(cli.launch_refusal(cli.ROOT, descriptor), cli.ROTATED)
             rotated = {**EVALUATED, "evaluator_sha": "1" * 40}
@@ -2825,22 +3182,28 @@ class CompletionScorecardTests(unittest.TestCase):
                                 for item in report["checks"]))
 
     def test_cli_refuses_a_direct_run_outside_the_launcher(self):
+        # A genuinely pinned descriptor at the real account home (never HOME/USERPROFILE) still refuses a direct
+        # run: DIRECTOR_SCORECARD_TREE/REPO are never set outside the launcher (#287 item 34).
         script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
         with tempfile.TemporaryDirectory() as folder:
-            (Path(folder) / ".director-scorecard").mkdir()
-            (Path(folder) / ".director-scorecard" / "release-descriptor.json").write_text(json.dumps(EVALUATED))
+            home = Path(folder)
+            (home / ".director-scorecard").mkdir()
+            descriptor_path = home / ".director-scorecard" / "release-descriptor.json"
+            descriptor_path.write_text(json.dumps(EVALUATED))
             env = {key: value for key, value in os.environ.items() if not key.startswith("DIRECTOR_SCORECARD_")}
-            result = subprocess.run([sys.executable, str(script), "--candidate-sha", SHA, "--output-dir", folder],
-                                    capture_output=True, timeout=30, text=True,
-                                    env={**env, "HOME": folder, "USERPROFILE": folder})
+            env["DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"] = hashlib.sha256(descriptor_path.read_bytes()).hexdigest()
+            result = subprocess.run(
+                evaluator_bootstrap_command(Path(__file__).resolve().parents[1] / "src", script, home,
+                                           "--candidate-sha", SHA, "--output-dir", str(home)),
+                capture_output=True, timeout=30, text=True, env=env)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn("not started by the owner-installed launcher", result.stderr)
-            self.assertFalse((Path(folder) / "completion-scorecard.json").exists())
+            self.assertFalse((home / "completion-scorecard.json").exists())
 
     def test_cli_offline_refuses_without_a_pinned_evaluator(self):
         script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
         with tempfile.TemporaryDirectory() as folder:
-            env = {**os.environ, "HOME": folder, "USERPROFILE": folder}  # no release descriptor installed
+            env = dict(os.environ)  # no release descriptor installed; HOME/USERPROFILE cannot supply one (#287 item 34)
             result = subprocess.run([sys.executable, str(script), "--candidate-sha", SHA, "--output-dir", folder],
                                     capture_output=True, timeout=30, text=True, env=env)
             self.assertEqual(result.returncode, 2, result.stderr)
@@ -2850,6 +3213,160 @@ class CompletionScorecardTests(unittest.TestCase):
                                       capture_output=True, timeout=15, text=True, env=env)
             self.assertEqual(rejected.returncode, 2)
             self.assertIn("--gateway require --live", rejected.stderr)
+
+
+TREE = "d" * 40
+REVIEWED = {"candidate_commit": SHA, "candidate_tree": TREE, "director_image_id": IMAGE}
+CONTAINED = sorted(set(sc._CONTAINED_RUNTIME + sc._CONTAINED_CAPTURES + sc._CONTAINED_CANDIDATE))
+
+
+class ReviewedImageAdmissionTests(unittest.TestCase):
+    """Owner ruling 2026-10-02 (#313): Director-written evidence counts only for exactly the reviewed release."""
+
+    def collect(self, *, descriptor=None, identity=None, github=True, scan="scan-1", ci=True, security=True,
+                adoption=True, originals=None, drop=(), fill_held=True):
+        descriptor = {**EVALUATED, "reviewed_release": dict(REVIEWED)} if descriptor is None else descriptor
+        graded = {key: sc._observation(key, True, f"graded {key}", "fixture", {"k": key}, NOW,
+                                       candidate_sha=SHA if key == "17" else None, runtime_sha=SHA, image_id=IMAGE)
+                  for key in CONTAINED if key not in drop}
+        graded.update(originals or {})
+        if not adoption:
+            graded["17"] = dataclasses.replace(graded["17"], passed=None)
+        who = {"runtime_sha": SHA, "runtime_tree": TREE, "director_image_id": IMAGE, "gateway_bound": True,
+               **(identity or {})}
+
+        def phase(*args, held=None, **kwargs):
+            if fill_held:
+                held.observations, held.identity = dict(graded), who
+            return [sc._observation(key, None, "collector not yet trusted", "fixture", {}, NOW, runtime_sha=SHA,
+                                    image_id=IMAGE, candidate_sha=SHA if key == "17" else None)
+                    for key in CONTAINED], ("steady",)
+
+        def ci_observation(*args, **kwargs):
+            return sc._observation("16", True if ci else None, "ci", "gh", {}, NOW, candidate_sha=SHA)
+
+        def security_observation(*args, **kwargs):
+            return sc._observation("18", True if security else None, "scan", "workbench", {}, NOW, candidate_sha=SHA)
+
+        with patch.object(sc, "_deployment_observations", side_effect=phase), \
+                patch.object(sc, "_still_deployed", side_effect=lambda items, *rest: items), \
+                patch.object(sc, "_ci_observation", side_effect=ci_observation), \
+                patch.object(sc, "_security_observation", side_effect=security_observation), \
+                patch.object(sc, "cli_release_descriptor", return_value=descriptor):
+            return {item.check_id: item for item in sc.collect(
+                SHA, deployment=DEPLOYMENT, github=github, security_scan_id=scan)}
+
+    def assert_contained(self, found, why=None):
+        for key in CONTAINED:
+            with self.subTest(check=key):
+                self.assertIsNone(found[key].passed)
+                if key not in ("16", "18"):
+                    self.assertEqual(found[key].explanation, "collector not yet trusted")
+                    if why:
+                        refusal = found[key].facts["reviewed_image_admission"]
+                        self.assertTrue(refusal.startswith("refused: "), refusal)
+                        self.assertIn(why, refusal)
+
+    def test_every_condition_holding_admits_the_held_originals_with_a_visible_label(self):
+        found = self.collect()
+        for key in set(CONTAINED) - {"16", "18"}:
+            with self.subTest(check=key):
+                self.assertIs(found[key].passed, True)
+                self.assertIn("reviewed-image trust", found[key].explanation)
+                label = found[key].facts["reviewed_image_trust"]
+                self.assertEqual(label["required_checks"], {"16": "PASS", "17": "PASS", "18": "PASS"})
+                self.assertEqual(label["pinned"], REVIEWED)
+                self.assertEqual(found[key].digest, hashlib.sha256(
+                    json.dumps(found[key].facts, sort_keys=True, allow_nan=False).encode()).hexdigest())
+
+    def test_each_unmet_condition_leaves_containment_exactly_as_it_was(self):
+        cases = {
+            "no pin": ({"descriptor": EVALUATED}, "no valid reviewed_release"),
+            "malformed pin": ({"descriptor": {**EVALUATED, "reviewed_release": {**REVIEWED, "extra": "x"}}},
+                              "no valid reviewed_release"),
+            "another image": ({"identity": {"director_image_id": "sha256:" + "9" * 64}}, "not the pinned reviewed image"),
+            "another running commit": ({"identity": {"runtime_sha": OTHER}}, "not one commit"),
+            "another pinned commit": ({"descriptor": {**EVALUATED, "reviewed_release": {**REVIEWED,
+                                                                                       "candidate_commit": OTHER}}},
+                                       "not one commit"),
+            "another tree": ({"identity": {"runtime_tree": "e" * 40}}, "not the pinned reviewed tree"),
+            "unbound gateway": ({"identity": {"gateway_bound": False}}, "gateway was not shown"),
+            "CI not PASS": ({"ci": False}, "checks 16 did not pass"),
+            "CI not collected": ({"github": False}, "checks 16 did not pass"),
+            "Security not PASS": ({"security": False}, "checks 18 did not pass"),
+            "Security not collected": ({"scan": None}, "checks 18 did not pass"),
+            "adoption not PASS": ({"adoption": False}, "checks 17 did not pass"),
+        }
+        for name, (options, why) in cases.items():
+            with self.subTest(case=name):
+                self.assert_contained(self.collect(**options), why)
+
+    def test_no_held_evidence_means_no_admission(self):
+        # The runtime could not be discovered (or the phase was replaced): nothing to release.
+        found = self.collect(fill_held=False)
+        for key in set(CONTAINED) - {"16", "18"}:
+            self.assertIsNone(found[key].passed)
+            self.assertEqual(found[key].explanation, "collector not yet trusted")
+            self.assertNotIn("reviewed_image_trust", found[key].facts)
+            # The refusal reason is still recorded, so the report can explain why nothing was admitted.
+            self.assertTrue(found[key].facts["reviewed_image_admission"].startswith("refused: no Director runtime"))
+
+    def test_a_contradiction_is_fail_and_an_unknown_keeps_its_own_reason(self):
+        failed = sc._observation("12", False, "combined_live_ready is false", "fixture", {}, NOW,
+                                 runtime_sha=SHA, image_id=IMAGE)
+        unknown = sc._observation("06", None, "the restart chronology is missing", "fixture", {}, NOW,
+                                  runtime_sha=SHA, image_id=IMAGE)
+        found = self.collect(originals={"12": failed, "06": unknown})
+        self.assertIs(found["12"].passed, False)
+        self.assertIn("reviewed-image trust", found["12"].explanation)
+        self.assertIsNone(found["06"].passed)
+        self.assertEqual(found["06"].explanation, "the restart chronology is missing")
+        self.assertIn("reviewed_image_trust", found["06"].facts)
+
+    def test_a_check_with_no_collected_source_is_never_admitted_as_trusted(self):
+        found = self.collect(drop=("03",))
+        self.assertIsNone(found["03"].passed)
+        self.assertIn("No source was collected", found["03"].explanation)
+        self.assertIs(found["05"].passed, True)
+        # It is not marked admitted, so the report keeps it in the contained set.
+        self.assertNotIn("reviewed_image_trust", found["03"].facts)
+        report = sc.score(SHA, list(found.values()), now=datetime.now(timezone.utc), runtime_sha=SHA, image_id=IMAGE)
+        text = " ".join(report["limitations"])
+        contained = next(line for line in report["limitations"] if "are contained by" in line)
+        self.assertIn(" 03", contained.split(" are contained")[0].replace(",", " "))
+        admitted = next(line for line in report["limitations"] if "were admitted under" in line)
+        self.assertNotIn(" 03", admitted.split(" were admitted")[0].replace(",", " "))
+        self.assertIn("were admitted under reviewed-image trust", text)
+
+    def test_the_report_names_what_was_admitted_and_what_is_contained(self):
+        def limitations(found):
+            report = sc.score(SHA, list(found.values()), now=datetime.now(timezone.utc),
+                              runtime_sha=SHA, image_id=IMAGE)
+            return " ".join(report["limitations"])
+
+        admitted = limitations(self.collect())
+        self.assertIn("admitted under reviewed-image trust", admitted)
+        self.assertNotIn("are contained by the trusted-collection follow-up", admitted)
+        contained = limitations(self.collect(descriptor=EVALUATED))
+        self.assertIn("are contained by the trusted-collection follow-up", contained)
+        self.assertNotIn("admitted under reviewed-image trust", contained)
+
+    def test_the_reviewed_release_pin_is_strict(self):
+        from director_orchestrator.primary_scorecard_evidence import reviewed_release_pin
+        self.assertEqual(reviewed_release_pin({**EVALUATED, "reviewed_release": dict(REVIEWED)}), REVIEWED)
+        for name, descriptor in {
+            "absent": EVALUATED,
+            "another version": {**EVALUATED, "version": "x", "reviewed_release": dict(REVIEWED)},
+            "extra field": {**EVALUATED, "reviewed_release": {**REVIEWED, "gateway_image_id": IMAGE}},
+            "missing field": {**EVALUATED, "reviewed_release": {"candidate_commit": SHA}},
+            "uppercase hex": {**EVALUATED, "reviewed_release": {**REVIEWED, "candidate_commit": "A" * 40}},
+            "short tree": {**EVALUATED, "reviewed_release": {**REVIEWED, "candidate_tree": "d" * 39}},
+            "bare image digest": {**EVALUATED, "reviewed_release": {**REVIEWED, "director_image_id": "c" * 64}},
+            "not a mapping": {**EVALUATED, "reviewed_release": [REVIEWED]},
+        }.items():
+            with self.subTest(case=name):
+                self.assertIsNone(reviewed_release_pin(descriptor))
+        self.assertIsNone(reviewed_release_pin(None))
 
 
 class ScorecardCollectorTests(unittest.TestCase):
@@ -3005,7 +3522,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         # independently bound daemon/store facts. Live containment still applies.
         observed = wrong_env.report(only_deployment=True)
         self.assertEqual(row(observed, "19")["status"], "UNKNOWN")
-        self.assertEqual(row(observed, "05")["status"], "PASS")  # store-bound, not health
+        # 05 reads the store, but a discarded (foreign) health response cannot confirm that this process holds
+        # the fence the store shows, so it is UNKNOWN, never PASS.
+        self.assertEqual(row(observed, "05")["status"], "UNKNOWN")
         self.assertEqual(row(observed, "17")["status"], "PASS")  # direct rule fixture only
 
     def test_no_committed_channel_or_legacy_endpoint(self):
@@ -3073,10 +3592,19 @@ class ScorecardCollectorTests(unittest.TestCase):
                 world = self.world(evaluate_rules=True)
                 world.consistency["intake_authority"]["lease_expires_at"] = broken_expiry
                 self.assertEqual(world.state("05"), "UNKNOWN")
-        # A candidate reporting no lease cannot fail a check its own store proves either.
+        # Cross-check: the store owns the fence, so the process must report holding that same fence. Health
+        # alone never promotes 05 (no snapshot, no PASS above); a process that denies the fence is a contradiction.
         unhealthy = self.world(evaluate_rules=True)
         unhealthy.payload["langgraph_primary"]["writer_lease_ready"] = False
-        self.assertEqual(unhealthy.state("05"), "PASS")
+        self.assertEqual(unhealthy.state("05"), "FAIL")
+        stale = self.world(evaluate_rules=True)
+        stale.payload["langgraph_primary"]["intake_fencing_generation"] = 82
+        self.assertEqual(stale.state("05"), "FAIL")
+        for field in ("writer_lease_ready", "intake_fencing_generation"):
+            with self.subTest(missing=field):
+                silent = self.world(evaluate_rules=True)
+                del silent.payload["langgraph_primary"][field]
+                self.assertEqual(silent.state("05"), "UNKNOWN")
         # A lease that is live at observation time but expires before the collection finalizes cannot
         # remain a PASS: the existing FRESH_FOR/valid_until finalization path revalidates it to UNKNOWN.
         expiring = self.world(evaluate_rules=True)
