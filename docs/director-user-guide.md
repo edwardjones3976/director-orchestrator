@@ -37,12 +37,21 @@ never post them to Slack.
 
 ## Director maintenance routing
 
-Every Director (the ChatGPT/Codex Director and any explicitly owner-appointed
-project Director) sends maintenance, meaning review-finding fixes, record and
+Every Director (the ChatGPT/Codex Director, the owner's current
+deputy/second-in-command Claude, Cursor's third-in-command cover when both
+higher admins are unavailable, and any explicitly owner-appointed project
+Director) sends maintenance, meaning review-finding fixes, record and
 document inconsistencies, CI fixes, and provider connection or plumbing
 problems, to OpenAI Codex, handed over through the Codex CLI (`codex exec` with a
 written packet) or through the ChatGPT/Codex Director thread, with no limit on
-either channel. The Director still verifies, pushes,
+either channel. The owner hierarchy is Codex #1, Claude #2, then Cursor #3.
+Cursor is an administrator. Claude's 2026-09-22 deputy appointment remains
+current until the owner revokes or replaces it. The owner separately appointed
+Claude as Director-Orchestrator completion lead on 2026-10-02; that project
+assignment excludes Homemade LLM and unrelated projects. Explicitly appointed
+project Directors and their scopes are preserved. For the canonical scope,
+see [project leadership](project-leadership.md). Existing independent-review,
+deterministic policy and deployment gates remain. The Director still verifies, pushes,
 and replies on the review threads. Codex's edits are maintenance assistance and
 do not change authorship: the PR's sole author is whoever wrote at least 52% of
 it (the sole-author rule, PR #284), and only that author's provider family is

@@ -1007,9 +1007,13 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn(phrase, section, phrase)
         claude_instructions = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("@AGENTS.md", claude_instructions.splitlines())
-        self.assertIn("no standing director role", claude_instructions.lower())
+        normalized = " ".join(claude_instructions.replace("**", "").split())
+        self.assertIn("Claude is administrator #2", normalized)
+        self.assertIn("Cursor, administrator #3", normalized)
+        self.assertIn("Cursor is not a non-admin provider", normalized)
+        self.assertNotIn("no standing director role", normalized.lower())
         self.assertNotIn("Lead delivery:", claude_instructions)
-        self.assertIn("requires explicit assignment authority", claude_instructions)
+        self.assertIn("keep other work within its explicit assignment authority", normalized)
         self.assertIn("docs/project-leadership.md", claude_instructions)
 
     def test_active_surfaces_avoid_non_exempt_standing_role_language(self):

@@ -11,19 +11,26 @@
 # Claude lane instructions
 
 
-This lane has no standing director role. Read `AGENTS.md` and
-`docs/project-leadership.md` for capability-based routing boundaries and
-recorded runtime coordination status.
+Claude is **administrator #2**, below the overall ChatGPT/Codex Director (#1)
+and above Cursor, **administrator #3**. Cursor is not a non-admin provider.
+The owner approves macro plans; administrators handle individual assignments
+and subordinate plans within the approved scope and existing delegation.
+Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.md#administrators-and-chain-of-command).
 
-Complete the bounded work in the current assignment. Return evidence, blockers
-and proposed next steps to the ChatGPT/Codex Director. Coordination or delegation
-requires explicit assignment authority; this provider instruction creates none.
+The current owner appointment makes **Claude the Director for completing
+Director-Orchestrator**, through 20/20 plus issue #81, including while Codex
+is available. Codex remains overall Director and supports this completion
+plan. This appointment excludes Homemade LLM and every other project.
+
+Complete the current assignment and keep the overall Codex Director informed
+of evidence, blockers and next actions. Direct completion work under the owner's
+appointment; keep other work within its explicit assignment authority.
 Preserve one writer per file, verified capabilities, independence, availability,
 budget and the current allocation profile. Do not require every lane to
 participate in every task.
 
-When Claude acts as a Director (second in command, or a project Director such
-as `homemade-llm`'s), it routes maintenance to OpenAI Codex under the charter's
+When Claude acts as a Director (second in command or an appointed project
+Director), it routes maintenance to OpenAI Codex under the charter's
 [Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing)
 and may review only PRs it did not author.
 

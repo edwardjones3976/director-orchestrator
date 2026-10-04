@@ -28,9 +28,11 @@ from pathlib import Path
 # checkout's copy of this file is never trusted to check itself (review 4112412081). The check below is a second
 # line against a direct run, standard library only, before any repository module is imported.
 ROOT = Path(__file__).resolve().parents[1]
-# The owner-installed release descriptor, read here with json alone. Its location is the account home the launcher
-# resolved from the operating system and handed over (never HOME/USERPROFILE), and its exact bytes must hash to the
-# digest the launcher pinned (#287 items 33/34). A run the launcher did not start has no descriptor.
+# The owner-installed release descriptor, read here with json alone. Its location is this process's own
+# OS-resolved account home (never HOME/USERPROFILE, and never DIRECTOR_SCORECARD_OWNER_HOME merely because a
+# descriptor digest is also present -- #287 item 34): a caller-controlled environment must not relocate the owner
+# trust root. Its exact bytes must hash to the digest the launcher pinned (#287 item 33). A run the launcher did
+# not start has no descriptor.
 OWNER_HOME_ENV = "DIRECTOR_SCORECARD_OWNER_HOME"
 DESCRIPTOR_ENV = "DIRECTOR_SCORECARD_DESCRIPTOR_SHA256"
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
@@ -39,9 +41,47 @@ SHA_ENV = "DIRECTOR_SCORECARD_EVALUATOR_SHA"  # the exact pin the launcher extra
 ROTATED = "the release descriptor no longer pins the evaluator revision the launcher extracted"
 
 
+def account_home() -> Path:
+    """The account's profile directory from the operating system, never HOME or USERPROFILE (#287 item 34): the
+    identical lookup scripts/scorecard-launcher.py's account_home() performs. Standalone (no import of that file,
+    or of any repository module) so this still runs before any repository module is imported."""
+    if os.name == "nt":
+        import ctypes
+        import uuid
+        folder = (ctypes.c_byte * 16).from_buffer_copy(
+            uuid.UUID("5E6C858F-0E22-4760-9AFE-EA3317B67173").bytes_le)  # FOLDERID_Profile
+        path = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(path)) != 0:
+            raise OSError("the account profile folder could not be resolved")
+        try:
+            return Path(path.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path)
+    import pwd
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:  # an effective UID with no passwd/NSS entry (arbitrary-UID containers)
+        raise OSError("the account has no passwd entry") from error
+    if not home or not os.path.isabs(home):
+        raise OSError("the account home is not an absolute path")
+    return Path(home)
+
+
 def release_descriptor() -> Path | None:
-    home = os.environ.get(OWNER_HOME_ENV)
-    return Path(home) / ".director-scorecard" / "release-descriptor.json" if home and Path(home).is_absolute() else None
+    """The OS-resolved owner root's descriptor (#287 item 34): a caller-controlled DIRECTOR_SCORECARD_OWNER_HOME is
+    never the source of this path, merely because a descriptor digest is also present. DESCRIPTOR_ENV still gates
+    this to launcher-started runs; a forwarded owner-home claim that disagrees with the OS-resolved account is
+    treated the same as a run the launcher never started."""
+    if not os.environ.get(DESCRIPTOR_ENV):
+        return None
+    try:
+        home = account_home()
+    except OSError:
+        return None
+    forwarded = os.environ.get(OWNER_HOME_ENV)
+    if forwarded is not None and Path(forwarded).resolve() != home.resolve():
+        return None
+    return home / ".director-scorecard" / "release-descriptor.json"
 
 
 def pinned_evaluator(descriptor: Path | None = None) -> str | None:

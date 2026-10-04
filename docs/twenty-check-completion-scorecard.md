@@ -452,8 +452,10 @@ known folder `FOLDERID_Profile`; POSIX `pwd`), never through `HOME`,
 `USERPROFILE` or `HOMEDRIVE`/`HOMEPATH`. A launcher, descriptor or attestation
 directory copied under a caller-chosen home is not the installed launcher and
 refuses. The launcher hands the resolved account home to the evaluator it
-starts (`DIRECTOR_SCORECARD_OWNER_HOME`), and the evaluator reads owner files
-(descriptor, CI replica key, Security index) only from there. A run the
+starts (`DIRECTOR_SCORECARD_OWNER_HOME`); each consumer independently resolves
+the OS account root and checks any forwarded claim against it. The evaluator
+reads owner files (descriptor, CI replica key, Security index) only from that
+OS-resolved root. A run the
 launcher did not start reads no owner files and is unattested. Check the installed file's bytes against
 that commit (`git hash-object`) before trusting it.
 
@@ -1437,7 +1439,20 @@ not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
 fails the rule. The descriptor is the owner-installed file
 `~/.director-scorecard/release-descriptor.json` (no override; absent, a link,
-over 1 MB, malformed or another version means none). A candidate can run its own
+over 1 MB, malformed or another version means none). The owner root both hops
+resolve to find it is the operating system's own account-profile directory
+(`SHGetKnownFolderPath(FOLDERID_Profile)` on Windows, the password-database
+entry on POSIX) — never the `HOME`/`USERPROFILE` environment variables or
+`Path.home()`, and never a value the launcher merely forwards. The launcher
+passes its own OS-resolved root to the archived CLI as
+`DIRECTOR_SCORECARD_OWNER_HOME`, plus a `DIRECTOR_SCORECARD_DESCRIPTOR_SHA256`
+digest of the descriptor bytes it pinned; the archived CLI (and
+`primary_scorecard_evidence.owner_home`, used by `cli_release_descriptor`)
+independently re-resolves that same OS account and only cross-checks the
+forwarded claim for agreement, refusing the run on any mismatch. Neither
+function ever selects its root from the forwarded claim merely because the
+digest variable is present (#287 item 34): a caller-controlled environment
+cannot relocate the owner trust root. A candidate can run its own
 code, but only launcher-attested reports count: a checkout cannot be trusted
 to check itself (review 4112412081). The
 owner-installed launcher (`~/.director-scorecard/launcher.py`, reviewed source

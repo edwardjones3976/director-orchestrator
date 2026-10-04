@@ -99,6 +99,22 @@ and that includes me: I may write a change or I may accept one, never both.
 and [Claude's project instructions](CLAUDE.md). The leadership handoff does not
 attest that a deployed service has switched its executing provider.
 
+## Administrators and chain of command
+
+**Owner -> #1 ChatGPT/Codex -> #2 Claude -> #3 Cursor -> assigned providers.**
+Codex, Claude and Cursor are the three provider administrators. Codex may
+overrule and delegate to both; Claude may overrule and delegate to Cursor.
+Cursor is an administrator even while another administrator is directing work.
+Claude covers Codex's absence; Cursor carries all Director duties when both
+are unavailable. The owner approves macro plans; administrators handle individual
+assignments and subordinate plans within existing delegation and runtime gates.
+
+**Current completion lead: Claude, for Director-Orchestrator through 20/20 plus
+issue #81.** Codex remains overall Director and supports Claude's completion
+plan. That assignment excludes Homemade LLM and other projects. See
+[administrator responsibilities and the scoped appointment](docs/project-leadership.md#administrators-and-chain-of-command)
+and [staff/briefing responsibilities](docs/team-staff-and-briefings.md).
+
 ## INVESTIGATOR responsibility
 
 OpenAI/Director members also act as **INVESTIGATOR** under the
@@ -365,8 +381,13 @@ tool, repository, delegation, merge, deployment, or purchasing authority. See
 
 ## Reaching the other providers: the provider-dispatch MCP server
 
-Every AI platform this project works with is reachable from any agent host on the
-owner's PC through one stdio MCP server, `provider-dispatch`
+Owners and providers can use the shared [provider roster and contact
+guide](docs/team-staff-and-briefings.md#provider-roster) to find all 11 documented
+provider/contact entries, including native CLI, cloud, GUI and research routes.
+
+The six shared MCP tools (`provider_status`, `perplexity_search`,
+`perplexity_ask`, `xai_ask`, `zai_ask`, `zai_ping`) are exposed on configured
+agent hosts through the stdio MCP server, `provider-dispatch`
 (`~/.claude/skills/provider-dispatch/mcp_server.py`, Python 3.12 standard library
 only). It wraps the same calls as the `dispatch.py` CLI beside it, so a tool call
 and a CLI call obey identical caps, receipts, secret markers and the Z.ai trial

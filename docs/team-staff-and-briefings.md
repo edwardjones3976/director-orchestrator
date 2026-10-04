@@ -4,12 +4,64 @@ Owner direction: 2026-09-30. This is the team's daily coordination procedure.
 The objective remains a correct, evidenced result at reasonable, non-wasteful
 cost. A status update is not a reason to launch another model or repeat QA.
 
+## Provider roster
+
+Shared reference for owners and all collaborating providers, updated 2026-10-02.
+The roster has **11 provider/contact entries across nine grouped providers or
+services**. Routes listed here are documented contact options, not a live
+availability check or proof of runtime admission.
+
+| # | Provider or contact | Documented contact options | Profile or guidance |
+| --- | --- | --- | --- |
+| 1 | OpenAI — ChatGPT / Codex | ChatGPT sessions, local Codex CLI, Codex Cloud and OpenAI API | [OpenAI profile](provider-profiles/openai.profile.md) |
+| 2 | Anthropic — Claude | Existing Claude session and first-party Claude Code CLI | [Claude profile](provider-profiles/claude.profile.md) |
+| 3 | Cursor | Local Cursor Agent CLI and separate Cloud Agents | [Cursor profile](provider-profiles/cursor.profile.md) |
+| 4 | Google Gemini / Antigravity | Antigravity application and `agy` CLI | [Antigravity profile](provider-profiles/antigravity.profile.md) |
+| 5 | xAI — Direct Grok | Responses API/MCP and Grok Build CLI | [Grok profile](provider-profiles/grok.profile.md) |
+| 6 | Grok Bot | Separate owner-authorized GUI contact | [Contact procedures](#staff-sheet-and-contact-directory) |
+| 7 | Perplexity | Public research through MCP/API search and ask | [Perplexity profile](provider-profiles/perplexity.profile.md) |
+| 8 | Firecrawl | Public web research/retrieval through CLI or connector | [Firecrawl profile](provider-profiles/firecrawl.profile.md) |
+| 9 | GitHub Copilot | PowerShell `copilot`, `copilot --resume` and headless CLI | [Copilot profile](provider-profiles/github-copilot.profile.md) |
+| 10 | VS Code Coding Bot | Installed editor's Copilot Chat GUI contact | [VS Code contact methods](providers/vscode-contact-methods.md) |
+| 11 | Z.ai — GLM | Provider-dispatch and isolated CLI transport | [Z.ai profile](provider-profiles/zai.profile.md) |
+
+Grok Bot is a separate Grok contact route. VS Code Coding Bot is a Copilot
+contact, not proof of a separately enrolled provider. Firecrawl provides
+retrieval tooling rather than a standalone reasoning model. A route or product
+name does not establish the actual served model or backend provider family.
+
+Internal OpenAI teammates include the linked Director and Astra Light sessions,
+the cloud ChatGPT teammate (owner-selected Astra High), and the separately
+registered Codex Cloud Worker. Codex Security is an OpenAI tool specialization.
+These are not additional provider families. Director is a role, not another
+provider or bot; removed Director-branded bots are not roster members.
+
+To use the roster, choose the relevant profile and existing contact, confirm
+current availability and assignment authority, then follow the contact
+procedures below. Preserve the owner preference for external-provider work,
+with internal chats providing useful support. Use the
+[runtime profiles and route catalog](provider-profiles/README.md) for runtime
+contracts; this contact list does not change allocation, budget, access or
+review eligibility. Keep secrets and private contact details out of this guide.
+
 ## Leadership and succession
+
+**Administrators: ChatGPT/Codex (#1), Claude (#2), Cursor (#3).** The owner
+is above the three-provider administrator team. Cursor must not be grouped with
+non-admin providers. Codex may overrule/delegate to both; Claude may
+overrule/delegate to Cursor. Administrative status persists while another lead
+is active; the table's absence rules govern succession, not membership.
+
+For current Director-Orchestrator completion, **Claude is the appointed
+completion Director** and Codex supports that plan while remaining overall
+Director. That scope excludes Homemade LLM and other projects. Follow
+[the canonical appointment and approval responsibilities](project-leadership.md#administrators-and-chain-of-command)
+when assigning work or preparing pass-downs.
 
 | Order | Provider | Responsibility |
 | --- | --- | --- |
-| 1 | ChatGPT / Codex | Director and site foreman; owns outcomes, priorities, routing, evidence and continuity. |
-| 2 | Claude | Deputy; performs the Director's duties while Codex is unavailable. |
+| 1 | ChatGPT / Codex | Overall Director and site foreman; accountable for outcomes and supports Claude's Director-Orchestrator completion plan. |
+| 2 | Claude | Director-Orchestrator completion lead, including while Codex is available; also deputy for Codex's absence in other authorized scopes. |
 | 3 | Cursor | Official third in command; performs **all Director duties when both Codex and Claude are unavailable**. |
 
 All Director duties include Consultant, Investigator, Foreman and Quality Lead,
@@ -19,9 +71,10 @@ author to accept or merge its own work. Existing project-specific appointments
 remain in force. This is current operating guidance, not evidence of a deployed
 runtime-provider change.
 
-Exactly one lead directs shared work. A deputy records the takeover, why the
-higher-priority leaders are unavailable, open writer claims, active sessions
-and uncertain external actions in the existing coordination record. Do not
+Exactly one lead directs shared work. On an absence-based takeover, a deputy
+records why the higher-priority leaders are unavailable, open writer claims,
+active sessions and uncertain external actions in the existing coordination record.
+Claude's current completion appointment does not require Codex's absence. Do not
 infer unavailability from silence or old quota data. Returning leaders read
 the handoff and agree the transfer before resuming. In-flight writers and the
 one eligible final reviewer remain intact.
@@ -47,8 +100,8 @@ readiness. Never invent personal contact information, Slack IDs or served models
 
 | Member or lane | Contact / location | Daily responsibility |
 | --- | --- | --- |
-| Codex Director | Originating Director chat; native Codex CLI and isolated worktree | Reconcile assignments, unblock delivery, publish briefing. |
-| Claude deputy | Verified existing Claude session; otherwise first-party Claude CLI via its skill | Return release/evidence status and unresolved decisions; cover #1 absence. |
+| Codex Director | Originating Director chat; native Codex CLI and isolated worktree | Support Claude's completion plan, reconcile delegated assignments, unblock delivery and publish briefing. |
+| Claude completion lead / deputy | Verified existing Claude session; otherwise first-party Claude CLI via its skill | Direct Director-Orchestrator completion, return release/evidence status and unresolved decisions; cover #1 absence in other authorized scopes. |
 | Cursor third in command | Local `cursor-agent` via its skill; separate from Cursor Cloud Agents | Return review/continuity status; cover only when #1 and #2 are unavailable. |
 | Astra Light partner | Linked local orchestration chat | Focused assistance and worktree/evidence handoffs. |
 | Cloud Astra teammate | Confirm an active reply-capable chat; a share URL is reference only | Assigned analysis and continuity; no assumed local filesystem access. |

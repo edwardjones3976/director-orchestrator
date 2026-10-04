@@ -55,7 +55,13 @@ def account_home() -> Path:
         finally:
             ctypes.windll.ole32.CoTaskMemFree(path)
     import pwd
-    return Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    try:
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    except KeyError as error:  # an effective UID with no passwd/NSS entry (arbitrary-UID containers)
+        raise OSError("the account has no passwd entry") from error
+    if not home or not os.path.isabs(home):
+        raise OSError("the account home is not an absolute path")
+    return Path(home)
 
 
 def owner_root() -> Path:
@@ -98,11 +104,10 @@ def _receipt_path(nonce: str, root: Path | None = None) -> Path:
 
 
 def _evaluator_root() -> Path:
-    """Inside the evaluator a launch started: the owner root the launcher resolved and handed over. A run without the
-    launcher's descriptor digest falls back to the OS-resolved root and is unattested in any case."""
-    home = os.environ.get(OWNER_HOME_ENV)
-    if home and os.environ.get(DESCRIPTOR_ENV) and Path(home).is_absolute():
-        return Path(home) / ".director-scorecard"
+    """Inside the evaluator a launch started: always the OS-resolved owner root (#287 item 34), the identical
+    lookup the installed launcher itself performs. A forwarded DIRECTOR_SCORECARD_OWNER_HOME is never a source of
+    this root -- a caller-controlled environment must not be able to relocate the owner trust root merely by also
+    presenting a descriptor digest. A run without the launcher's descriptor digest is unattested in any case."""
     return owner_root()
 
 
@@ -136,7 +141,10 @@ def read_attestation(nonce: str, root: Path | None = None) -> dict | None:
 
 
 def run_attestation(root: Path) -> dict | None:
-    receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
+    try:
+        receipt = read_attestation(os.environ.get(NONCE_ENV, ""), _evaluator_root())
+    except OSError:
+        return None
     if receipt is None or receipt.get("report_sha256") is not None:
         return None
     try:
