@@ -1,7 +1,7 @@
 """Preparation contracts using the real A2 reader in isolated temporary owner roots."""
 import copy
 import base64
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import asdict, replace
 import importlib.util
 import io
@@ -31,6 +31,7 @@ SPEC.loader.exec_module(release)
 REAL_COMMAND = release.command
 REAL_CONTAINED_LAUNCH = process_isolation.launch_contained_process
 REAL_CONTAINED_STOP = process_isolation.stop_contained_process
+REAL_POPEN = subprocess.Popen
 PREFLIGHT_SPEC = importlib.util.spec_from_file_location("preflight_contract_fixture", ROOT / "tests/test_live_dispatch_preflight.py")
 PREFLIGHT_FIXTURE = importlib.util.module_from_spec(PREFLIGHT_SPEC)
 PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT_FIXTURE)
@@ -52,14 +53,7 @@ class ReleasePreparationTests(unittest.TestCase):
         # launcher logic. The real containment regression restores both helpers.
         def launch(argv, **kwargs):
             if kwargs.get("stdout") is not None:
-                # Owned-probe reads use the same mocked native boundary as
-                # observations, while exercising the real deadline/output loop.
-                raw = subprocess.check_output(argv, env=kwargs["env"], cwd=kwargs["cwd"])
-                kwargs["stdout"].write(raw)
-                class ReadProcess:
-                    returncode = 0
-                    def poll(inner): return 0
-                return ReadProcess(), object()
+                return subprocess.Popen(argv, **kwargs), None
             class Process:
                 def wait(inner, timeout):
                     result = subprocess.run(argv, **kwargs, check=True, timeout=timeout)
@@ -1068,7 +1062,7 @@ class ReleasePreparationTests(unittest.TestCase):
             # Only Docker observation is mocked. The emitted launcher invokes a
             # real harmless child, which records its actual replacement env.
             with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
-                    patch.object(subprocess, "check_output", side_effect=read):
+                    self.native_reads(read):
                 exec(compile(step["argv"][-2], "emitted-launcher", "exec"), {})
             observed = json.loads((self.root / "observed-environment.json").read_text())
             self.assertEqual(observed["DOCKER_HOST"], "npipe:////./pipe/docker_engine")
@@ -1106,7 +1100,7 @@ class ReleasePreparationTests(unittest.TestCase):
                     if change == "rollback":
                         Path(payload["prior_images"]).write_text('{"orchestrator_image_id":"unverified"}')
                     with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
-                            patch.object(subprocess, "check_output", side_effect=drift), \
+                            self.native_reads(drift), \
                             patch.object(subprocess, "run") as child:
                         with self.assertRaises(SystemExit):
                             exec(compile(step["argv"][-2], "emitted-launcher", "exec"), {})
@@ -1197,7 +1191,7 @@ class ReleasePreparationTests(unittest.TestCase):
                             return payload["fresh_networks"][0].encode()
                         return b""
                     with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
-                            patch.object(subprocess, "check_output", side_effect=read), \
+                            self.native_reads(read), \
                             patch.object(subprocess, "run") as child:
                         if defect and not (defect == "network" and not first_step):
                             with self.assertRaises(SystemExit):
@@ -1233,7 +1227,7 @@ class ReleasePreparationTests(unittest.TestCase):
                 def read(argv, **kwargs):
                     return self.platform(argv, **kwargs)
                 with patch.object(sys, "argv", ["launcher", step["argv"][-1]]), \
-                        patch.object(subprocess, "check_output", side_effect=read), \
+                        self.native_reads(read), \
                         patch.object(subprocess, "run") as child:
                     exec(compile(step["argv"][-2], "launcher", "exec"), {})
                     self.assertGreater(child.call_args.kwargs["timeout"], health + quiescence)
@@ -1586,6 +1580,38 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertNotIn("bootstrap=True", release.DATABASE_PROBE)
         self.assertNotIn("initialize", release.DATABASE_PROBE)
 
+    @contextmanager
+    def native_reads(self, read, *, real_controls=False):
+        """Fake native observations at Popen; execute the actual bounded loops."""
+        control_launch = REAL_CONTAINED_LAUNCH if real_controls else process_isolation.launch_contained_process
+        control_stop = REAL_CONTAINED_STOP if real_controls else process_isolation.stop_contained_process
+        def popen(argv, **kwargs):
+            if not hasattr(kwargs.get("stdout"), "write"):
+                return REAL_POPEN(argv, **kwargs)
+            selected = {key: kwargs[key] for key in ("env", "cwd", "executable") if key in kwargs}
+            if hasattr(kwargs.get("stdin"), "read"):
+                selected["input"] = kwargs["stdin"].read()
+            # A custom router may deliberately use real Git. Its inner native
+            # launch must not recursively re-enter this observation fixture.
+            with patch.object(subprocess, "Popen", REAL_POPEN):
+                raw = read(argv, **selected)
+            kwargs["stdout"].write(raw)
+            class ReadProcess:
+                returncode = 0
+                def poll(inner): return 0
+            return ReadProcess()
+        def contained(argv, **kwargs):
+            if hasattr(kwargs.get("stdout"), "write"):
+                return popen(argv, **kwargs), None
+            return control_launch(argv, **kwargs)
+        def stop(process, guard, **kwargs):
+            if guard is not None:
+                return control_stop(process, guard, **kwargs)
+        with patch.object(subprocess, "Popen", side_effect=popen), \
+                patch.object(process_isolation, "launch_contained_process", side_effect=contained), \
+                patch.object(process_isolation, "stop_contained_process", side_effect=stop):
+            yield
+
     def launch_fixture(self, step, *, observe=None, effect=None):
         """Run the emitted launcher; only native command boundaries are faked."""
         payload = json.loads(base64.b64decode(step["argv"][-1]))
@@ -1596,7 +1622,7 @@ class ReleasePreparationTests(unittest.TestCase):
                     return reply
             return self.platform(argv, **kwargs)
         with patch.object(sys, "argv", ["launcher", step["argv"][-1]]), \
-                patch.object(subprocess, "check_output", side_effect=read), \
+                self.native_reads(read), \
                 patch.object(subprocess, "run", side_effect=effect) as child:
             try:
                 exec(compile(step["argv"][-2], "emitted-launcher", "exec"), {})
@@ -2481,6 +2507,29 @@ assert fixture_cache.SAFE and callable(jsonschema.validate)
                     self.assertRaisesRegex(release.ReleaseError, "sibling_(loader_environment|working_directory)_unsupported"):
                 tool.rehearsal_images(graph)
 
+    def test_rehearsal_refuses_git_environment_even_when_compose_masks_image(self):
+        self.sibling()
+        tool = release.Release(self.root / "sibling.json")
+        tool.rehearsal_images(self.sibling_compose)
+        for key, value in (("GIT_CONFIG_COUNT", "1"), ("HOME", "/repository/tracked-home"),
+                           ("XDG_CONFIG_HOME", "/repository/tracked-xdg")):
+            graph = copy.deepcopy(self.sibling_compose)
+            for name in ("orchestrator", "slackbot"):
+                graph["services"][name]["environment"][key] = None
+            def observe(argv, **kwargs):
+                raw = self.platform(argv, **kwargs)
+                if argv[:3] == ["docker", "image", "inspect"] and argv[-1] == self.image:
+                    rows = json.loads(raw)
+                    rows[0]["Config"]["Env"].append(key + "=" + value)
+                    # Compose removes the key, but the direct image-only probe
+                    # still inherits it and must be refused by its own check.
+                    release.reviewed_application_environment(graph["services"]["orchestrator"], rows[0]["Config"])
+                    return release.encoded(rows)
+                return raw
+            with self.subTest(key=key), patch.object(release, "command", side_effect=observe), \
+                    self.assertRaisesRegex(release.ReleaseError, "^sibling_git_environment_unsupported$"):
+                tool.rehearsal_images(graph)
+
     @unittest.skipUnless(os.name == "nt", "Windows executable search regression")
     def test_trusted_native_path_prevents_candidate_executable_lookup(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2517,9 +2566,7 @@ except m['ReleaseError']: pass
         payload.update(control_argv=[sys.executable, "-I", "-c", parent, str(marker), str(ready), grandchild],
                        control_timeout_seconds=0.5)
         with patch.object(sys, "argv", ["launcher", base64.b64encode(release.encoded(payload)).decode()]), \
-                patch.object(subprocess, "check_output", side_effect=self.platform), \
-                patch.object(process_isolation, "launch_contained_process", REAL_CONTAINED_LAUNCH), \
-                patch.object(process_isolation, "stop_contained_process", REAL_CONTAINED_STOP):
+                self.native_reads(self.platform, real_controls=True):
             with self.assertRaises(subprocess.TimeoutExpired):
                 exec(compile(release.REHEARSAL_LAUNCH, "launcher", "exec"), {})
         self.assertTrue(ready.exists(), "fixture child must start before the deadline")
@@ -3014,19 +3061,30 @@ except m['ReleaseError']: pass
         # and launches a real harmless child through the production containment.
         harness = self.root / "emitted-fixture.json"
         harness.write_bytes(release.encoded({"code": step["argv"][-2], "payload": payload, "intake_rows": self.intake_rows}))
+        response = ("import json,pathlib,sys\n"
+            "fixture=json.loads(pathlib.Path(sys.argv[1]).read_bytes()); v=fixture['payload']; args=sys.argv[2:]\n"
+            "if args[:2]==['docker','info']: raw=v['daemon_id'].encode()\n"
+            "elif args[:2]==['docker','ps']: raw=b''\n"
+            "elif args[:3]==['docker','volume','inspect']: raw=json.dumps([fixture['intake_rows'][args[-1]]]).encode()\n"
+            "else: raise AssertionError(args)\n"
+            "sys.stdout.buffer.write(raw)\n")
         wrapper = """import base64,json,pathlib,subprocess,sys
-fixture=json.loads(pathlib.Path(sys.argv[1]).read_bytes()); v=fixture['payload']
+fixture_path=sys.argv[1]
+fixture=json.loads(pathlib.Path(fixture_path).read_bytes()); v=fixture['payload']
 assert sys.flags.isolated and sys.flags.dont_write_bytecode
-original=subprocess.check_output; checks=[]
-def read(args,**kwargs):
+original=subprocess.Popen; checks=[]
+response=""" + repr(response) + """
+def popen(args,**kwargs):
+    args=list(args)
     if args[0]=='git':
         if args[1]=='status': checks.append('source')
-        return original(args,**kwargs)
-    if args[:2]==['docker','info']: return v['daemon_id'].encode()
-    if args[:2]==['docker','ps']: return b''
-    if args[:3]==['docker','volume','inspect']: return json.dumps([fixture['intake_rows'][args[-1]]]).encode()
-    raise AssertionError(args)
-subprocess.check_output=read
+    elif args[0]=='docker':
+        # A harmless real process supplies synthetic daemon observations. The
+        # production bounded I/O and authenticated containment stay real.
+        args=[sys.executable,'-I','-B','-c',response,fixture_path,*args]
+        kwargs['executable']=sys.executable
+    return original(args,**kwargs)
+subprocess.Popen=popen
 sys.argv=['launcher',base64.b64encode(json.dumps(v).encode()).decode()]
 exec(compile(fixture['code'],'emitted-launcher','exec'),{})
 assert checks==['source','source'],checks
@@ -3040,6 +3098,177 @@ assert checks==['source','source'],checks
 
 
 class ReleaseInputAndProcessTests(unittest.TestCase):
+    def git_authority_fixture(self, root):
+        """A real pinned repo with inert tracked configs until the app selects them."""
+        git_path = shutil.which("git")
+        if not git_path:
+            self.skipTest("Git required")
+        repo = root / "snapshot"
+        repo.mkdir()
+        for name in ("empty-template", "empty-home", "empty-xdg"):
+            (root / name).mkdir()
+        environment = {key: value for key, value in release.child_environment().items()
+                       if not key.startswith("GIT_")}
+        environment.update(HOME=str(root / "empty-home"), XDG_CONFIG_HOME=str(root / "empty-xdg"),
+                           GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_SYSTEM=os.devnull)
+        def git(*args):
+            return subprocess.check_output([git_path, *args], cwd=repo, env=environment, stderr=subprocess.DEVNULL)
+        git("init", "--template=" + str(root / "empty-template"), "-b", "main")
+        git("config", "core.autocrlf", "false")
+        git("config", "core.filemode", "false")
+        files = {"README.md": b"synthetic pinned authority\n",
+            "tracked-hook.sh": b'#!/bin/sh\nprintf executed > "$SYNTHETIC_MARKER"\nprintf "token\\0"\n',
+            "tracked-home/.gitconfig": b"[core]\n\tfsmonitor = ./tracked-hook.sh\n",
+            "tracked-xdg/git/config": b"[core]\n\tfsmonitor = ./tracked-hook.sh\n"}
+        for name, raw in files.items():
+            path = repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        (repo / "tracked-hook.sh").chmod(0o755)
+        git("add", ".")
+        git("-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+            "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+        git("remote", "add", "origin", "https://github.com/example/demo.git")
+        return repo, environment, git, git("rev-parse", "HEAD").decode().strip(), git("rev-parse", "HEAD^{tree}").decode().strip()
+
+    def test_application_git_environment_cannot_execute_tracked_hook(self):
+        from types import SimpleNamespace
+        from director_orchestrator.models import Assignment, ProviderName
+        from director_orchestrator.packet_transports import LocalGitAuthoritySnapshotResolver
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, environment, git, commit, tree = self.git_authority_fixture(root)
+            assignment = Assignment(sequence=1, agent=ProviderName.CURSOR, task="synthetic inspection",
+                acceptance=["report"], repository="example/demo", starting_ref=commit)
+            record = SimpleNamespace(plan=SimpleNamespace(prestage=SimpleNamespace(
+                worktree=str(repo), base_sha=commit, branch=commit)))
+            resolver = LocalGitAuthoritySnapshotResolver("example/demo", str(repo),
+                pinned_commit_sha=commit, pinned_tree_sha=tree)
+            stock = {"WorkingDir": "/app", "Env": ["PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONPATH=/app/src",
+                     "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1"]}
+            release.reviewed_application_environment({}, stock)
+            with patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(len(resolver.resolve(record, assignment)), 4)
+            cases = {"count": {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.fsmonitor",
+                               "GIT_CONFIG_VALUE_0": "./tracked-hook.sh"},
+                     "home": {"HOME": str(repo / "tracked-home")},
+                     "xdg": {"XDG_CONFIG_HOME": str(repo / "tracked-xdg")}}
+            for origin in ("image", "compose"):
+                for mode, changes in cases.items():
+                    with self.subTest(origin=origin, mode=mode):
+                        marker = root / (origin + "-" + mode + ".marker")
+                        image, service = copy.deepcopy(stock), {}
+                        changes = dict(changes, SYNTHETIC_MARKER=marker.as_posix())
+                        if origin == "image":
+                            image["Env"].extend(key + "=" + value for key, value in changes.items())
+                        else:
+                            service["environment"] = changes
+                        refused = False
+                        try:
+                            effective = release.reviewed_application_environment(service, image)
+                        except release.ReleaseError as error:
+                            self.assertEqual(str(error), "sibling_git_environment_unsupported")
+                            refused = True
+                        else:
+                            # The real local Git executable remains on the
+                            # trusted host PATH; the accepted Git selectors are
+                            # carried unchanged into the real pinned resolver.
+                            native = dict(environment, **{key: value for key, value in effective.items() if key != "PATH"})
+                            with patch.dict(os.environ, native, clear=True):
+                                self.assertEqual(len(resolver.resolve(record, assignment)), 4)
+                        self.assertFalse(marker.exists(), "accepted application environment executed the tracked hook")
+                        self.assertTrue(refused, "unsupported application Git selector was admitted")
+            for key in ("GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL", "GIT_EXEC_PATH", "HOME", "XDG_CONFIG_HOME"):
+                with self.subTest(empty=key), self.assertRaisesRegex(release.ReleaseError, "^sibling_git_environment_unsupported$"):
+                    release.reviewed_application_environment({"environment": {key: ""}}, stock)
+            self.assertEqual(git("status", "--porcelain=v2"), b"")
+
+    def emitted_read_fixture(self, *, containment=None):
+        import ast
+        import signal
+        nodes = [item for item in ast.parse(release.REHEARSAL_LAUNCH).body
+                 if isinstance(item, ast.FunctionDef) and item.name in ("command", "require", "read")]
+        namespace = {"subprocess": subprocess, "pathlib": __import__("pathlib"), "Path": Path,
+            "signal": signal, "os": os, "time": time, "tempfile": tempfile, "MAX_BYTES": release.MAX_BYTES,
+            "native_containment": containment, "env": release.child_environment(),
+            "v": {"executables": {}, "cwd": str(ROOT)}}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "actual-emitted-native-reader", "exec"), namespace)
+        return namespace
+
+    def test_emitted_read_caps_output_and_preserves_input(self):
+        namespace = self.emitted_read_fixture()
+        read = namespace["read"]
+        echo = [sys.executable, "-I", "-B", "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"]
+        self.assertEqual(read(echo, input=b"synthetic stdin\0bytes"), b"synthetic stdin\0bytes")
+        self.assertEqual(read(echo), b"")
+        for stream in ("stdout", "stderr"):
+            writer = [sys.executable, "-I", "-B", "-c",
+                      "import sys; sys." + stream + ".buffer.write(b'x'*(4*1024*1024+1))"]
+            # On the published implementation stdout already fails this first
+            # assertion; it never floods the parent with the later stderr case.
+            with self.assertRaisesRegex(SystemExit, "^command_output_exceeded$"):
+                read(writer)
+        with self.assertRaisesRegex(SystemExit, "^platform_check_failed$"):
+            read([sys.executable, "-I", "-B", "-c", "import sys; sys.stderr.write('synthetic-not-for-errors'); sys.exit(1)"])
+
+    def test_emitted_read_deadline_cleans_children_before_and_after_authentication(self):
+        for contained in (False, True):
+            with self.subTest(contained=contained), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                marker, ready = root / "survived", root / "ready"
+                namespace = self.emitted_read_fixture(containment=(REAL_CONTAINED_LAUNCH, REAL_CONTAINED_STOP) if contained else None)
+                actual = namespace["command"]
+                def shortened(*args, deadline, **kwargs):
+                    self.assertGreater(deadline, time.monotonic() + 29)
+                    return actual(*args, deadline=min(deadline, time.monotonic() + 0.5), **kwargs)
+                namespace["command"] = shortened
+                descendant = "import pathlib,sys,time; time.sleep(1.5); pathlib.Path(sys.argv[1]).write_text('escaped')"
+                parent = ("import pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[3],sys.argv[1]]); "
+                          "pathlib.Path(sys.argv[2]).write_text('ready'); time.sleep(20)")
+                start = time.monotonic()
+                with self.assertRaisesRegex(SystemExit, "^doctor_deadline_exhausted$"):
+                    namespace["read"]([sys.executable, "-I", "-B", "-c", parent, str(marker), str(ready), descendant])
+                self.assertLess(time.monotonic() - start, 6)
+                self.assertTrue(ready.exists(), "fixture parent did not start")
+                time.sleep(1.6)
+                self.assertFalse(marker.exists(), "read timeout left a native descendant alive")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required for the actual snapshot consumers")
+    def test_snapshot_remote_alias_preserves_mandatory_origin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, environment, git, commit, tree = self.git_authority_fixture(root)
+            git("remote", "add", "reviewed", "https://github.com/example/demo.git")
+            tool = release.Release.__new__(release.Release)
+            tool.spec = {"snapshot": {"path": str(repo), "remote": "reviewed", "repository": "example/demo",
+                                     "starting_ref": "main", "commit": commit, "tree": tree}}
+            def powershell(name, arguments):
+                return REAL_COMMAND([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts" / name),
+                    *arguments, "-GitExecutable", shutil.which("git")], cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+            tool.powershell = powershell
+            control = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
+            start = control.index('$snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]')
+            block = control[start:control.index("$env:DIRECTOR_ENV_FILE =", start)]
+            harness = root / "control-snapshot.ps1"
+            harness.write_text('param($SnapshotPath,$Commit,$Tree,$SelectedGit,$ScriptRoot)\n'
+                '$ErrorActionPreference="Stop";$PSScriptRoot=$ScriptRoot\n'
+                '$values=@{REPOSITORY_SNAPSHOT_HOST_PATH=$SnapshotPath;REPOSITORY_ALLOWLIST="example/demo";ALLOWED_STARTING_REFS="main"}\n'
+                '$executionCommit=$Commit;$executionTree=$Tree;$GitExecutable=$SelectedGit\n' + block)
+            argv = [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(harness),
+                    "-SnapshotPath", str(repo), "-Commit", commit, "-Tree", tree,
+                    "-SelectedGit", shutil.which("git"), "-ScriptRoot", str(ROOT / "scripts")]
+            tool.snapshot_check()
+            REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+            for missing in (False, True):
+                if missing:
+                    git("remote", "remove", "origin")
+                else:
+                    git("remote", "set-url", "origin", "https://github.com/example/other.git")
+                with self.subTest(missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
+                    tool.snapshot_check()
+                with self.subTest(control_missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
+                    REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+
     def test_cli_bootstrap_refuses_checkout_imports_without_isolation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

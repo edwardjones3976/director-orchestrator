@@ -264,6 +264,14 @@ and daemon ID. Later Docker checks use that endpoint with ambient Docker selecto
 removed. Windows Program Files
 variables are retained because Docker discovers its Compose plugin there. The descriptor's
 protected profiles and explicit executable paths remain trusted local inputs.</p>
+<p>The emitted launcher's ordinary Git and Docker observations share the same
+bounded native-command implementation: each read has one absolute 30-second
+deadline, a 4 MiB limit on each captured output stream and native child cleanup.
+Stdin bytes use a temporary file; stdout and stderr never accumulate without a
+limit in memory. Before source authentication the fixed launcher uses only the
+standard library and the pinned executable. After authentication it uses the
+verified process-containment helper. This does not import checkout code early or
+claim that terminating a Docker client reverses a daemon-side effect.</p>
 <p>The current host doctor requires host-readable profile paths and a database DSN
 whose canonical identity matches the manifest. Container-only paths or a host
 port alias producing a different storage identity fail; the script never
@@ -398,6 +406,10 @@ retain <code>PYTHONPATH=/app/src</code>, <code>PYTHONDONTWRITEBYTECODE=1</code>,
 <code>PYTHONUNBUFFERED=1</code>, stock executable search directories and
 <code>/app</code> as the effective working directory. Alternate Python startup
 controls and native-loader overrides are refused, including inherited image values.
+Explicit <code>GIT_*</code>, <code>HOME</code> and <code>XDG_CONFIG_HOME</code> keys,
+including empty values, are also refused for these application services. The
+stock image's implicit user defaults remain in place; application settings cannot
+select runtime Git configuration from tracked files in the mounted snapshot.
 Nonempty <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code> and <code>ALL_PROXY</code>
 are refused regardless of case, so an HTTP client cannot redirect the internal
 gateway request and bearer header through an environment-selected proxy.
@@ -543,6 +555,11 @@ loading includes and refuses <code>include.path</code> and
 <code>includeIf.*.path</code>, even inactive or missing includes: a condition or
 absolute path can resolve differently when the snapshot moves to
 <code>/repository</code>. Such indirection is outside the supported snapshot contract.
+The descriptor's selected <code>snapshot.remote</code> and the snapshot's mandatory
+<code>origin</code> must both identify the expected repository. A matching custom
+alias is supported; it does not replace <code>origin</code>, which the control script
+and runtime repository-authority resolver use. Missing or mismatched
+<code>origin</code> is refused during preparation.
 It additionally reads every direct <code>core.fsmonitor</code> value, including
 temporarily masked values, and requires absence or values that Git parses as disabled.
 Hook paths, enabled settings,
