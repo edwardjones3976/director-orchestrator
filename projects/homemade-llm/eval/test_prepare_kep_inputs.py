@@ -36,7 +36,7 @@ class Fixture:
         census = []
         for config in self.items:
             number, sig = config["number"], config["sig"]
-            parent = f"keps/{sig}/{number}-synthetic"
+            parent = f"keps/{sig}/{config.get('directory_number', number)}-synthetic"
             path = parent + "/kep.yaml"
             raw = f"kep-number: {number}\nstatus: {config['status']}\ncreation-date: 2025-15-01\n".encode()
             self.files[path] = raw
@@ -241,15 +241,58 @@ class PrepareKepInputsTests(unittest.TestCase):
             tool.prepare(**fixture.args())
         self.assertFalse((self.root / "out").exists())
 
-    def test_census_number_must_match_directory_prefix_including_ineligible(self):
-        for status in ("implemented", "provisional"):
+    def test_directory_disagreement_is_counted_without_reidentifying_or_aborting(self):
+        for status in ("implementable", "provisional"):
             with self.subTest(status=status):
                 root = self.root / status
                 root.mkdir()
-                fixture = Fixture(root, [dict(number=19, sig="sig-example", status=status, text=source())])
-                fixture.census["items"][0]["kep_id"] = "29"
+                items = [dict(number=1884, directory_number=2043, sig="sig-example", status=status,
+                              text="Refused source body must not enter the input artifact."),
+                         dict(number=19, sig="sig-example", status="implemented", text=source(19)),
+                         dict(number=29, sig="provider-aws", status="implementable", text=source(29))]
+                items.extend(dict(number=0, directory_number="0000", sig=sig, status="implemented", text=source(0))
+                             for sig in ("sig-zero-a", "sig-zero-b", "sig-zero-c"))
+                fixture = Fixture(root, items)
+                result = tool.prepare(**fixture.args())
+                raw, rows, manifest = self.load(root / "out")
+                self.assertEqual(result["metadata_candidates"], 6)
+                self.assertEqual(result["status_candidates"], 6 if status == "implementable" else 5)
+                self.assertEqual(result["usable_inputs"], 2)
+                self.assertEqual(result["refused"], 4)
+                self.assertEqual(result["refused_by_reason"], {"DIRECTORY_ID_MISMATCH": 1, "NONPOSITIVE_ID": 3})
+                decision = next(item for item in manifest["qualification"]["census"] if "2043-synthetic" in item["path"])
+                self.assertEqual(decision["kep_number"], 1884)
+                self.assertEqual(decision["reason"], "DIRECTORY_ID_MISMATCH")
+                self.assertIsNone(decision["selection_rank"])
+                self.assertFalse(decision["section_qualified"])
+                self.assertEqual(decision["disposition"], "refused")
+                self.assertEqual({row["kep_number"] for row in rows}, {19, 29})
+                self.assertTrue(all(set(row) == tool.RECORD_KEYS and "target" not in row for row in rows))
+                self.assertNotIn(b"Refused source body", raw)
+                self.assertEqual(manifest["inputs_sha256"], tool.digest(raw))
+
+    def test_directory_refusal_still_authenticates_metadata_and_unique_eligible_ids(self):
+        for mutation, expected in (("census_id", "CENSUS_METADATA_MISMATCH"),
+                                   ("status", "CENSUS_METADATA_MISMATCH"),
+                                   ("hash", "METADATA_PIN_MISMATCH"),
+                                   ("duplicate", "DUPLICATE_KEP_ID")):
+            with self.subTest(mutation=mutation):
+                root = self.root / mutation
+                root.mkdir()
+                fixture = Fixture(root, [dict(number=1884, directory_number=2043, sig="sig-example",
+                                             status="implementable", text=source(1884)),
+                                        dict(number=19, sig="sig-other", status="implemented", text=source(19))])
+                item = fixture.census["items"][0]
+                if mutation == "census_id":
+                    item["kep_id"] = "1885"
+                elif mutation == "status":
+                    item["status"] = "provisional"
+                elif mutation == "hash":
+                    item["metadata_sha256"] = "0" * 64
+                else:
+                    fixture.census["items"][1]["kep_id"] = "1884"
                 fixture.refresh()
-                with self.assertRaisesRegex(tool.Refusal, "CENSUS_IDENTITY_MISMATCH"):
+                with self.assertRaisesRegex(tool.Refusal, expected):
                     tool.prepare(**fixture.args())
                 self.assertFalse((root / "out").exists())
 

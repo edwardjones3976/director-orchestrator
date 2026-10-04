@@ -19,9 +19,16 @@ uniquely named regular members after validating their paths and evidence pins.
 Rule v2 accepts exact metadata statuses `implemented` and `implementable` and
 does not filter by creation date. A positive unique KEP number identifies one
 source group. Duplicate identities and conflicting evidence are refused.
-Each census number must match its directory's numeric prefix. Before any README
-read, every census entry (including ineligible entries) must match the number
+The authenticated YAML `kep-number`, equal to the census ID, is the identity
+authority. A directory numeric-prefix disagreement receives one explicit
+`DIRECTORY_ID_MISMATCH` refusal in the qualification census and aggregate counts;
+that entry is never accepted, reidentified or silently dropped, and unrelated
+valid entries may continue. Nonpositive IDs retain their counted refusal when
+their directory prefix agrees. Before any README read, every census entry
+(including directory-refused and ineligible entries) must match the number
 and exact status in its independently pinned `kep.yaml` bytes and Git blob.
+Untrusted evidence (a hash failure, YAML/census identity or status disagreement,
+or duplicate eligible positive identity) still refuses the whole run.
 Metadata is inspected as YAML nodes with the existing PyYAML dependency; no YAML
 object constructors run. Duplicate top-level keys, merge keys and ambiguous or
 non-scalar identity fields are refused rather than reinterpreted.

@@ -327,20 +327,27 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         if type(number) is int:
             number = str(number)
         directory_number = re.match(r"([0-9]+)(?:-|$)", path.split("/")[2])
-        if not isinstance(number, str) or not number.isascii() or not number.isdigit() or directory_number is None or int(directory_number[1]) != int(number):
+        if not isinstance(number, str) or not number.isascii() or not number.isdigit():
             raise Refusal("CENSUS_IDENTITY_MISMATCH")
         number = int(number)
         if re.fullmatch(r"[0-9a-f]{64}", str(entry.get("metadata_sha256"))) is None:
             raise Refusal("INVALID_CENSUS")
+        # Census/YAML identity is authoritative. Directory disagreements are
+        # counted refusals, not identities to repair or a batch-wide veto.
+        if entry.get("status") in ("implemented", "implementable") and number > 0:
+            if number in seen_ids:
+                raise Refusal("DUPLICATE_KEP_ID")
+            seen_ids.add(number)
+        if directory_number is None or int(directory_number[1]) != number:
+            decision["kep_number"] = number
+            decision["reason"] = "DIRECTORY_ID_MISMATCH"
+            continue
         if entry.get("status") not in ("implemented", "implementable"):
             decision["reason"] = "INELIGIBLE_STATUS"
             continue
         if number < 1:
             decision["reason"] = "NONPOSITIVE_ID"
             continue
-        if number in seen_ids:
-            raise Refusal("DUPLICATE_KEP_ID")
-        seen_ids.add(number)
         decision["kep_number"] = number
         eligible.append((entry, decision))
     buckets = defaultdict(list)
