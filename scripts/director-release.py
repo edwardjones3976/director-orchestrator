@@ -27,6 +27,7 @@ import time
 from types import ModuleType
 
 from jsonschema import Draft202012Validator
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/schemas/director-release-descriptor-v1.schema.json"
@@ -34,6 +35,10 @@ MAX_BYTES = 4 * 1024 * 1024
 DEPENDENCIES = {
     "fresh_generation_authority": "primary_generation.require_generation has no read-only fresh-manifest verification path",
     "paid_admission": "the validation CLI has no per-lane campaign/daily-dollar reservation and settlement contract",
+}
+COMPOSE_SERVICE_FIELDS = {
+    "image", "build", "command", "entrypoint", "restart", "environment", "ports", "volumes",
+    "depends_on", "healthcheck", "networks", "pull_policy", "deploy", "scale", "working_dir", "logging",
 }
 
 
@@ -159,6 +164,55 @@ def dotenv(raw):
         # Match the existing control scripts: raw values, never shell expansion.
         result[name] = value
     return result
+
+
+class ComposeInputLoader(yaml.SafeLoader):
+    """A small, unambiguous YAML subset; no aliases, merges or custom tags."""
+
+    def compose_node(self, parent, index):
+        require(not self.check_event(yaml.AliasEvent), "compose_yaml_unsupported")
+        return super().compose_node(parent, index)
+
+    def construct_mapping(self, node, deep=False):
+        keys = [key.value for key, _ in node.value]
+        require(all(key.tag == "tag:yaml.org,2002:str" for key, _ in node.value) and
+                len(keys) == len(set(keys)), "compose_yaml_unsupported")
+        return super().construct_mapping(node, deep=deep)
+
+
+def compose_input_check(pins, runtime_pin):
+    """Close file inputs before Compose can load and erase their provenance."""
+    pinned_file(runtime_pin)
+    runtime_path = Path(runtime_pin["path"]).resolve()
+    for pin in pins:
+        try:
+            model = yaml.load(pinned_file(pin), Loader=ComposeInputLoader)
+        except (yaml.YAMLError, RecursionError):
+            raise ReleaseError("compose_yaml_unsupported") from None
+        require(isinstance(model, dict) and set(model) <= {"name", "version", "services", "networks", "volumes"},
+                "compose_external_input_unsupported")
+        services = model.get("services", {})
+        require(isinstance(services, dict), "compose_yaml_unsupported")
+        for service in services.values():
+            require(isinstance(service, dict) and set(service) <= COMPOSE_SERVICE_FIELDS | {"env_file"},
+                    "compose_external_input_unsupported")
+            files = service.get("env_file", [])
+            files = [files] if isinstance(files, str) else files
+            require(isinstance(files, list), "compose_env_file_unbound")
+            for entry in files:
+                if isinstance(entry, dict):
+                    require(set(entry) <= {"path", "required"} and entry.get("required", True) is True,
+                            "compose_env_file_unbound")
+                    entry = entry.get("path")
+                require(isinstance(entry, str) and bool(entry), "compose_env_file_unbound")
+                if entry in ("$DIRECTOR_ENV_FILE", "${DIRECTOR_ENV_FILE}", "${DIRECTOR_ENV_FILE:-.env}"):
+                    continue  # Every planning and emitted consumer sets this to the bound input.
+                require("$" not in entry, "compose_env_file_unbound")
+                path = Path(entry)
+                if not path.is_absolute():
+                    path = Path(pins[0]["path"]).parent / path
+                unlinked(path)
+                require(str(path.resolve()) == str(runtime_path), "compose_env_file_unbound")
 
 
 def child_environment():
@@ -614,8 +668,7 @@ class Release:
         self.manifest = document(pinned_file(self.spec["generation_manifest"]))
         self.validation = document(pinned_file(self.spec["validation_manifest"]))
         pinned_file(self.spec["bridge_ca"])
-        for pin in self.spec["compose_files"]:
-            pinned_file(pin)
+        compose_input_check(self.spec["compose_files"], self.spec["runtime_env"])
         self.rendered = None
         self.observed_database = None
         self.docker_environment = None
@@ -724,6 +777,7 @@ class Release:
         # This is a selector comparison, not acceptance or full manifest verification.
 
     def compose_document(self, runtime):
+        compose_input_check(self.spec["compose_files"], self.spec["runtime_env"])
         env = child_environment()
         env.update(runtime)
         env.update(DIRECTOR_ENV_FILE=self.spec["runtime_env"]["path"],
@@ -1002,6 +1056,7 @@ class Release:
         environment = child_environment()
         environment.update(sibling.docker_environment)
         environment.update(COMPOSE_FILE=os.pathsep.join(pin["path"] for pin in sibling.spec["compose_files"]),
+                           DIRECTOR_ENV_FILE=sibling.spec["runtime_env"]["path"],
                            COMPOSE_PATH_SEPARATOR=os.pathsep, DIRECTOR_HOST_PORT=str(plan["host_port"]),
                            ALLOW_PAID_RUNS="false", LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED="false",
                            LANGGRAPH_PARALLEL_KILL_SWITCH="true")
@@ -1314,8 +1369,7 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
     require({"orchestrator", "slackbot", "n8n"} <= set(sibling["services"]) <= set(allowed_dependencies),
             "sibling_service_graph_unsupported")
     for name, service in sibling["services"].items():
-        require(set(service) <= {"image", "build", "command", "entrypoint", "restart", "environment", "ports", "volumes",
-                "depends_on", "healthcheck", "networks", "pull_policy", "deploy", "scale", "working_dir", "logging"},
+        require(set(service) <= COMPOSE_SERVICE_FIELDS,
                 "sibling_service_option_unsupported")
         require(service.get("restart", "no") in ("no", "unless-stopped") and
                 set(service.get("deploy", {})) <= {"replicas", "mode"}, "sibling_restart_or_deploy_unsupported")
@@ -1370,6 +1424,12 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
                 n8n.get("DB_POSTGRESDB_USER") == database.get("POSTGRES_USER") == "n8n" and
                 bool(database.get("POSTGRES_PASSWORD")) and
                 n8n.get("DB_POSTGRESDB_PASSWORD") == database["POSTGRES_PASSWORD"], "sibling_n8n_database_mismatch")
+        dependency = sibling["services"]["n8n"].get("depends_on", {}).get("n8n-db", {})
+        health = sibling["services"]["n8n-db"].get("healthcheck", {})
+        require(isinstance(dependency, dict) and set(dependency) <= {"condition", "required", "restart"} and
+                dependency.get("condition") == "service_healthy" and dependency.get("required", True) is True and
+                dependency.get("restart", False) is False and not health.get("disable") and
+                health.get("test") == ["CMD-SHELL", "pg_isready -U n8n -d n8n"], "sibling_n8n_database_dependency_missing")
     for name in ("n8n-db", "langgraph-primary-db"):
         if name in sibling["services"]:
             require(set(sibling["services"][name].get("environment", {})) <=
@@ -1378,6 +1438,10 @@ def isolated_sibling(final, sibling, host_port, *, protected_paths=(), final_res
     for kind in ("networks", "volumes"):
         final_names = {item.get("name") for item in final.get(kind, {}).values()} | set(final_resources.get(kind, []))
         for item in sibling.get(kind, {}).values():
+            if kind == "networks":
+                defaults = {"external": False, "internal": False, "attachable": False, "enable_ipv4": True, "enable_ipv6": False}
+                require(set(item) <= {"name", "ipam", *defaults} and type(item.get("ipam", {})) is dict and not item.get("ipam", {}) and
+                        all(item.get(key, value) is value for key, value in defaults.items()), "sibling_network_option_unsupported")
             require(not item.get("external") and not item.get("driver_opts") and not item.get("driver") and
                     isinstance(item.get("name"), str) and
                     item["name"].startswith(project + "_") and item["name"] not in final_names,

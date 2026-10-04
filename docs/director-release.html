@@ -60,7 +60,7 @@ a protected descriptor with these inputs; no secrets belong in the descriptor:</
 </tr>
 <tr>
 <td><code>compose_files</code></td>
-<td>Ordered <code>{path, sha256}</code> pins passed explicitly to Compose</td>
+<td>Ordered <code>{path, sha256}</code> pins passed explicitly to Compose; every raw file must satisfy the supported input contract below</td>
 </tr>
 <tr>
 <td><code>generation_manifest</code>, <code>validation_manifest</code></td>
@@ -114,6 +114,25 @@ permissions. Creation requests mode <code>0600</code> on POSIX; it does not crea
 Windows ACLs. Do not commit or post the rendered file. Reports and journal records
 contain digests, fixed reason codes, and check names instead of raw subprocess
 output, DSNs, environment values, or HTTP bodies.</p>
+<p>Before invoking Compose, the runner safely parses every pinned raw YAML file.
+The supported top-level fields are <code>name</code>, <code>version</code>,
+<code>services</code>, <code>networks</code> and <code>volumes</code>; service fields are
+limited to the reviewed stock graph. Recursive <code>include</code>, service
+<code>extends</code>, <code>label_file</code>, file-backed configs/secrets and other
+unsupported input features are refused before Compose can read them. Duplicate
+mapping keys, YAML aliases/merges and custom tags are unsupported.</p>
+<p>A service <code>env_file</code> may reference only that descriptor's existing
+protected <code>runtime_env</code> input. Literal absolute paths or paths relative
+to the first Compose file must resolve to that exact unlinked input; a separate
+file with identical contents is insufficient. The fixed
+<code>$DIRECTOR_ENV_FILE</code>, <code>${DIRECTOR_ENV_FILE}</code> and stock
+<code>${DIRECTOR_ENV_FILE:-.env}</code> selectors are supported. Every planning and
+emitted consumer sets that variable to the bound runtime path, including the
+direct <code>StartDatabase</code> command. Other unresolved interpolation, optional
+env files and alternate formats are refused. List entries may use
+<code>{path: ..., required: true}</code>. The existing immutable Compose pins and
+runtime byte/expected-transition checks remain the authority before each action;
+the runner does not discover or pin a recursive input graph.</p>
 <h2 id="one-owner-descriptor">One owner descriptor</h2>
 <p>Start the runner with Python <code>-I -B</code>. It requires both flags and refuses ordinary interpreter startup
 before importing filesystem modules: an unverified checkout cannot supply a
@@ -342,11 +361,19 @@ image repositories without command/entrypoint overrides. Every service must be
 a singleton: both <code>scale</code> and <code>deploy.replicas</code>, when present, must be integer 1;
 global replication is unsupported. Health commands are limited to the checked-in
 orchestrator HTTP check and stock Postgres readiness checks, or disabled/absent
-checks. Image-inherited health commands are checked too, including when Compose
+checks where permitted. PostgreSQL-backed n8n requires a nonoptional
+<code>n8n-db</code> dependency with <code>condition: service_healthy</code> and the
+enabled stock <code>pg_isready -U n8n -d n8n</code> check; a missing dependency,
+start-only condition or disabled readiness check is refused. Dependency restart
+propagation is unsupported. Image-inherited health commands are checked too, including when Compose
 overrides only their timing. Arbitrary healthcheck commands are refused.
 Only the reviewed service fields and network/deployment shapes are supported;
 additional execution settings such as capabilities, security options, devices
-and custom labels are refused. Restart policy must be disabled or
+and custom labels are refused. Networks support only the isolated generated name
+and stock default flags: nonexternal, noninternal, nonattachable, IPv4 enabled and
+IPv6 disabled. Compose's inert <code>ipam: {}</code> default is accepted; nonempty
+or nonobject IPAM values, labels and other network attributes are refused.
+Restart policy must be disabled or
 <code>unless-stopped</code>; <code>always</code> could restart intake after the completed stop.</p>
 <p>The orchestrator must resolve to the stock <code>uvicorn</code> argument list
 for the selected main or staging ASGI app, listening on <code>0.0.0.0:8080</code>,
@@ -427,7 +454,7 @@ never considers its mere existence or a successful plan to be acceptance.
 Each executable <code>argv</code> invokes a fixed Python launcher which actually replaces
 the control child's environment with the emitted allowlist. The result declares
 <code>environment_mode: replace</code>; it is not an overlay or a promise that JSON null
-unsets a variable. This binds <code>cwd</code>, the local <code>DOCKER_HOST</code>, <code>COMPOSE_FILE</code>,
+unsets a variable. This binds <code>cwd</code>, the local <code>DOCKER_HOST</code>, <code>COMPOSE_FILE</code>, <code>DIRECTOR_ENV_FILE</code>,
 <code>COMPOSE_PATH_SEPARATOR</code>, <code>DIRECTOR_HOST_PORT</code> and unpaid switches. Ambient
 <code>DOCKER_CONTEXT</code>, TLS/certificate/config selectors and provider keys cannot reach
 the control child. Before each action the launcher rechecks exact bytes for both

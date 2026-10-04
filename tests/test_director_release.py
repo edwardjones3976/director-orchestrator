@@ -1143,7 +1143,8 @@ class ReleasePreparationTests(unittest.TestCase):
                 volumes=[{"type": "volume", "source": key, "target": "/var/lib/postgresql/data"}])
         graph["services"]["slackbot"]["depends_on"] = {"orchestrator": {}, "n8n": {}}
         graph["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {}}
-        graph["services"]["n8n"].update(depends_on={"n8n-db": {}},
+        graph["services"]["n8n-db"]["healthcheck"] = {"test": ["CMD-SHELL", "pg_isready -U n8n -d n8n"]}
+        graph["services"]["n8n"].update(depends_on={"n8n-db": {"condition": "service_healthy"}},
             environment={**graph["services"]["n8n"]["environment"], "DB_TYPE": "postgresdb", "DB_POSTGRESDB_HOST": "n8n-db", "DB_POSTGRESDB_DATABASE": "n8n",
                          "DB_POSTGRESDB_USER": "n8n", "DB_POSTGRESDB_PASSWORD": "fixture", "DB_POSTGRESDB_PORT": "5432"})
         release.isolated_sibling(self.compose, graph, 18080)
@@ -2185,6 +2186,151 @@ except m['ReleaseError']: pass
         self.assertTrue(ready.exists())
         time.sleep(1.6)
         self.assertFalse(marker.exists(), "bounded probe cleanup left its client grandchild alive")
+
+    def test_compose_raw_inputs_refuse_transitive_files_before_render(self):
+        external = self.root / "unbound.env"
+        external.write_text("FIXTURE_UNBOUND=original\n")
+        for raw in (
+                b"include: [hidden.yml]\nservices: {}\n",
+                b"services: {orchestrator: {extends: {file: hidden.yml, service: app}}}\n",
+                release.encoded({"services": {"orchestrator": {"env_file": str(external)}}}),
+                b"services: {orchestrator: {env_file: [unbound.env]}}\n",
+                b"services: {orchestrator: {env_file: [{path: unbound.env, required: false}]}}\n",
+                b"services: {orchestrator: {env_file: '${UNBOUND_FILE:-unbound.env}'}}\n",
+                b"services: {orchestrator: {label_file: unbound.env}}\n",
+                b"configs: {hidden: {file: hidden.yml}}\nservices: {}\n",
+                b"services: {orchestrator: {env_file: unbound.env}}\nservices: {}\n",
+                b"defaults: &defaults {env_file: unbound.env}\nservices: {orchestrator: {<<: *defaults}}\n"):
+            self.spec["compose_files"] = [self.pin("compose.yml", raw)]
+            self.save()
+            self.calls.clear()
+            with self.subTest(raw=raw):
+                with self.assertRaises(release.ReleaseError):
+                    tool = release.Release(self.descriptor)
+                    tool.compose_document(tool.runtime)
+                self.assertFalse(any(argv[:2] == ["docker", "compose"] for argv, _ in self.calls))
+
+    def test_n8n_postgres_requires_healthy_required_database_dependency(self):
+        self.sibling()
+        graph = copy.deepcopy(self.sibling_compose)
+        db = graph["services"]["n8n-db"] = copy.deepcopy(graph["services"]["langgraph-primary-db"])
+        db["environment"] = {"POSTGRES_DB": "n8n", "POSTGRES_USER": "n8n", "POSTGRES_PASSWORD": "fixture"}
+        db["healthcheck"]["test"] = ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+        db["volumes"][0]["source"] = "n8n-db-data"
+        graph["volumes"]["n8n-db-data"] = {"name": "fixture-sibling_n8n-db-data"}
+        graph["services"]["n8n"]["environment"].update(DB_TYPE="postgresdb", DB_POSTGRESDB_HOST="n8n-db",
+            DB_POSTGRESDB_DATABASE="n8n", DB_POSTGRESDB_USER="n8n", DB_POSTGRESDB_PASSWORD="fixture")
+        graph["services"]["n8n"]["depends_on"] = {"n8n-db": {"condition": "service_healthy", "required": True}}
+        release.isolated_sibling(self.compose, graph, 18080)
+        for dependency in (None, {}, {"condition": "service_started"},
+                           {"condition": "service_healthy", "required": False},
+                           {"condition": "service_healthy", "restart": True}):
+            altered = copy.deepcopy(graph)
+            altered["services"]["n8n"]["depends_on"] = {} if dependency is None else {"n8n-db": dependency}
+            with self.subTest(dependency=dependency), self.assertRaises(release.ReleaseError):
+                release.isolated_sibling(self.compose, altered, 18080)
+        for healthcheck in ({}, {"disable": True}, {"test": ["NONE"]}):
+            altered = copy.deepcopy(graph)
+            altered["services"]["n8n-db"]["healthcheck"] = healthcheck
+            with self.subTest(healthcheck=healthcheck), self.assertRaises(release.ReleaseError):
+                release.isolated_sibling(self.compose, altered, 18080)
+
+    def test_stock_compose_runtime_selector_is_bound_before_start_database(self):
+        sibling = self.sibling()
+        stock = self.pin("compose.yml", (ROOT / "docker-compose.yml").read_bytes())
+        self.spec["compose_files"] = sibling["compose_files"] = [stock]
+        self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+        self.save()
+        with patch.dict(os.environ, {"DIRECTOR_ENV_FILE": str(self.root / "unbound.env")}):
+            plan = release.Release(self.descriptor).rehearsal()
+            start = plan["steps"][0]
+            self.assertEqual(start["action"], "StartDatabase")
+            payload = json.loads(base64.b64decode(start["argv"][-1]))
+            self.assertEqual(payload["environment"].get("DIRECTOR_ENV_FILE"), sibling["runtime_env"]["path"])
+            self.launch_fixture(start)
+        self.assertEqual(self.launched[0].kwargs["env"]["DIRECTOR_ENV_FILE"], sibling["runtime_env"]["path"])
+        Path(sibling["runtime_env"]["path"]).write_bytes(b"ALTERED=fixture\n")
+        with self.assertRaisesRegex(SystemExit, "runtime profile changed"):
+            self.launch_fixture(start)
+        self.assertEqual(self.launched, [])
+
+    def test_compose_env_file_supports_only_existing_bound_runtime_input(self):
+        runtime = self.spec["runtime_env"]
+        for entry in (runtime["path"], Path(runtime["path"]).name, "$DIRECTOR_ENV_FILE", "${DIRECTOR_ENV_FILE}",
+                      "${DIRECTOR_ENV_FILE:-.env}", [{"path": runtime["path"], "required": True}]):
+            self.spec["compose_files"] = [self.pin("compose.yml", release.encoded({"services": {"orchestrator": {"env_file": entry}}}))]
+            self.save()
+            tool = release.Release(self.descriptor)
+            tool.compose_document(tool.runtime)
+        duplicate = self.root / "same-bytes-other-input.env"
+        duplicate.write_bytes(Path(runtime["path"]).read_bytes())
+        for entry in (str(duplicate), [{"path": runtime["path"], "format": "raw"}],
+                      [{"path": runtime["path"], "required": False}]):
+            self.spec["compose_files"] = [self.pin("compose.yml", release.encoded({"services": {"orchestrator": {"env_file": entry}}}))]
+            self.save()
+            self.calls.clear()
+            with self.subTest(entry=entry), self.assertRaisesRegex(release.ReleaseError, "compose_env_file_unbound"):
+                release.Release(self.descriptor)
+            self.assertEqual(self.calls, [])
+
+    def test_stock_compose_source_renders_bound_runtime_and_future_modes_without_daemon(self):
+        docker = shutil.which("docker")
+        if not docker and os.name == "nt":
+            path = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Docker/Docker/resources/bin/docker.exe"
+            docker = str(path) if path.is_file() else None
+        if not docker:
+            self.skipTest("Docker Compose CLI required for configuration-only stock-source proof")
+        windows_cli_from_wsl = False
+        if os.name != "nt" and os.environ.get("WSL_DISTRO_NAME"):
+            with Path(docker).open("rb") as stream:
+                shim = stream.read(1024)
+            windows_cli_from_wsl = Path(docker).resolve().suffix.lower() == ".exe" or bool(re.fullmatch(
+                rb'#!/bin/sh\r?\nexec "[^"\r\n]+docker\.exe" "\$@"\s*', shim))
+        self.runtime["FIXTURE_BOUND_INPUT"] = "from-protected-runtime"
+        self.spec["runtime_env"] = self.pin_env("runtime.env", self.runtime)
+        self.spec["compose_files"] = [self.pin("compose.yml", (ROOT / "docker-compose.yml").read_bytes())]
+        self.save()
+        calls = []
+        def actual_config(argv, **kwargs):
+            self.assertEqual(argv[:2], ["docker", "compose"])
+            self.assertEqual(argv[-3:], ["config", "--format", "json"])
+            self.assertEqual(kwargs["env"]["DIRECTOR_ENV_FILE"], self.spec["runtime_env"]["path"])
+            calls.append(argv)
+            environment = dict(kwargs["env"])
+            if windows_cli_from_wsl:
+                # A WSL Docker shim may invoke Windows Docker.exe. Forward the
+                # synthetic inputs across that boundary, preserving the bound
+                # file identity. Native Linux and Windows paths stay unchanged.
+                forwarded = (set(runtime) | {"DIRECTOR_COMPOSE_PROJECT_NAME"}) - {"DIRECTOR_ENV_FILE"}
+                environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/pw", *sorted(key + "/w" for key in forwarded)])
+            result = subprocess.run([docker, *argv[1:]], cwd=kwargs["cwd"], env=environment,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, "configuration-only stock Compose producer failed")
+            return result.stdout
+        tool = release.Release(self.descriptor)
+        runtime = dict(tool.runtime)
+        for changes in ({}, *release.RUNTIME_CHANGES.values()):
+            runtime.update(changes)
+            with patch.object(release, "command", side_effect=actual_config):
+                graph = tool.compose_document(runtime)
+            self.assertEqual(graph["services"]["orchestrator"]["environment"]["FIXTURE_BOUND_INPUT"], "from-protected-runtime")
+            for key, value in changes.items():
+                self.assertEqual(graph["services"]["orchestrator"]["environment"][key], value)
+        self.assertEqual(len(calls), 4)
+
+    def test_sibling_network_options_are_closed_to_stock_defaults(self):
+        self.sibling()
+        for key, value in (("ipam", {"config": [{"subnet": "172.25.0.0/16"}]}),
+                           ("ipam", None), ("ipam", []), ("ipam", False), ("ipam", {"config": []}),
+                           ("labels", {"unreviewed": "value"}),
+                           ("attachable", True), ("internal", True), ("enable_ipv6", True), ("enable_ipv4", False)):
+            graph = copy.deepcopy(self.sibling_compose)
+            graph["networks"]["default"][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(release.ReleaseError):
+                release.isolated_sibling(self.compose, graph, 18080)
+        graph = copy.deepcopy(self.sibling_compose)
+        graph["networks"]["default"].update(external=False, internal=False, attachable=False, enable_ipv4=True, enable_ipv6=False, ipam={})
+        release.isolated_sibling(self.compose, graph, 18080)
 
     def test_sibling_ports_only_publish_stock_application_targets(self):
         self.sibling()
