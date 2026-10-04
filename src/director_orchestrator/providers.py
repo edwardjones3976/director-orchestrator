@@ -242,7 +242,8 @@ class ProviderDailySpendLedger:
 
         count, exposure = connection.execute(
             """SELECT COUNT(*),
-                      COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd)), 0)
+                      COALESCE(SUM(CASE WHEN typeof(actual_cost_usd) IN ('real', 'integer')
+                                        THEN actual_cost_usd ELSE estimated_cost_usd END), 0)
             FROM provider_daily_spend_reservations
             WHERE provider = ? AND utc_day = ? AND released_at IS NULL""",
             (provider.value, utc_day),
@@ -364,7 +365,7 @@ class ProviderDailySpendLedger:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
-                WHERE provider = ? AND actual_cost_usd IS NULL AND released_at IS NULL""",
+                WHERE provider = ? AND typeof(actual_cost_usd) NOT IN ('real', 'integer') AND released_at IS NULL""",
                 (provider.value,),
             ).fetchall()
         return [str(key) for key, settled_at, recorded_at in rows

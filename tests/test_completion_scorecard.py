@@ -342,6 +342,7 @@ def consistency_fixture():
                                   "registered_plan": {"error": None},
                                   "terminal_evidence_without_reservation": 0},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
+                                      "approval_receipts_truncated": False,
                                       "approval_receipts": [approval_receipt()]}}}
 
 
@@ -3399,6 +3400,25 @@ class WorkloadJournalPinTests(unittest.TestCase):
                     self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["UNKNOWN", "UNKNOWN"])
                     self.assertIn("pins as the deployment's workload journal", row(report, "13")["explanation"])
 
+    def test_unc_workload_journal_pin_is_rejected(self):
+        from director_orchestrator.primary_scorecard_evidence import CLI_RELEASE_DESCRIPTOR_VERSION
+        self.assertIsNone(sc.workload_journal_pin({"version": CLI_RELEASE_DESCRIPTOR_VERSION,
+                                                 "workload_journal": r"\\server\share\j.sqlite3"}))
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links are not available")
+    def test_a_pinned_journal_with_a_linked_parent_is_not_pinned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent, link = Path(folder) / "parent", Path(folder) / "link"
+            parent.mkdir()
+            (parent / "journal.sqlite3").write_bytes(b"")
+            try:
+                link.symlink_to(parent, target_is_directory=True)
+            except OSError:
+                self.skipTest("symbolic links are not permitted")
+            pinned = link / "journal.sqlite3"
+            _, reads = self.collect(pinned, {"workload_journal": str(pinned)})
+            self.assertEqual(reads, 0)
+
     def test_a_link_to_the_pinned_journal_is_not_the_pinned_journal(self):
         with tempfile.TemporaryDirectory() as folder:
             pinned, link = Path(folder) / "pinned.sqlite3", Path(folder) / "link.sqlite3"
@@ -5219,6 +5239,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         prompt = next(m for m in stray.threads[ts(30000)] if m.get("ts") == ts(30005))
         stray.threads[ts(30000)].append({**prompt, "ts": ts(30007), "client_msg_id": "approval-client-2"})
         self.assertEqual(stray.state("08"), "FAIL")
+
+    def test_approval_receipt_completeness_requires_explicit_false_08(self):
+        for flag in (None, True, 0, "false"):
+            case = self.world(evaluate_rules=True)
+            entry = case.consistency["tasks"][APPROVAL_TASK]
+            if flag is None:
+                del entry["approval_receipts_truncated"]
+                self.assertEqual(case.state("08"), "UNKNOWN")
+            entry["approval_receipts_truncated"] = flag
+            with self.subTest(flag=flag):
+                self.assertEqual(case.state("08"), "UNKNOWN")
 
     def test_truncated_approval_receipt_read_is_unknown_not_fail_08(self):
         """#287 item 12: a receipt list cut at its per-task cap draws neither a pass nor a fail."""

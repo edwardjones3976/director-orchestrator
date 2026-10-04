@@ -2472,11 +2472,10 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
                "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
-    if isinstance(entry, dict) and entry.get("approval_receipts_truncated") is True:
-        # The receipt read hit its per-task cap, so the joins above ran on a partial list: neither a pass nor a
-        # fail can be drawn from it.
-        facts08["approval_receipts_truncated"] = True
-        passed08, explanation08 = None, "The approval_resume receipt read reached its per-task limit and is incomplete."
+    if not isinstance(entry, dict) or entry.get("approval_receipts_truncated") is not False:
+        # The receipt read is not proven complete, so neither a pass nor a fail can be drawn from its joins.
+        facts08["approval_receipts_truncated"] = entry.get("approval_receipts_truncated") if isinstance(entry, dict) else None
+        passed08, explanation08 = None, "The approval_resume receipt read is truncated or not proven complete."
     elif failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
@@ -3621,8 +3620,11 @@ def _compare_status(base: str, head: str) -> str:
 def _journal_pinned(path: Path) -> bool:
     """Whether ``path`` is the one journal the owner's descriptor pins, reached without a link (#287 item 35)."""
     pin = workload_journal_pin(cli_release_descriptor())
+    # ponytail: check-then-open race remains because the ledger reopens the path; upgrade to open once and verify the handle.
     try:
         return (pin is not None and not path.is_symlink() and not pin.is_symlink()
+                and os.path.normcase(os.path.realpath(pin)) == os.path.normcase(os.path.normpath(pin))
+                and os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.normpath(path))
                 and os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.realpath(pin)))
     except OSError:
         return False

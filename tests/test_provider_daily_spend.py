@@ -259,6 +259,20 @@ class ProviderDailySpendLedgerTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     ledger.record_charge(provider=ProviderName.GROK, effect_key=probe, actual_cost_usd=bad)
 
+    def test_non_numeric_persisted_charge_is_unreconciled_and_counts_its_estimate(self):
+        import sqlite3
+        from contextlib import closing
+        from datetime import timedelta
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = ProviderDailySpendLedger(str(Path(directory) / "tasks.sqlite3"))
+            key = "a" * 64
+            ledger.reserve(provider=ProviderName.GROK, effect_key=key, estimated_cost_usd=0.75,
+                           request_limit=10, budget_usd=1.0)
+            with closing(sqlite3.connect(ledger.path)) as connection, connection:
+                connection.execute("UPDATE provider_daily_spend_reservations SET actual_cost_usd = 'unpriced'")
+            self.assertEqual(ledger.unreconciled(ProviderName.GROK, stale_after=timedelta(0)), [key])
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (1, 0.75))
+
     def test_concurrent_reservations_cannot_both_pass_the_reconciled_cap(self):
         """Two admissions racing for the last $0.40 under a $1 cap (exposure $0.60): exactly one is admitted."""
         import threading
