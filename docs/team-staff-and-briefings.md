@@ -46,10 +46,22 @@ review eligibility. Keep secrets and private contact details out of this guide.
 
 ## Leadership and succession
 
+**Administrators: ChatGPT/Codex (#1), Claude (#2), Cursor (#3).** The owner
+is above the three-provider administrator team. Cursor must not be grouped with
+non-admin providers. Codex may overrule/delegate to both; Claude may
+overrule/delegate to Cursor. Administrative status persists while another lead
+is active; the table's absence rules govern succession, not membership.
+
+For current Director-Orchestrator completion, **Claude is the appointed
+completion Director** and Codex supports that plan while remaining overall
+Director. That scope excludes Homemade LLM and other projects. Follow
+[the canonical appointment and approval responsibilities](project-leadership.md#administrators-and-chain-of-command)
+when assigning work or preparing pass-downs.
+
 | Order | Provider | Responsibility |
 | --- | --- | --- |
-| 1 | ChatGPT / Codex | Director and site foreman; owns outcomes, priorities, routing, evidence and continuity. |
-| 2 | Claude | Deputy; performs the Director's duties while Codex is unavailable. |
+| 1 | ChatGPT / Codex | Overall Director and site foreman; accountable for outcomes and supports Claude's Director-Orchestrator completion plan. |
+| 2 | Claude | Director-Orchestrator completion lead, including while Codex is available; also deputy for Codex's absence in other authorized scopes. |
 | 3 | Cursor | Official third in command; performs **all Director duties when both Codex and Claude are unavailable**. |
 
 All Director duties include Consultant, Investigator, Foreman and Quality Lead,
@@ -59,9 +71,10 @@ author to accept or merge its own work. Existing project-specific appointments
 remain in force. This is current operating guidance, not evidence of a deployed
 runtime-provider change.
 
-Exactly one lead directs shared work. A deputy records the takeover, why the
-higher-priority leaders are unavailable, open writer claims, active sessions
-and uncertain external actions in the existing coordination record. Do not
+Exactly one lead directs shared work. On an absence-based takeover, a deputy
+records why the higher-priority leaders are unavailable, open writer claims,
+active sessions and uncertain external actions in the existing coordination record.
+Claude's current completion appointment does not require Codex's absence. Do not
 infer unavailability from silence or old quota data. Returning leaders read
 the handoff and agree the transfer before resuming. In-flight writers and the
 one eligible final reviewer remain intact.
@@ -87,8 +100,8 @@ readiness. Never invent personal contact information, Slack IDs or served models
 
 | Member or lane | Contact / location | Daily responsibility |
 | --- | --- | --- |
-| Codex Director | Originating Director chat; native Codex CLI and isolated worktree | Reconcile assignments, unblock delivery, publish briefing. |
-| Claude deputy | Verified existing Claude session; otherwise first-party Claude CLI via its skill | Return release/evidence status and unresolved decisions; cover #1 absence. |
+| Codex Director | Originating Director chat; native Codex CLI and isolated worktree | Support Claude's completion plan, reconcile delegated assignments, unblock delivery and publish briefing. |
+| Claude completion lead / deputy | Verified existing Claude session; otherwise first-party Claude CLI via its skill | Direct Director-Orchestrator completion, return release/evidence status and unresolved decisions; cover #1 absence in other authorized scopes. |
 | Cursor third in command | Local `cursor-agent` via its skill; separate from Cursor Cloud Agents | Return review/continuity status; cover only when #1 and #2 are unavailable. |
 | Astra Light partner | Linked local orchestration chat | Focused assistance and worktree/evidence handoffs. |
 | Cloud Astra teammate | Confirm an active reply-capable chat; a share URL is reference only | Assigned analysis and continuity; no assumed local filesystem access. |
