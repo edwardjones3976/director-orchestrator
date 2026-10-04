@@ -226,7 +226,11 @@ required paths and a correctly formed registry/adoption digest. A missing
 mode defaults to <code>github-v1</code> in the control script and is refused here.</li>
 <li>The existing <code>resolved_deployment_digest</code> contract, including the Slack
 gateway's exact image, explicit <code>pull_policy: never</code>, and the nonempty read-only
-<code>/repository</code> snapshot mount.</li>
+<code>/repository</code> snapshot mount. Every service in the resolved final graph,
+including n8n and both database dependencies, must select an immutable image
+reference with <code>pull_policy: never</code>. The doctor observes each cached image ID;
+a reviewed reference string alone is insufficient. These image checks do not
+require the final project's resources to be fresh.</li>
 <li><code>windows-primary-snapshot.ps1 -Action Verify</code> and the planned reviewer
 allowlists, without adding actors or issuing acceptance.</li>
 <li><code>windows-host-provider-bridge.ps1 -Action Preflight</code>, followed by the existing
@@ -534,7 +538,10 @@ tree and cleanliness, both before probes and immediately before launching the co
 script. It refuses executable Git filters and submodule checkouts. The separate
 snapshot verifier also refuses its own local executable filters and submodules,
 and disables fsmonitor and hooks using an explicit <code>/dev/null</code> hook path for its
-index, content and cleanliness checks. Both paths reject hidden index flags and authenticate actual
+index, content and cleanliness checks. Snapshot <code>Create</code> also persists
+<code>core.hooksPath=/dev/null</code> through clone's initial configuration before
+checkout, preventing inherited template hooks from executing before verification.
+Both paths reject hidden index flags and authenticate actual
 tracked file bytes against the pinned Git tree using batched raw hashes. They
 tolerate only UTF-8 text CRLF line endings. The host source gate additionally refuses
 <code>ident</code>, working-tree encoding and filter attributes; the snapshot verifier
@@ -546,7 +553,9 @@ refuses bytecode, native extension and untracked Python import artifacts beneath
 those checkout import roots remain supported, and the runner never deletes caches.
 These checks retain the trusted
 operator model; they are not an atomic defense against concurrent filesystem replacement.
-The launcher also rechecks daemon identity and every cached image ID; before the
+The launcher also rechecks daemon identity and the combined cached image IDs from
+the final and sibling graphs before effects, including final-only dependencies;
+inconsistent observations of a shared reference refuse planning. Before the
 first step it rechecks fresh project networks and project/n8n
 state. Any prior-image record must remain within the verified candidate image,
 so rollback cannot select an uninspected older image. Execute <code>argv</code> in order;

@@ -217,9 +217,58 @@ Write-Output 'tls-lifecycle-passed'
         # so the initial checkout uses them and later checkouts keep using them.
         # `git -c ... clone` would apply to the clone only and not persist.
         self.assertIn(
-            "$GitExecutable clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks",
+            "$GitExecutable clone -c core.autocrlf=false -c core.eol=lf -c core.hooksPath=/dev/null --no-hardlinks",
             text,
         )
+
+    @unittest.skipUnless(shutil.which("pwsh") and shutil.which("git"), "PowerShell and Git are required")
+    def test_snapshot_clone_disables_inherited_template_hooks_before_checkout(self) -> None:
+        line = next(line.strip() for line in self.text("windows-primary-snapshot.ps1").splitlines()
+                    if line.strip().startswith("& $GitExecutable clone "))
+        git = str(Path(shutil.which("git")).resolve())
+        environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+                           GIT_CONFIG_SYSTEM=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty, source, template = [root / name for name in ("empty", "source", "template")]
+            empty.mkdir()
+            (template / "hooks").mkdir(parents=True)
+            hook = template / "hooks/post-checkout"
+            hook.write_text(
+                '#!/bin/sh\nprintf template-executed > "$PR411_HOOK_MARKER"\n', encoding="utf-8")
+            hook.chmod(0o755)
+            def invoke(*args):
+                return subprocess.check_output([git, *args], env=environment, stderr=subprocess.STDOUT, timeout=20)
+            invoke("init", "--template=" + str(empty), "-b", "main", str(source))
+            (source / "reviewed.txt").write_bytes(b"reviewed fixture\n")
+            invoke("-C", str(source), "add", "reviewed.txt")
+            invoke("-C", str(source), "-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
+                   "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture")
+            for mode in ("GIT_TEMPLATE_DIR", "init.templateDir"):
+                for guarded in (False, True):
+                    with self.subTest(inheritance=mode, guarded=guarded):
+                        stem = mode.replace(".", "-") + str(guarded)
+                        marker, target = root / (stem + ".marker"), root / stem
+                        env = dict(environment, PR411_HOOK_MARKER=marker.as_posix())
+                        if mode == "GIT_TEMPLATE_DIR":
+                            env[mode] = str(template)
+                        else:
+                            env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="init.templateDir",
+                                       GIT_CONFIG_VALUE_0=str(template))
+                        command = line if guarded else line.replace(" -c core.hooksPath=/dev/null", "")
+                        harness = ("$GitExecutable=$args[0]; $StartingRef='main'; "
+                                   "$sourceRemoteUrl=$args[1]; $targetPath=$args[2]\n" + command + "\nexit $LASTEXITCODE\n")
+                        script = root / (stem + ".ps1")
+                        script.write_text(harness, encoding="utf-8")
+                        result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script),
+                                                 git, str(source), str(target)], env=env, capture_output=True,
+                                                text=True, timeout=30)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual((target / "reviewed.txt").read_bytes(), b"reviewed fixture\n")
+                        self.assertEqual(marker.exists(), not guarded)
+                        if guarded:
+                            self.assertEqual(invoke("-C", str(target), "config", "--get", "core.hooksPath").strip(), b"/dev/null")
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_snapshot_verify_refuses_local_filters_and_suppresses_fsmonitor(self) -> None:

@@ -91,7 +91,8 @@ if ($Action -eq "Create") {
     # conversion, sees every line as modified, and refuses the authority with
     # "Default primary repository authority must be clean". Certifying a snapshot
     # the consumer rejects is worse than failing to build one.
-    & $GitExecutable clone -c core.autocrlf=false -c core.eol=lf --no-hardlinks --no-tags --branch $StartingRef --single-branch -- $sourceRemoteUrl $targetPath
+    # Template hooks can run during clone's initial checkout, before Verify.
+    & $GitExecutable clone -c core.autocrlf=false -c core.eol=lf -c core.hooksPath=/dev/null --no-hardlinks --no-tags --branch $StartingRef --single-branch -- $sourceRemoteUrl $targetPath
     if ($LASTEXITCODE -ne 0) { throw "Snapshot clone failed." }
     & $GitExecutable -C $targetPath remote set-url origin $sourceRemoteUrl
     if ($LASTEXITCODE -ne 0) { throw "Snapshot origin binding failed." }

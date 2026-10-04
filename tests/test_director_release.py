@@ -279,7 +279,8 @@ class ReleasePreparationTests(unittest.TestCase):
         if argv[:2] == ["git", "status"]:
             return self.reply_changes.get("status", b"")
         if argv[:3] == ["docker", "image", "inspect"]:
-            return release.encoded([{"Id": self.reply_changes.get("image", self.image), "Config": {
+            return release.encoded([{"Id": self.reply_changes.get("images", {}).get(
+                argv[-1], self.reply_changes.get("image", self.image)), "Config": {
                 "Labels": {"org.director.candidate.commit": self.candidate, "org.director.candidate.tree": self.tree},
                 "WorkingDir": "/app", "Env": ["PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONPATH=/app/src",
                     "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1"],
@@ -954,6 +955,88 @@ class ReleasePreparationTests(unittest.TestCase):
         self.assertEqual(report["environment"]["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
         self.assertFalse(any("windows-langgraph-primary-control.ps1" in str(arg) for call, _ in self.calls for arg in call))
         self.assertEqual(list(Path(sibling["output_directory"]).iterdir()), [])
+
+    def final_dependency_graph(self):
+        """Model final-only image aliases and both actual activation dependencies."""
+        self.sibling()
+        references = {}
+        for name, character in (("n8n", "5"), ("n8n-db", "6"), ("langgraph-primary-db", "7")):
+            if name != "n8n":
+                self.compose["services"][name] = copy.deepcopy(self.sibling_compose["services"]["langgraph-primary-db"])
+                self.compose["services"][name].pop("volumes")
+            reference = ("docker.n8n.io/n8nio/n8n:latest" if name == "n8n" else "postgres:17-alpine") + "@sha256:" + character * 64
+            self.compose["services"][name].update(image=reference, pull_policy="never")
+            references[name] = reference
+        self.compose["services"]["orchestrator"]["depends_on"] = {"langgraph-primary-db": {"condition": "service_healthy"}}
+        self.compose["services"]["n8n"]["depends_on"] = {"n8n-db": {"condition": "service_healthy"}}
+        self.reply_changes["images"] = {reference: "sha256:" + character * 64
+                                         for reference, character in zip(references.values(), ("2", "3", "4"))}
+        self.repin_graph(self.spec, self.compose)
+        return references
+
+    def test_final_doctor_and_rehearsal_require_every_dependency_image_offline_and_cached(self):
+        references = self.final_dependency_graph()
+        tool = release.Release(self.descriptor)
+        self.assertTrue(tool.doctor()["preparation_ready"])
+        self.assertEqual(tool.rehearsal()["status"], "PLANNED")
+        for name, reference in references.items():
+            service = self.compose["services"][name]
+            original = copy.deepcopy(service)
+            for defect in ("mutable", "always", "missing_policy", "uncached", "raw_id_mismatch"):
+                with self.subTest(service=name, defect=defect):
+                    service.clear()
+                    service.update(copy.deepcopy(original))
+                    if defect == "mutable":
+                        service["image"] = reference.partition("@")[0]
+                    elif defect == "always":
+                        service["pull_policy"] = "always"
+                    elif defect == "missing_policy":
+                        service.pop("pull_policy")
+                    elif defect == "raw_id_mismatch":
+                        service["image"] = "sha256:" + "0" * 64
+                    self.repin_graph(self.spec, self.compose)
+                    def observe(argv, **kwargs):
+                        if defect == "uncached" and argv[:3] == ["docker", "image", "inspect"] and argv[-1] == reference:
+                            return b"[]"
+                        return self.platform(argv, **kwargs)
+                    with patch.object(release, "command", side_effect=observe):
+                        tool = release.Release(self.descriptor)
+                        report = tool.doctor()
+                        try:
+                            tool.rehearsal()
+                            refused = False
+                        except release.ReleaseError:
+                            refused = True
+                    self.assertEqual((report["preparation_ready"], refused), (False, True), report)
+                    self.assertTrue(any(row["check"] == "compose" and row["status"] == "FAIL" for row in report["checks"]))
+                    self.assertFalse(report["release_ready"])
+            service.clear()
+            service.update(original)
+            self.repin_graph(self.spec, self.compose)
+
+    def test_emitted_launcher_rechecks_final_dependency_images_before_effects(self):
+        references = self.final_dependency_graph()
+        plan = release.Release(self.descriptor).rehearsal()
+        expected = self.reply_changes["images"]
+        for step in plan["steps"]:
+            payload = json.loads(base64.b64decode(step["argv"][-1]))
+            self.assertEqual({reference: payload["images"].get(reference) for reference in expected}, expected)
+        # Execute the real first-step producer and the following database action.
+        self.initialize_intake(plan)
+        start = next(step for step in plan["steps"] if step["action"] == "StartDatabase")
+        self.launch_fixture(start)
+        self.assertEqual(len(self.launched), 1)
+        for reference in references.values():
+            for step in plan["steps"][:3]:
+                for missing in (False, True):
+                    def changed(argv, **kwargs):
+                        if argv[:3] == ["docker", "image", "inspect"] and argv[-1] == reference:
+                            return b"[]" if missing else release.encoded([{"Id": "sha256:" + "0" * 64}])
+                        return None
+                    with self.subTest(reference=reference, action=step["action"], missing=missing), \
+                            self.assertRaisesRegex(SystemExit, "verified cached image changed"):
+                        self.launch_fixture(step, observe=changed)
+                    self.assertEqual(self.launched, [])
 
     def test_actual_launcher_replaces_environment_and_rechecks_daemon_and_images(self):
         self.sibling()

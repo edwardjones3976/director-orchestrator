@@ -887,6 +887,19 @@ class Release:
                 labels.get("org.director.candidate.tree") == self.spec["candidate"]["tree"] and
                 image["Config"].get("Entrypoint") in (None, []), "image_identity_mismatch")
 
+    def cached_service_image(self, service):
+        reference = service.get("image")
+        require(isinstance(reference, str) and
+                re.fullmatch(r"(?:sha256:[0-9a-f]{64}|[^\s]+@sha256:[0-9a-f]{64})", reference) and
+                service.get("pull_policy") == "never", "service_image_not_immutable_offline")
+        rows = document(self.run(["docker", "image", "inspect", reference]))
+        require(isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict) and
+                isinstance(rows[0].get("Id"), str) and re.fullmatch(r"sha256:[0-9a-f]{64}", rows[0]["Id"]),
+                "service_image_not_cached")
+        require(not reference.startswith("sha256:") or rows[0]["Id"] == reference,
+                "service_cached_image_mismatch")
+        return rows[0]
+
     def selectors_check(self):
         self.owner_check()
         self.source_check()
@@ -966,6 +979,15 @@ class Release:
                 "snapshot_mount_mismatch")
         require(Path(snapshot["path"]).is_dir() and any(Path(snapshot["path"]).iterdir()), "snapshot_empty")
         require(composed["services"]["slackbot"].get("pull_policy") == "never", "gateway_can_pull_unreviewed_image")
+        # Activation starts n8n and orchestrator with their dependencies. Bind
+        # every resolved service, including final-only dependencies, before use.
+        images = {}
+        for service in composed["services"].values():
+            image = self.cached_service_image(service)
+            reference = service["image"]
+            require(images.get(reference, image["Id"]) == image["Id"], "cached_image_identity_changed")
+            images[reference] = image["Id"]
+        self.cached_images = images
         self.rendered = encoded(composed) + b"\n"
 
     def snapshot_check(self):
@@ -1231,7 +1253,10 @@ class Release:
                          identity_key=identity_key)
         require(self.daemon_id == sibling.daemon_id and self.docker_environment == sibling.docker_environment,
                 "sibling_docker_target_mismatch")
-        images = sibling.rehearsal_images(sibling_graph)
+        images = dict(self.cached_images)
+        for reference, image_id in sibling.rehearsal_images(sibling_graph).items():
+            require(images.get(reference, image_id) == image_id, "cached_image_identity_changed")
+            images[reference] = image_id
         require(sibling.application_environments["orchestrator"].get("LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES") == "true",
                 "sibling_primary_database_transport_unsupported")
         isolated_slack_identities(final_graph, sibling.application_environments, final_resources, identity_key)
@@ -1375,12 +1400,8 @@ class Release:
         self.application_environments = {}
         for name, service in graph["services"].items():
             reference = service["image"]
-            inspected = document(self.run(["docker", "image", "inspect", reference]))
-            require(len(inspected) == 1 and re.fullmatch(r"sha256:[0-9a-f]{64}", inspected[0]["Id"]),
-                    "rehearsal_image_not_cached")
-            require(not reference.startswith("sha256:") or inspected[0]["Id"] == reference,
-                    "rehearsal_cached_image_mismatch")
-            healthcheck = inspected[0].get("Config", {}).get("Healthcheck", {})
+            image = self.cached_service_image(service)
+            healthcheck = image.get("Config", {}).get("Healthcheck", {})
             override = service.get("healthcheck", {})
             if override.get("disable"):
                 healthcheck = {"test": ["NONE"]}
@@ -1388,16 +1409,17 @@ class Release:
                 healthcheck = override
             reviewed_healthcheck(name, healthcheck)
             if name in ("orchestrator", "slackbot"):
-                self.application_environments[name] = reviewed_application_environment(service, inspected[0].get("Config", {}))
+                self.application_environments[name] = reviewed_application_environment(service, image.get("Config", {}))
             if name == "orchestrator":
                 # The control's direct digest probe runs this image without
                 # Compose overrides; masking unsafe image defaults is insufficient.
-                reviewed_application_environment({}, inspected[0].get("Config", {}))
-                reviewed_orchestrator(service, inspected[0].get("Config", {}))
-            image_mounts = set((inspected[0].get("Config", {}).get("Volumes") or {}))
+                reviewed_application_environment({}, image.get("Config", {}))
+                reviewed_orchestrator(service, image.get("Config", {}))
+            image_mounts = set((image.get("Config", {}).get("Volumes") or {}))
             require(image_mounts <= {mount["target"] for mount in service.get("volumes", [])} and
                     image_mounts <= set(STOCK_MOUNTS[name]), "sibling_mount_unsupported")
-            images[reference] = inspected[0]["Id"]
+            require(images.get(reference, image["Id"]) == image["Id"], "cached_image_identity_changed")
+            images[reference] = image["Id"]
         # n8n must start without persisted workflows or credentials. The caller
         # may provision fresh isolated volumes; reused n8n state is unsupported.
         existing = set(self.run(["docker", "volume", "ls", "--format", "{{.Name}}"]).decode().splitlines())
