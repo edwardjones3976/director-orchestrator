@@ -273,6 +273,9 @@ def compose_environment(base,runtime):
 exec(COMPOSE_ENVIRONMENT)
 
 
+# The emitted bootstrap shares these exact stdlib-only bytes. Checkout imports
+# remain forbidden until the source gate authenticates the containment helper.
+NATIVE_COMMAND = r'''
 def command(argv, *, cwd, env, deadline, input_bytes=None, executable=None, containment=None):
     """One deadline, closed stdin, bounded output, no shell and no raw-output logging."""
     require(time.monotonic() < deadline, "doctor_deadline_exhausted")
@@ -317,6 +320,8 @@ def command(argv, *, cwd, env, deadline, input_bytes=None, executable=None, cont
                     if process.poll() is None:
                         process.kill()
                     process.wait(timeout=5)
+'''
+exec(NATIVE_COMMAND)
 
 
 BRIDGE_PROBE = """
@@ -494,11 +499,17 @@ exec(SOURCE_PROOF)
 # The emitted argv executes this fixed launcher, so environment replacement is
 # performed by a real consumer rather than depending on JSON overlay semantics.
 REHEARSAL_LAUNCH = r"""
-import base64,hashlib,hmac,json,os,pathlib,re,socket,stat,subprocess,sys,tempfile,time,uuid
+import base64,hashlib,hmac,json,os,pathlib,re,signal,socket,stat,subprocess,sys,tempfile,time,uuid
+from pathlib import Path
 v=json.loads(base64.b64decode(sys.argv[1]))
 env=v['environment']
-def read(args,**kwargs):
-    return subprocess.check_output(args,executable=v['executables'].get(args[0],args[0]),env=env,cwd=v['cwd'],timeout=30,**kwargs)
+MAX_BYTES=4*1024*1024
+native_containment=None
+def require(condition,reason):
+    if not condition: raise SystemExit(reason)
+def read(args,*,input=None):
+    return command(args,executable=v['executables'].get(args[0],args[0]),env=env,cwd=v['cwd'],
+                   deadline=time.monotonic()+30,input_bytes=input,containment=native_containment)
 def digest(raw): return hashlib.sha256(raw).hexdigest()
 def encoded(value): return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 def file_bytes(name):
@@ -681,6 +692,7 @@ source_check()
 offline_attempt_check()
 sys.path.insert(0,str(pathlib.Path(v['cwd'])/'src'))
 from director_orchestrator.process_isolation import launch_contained_process,stop_contained_process
+native_containment=(launch_contained_process,stop_contained_process)
 if read(['docker','info','--format','{{.ID}}']).decode().strip()!=v['daemon_id']:
     raise SystemExit('verified Docker daemon changed')
 try: final_resources=resource_inventory(read,v['final_project'],v['slack_identity_key'])
@@ -755,7 +767,7 @@ if v['action']=='Stop':
                 raise SystemExit('sibling intake not proved stopped')
 """
 REHEARSAL_LAUNCH = ("LOCAL_DATABASE_PROBE=" + repr(LOCAL_DATABASE_PROBE) + "\nVALIDATION_PROBE=" +
-                   repr(VALIDATION_PROBE) + "\n" + COMPOSE_ENVIRONMENT + RESOURCE_INVENTORY + SOURCE_PROOF + REHEARSAL_LAUNCH)
+                   repr(VALIDATION_PROBE) + "\n" + NATIVE_COMMAND + COMPOSE_ENVIRONMENT + RESOURCE_INVENTORY + SOURCE_PROOF + REHEARSAL_LAUNCH)
 REHEARSAL_BOOTSTRAP = ("import base64,zlib;exec(zlib.decompress(base64.b64decode(" +
                        repr(base64.b64encode(zlib.compress(REHEARSAL_LAUNCH.encode())).decode("ascii")) + ")))")
 
@@ -1538,6 +1550,8 @@ def reviewed_application_environment(service, image=None):
     values.update(override)
     values = {key: value for key, value in values.items() if value is not None}
     for key, value in values.items():
+        require(not key.upper().startswith("GIT_") and key.upper() not in {"HOME", "XDG_CONFIG_HOME"},
+                "sibling_git_environment_unsupported")
         require(key.upper() not in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} or not value,
                 "sibling_proxy_environment_unsupported")
         require(not key.startswith(("LD_", "DYLD_")) and key not in
