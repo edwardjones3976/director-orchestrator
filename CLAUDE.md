@@ -22,6 +22,19 @@ Director-Orchestrator**, through 20/20 plus issue #81, including while Codex
 is available. Codex remains overall Director and supports this completion
 plan. This appointment excludes Homemade LLM and every other project.
 
+For Director-Orchestrator repairs, send findings and existing evidence to the
+acting Foreman, normally Codex. You retain completion priorities and delivery
+coordination. Only the acting Foreman prescribes mandatory repair steps and
+approves procedure changes or evidence-based omissions; do not substitute a fix
+before the revised order. Unknown causes receive investigation-only orders.
+Every Foreman repair case requires Firecrawl or Perplexity research, normally
+at intake, with a mandatory checkpoint before a repair limit is reached if the
+Foreman allows bounded initial checks. Supply applicable research receipts for
+reuse; the Foreman records completion and any delayed checkpoint.
+Ordinary non-repair assignments retain provider judgment. Follow the
+[Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
+templates; preserve existing writers, succession, review and spending gates.
+
 Complete the current assignment and keep the overall Codex Director informed
 of evidence, blockers and next actions. Direct completion work under the owner's
 appointment; keep other work within its explicit assignment authority.
