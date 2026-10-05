@@ -3257,26 +3257,65 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
             read([sys.executable, "-I", "-B", "-c", "import sys; sys.stderr.write('synthetic-not-for-errors'); sys.exit(1)"])
 
     def test_emitted_read_deadline_cleans_children_before_and_after_authentication(self):
+        from types import SimpleNamespace
         for contained in (False, True):
             with self.subTest(contained=contained), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                marker, ready = root / "survived", root / "ready"
-                namespace = self.emitted_read_fixture(containment=(REAL_CONTAINED_LAUNCH, REAL_CONTAINED_STOP) if contained else None)
-                actual = namespace["command"]
-                def shortened(*args, deadline, **kwargs):
-                    self.assertGreater(deadline, time.monotonic() + 29)
-                    return actual(*args, deadline=min(deadline, time.monotonic() + 0.5), **kwargs)
-                namespace["command"] = shortened
-                descendant = "import pathlib,sys,time; time.sleep(1.5); pathlib.Path(sys.argv[1]).write_text('escaped')"
-                parent = ("import pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[3],sys.argv[1]]); "
-                          "pathlib.Path(sys.argv[2]).write_text('ready'); time.sleep(20)")
-                start = time.monotonic()
-                with self.assertRaisesRegex(SystemExit, "^doctor_deadline_exhausted$"):
-                    namespace["read"]([sys.executable, "-I", "-B", "-c", parent, str(marker), str(ready), descendant])
-                self.assertLess(time.monotonic() - start, 6)
-                self.assertTrue(ready.exists(), "fixture parent did not start")
-                time.sleep(1.6)
-                self.assertFalse(marker.exists(), "read timeout left a native descendant alive")
+                marker, ready, arm = root / "survived", root / "ready", root / "arm"
+                descendant = ("import pathlib,sys,time\n"
+                              "ready,arm,marker=map(pathlib.Path,sys.argv[1:4])\n"
+                              "ready.write_text('ready')\n"
+                              "while not arm.exists(): time.sleep(.02)\n"
+                              "time.sleep(1.5)\nmarker.write_text('escaped')\n")
+                parent = ("import subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',"
+                          "sys.argv[4],*sys.argv[1:4]]); time.sleep(20)")
+                argv = [sys.executable, "-I", "-B", "-c", parent, str(ready), str(arm), str(marker), descendant]
+                process, guard = REAL_CONTAINED_LAUNCH(argv, env=release.child_environment(), cwd=ROOT,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                stopped = False
+                try:
+                    startup_deadline = time.monotonic() + 10
+                    while not ready.exists() and process.poll() is None and time.monotonic() < startup_deadline:
+                        time.sleep(.02)
+                    self.assertTrue(ready.exists(), "real grandchild did not signal readiness")
+                    launched = False
+                    def owned_launcher(args, **kwargs):
+                        nonlocal launched
+                        self.assertEqual(args, argv)
+                        self.assertFalse(launched, "read launcher must run once")
+                        launched = True
+                        return (process, guard) if contained else process
+                    def owned_stop(child, token, **kwargs):
+                        nonlocal stopped
+                        self.assertIs(child, process)
+                        self.assertIs(token, guard)
+                        result = REAL_CONTAINED_STOP(child, token, **kwargs)
+                        stopped = True
+                        return result
+                    namespace = self.emitted_read_fixture(containment=(owned_launcher, owned_stop) if contained else None)
+                    if not contained:
+                        namespace["subprocess"] = SimpleNamespace(**{**vars(subprocess), "Popen": owned_launcher})
+                    actual = namespace["command"]
+                    def shortened(*args, deadline, **kwargs):
+                        self.assertGreater(deadline, time.monotonic() + 29)
+                        return actual(*args, deadline=min(deadline, time.monotonic() + 0.5), **kwargs)
+                    namespace["command"] = shortened
+                    armed_at = time.monotonic()
+                    arm.write_text("armed")
+                    start = time.monotonic()
+                    with self.assertRaisesRegex(SystemExit, "^doctor_deadline_exhausted$"):
+                        namespace["read"](argv)
+                    self.assertLess(time.monotonic() - start, 6)
+                    self.assertTrue(launched)
+                    self.assertIsNotNone(process.poll())
+                    self.assertEqual(stopped, contained)
+                    # Keep the outer guard open until fallback cleanup proves itself.
+                    while time.monotonic() < armed_at + 2.5:
+                        time.sleep(.02)
+                    self.assertFalse(marker.exists(), "read timeout left a native descendant alive")
+                finally:
+                    if not stopped:
+                        REAL_CONTAINED_STOP(process, guard)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required for the actual snapshot consumers")
     def test_snapshot_remote_alias_preserves_mandatory_origin(self):
