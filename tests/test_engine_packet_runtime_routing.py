@@ -65,7 +65,7 @@ from director_orchestrator.packet_results import DirectorPacketResultConsumer, P
 from director_orchestrator.packet_contracts import load_json_document
 from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.parallel_dispatch import MemberState
-from director_orchestrator.providers import ProviderDailyLimitExceeded
+from director_orchestrator.providers import ProviderDailyLimitExceeded, ProviderDailySpendLedger
 from director_orchestrator.runtime_activation import RuntimeActivation
 from director_orchestrator.store import TaskStore, WorkloadAttemptOutcome
 from tests.plan_binding_helpers import seed_production_plan_materialization
@@ -1378,9 +1378,14 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         await self._parallel_settlement_failure(cancel=True)
 
     async def test_parallel_reset_before_settlement_keeps_only_accounting(self):
-        await self._parallel_settlement_failure(reset=True)
+        await self._parallel_settlement_failure(reset=True, first_provider=ProviderName.OPENAI)
 
-    async def _parallel_settlement_failure(self, *, cancel=False, reset=False):
+    async def test_parallel_reset_before_settlement_gemini_first_keeps_only_accounting(self):
+        await self._parallel_settlement_failure(reset=True, first_provider=ProviderName.GEMINI)
+
+    async def _parallel_settlement_failure(
+        self, *, cancel=False, reset=False, first_provider=ProviderName.OPENAI
+    ):
         assignments = [
             Assignment(
                 sequence=1,
@@ -1476,49 +1481,92 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         if reset:
             from director_orchestrator.approvals import reset_for_owner_clarification
 
-            openai_finished = threading.Event()
-            reset_finished = threading.Event()
+            leader = (
+                first_provider.value
+                if isinstance(first_provider, ProviderName)
+                else str(first_provider)
+            )
+            follower = (
+                ProviderName.GEMINI.value
+                if leader == ProviderName.OPENAI.value
+                else ProviderName.OPENAI.value
+            )
+            leader_finished = threading.Event()
+            actual_completion_order: list[str] = []
             run_packet = activation.runtime.run_packet
 
             def ordered_run_packet(work_packet, *, provider, **kwargs):
-                if provider == ProviderName.GEMINI.value:
-                    if not openai_finished.wait(timeout=5):
-                        raise RuntimeError("OpenAI packet did not finish")
-                    reset_finished.wait(timeout=0.5)
+                if provider == follower:
+                    if not leader_finished.wait(timeout=5):
+                        raise RuntimeError(
+                            f"Leader provider {leader} did not finish within 5s"
+                        )
                 try:
                     return run_packet(
                         work_packet, provider=provider, **kwargs
                     )
                 finally:
-                    if provider == ProviderName.OPENAI.value:
-                        openai_finished.set()
+                    actual_completion_order.append(provider)
+                    if provider == leader:
+                        leader_finished.set()
 
             activation.runtime.run_packet = ordered_run_packet
             settle = engine._settle_packet_spend
             dispatch_generation = stored.plan_generation
             reset_done = False
+            pre_reset_context = None
 
             def settle_after_reset(*args, **kwargs):
-                nonlocal reset_done
+                nonlocal reset_done, pre_reset_context
                 if not reset_done:
                     current = store.get(record.task_id)
+                    pre_reset_context = {
+                        "plan_generation": current.plan_generation,
+                        "provider_runs": list(current.provider_runs),
+                        "settle_args": args,
+                        "settle_kwargs": kwargs,
+                    }
                     reset_for_owner_clarification(current)
                     current.plan_generation += 1
                     store.save(current)
                     reset_done = True
-                    reset_finished.set()
                 return settle(*args, **kwargs)
 
             with patch.object(engine, "_settle_packet_spend", side_effect=settle_after_reset):
                 self.assertFalse(await engine._dispatch_parallel_packet_batch(stored))
-            self.assertTrue(reset_done)
-            self.assertEqual(store.get(record.task_id).provider_runs, [])
-            self.assertEqual(consumer.calls, 0)
-            self.assertEqual(transports["gemini"].sends, 1)
-            self.assertEqual(transports["openai"].sends, 1)
-            held, = engine.provider_spend.settlements(record.task_id).values()
+            self.assertTrue(reset_done, "reset callback was not executed before settlement")
+            self.assertEqual(
+                actual_completion_order,
+                [leader, follower],
+                f"actual provider completion order {actual_completion_order} did not match expected {[leader, follower]}",
+            )
+            self.assertIsNotNone(pre_reset_context, "accounting context before reset was not retained")
+            self.assertEqual(pre_reset_context["plan_generation"], dispatch_generation)
+            persisted = store.get(record.task_id)
+            self.assertEqual(persisted.provider_runs, [], "stale provider runs were consumed after reset")
+            self.assertEqual(persisted.consumed_packet_results, {}, "stale packet results were consumed after reset")
+            self.assertEqual(consumer.calls, 0, "packet result consumer was called despite plan reset")
+            self.assertEqual(transports["gemini"].sends, 1, "gemini transport send count mismatch")
+            self.assertEqual(transports["openai"].sends, 1, "openai transport send count mismatch")
+
+            settlements = engine.provider_spend.settlements(record.task_id)
+            self.assertEqual(
+                len(settlements),
+                1,
+                f"Expected exactly 1 settlement in supported ledger for task {record.task_id}, "
+                f"found {len(settlements)}: {settlements}; supported providers are {ProviderDailySpendLedger._SUPPORTED}",
+            )
+            held = next(iter(settlements.values()))
+            self.assertEqual(held["provider"], ProviderName.GEMINI.value)
             self.assertEqual(held["plan_generation"], dispatch_generation)
-            self.assertFalse(held["pending"])
+            self.assertFalse(held["pending"], "settlement remained in pending state")
+            self.assertIsNone(held["cost"], "estimated cost is not authoritative reported spend")
+
+            # Assert no replay on second dispatch attempt
+            self.assertFalse(await engine._dispatch_parallel_packet_batch(persisted))
+            self.assertEqual(transports["gemini"].sends, 1, "gemini packet was replayed after reset")
+            self.assertEqual(transports["openai"].sends, 1, "openai packet was replayed after reset")
+            self.assertEqual(consumer.calls, 0, "consumer was called on replay attempt")
             return
 
         if cancel:
