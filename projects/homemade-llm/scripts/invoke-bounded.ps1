@@ -10,7 +10,8 @@
 # Shared by train-smoke.ps1 and serve-smoke.ps1 (dot-sourced): run a native command with a host-side deadline.
 # A stalled Docker or LM Studio daemon must not hang a run that holds the GPU lock, and a timed-out command
 # must not keep running after we give up on it, so the whole process tree is killed on timeout.
-# Returns the command's stdout lines, then '__EXIT__<code>' (or '__EXIT__timeout') as the last element.
+# Returns stdout lines plus '__EXIT__<code>' by default. -RawBytes returns {Bytes, ExitCode};
+# both modes return '__EXIT__timeout' only after verified cleanup on a deadline.
 # One machine-wide GPU marker for the one machine-wide Global\homemade-llm-gpu mutex: a fixed path under ProgramData,
 # never derived from a caller's -HotRoot, so no choice of root can miss it.
 $GpuMarker = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'homemade-llm\gpu-poisoned.txt'
@@ -116,13 +117,13 @@ public static class JobTree {
 function New-BoundedJob { [HomemadeLlm.JobTree]::Create() }
 function Get-BoundedJobActive([IntPtr]$Job) { [HomemadeLlm.JobTree]::Active($Job) }
 function Add-BoundedJobMember([IntPtr]$Job, [IntPtr]$Process) { [HomemadeLlm.JobTree]::Join($Job, $Process) }
-function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds, [switch]$RawBytes) {
     $path = (Get-Command $Exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $commandLine = (@($path) + @($A) | ForEach-Object { [HomemadeLlm.JobTree]::Quote([string]$_) }) -join ' '
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     # No job, no launch: a job that cannot be created throws here, before anything runs.
     $job = New-BoundedJob
-    $h = [IntPtr]::Zero; $rootPid = 0; $completed = $false; $pipes = @()
+    $h = [IntPtr]::Zero; $rootPid = 0; $completed = $false; $pipes = @(); $rawOutput = $null
     try {
         # Inheritable anonymous pipes: stdin is closed at once (EOF), stdout is returned, stderr is drained so a
         # chatty child cannot block on it.
@@ -138,7 +139,10 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         try { Add-BoundedJobMember $job $h; [HomemadeLlm.JobTree]::Resume($t) } finally { [HomemadeLlm.JobTree]::Close($t) }
         foreach ($pipe in $pipes) { $pipe.DisposeLocalCopyOfClientHandle() }
         $in.Dispose()
-        $stdout = [IO.StreamReader]::new($out, [Console]::OutputEncoding).ReadToEndAsync()
+        $stdout = if ($RawBytes) {
+            $rawOutput = [IO.MemoryStream]::new()
+            $out.CopyToAsync($rawOutput)
+        } else { [IO.StreamReader]::new($out, [Console]::OutputEncoding).ReadToEndAsync() }
         $stderr = [IO.StreamReader]::new($err, [Console]::OutputEncoding).ReadToEndAsync()
         # Wait in short slices: PowerShell.Stop() and Ctrl+C cannot interrupt one long blocking wait, but can stop
         # the loop between slices, and finally then kills the tree.
@@ -149,6 +153,9 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         $left = [int][math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
         if (-not [Threading.Tasks.Task]::WaitAll(@($stdout, $stderr), $left)) { return @('__EXIT__timeout') }
         $completed = $true
+        if ($RawBytes) {
+            return [pscustomobject]@{ Bytes = $rawOutput.ToArray(); ExitCode = [HomemadeLlm.JobTree]::ExitCode($h) }
+        }
         $text = $stdout.Result.TrimEnd("`r", "`n")
         # @() matters: a single output line would otherwise be a string, and string + string concatenates.
         @(if ($text) { $text -split "`r?`n" }) + "__EXIT__$([HomemadeLlm.JobTree]::ExitCode($h))"
@@ -176,6 +183,7 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         # the job is terminated and verified above, even when the root has already exited.
         [HomemadeLlm.JobTree]::Close($h); [HomemadeLlm.JobTree]::Close($job)
         foreach ($pipe in $pipes) { $pipe.Dispose() }
+        if ($null -ne $rawOutput) { $rawOutput.Dispose() }
         if (-not $gone -or $unverified) {
             $msg = "Invoke-Bounded: $Exe (pid $rootPid) or a child process could not be confirmed stopped and may still be running"
             # Persist the machine-wide GPU guard before any caller can unwind and release the mutex: every caller is

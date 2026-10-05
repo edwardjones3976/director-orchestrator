@@ -181,7 +181,234 @@ def _wrapper_mount_construction(source: str) -> str:
     return ". '" + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n"
 
 
+def synthetic_kep_input(item):
+    # Mirrors prepare_kep_inputs.RECORD_KEYS without importing its custody tooling.
+    return {"protocol": "kep-input/v1", "disposition": "construction_only",
+        "source_group": "licensed/kubernetes/enhancements/kep-1", "kep_number": 1, "selection_rank": 0,
+        "source_ref": "keps/synthetic/README.md", "source_sha256": "a" * 64,
+        "source_git_blob": "b" * 40, "policy_sha256": "c" * 64, "qualified_selection_sha256": "d" * 64,
+        "source_captured_at": "2026-10-05T10:00:00Z", "generated_at": "2026-10-05T10:00:01Z",
+        "input": {key: value for key, value in item.items() if key != "id"},
+        "title_span": {"start": 0, "end": 2}, "objective_span": {"start": 3, "end": 5},
+        "context_spans": [{"start": 6, "end": 8}]}
+
+
+class ContextTokenizer:
+    def __init__(self, prompt=2, full=3, truncate=False):
+        self.prompt, self.full, self.truncate = prompt, full, truncate
+    def apply_chat_template(self, messages, **kwargs):
+        length = self.prompt if kwargs["add_generation_prompt"] else self.full
+        if self.truncate and "truncation" not in kwargs:
+            length -= 1
+        return list(range(length))
+
+
 class TrainAdapterTests(unittest.TestCase):
+    def test_epoch_dev_preflight_exact_boundaries_and_no_truncation(self):
+        rows = [row("dev")]
+        train_adapter.preflight_epoch_dev(rows, ContextTokenizer(prompt=2, full=2048), 2050)
+        for tokenizer, limit, message in [
+            (ContextTokenizer(prompt=3), 2050, "max_new_tokens"),
+            (ContextTokenizer(full=2049), 4096, "reference"),
+            (ContextTokenizer(truncate=True), 4096, "truncates"),
+            (ContextTokenizer(), None, "explicit context"),
+            (ContextTokenizer(), True, "explicit context"),
+        ]:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                train_adapter.preflight_epoch_dev(rows, tokenizer, limit)
+
+    def test_epoch_row_id_recomputed_for_input_and_target_on_both_splits(self):
+        for split in ("train", "dev"):
+            for field in ("input", "target"):
+                with self.subTest(split=split, field=field), tempfile.TemporaryDirectory() as tmp:
+                    rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+                    target = next(item for item in rows if item["split"] == split)
+                    if field == "input":
+                        target["input"]["id"] += "-substituted"
+                    else:
+                        target["target"]["constraints"][0] = "substituted"
+                    fx = _build_publication_fixture(Path(tmp), rows=rows)
+                    with self.assertRaisesRegex(ValueError, "noncanonical row_id"):
+                        train_adapter.load_epoch_rows(fx["binding_path"], fx["rows_dir"], fx["code_dir"], fx["eval_dir"])
+        # Pure algorithm parity, including Unicode and key order.
+        value = {"input": {"z": "\u00e9", "a": 1}, "target": {"b": "x"}}
+        expected = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()[:16]
+        self.assertEqual(train_adapter.canonical_row_id(value["input"], value["target"]), expected)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows JobTree fixture")
+    def test_bounded_raw_bytes_exit_and_pipe_holder_cleanup(self):
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "invoke-bounded.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "raw_child.py"
+            child.write_text("import sys,os,time,subprocess\n"
+                "if sys.argv[1]=='bytes': os.write(1,bytes([0,255,128,13,10,65])); sys.exit(7)\n"
+                "if sys.argv[1]=='empty': sys.exit(0)\n"
+                "if sys.argv[1]=='hold':\n"
+                " p=subprocess.Popen([sys.executable,__file__,'sleep',sys.argv[2]],close_fds=False)\n"
+                " open(sys.argv[2],'w').write(str(p.pid))\n"
+                "if sys.argv[1]=='sleep': time.sleep(20)\n", encoding="utf-8")
+            repo = root / "repo"
+            repo.mkdir()
+            payload = bytes([0, 255, 128, 13, 10, 65])
+            (repo / "payload.bin").write_bytes(payload)
+            (repo / "empty.bin").write_bytes(b"")
+            for git_args in (["init", "-q"], ["add", "."], ["-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "binary fixture"]):
+                subprocess.run(["git", *git_args], cwd=repo, check=True, capture_output=True, timeout=10)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, timeout=10).decode().strip()
+            stage_helper = helper.with_name("train-adapter-stage.ps1")
+            command = f"""
+$ErrorActionPreference='Stop'
+. '{helper.as_posix()}'
+$GpuMarker='{root.as_posix()}/marker'
+. '{stage_helper.as_posix()}'
+$b=Get-GitBlobBytes -RepoRoot '{repo.as_posix()}' -Commit '{commit}' -Path payload.bin -ExpectedSha256 '{hashlib.sha256(bytes([0,255,128,13,10,65])).hexdigest()}'
+if ($b -isnot [byte[]] -or [Convert]::ToHexString($b) -cne '00FF800D0A41') {{ throw 'real Git binary payload changed' }}
+$b=Get-GitBlobBytes -RepoRoot '{repo.as_posix()}' -Commit '{commit}' -Path empty.bin -ExpectedSha256 '{hashlib.sha256(b'').hexdigest()}'
+if ($b -isnot [byte[]] -or $b.Length -ne 0) {{ throw 'real Git empty payload changed' }}
+$r=Invoke-Bounded '{sys.executable}' @('{child.as_posix()}', 'bytes') 10 -RawBytes
+if ($r.ExitCode -ne 7 -or [Convert]::ToHexString($r.Bytes) -cne '00FF800D0A41') {{ throw 'raw byte/nonzero result mismatch' }}
+$r=Invoke-Bounded '{sys.executable}' @('{child.as_posix()}', 'empty') 10 -RawBytes
+if ($r.ExitCode -ne 0 -or $r.Bytes.Length -ne 0) {{ throw 'empty raw stdout mismatch' }}
+$r=@(Invoke-Bounded 'cmd' @('/c','echo text-default') 10)
+if (($r -join '|') -cne 'text-default|__EXIT__0') {{ throw 'text default changed' }}
+$r=@(Invoke-Bounded '{sys.executable}' @('{child.as_posix()}', 'hold', '{root.as_posix()}/pid') 2 -RawBytes)
+if (($r -join '|') -cne '__EXIT__timeout') {{ throw 'pipe holder did not time out' }}
+$childPid=[int](Get-Content -LiteralPath '{root.as_posix()}/pid')
+if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) {{ throw 'pipe holder survived cleanup' }}
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) {{ throw 'unconfirmed cleanup; stop' }}
+Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
+"""
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", command],
+                capture_output=True, text=True, timeout=40, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cleanup: PASS", result.stdout)
+
+    def test_context_probe_longest_real_input_full_generation_and_refusals(self):
+        from contextlib import nullcontext
+        class Tokenizer(ContextTokenizer):
+            model_max_length = 8192
+            def apply_chat_template(self, messages, **kwargs):
+                self.prompt = 4 if "longest" in messages[1]["content"] else 2
+                return super().apply_chat_template(messages, **kwargs)
+        for kind in ("pass", "constructor_cli", "short", "changed_prefix", "memory", "over_limit", "generate_error"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                short, longest = dict(row()["input"]), dict(row()["input"], objective="longest real input")
+                records = [short, longest] if kind != "constructor_cli" else [synthetic_kep_input(short), synthetic_kep_input(longest)]
+                raw = ("\n".join(json.dumps(item) for item in records) + "\n").encode()
+                inputs, report_path = root / "inputs.jsonl", root / "report.json"
+                inputs.write_bytes(raw)
+                tokenizer = Tokenizer()
+                model = mock.Mock(device="cpu", max_seq_length=2052,
+                    config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION, max_position_embeddings=8192))
+                output = list(range(4)) + [9] * (2047 if kind == "short" else 2048)
+                if kind == "changed_prefix": output[0] = 999
+                model.generate.return_value = [output]
+                if kind == "generate_error": model.generate.side_effect = RuntimeError("synthetic")
+                cuda = mock.Mock(max_memory_reserved=mock.Mock(return_value=(11 if kind == "memory" else 2) * 2**30))
+                with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+                     mock.patch.object(train_adapter, "FastLanguageModel") as flm, \
+                     mock.patch.object(train_adapter, "set_seed"), \
+                     mock.patch.object(train_adapter.torch, "cuda", cuda, create=True), \
+                     mock.patch.object(train_adapter.torch, "tensor", side_effect=lambda ids, **kw: ids, create=True), \
+                     mock.patch.object(train_adapter.torch, "ones_like", return_value=[[1] * 4], create=True), \
+                     mock.patch.object(train_adapter.torch, "long", 0, create=True), \
+                     mock.patch.object(train_adapter.torch, "inference_mode", side_effect=nullcontext, create=True):
+                    flm.from_pretrained.return_value = model, tokenizer
+                    args = (inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, report_path)
+                    if kind in ("pass", "constructor_cli"):
+                        if kind == "constructor_cli":
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", str(report_path),
+                                    "--probe", "--probe-context-inputs", str(inputs), "--probe-context-limit", "2052"])
+                            result = json.loads(report_path.read_text())
+                        else:
+                            result = train_adapter.run_context_probe(*args, context_limit=2052)
+                        self.assertTrue(result["context_pass"])
+                        self.assertFalse(result["qualified"])
+                        self.assertEqual(result["inputs_sha256"], hashlib.sha256(raw).hexdigest())
+                        self.assertEqual(result["record_position"], 2)
+                        self.assertEqual(result["prompt_max"], 4)
+                        self.assertEqual(result["total_positions"], 2052)
+                        self.assertEqual(result["new_tokens"], 2048)
+                        self.assertEqual(result["tokenizer_model_max_length"], 8192)
+                        self.assertEqual(model.generate.call_args.kwargs["input_ids"], [list(range(4))])
+                        self.assertEqual(model.generate.call_args.kwargs["min_new_tokens"], 2048)
+                        self.assertEqual(model.generate.call_args.kwargs["max_new_tokens"], 2048)
+                        self.assertNotIn("9, 9, 9", report_path.read_text())
+                    else:
+                        with self.assertRaises((ValueError, RuntimeError)):
+                            train_adapter.run_context_probe(*args, context_limit=2051 if kind == "over_limit" else 2052)
+                        result = json.loads(report_path.read_text())
+                        self.assertFalse(result["context_pass"])
+                    if kind == "over_limit":
+                        model.generate.assert_not_called()
+                    else:
+                        model.generate.assert_called_once()
+                        flm.for_training.assert_called_once_with(model, use_gradient_checkpointing="unsloth")
+
+    def test_context_probe_rejects_malformed_envelopes_before_model_load(self):
+        import copy
+        good = synthetic_kep_input(row()["input"])
+        cases = []
+        for field, value in (("protocol", "kep-extraction/v1"), ("disposition", "accepted"), ("input", [])):
+            bad = copy.deepcopy(good)
+            bad[field] = value
+            cases.append(bad)
+        for where in ("envelope", "input", "bare"):
+            bad = copy.deepcopy(row()["input"] if where == "bare" else good)
+            (bad["input"] if where == "input" else bad)["target"] = row()["target"]
+            cases.append(bad)
+        bad = copy.deepcopy(good)
+        del bad["source_git_blob"]
+        cases.append(bad)
+        bad = copy.deepcopy(good)
+        bad["input"]["context"][0]["source_sha256"] = "invalid"
+        cases.append(bad)
+        bad = copy.deepcopy(good)
+        bad["input"]["objective"] = 17
+        cases.append(bad)
+        for index, bad in enumerate(cases):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as tmp, \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as flm, \
+                 mock.patch.object(train_adapter, "digest_verification_before_load") as digests, \
+                 mock.patch.object(train_adapter, "set_seed") as seed:
+                inputs = Path(tmp) / "inputs.jsonl"
+                # A valid earlier record must not cause a load before later validation.
+                inputs.write_text(json.dumps(good) + "\n" + json.dumps(bad) + "\n")
+                with self.assertRaises(ValueError):
+                    train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", str(Path(tmp) / "report.json"),
+                        "--probe", "--probe-context-inputs", str(inputs), "--probe-context-limit", "4096"])
+                flm.from_pretrained.assert_not_called()
+                digests.assert_not_called()
+                seed.assert_not_called()
+
+    def test_epoch_bad_dev_context_refuses_before_first_trainer_step(self):
+        for tokenizer in (ContextTokenizer(prompt=2049), ContextTokenizer(full=2049), ContextTokenizer(truncate=True)):
+            with self.subTest(tokenizer=tokenizer), tempfile.TemporaryDirectory() as tmp:
+                trainer_type = mock.Mock()
+                with self.assertRaisesRegex(ValueError, "max_new_tokens|reference|truncates"):
+                    self._maintenance_epoch_run(Path(tmp), trainer_type, epochs=1, context_tokenizer=tokenizer)
+                trainer_type.assert_not_called()
+                report = json.loads((Path(tmp) / "reports" / "maintenance.json").read_text())
+                self.assertEqual(report["state"], "failed")
+
+    def test_context_probe_cli_dispatches_without_loading_training_rows(self):
+        with mock.patch.object(train_adapter, "run_context_probe", return_value={"context_pass": True}) as probe, \
+             mock.patch.object(train_adapter, "load_training_rows") as rows, \
+             contextlib.redirect_stdout(io.StringIO()):
+            train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", "out.json", "--probe",
+                "--probe-context-inputs", "inputs.jsonl", "--probe-context-limit", "15009"])
+            rows.assert_not_called()
+            probe.assert_called_once()
+            self.assertEqual(probe.call_args.kwargs["context_limit"], 15009)
+        for extra in (["--probe-context-inputs", "inputs.jsonl"], ["--probe-context-limit", "15009"]):
+            with self.subTest(extra=extra), mock.patch.object(train_adapter, "run_context_probe") as probe:
+                with self.assertRaises(SystemExit):
+                    train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", "out.json", "--probe", *extra])
+                probe.assert_not_called()
+
     def test_response_mask_ignores_the_prompt_and_covers_the_answer(self):
         labels = train_adapter.labels_for_token_ids([4, 5, 6, 7], [4, 5, 6, 7, 8, 9, 10])
         self.assertEqual(labels, [-100, -100, -100, -100, 8, 9, 10])
@@ -435,7 +662,7 @@ class TrainAdapterTests(unittest.TestCase):
             train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(Path(tmp) / "out.json"),
                                 "--epochs", "1", "--base", train_adapter.WINNER_BASE,
                                 "--revision", train_adapter.WINNER_REVISION,
-                                "--publication-binding", str(fx["binding_path"])])
+                                "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
             self.assertEqual(training.call_args.args[2:4], (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
             self.assertEqual(training.call_args.kwargs["epochs"], 1)
             self.assertEqual(training.call_args.kwargs["publication_binding_path"], fx["binding_path"])
@@ -464,17 +691,17 @@ class TrainAdapterTests(unittest.TestCase):
         start = source.index("    $dockerArgs = ")
         end = source.index("    function Get-AdapterState", start)
         construction = source[start:end]
-        for digests in ("", "dummy-digests.json"):
+        for digests, context_file in (("", False), ("dummy-digests.json", True)):
             with self.subTest(expected_digests=bool(digests)), tempfile.TemporaryDirectory() as tmp:
                 hot_root = Path(tmp).as_posix().replace("'", "''")
                 command = """
 $ErrorActionPreference = 'Stop'
 $name = 'dummy-container'; $code = 'dummy-code'; $evalCode = 'dummy-eval'; $Image = 'dummy-image'
 $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
-$Epochs = 0; $runId = 'dummy-run'
+$Epochs = 0; $runId = 'm2-01234567'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
-""" + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+""" + ("$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n" if context_file else "") + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
                 completed = subprocess.run(
                     [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True, text=True, timeout=30,
@@ -495,6 +722,10 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                         self.assertEqual(options[options.index(flag) - 1], "-e")
                     else:
                         self.assertNotIn(flag, args)
+                if context_file:
+                    self.assertIn("C:/synthetic/inputs.jsonl:/workspace/context-inputs.jsonl:ro", options)
+                    self.assertEqual(trainer[trainer.index("--probe-context-limit") + 1], "15009")
+                    self.assertEqual(trainer[trainer.index("--probe-context-inputs") + 1], "/workspace/context-inputs.jsonl")
                 if digests:
                     index = trainer.index("--expected-digests")
                     self.assertEqual(trainer[index + 1], "/workspace/expected-digests.json")
@@ -506,7 +737,8 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                     self.assertNotIn("--expected-digests", args)
                     self.assertNotIn("--trusted-digest-root", args)
                 self.assertIn("--winner", trainer)
-                self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
+                self.assertEqual(trainer[-2:], ["--probe-rows-total", "96"])
+                self.assertEqual(trainer[trainer.index("--probe-seq-len") + 1], "2048")
 
     def test_wrapper_epoch_mode_docker_args_use_the_staged_tree_not_code(self):
         # Epoch mode's docker-argument contract moved from an inline snippet to
@@ -528,7 +760,7 @@ $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
 $args_ = New-TrainerDockerArgs -Image 'dummy-image' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
     -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
-    -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -ModelsHostDir 'C:/synthetic/models/m2' `
+    -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -EpochContextLimit 4096 -ModelsHostDir 'C:/synthetic/models/m2' `
     -ExtraEnv @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
 ConvertTo-Json -InputObject $args_ -Compress
 """
@@ -560,6 +792,7 @@ ConvertTo-Json -InputObject $args_ -Compress
         self.assertEqual(trainer[:2], ["--rows", "/workspace/rows/accepted.jsonl"])
         self.assertIn("--epochs", trainer)
         self.assertEqual(trainer[trainer.index("--epochs") + 1], "4")
+        self.assertEqual(trainer[trainer.index("--epoch-context-limit") + 1], "4096")
         self.assertIn("--publication-binding", trainer)
         self.assertEqual(trainer[trainer.index("--publication-binding") + 1], "/workspace/publication-binding.json")
         self.assertNotIn("--steps", args)
@@ -572,13 +805,13 @@ ConvertTo-Json -InputObject $args_ -Compress
     def _assert_common_mounts(self, options, root, *, epoch_mode, digests):
         mounts = [options[index + 1].replace("\\", "/")
                   for index, value in enumerate(options) if value == "-v"]
-        for directory in (("hf", "models/m2") if epoch_mode else ("hf", "runs", "models/m2", "reports")):
-            self.assertIn(f"{root.as_posix()}/{directory}:/workspace/{directory}"
-                          + (":ro" if epoch_mode and directory == "hf" else ""), mounts)
-        if epoch_mode:
-            self.assertIn(f"{root.as_posix()}/reports/adapter-output:/workspace/reports", mounts)
-            self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
-            self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
+        self.assertIn(f"{root.as_posix()}/hf:/workspace/hf:ro", mounts)
+        model_subdir = "models/m2" if epoch_mode else "models/m2/m2-01234567"
+        report_subdir = "reports/adapter-output" if epoch_mode else "reports/adapter-output/m2-01234567"
+        self.assertIn(f"{root.as_posix()}/{model_subdir}:/workspace/models/m2", mounts)
+        self.assertIn(f"{root.as_posix()}/{report_subdir}:/workspace/reports", mounts)
+        self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
+        self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
         rows_mounts = [mount for mount in mounts if ":/workspace/rows" in mount]
         self.assertEqual(rows_mounts, ["C:/synthetic/Input:/workspace/rows:ro"] if epoch_mode
                          else [f"{root.as_posix()}:/workspace/rows:ro"])
@@ -719,7 +952,7 @@ Write-Output 'PASS'
         guard_start = source.index("if ($Winner -and $Fallback)", start)
         end = source.index("if ($Steps -lt 1)", guard_start)
         prerequisites, guards = source[start:guard_start], source[guard_start:end]
-        epoch_pin = {"Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
+        epoch_pin = {"EpochContextLimit": "4096", "Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
         cases = [
             ({}, None),
             ({"Winner": "$true", "Probe": "$false"}, "-Winner is only valid together with -Probe"),
@@ -731,6 +964,8 @@ Write-Output 'PASS'
             ({"Epochs": "4", "TimeoutMinutes": "1"}, "requires explicit -Base"),
             ({**epoch_pin, "Batch": "'batch-0001'"}, None),
             (epoch_pin, "-Epochs requires -Batch"),
+            ({**{k: v for k, v in epoch_pin.items() if k != "EpochContextLimit"}, "Batch": "'batch-0001'"}, "requires explicit -EpochContextLimit"),
+            ({**epoch_pin, "Batch": "'batch-0001'", "EpochContextLimit": "2048"}, "requires explicit -EpochContextLimit"),
             *[({**epoch_pin, "Batch": value}, "-Batch is not a valid batch id")
               for value in ("''", "'../escape'", "'UPPER'")],
             ({"Batch": "'batch-0001'"}, "-Batch is only valid with -Epochs"),
@@ -743,7 +978,7 @@ Write-Output 'PASS'
             with self.subTest(overrides=overrides, message=message):
                 bound = "@{ " + "; ".join(
                     f"{name} = {value}" for name, value in overrides.items()
-                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch")
+                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch", "EpochContextLimit")
                 ) + " }"
                 setup = "\n".join(
                     f"${name} = {value}" for name, value in overrides.items()
@@ -1939,7 +2174,7 @@ Write-Output 'PASS'
 
     def _maintenance_epoch_run(
         self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False, scores=None,
-        row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None,
+        row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None, context_tokenizer=None,
     ):
         import predict_dev
         rows, dev_rows = slice3_train_rows(row_count), slice3_dev_rows()
@@ -1951,7 +2186,9 @@ Write-Output 'PASS'
             Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
             Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
         model.save_pretrained.side_effect = save
-        tokenizer = mock.Mock()
+        tokenizer = context_tokenizer if context_tokenizer is not None else mock.Mock()
+        if context_tokenizer is None:
+            tokenizer.apply_chat_template.return_value = [1, 2]
         encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}
                    for _ in rows]
         if cuda is None:
@@ -2799,6 +3036,7 @@ def slice3_train_rows(count=64):
         item = row()
         item.update(row_id=f"train-synthetic-{index:02d}", source_group="train-group")
         item["input"] = dict(item["input"], id=item["row_id"])
+        item["row_id"] = hashlib.sha256(json.dumps({"input": item["input"], "target": item["target"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
         items.append(item)
     return items
 
@@ -2809,6 +3047,7 @@ def slice3_dev_rows():
         item = row("dev")
         item.update(row_id=f"dev-{index:02d}", source_group=f"dev-group-{index:02d}")
         item["input"] = dict(item["input"], id=item["row_id"])
+        item["row_id"] = hashlib.sha256(json.dumps({"input": item["input"], "target": item["target"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
         items.append(item)
     return items
 
@@ -3174,7 +3413,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                     elif fault == "roster":
                         result["binding"]["roster"] = []
                     elif fault == "input_digest":
-                        result["binding"]["input_sha256"]["dev-00"] = "0" * 64
+                        result["binding"]["input_sha256"][next(iter(result["binding"]["input_sha256"]))] = "0" * 64
                     elif fault == "expected_packets":
                         result["binding"]["expected_packets_sha256"] = "0" * 64
                     elif fault == "row_ids":
@@ -3217,7 +3456,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                 elif fault == "packets_mismatch":
                     context["expected_packets"]["dev-group-00"] = ["other"]
                 elif fault == "row_overlap":
-                    context["train_rows"][0]["row_id"] = "dev-00"
+                    context["train_rows"][0]["row_id"] = context["dev_rows"][0]["row_id"]
                     context["train_ids"] = {item["row_id"] for item in context["train_rows"]}
                 elif fault == "group_overlap":
                     context["train_rows"][0]["source_group"] = "dev-group-00"
@@ -3467,7 +3706,7 @@ def _build_publication_fixture(
     return {
         "binding_path": binding_path, "rows_dir": rows_dir, "code_dir": code_dir, "eval_dir": eval_dir,
         "binding": binding, "profile": profile, "report": report, "rows": rows, "row_digests": row_digests,
-        "train_kwargs": {"publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
+        "train_kwargs": {"epoch_context_limit": 4096, "publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
                          "publication_code_dir": code_dir, "publication_eval_dir": eval_dir},
     }
 
@@ -3507,7 +3746,7 @@ class PublicationBindingTests(unittest.TestCase):
                 train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"),
                     "--report", str(root / "out.json"), "--epochs", "1", "--check-only",
                     "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
-                    "--publication-binding", str(fx["binding_path"])])
+                    "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
             self.assertEqual(json.loads(output.getvalue()), {"train_rows": 2, "check_only": True})
             training_run.assert_not_called()
             self.assertEqual(model.mock_calls, [])
@@ -3644,7 +3883,7 @@ class PublicationBindingTests(unittest.TestCase):
                     train_adapter.main(["--rows", str(accepted), "--report", str(root / "out.json"),
                         "--epochs", "1", "--base", train_adapter.WINNER_BASE,
                         "--revision", train_adapter.WINNER_REVISION,
-                        "--publication-binding", str(fx["binding_path"])])
+                        "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
             self.assertIs(caught.exception, stop)
             self.assertEqual(len(reads), 2)
             seed.assert_not_called()
@@ -3678,7 +3917,7 @@ class PublicationBindingTests(unittest.TestCase):
                     "--rows", str(Path(tmp, "missing-accepted.jsonl")),
                     "--report", str(Path(tmp, "out.json")),
                     "--steps", "20",
-                    "--publication-binding", str(Path(tmp, "missing-binding.json")),
+                    "--epoch-context-limit", "4096", "--publication-binding", str(Path(tmp, "missing-binding.json")),
                 ])
 
     def test_binding_duplicate_key_refused(self):

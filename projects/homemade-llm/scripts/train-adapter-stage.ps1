@@ -423,19 +423,13 @@ function Get-GitBlobBytes {
 
     # Raw stdout stream, never the PowerShell text pipeline: the bytes must
     # round-trip exactly, including CRLF-vs-LF, which a text decode would mangle.
-    $psi = [Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $gitExe
-    foreach ($a in @('-C', $RepoRoot, 'cat-file', 'blob', "$($Commit):$($Path)")) { $psi.ArgumentList.Add($a) }
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    $proc = [Diagnostics.Process]::Start($psi)
-    $ms = [IO.MemoryStream]::new()
-    $proc.StandardOutput.BaseStream.CopyTo($ms)
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) { Write-Error "git cat-file blob failed for ${Commit}:${Path}" }
-    $bytes = $ms.ToArray()
+    $raw = Invoke-Bounded $gitExe @('-C', $RepoRoot, 'cat-file', 'blob', "$($Commit):$($Path)") 60 -RawBytes
+    if ($raw -isnot [pscustomobject] -or $raw.ExitCode -ne 0 -or $raw.Bytes -isnot [byte[]]) {
+        Write-Error "git cat-file blob failed or timed out for ${Commit}:${Path}"
+    }
+    $bytes = $raw.Bytes
     if ((Get-SHA256Hex $bytes) -cne $ExpectedSha256) { Write-Error "git blob SHA-256 mismatch for ${Commit}:${Path}" }
-    return $bytes
+    return ,$bytes
 }
 
 # ---- 5. Stage tree and binding ---------------------------------------------
@@ -575,22 +569,23 @@ function New-TrainerCommonMounts {
         [Parameter(Mandatory)][string]$RowsDir,
         [string]$ExpectedDigests,
         [string]$TrustedDigestRoot,
-        [switch]$EpochMode
+        [switch]$EpochMode,
+        [string]$RunId
     )
     $mounts = @()
-    # Epoch outputs need no runs mount. Mount only report outputs, never the
-    # reports parent containing Route R custody. Keep smoke/probe destinations.
+    # No mode exposes runs or custody-bearing reports parents for writes.
+    if (-not $EpochMode -and $RunId -cnotmatch '^m2-[0-9a-f]{8}$') { Write-Error 'smoke/probe mounts require a run id' }
     $pairs = if ($EpochMode) {
         @(@('hf', 'hf'), @('models\m2', 'models/m2'), @('reports\adapter-output', 'reports'))
     } else {
-        @(@('hf', 'hf'), @('runs', 'runs'), @('models\m2', 'models/m2'), @('reports', 'reports'))
+        @(@('hf', 'hf'), @(('models\m2\' + $RunId), 'models/m2'), @(('reports\adapter-output\' + $RunId), 'reports'))
     }
     foreach ($pair in $pairs) {
         $hostDir = Join-Path $HotRoot $pair[0]
         New-Item -ItemType Directory -Force $hostDir | Out-Null
-        # Epoch loads are pinned, complete-cache and local-files-only. Preserve
-        # legitimate HF blob links without exposing any of their targets for write.
-        $access = if ($EpochMode -and $pair[1] -ceq 'hf') { ':ro' } else { '' }
+        # Preserve legitimate HF blob links without exposing any of their targets
+        # for write. Cache availability and read-only image compatibility are runtime gates.
+        $access = if ($pair[1] -ceq 'hf') { ':ro' } else { '' }
         $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])${access}")
     }
     if (-not $EpochMode) {
@@ -651,6 +646,7 @@ function New-TrainerDockerArgs {
         [Parameter(Mandatory)][string]$Revision,
         [Parameter(Mandatory)][string]$ReportContainerPath,
         [Parameter(Mandatory)][int]$Epochs,
+        [Parameter(Mandatory)][ValidateRange(2049, [int]::MaxValue)][int]$EpochContextLimit,
         [string]$ModelsHostDir,
         [string[]]$ExtraEnv = @(),
         [hashtable]$Locations = (Get-ProductionLocations)
@@ -672,5 +668,6 @@ function New-TrainerDockerArgs {
         '--base', $Base, '--revision', $Revision,
         '--report', $ReportContainerPath,
         '--epochs', "$Epochs",
+        '--epoch-context-limit', "$EpochContextLimit",
         '--publication-binding', '/workspace/publication-binding.json')
 }

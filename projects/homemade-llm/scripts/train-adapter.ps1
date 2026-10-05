@@ -6,9 +6,13 @@
 #       D-M2-6 probe on Qwen/Qwen3-14B at 40c069824f4251a91eefaf281ebe4c544efd3e18.
 #   .\train-adapter.ps1 -Rows <jsonl> -Batch <published-batch-id> -Epochs <N> -Base 'Qwen/Qwen3-14B' `
 #       -Revision '40c069824f4251a91eefaf281ebe4c544efd3e18' `
-#       -ExpectedDigests <approved-list> -TimeoutMinutes <explicit-approved-bound>
+#       -EpochContextLimit <measured-total-positions> -ExpectedDigests <approved-list> -TimeoutMinutes <explicit-approved-bound>
 #       Epoch-mode training: one adapter leaf per epoch under models\m2\<run id>.
 #       Epoch summaries are saved under reports\adapter-output\<run id>.json.
+#   .\train-adapter.ps1 -Rows <accepted.jsonl> -Winner -Probe -ProbeContextInputs <inputs.jsonl> `
+#       -ProbeContextLimit <measured-prompt-max-plus-2048> -TimeoutMinutes <explicit-bound>
+#       Separate context probe: one full generation, output discarded; Director gate still required.
+#       Smoke/probe reports and trainer scratch are under reports\adapter-output\<run id>.
 # -Winner is only valid together with -Probe; -Epochs is a training mode and
 #   excludes -Steps, -Probe, -Winner and -Fallback.
 # Refuses a short revision, a winner probe pointed at any other base, a hot root
@@ -25,11 +29,14 @@ param(
     [string]$MergeRevision = 'db4e90b8359f816f09bf5c944797ce116f26da3c',
     [int]$Steps = 20,
     [int]$Epochs = 0,
+    [int]$EpochContextLimit,
     [switch]$Winner,
     [switch]$Fallback,
     [switch]$Probe,
     [string]$ExpectedDigests,
     [int]$ProbeRowsTotal,
+    [string]$ProbeContextInputs,
+    [int]$ProbeContextLimit,
     [int]$ProbeSeqLen = 2048,
     [double]$TimeoutMinutes = 90
 )
@@ -56,10 +63,17 @@ if ($PSBoundParameters.ContainsKey('Epochs')) {
         Write-Error "-Epochs requires explicit -Base $WinnerBase -Revision $WinnerRevision"
     }
     if (-not $PSBoundParameters.ContainsKey('Batch')) { Write-Error '-Epochs requires -Batch (the publication batch id to resolve and stage)' }
+    if (-not $PSBoundParameters.ContainsKey('EpochContextLimit') -or $EpochContextLimit -le 2048) { Write-Error '-Epochs requires explicit -EpochContextLimit greater than max_new_tokens' }
     if ($Batch -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { Write-Error "-Batch is not a valid batch id: $Batch" }
 }
+if ($PSBoundParameters.ContainsKey('EpochContextLimit') -and -not $PSBoundParameters.ContainsKey('Epochs')) { Write-Error '-EpochContextLimit is only valid with -Epochs' }
 if ($PSBoundParameters.ContainsKey('Batch') -and -not $PSBoundParameters.ContainsKey('Epochs')) {
     Write-Error '-Batch is only valid with -Epochs'
+}
+if ($PSBoundParameters.ContainsKey('ProbeContextInputs') -or $PSBoundParameters.ContainsKey('ProbeContextLimit')) {
+    if (-not $Probe -or [string]::IsNullOrWhiteSpace($ProbeContextInputs) -or $ProbeContextLimit -le 2048) { Write-Error 'context probe requires -Probe -ProbeContextInputs and explicit -ProbeContextLimit greater than 2048' }
+    $ProbeContextInputs = [IO.Path]::GetFullPath($ProbeContextInputs)
+    if (-not (Test-Path -LiteralPath $ProbeContextInputs -PathType Leaf)) { Write-Error 'context probe input file is missing' }
 }
 if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
 if ([double]::IsNaN($TimeoutMinutes) -or [double]::IsInfinity($TimeoutMinutes) -or $TimeoutMinutes -le 0) {
@@ -149,12 +163,15 @@ foreach ($t in 'token', 'stored_tokens') {
 # non-epoch argument vector built later, once the lock and preflight pass.
 # Epoch mode mounts the staged Input tree as /workspace/rows (New-TrainerDockerArgs),
 # never the caller's rows directory; smoke and probe keep the caller rows mount.
+$runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-    -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs)
+    -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
+if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
+    $mounts += @('-v', "${ProbeContextInputs}:/workspace/context-inputs.jsonl:ro")
+}
 $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
 $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-$runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 
 $epochDockerArgs = $null
 if ($Epochs) {
@@ -189,7 +206,7 @@ if ($Epochs) {
     )
     $bindingPath = New-PublicationBinding -Batch $Batch -Candidate $candidate -Resolution $resolution -RootSha256 $pin.APPROVED_TRUST_ROOT_SHA256 -Files $stagedFiles -MetaDir $stage.Meta
     $epochDockerArgs = New-TrainerDockerArgs -Image $Image -Name $name -CommonMounts $mounts -Stage $stage -BindingPath $bindingPath `
-        -Base $Base -Revision $Revision -ReportContainerPath "/workspace/reports/$runId.json" -Epochs $Epochs `
+        -Base $Base -Revision $Revision -ReportContainerPath "/workspace/reports/$runId.json" -Epochs $Epochs -EpochContextLimit $EpochContextLimit `
         -ModelsHostDir (Join-Path $HotRoot 'models\m2') `
         -ExtraEnv @(if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) { @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1') } else { @() })
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
@@ -198,6 +215,13 @@ if ($Epochs) {
     if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
         $epochDockerArgs += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
     }
+}
+
+if (-not $Epochs) {
+    $locations = Get-ProductionLocations
+    Assert-TrainerMountIsolation -Mounts $mounts -ProtectedPaths @(
+        (Join-Path $HotRoot 'runs\stage'), $Rows, $code, $evalCode, $locations.PinFile, $locations.CustodyRoot;
+        if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs })
 }
 
 $gpuLock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
@@ -246,6 +270,9 @@ try {
         }
         if ($Probe) {
             $d += @('--probe', '--probe-seq-len', "$ProbeSeqLen")
+            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
+                $d += @('--probe-context-inputs', '/workspace/context-inputs.jsonl', '--probe-context-limit', "$ProbeContextLimit")
+            }
             if ($PSBoundParameters.ContainsKey('ProbeRowsTotal')) {
                 $d += @('--probe-rows-total', "$ProbeRowsTotal")
             }

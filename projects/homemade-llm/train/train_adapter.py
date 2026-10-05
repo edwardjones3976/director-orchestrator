@@ -1790,6 +1790,50 @@ def verify_publication_binding(
     return publication
 
 
+def canonical_row_id(input_block: dict[str, Any], target_block: dict[str, Any]) -> str:
+    """Producer's pure canonical identity algorithm, without an unstaged import."""
+    canonical = json.dumps({"input": input_block, "target": target_block},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _single_token_ids(encoded: Any) -> list[int]:
+    if isinstance(encoded, dict):
+        encoded = encoded["input_ids"]
+    if hasattr(encoded, "tolist"):
+        encoded = encoded.tolist()
+    if isinstance(encoded, list) and len(encoded) == 1 and isinstance(encoded[0], list):
+        encoded = encoded[0]
+    if not isinstance(encoded, list) or not encoded or any(type(token) is not int for token in encoded):
+        raise ValueError("expected one nonempty tokenized prompt")
+    return encoded
+
+
+def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any]) -> list[int]:
+    # Match predict_dev's exact input-only renderer and generation call. Compare
+    # its default tokenization with explicit untruncated tokens before generation.
+    messages = prompt_template.render_messages(input_block)
+    kwargs = dict(tokenize=True, add_generation_prompt=True, enable_thinking=False, return_tensors="pt")
+    actual = _single_token_ids(tokenizer.apply_chat_template(messages, **kwargs))
+    untruncated = _single_token_ids(tokenizer.apply_chat_template(messages, truncation=False, **kwargs))
+    if actual != untruncated:
+        raise ValueError("generation tokenizer truncates or changes the input prompt")
+    return untruncated
+
+
+def preflight_epoch_dev(dev_rows: list[dict[str, Any]], tokenizer: Any, context_limit: int) -> None:
+    if type(context_limit) is not int or context_limit <= SEQ:
+        raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
+    for row in dev_rows:
+        prompt = input_prompt_ids(tokenizer, row["input"])
+        full = _single_token_ids(tokenizer.apply_chat_template(messages_for(row), tokenize=True,
+            add_generation_prompt=False, enable_thinking=False, truncation=False))
+        if len(full) > SEQ:
+            raise ValueError(f"dev prompt plus reference exceeds SEQ={SEQ}")
+        if len(prompt) + SEQ > context_limit:
+            raise ValueError("dev prompt plus max_new_tokens exceeds epoch context limit")
+
+
 def load_epoch_rows(
     binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1799,6 +1843,8 @@ def load_epoch_rows(
     for line_number, row in enumerate(accepted, 1):
         _require_accepted_row(row, line_number)
         _validate_dev_row(row, row["split"])
+        if row["row_id"] != canonical_row_id(row["input"], row["target"]):
+            raise ValueError(f"accepted row {line_number} has a noncanonical row_id")
         splits[row["split"]].append(row)
     return publication, splits["train"], splits["dev"]
 
@@ -1816,6 +1862,7 @@ def train(
     trusted_digest_root_path: Path | None = None,
     epochs: int | None = None,
     use_gradient_checkpointing: str | bool = "unsloth",
+    epoch_context_limit: int | None = None,
     publication_binding_path: Path | None = None,
     publication_rows_dir: Path | None = None,
     publication_code_dir: Path | None = None,
@@ -1861,6 +1908,8 @@ def train(
                 "numerator": callback.best_epoch_end_primary.numerator, "denominator": callback.best_epoch_end_primary.denominator},
             completed_epoch_ids=None if callback is None else sorted(callback.epoch_ends_done),
         )
+        if epochs is not None:
+            report["epoch_context_limit"] = epoch_context_limit
         write_report(report_path, report)
         return report
 
@@ -1884,6 +1933,8 @@ def train(
                 raise ValueError("invalid requested epochs")
             if not is_winner_pin(base, revision):
                 raise ValueError("epoch mode requires the explicit winner pin")
+            if type(epoch_context_limit) is not int or epoch_context_limit <= SEQ:
+                raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
             # Validate the cohort before any model or GPU operation. The approved
             # digest verification below reads local files, never loads a model.
             for row in rows:
@@ -1916,7 +1967,7 @@ def train(
         if digest_verification is not None:
             load_kwargs["local_files_only"] = True
         model, tokenizer = FastLanguageModel.from_pretrained(
-            base, revision=revision, max_seq_length=SEQ, load_in_4bit=True,
+            base, revision=revision, max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
             use_exact_model_name=True, **load_kwargs)
         resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
         if callback is not None and callback.identity["base_revision"] != resolved:
@@ -1931,8 +1982,11 @@ def train(
 
         def tokenize(messages: list[dict[str, str]], add_generation_prompt: bool) -> list[int]:
             return list(tokenizer.apply_chat_template(messages, tokenize=True,
-                add_generation_prompt=add_generation_prompt, enable_thinking=False))
+                add_generation_prompt=add_generation_prompt, enable_thinking=False,
+                **({"truncation": False} if epochs is not None else {})))
 
+        if epochs is not None:
+            preflight_epoch_dev(dev_rows, tokenizer, epoch_context_limit)
         encoded = encode_rows(rows, tokenize)
         lengths = token_lengths(encoded)
         overlength = [length for length in lengths if length > SEQ]
@@ -1977,6 +2031,114 @@ def train(
             elif callback.state != "failed":
                 callback._mark_failed("training_" + type(exc).__name__)
             retained_report(state="failed", completed=False)
+        raise
+
+
+def context_probe_input(record: dict[str, Any]) -> dict[str, Any]:
+    """Accept bare inputs or the constructor's exact input-only envelope shape.
+
+    This checks shape for rendering, not source custody or constructor admission.
+    The original file digest remains the Director's batch-binding evidence.
+    """
+    if "protocol" in record:
+        keys = {"protocol", "disposition", "source_group", "kep_number", "selection_rank", "source_ref",
+                "source_sha256", "source_git_blob", "policy_sha256", "qualified_selection_sha256",
+                "source_captured_at", "generated_at", "input", "title_span", "objective_span", "context_spans"}
+        if (set(record) != keys or record["protocol"] != "kep-input/v1"
+                or record["disposition"] != "construction_only"):
+            raise ValueError("context probe requires the exact kep-input/v1 construction-only envelope")
+        record = record["input"]
+        if not isinstance(record, dict) or set(record) != {"objective", "repository", "title", "context"}:
+            raise ValueError("context probe constructor input shape is invalid")
+    if not isinstance(record, dict):
+        raise ValueError("context probe input must be an object")
+    prompt_template.input_contract(record)  # Reject targets and all other extra fields.
+    if any(not isinstance(record[key], str) or not record[key].strip() for key in ("objective", "repository", "title")):
+        raise ValueError("context probe input fields must be nonempty strings")
+    if "context" in record and prompt_template.context_shape_errors(record["context"]):
+        raise ValueError("context probe input context shape is invalid")
+    prompt_template.render_messages(record)  # Validate rendering before any model load.
+    return record
+
+
+def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: Path, *,
+                      context_limit: int, expected_digests_path: Path | None = None,
+                      trusted_digest_root_path: Path | None = None) -> dict[str, Any]:
+    """One real input, one forced full generation; output is discarded, never graded."""
+    if type(context_limit) is not int or context_limit <= SEQ:
+        raise ValueError("context probe requires an explicit load context limit greater than max_new_tokens")
+    raw = inputs_path.read_bytes()
+    inputs = [_load_strict_json(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+    if not inputs or any(not isinstance(item, dict) for item in inputs):
+        raise ValueError("context probe needs nonempty JSONL input records")
+    inputs = [context_probe_input(item) for item in inputs]
+    report = {"format": "adapter-context-probe/v1", "base": base, "revision": revision,
+              "inputs_sha256": hashlib.sha256(raw).hexdigest(), "input_count": len(inputs),
+              "requested_context_limit": context_limit, "max_new_tokens": SEQ,
+              "template_sha256": ADMITTED_TEMPLATE_SHA256, "seed": SEED, "thinking": False,
+              "generation_executed": False, "context_pass": False, "qualified": False,
+              "truncation": None, "total_positions": None, "peak_reserved_gib": None}
+    loaded = False
+    try:
+        verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path)
+        set_seed(SEED)
+        model, tokenizer = FastLanguageModel.from_pretrained(base, revision=revision,
+            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True,
+            **({"local_files_only": True} if verification is not None else {}))
+        loaded = True
+        report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+        report["digest_verification"] = verification
+        for key, value in (("tokenizer_model_max_length", getattr(tokenizer, "model_max_length", None)),
+                           ("model_max_seq_length", getattr(model, "max_seq_length", None)),
+                           ("config_max_position_embeddings", getattr(model.config, "max_position_embeddings", None))):
+            report[key] = value if type(value) is int else None
+        # Keep just the longest prompt; nothing generated becomes a target or an evaluation input.
+        lengths, longest = [], []
+        for position, item in enumerate(inputs, 1):
+            tokens = input_prompt_ids(tokenizer, item)
+            lengths.append(len(tokens))
+            if len(tokens) > len(longest):
+                longest = tokens
+                report["record_position"] = position
+        ordered = sorted(lengths)
+        middle = len(ordered) // 2
+        median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+        report.update(prompt_min=min(lengths), prompt_median=median, prompt_max=len(longest),
+                      required_positions=len(longest) + SEQ)
+        if len(longest) + SEQ > context_limit:
+            raise ValueError("longest input plus max_new_tokens exceeds requested probe context")
+        input_ids = torch.tensor([longest], dtype=torch.long, device=model.device)
+        attention_mask = torch.ones_like(input_ids)
+        torch.cuda.reset_peak_memory_stats()
+        FastLanguageModel.for_inference(model)
+        try:
+            report["generation_executed"] = True
+            with torch.inference_mode():
+                generated = model.generate(input_ids=input_ids, attention_mask=attention_mask,
+                    do_sample=False, min_new_tokens=SEQ, max_new_tokens=SEQ, return_dict_in_generate=False)
+            output = _single_token_ids(generated)
+            report["total_positions"] = len(output)
+            report["new_tokens"] = len(output) - len(longest)
+            report["truncation"] = output[:len(longest)] != longest
+            del output, generated
+        finally:
+            FastLanguageModel.for_training(model, use_gradient_checkpointing="unsloth")
+        report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
+        report["context_pass"] = (report["truncation"] is False and report["new_tokens"] == SEQ
+                                  and report["total_positions"] == report["required_positions"]
+                                  and report["peak_reserved_gib"] < 11)
+        if not report["context_pass"]:
+            raise ValueError("context generation did not reach the full untruncated prompt+2048 below 11 GiB")
+        write_report(report_path, report)
+        return report
+    except BaseException as exc:
+        report["error_type"] = type(exc).__name__
+        if loaded:
+            try:
+                report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
+            except BaseException:
+                pass
+        write_report(report_path, report)
         raise
 
 
@@ -2145,10 +2307,14 @@ def main(argv: list[str] | None = None) -> None:
                         help="Smoke/dry-run length in optimizer steps; exactly one of --steps or --epochs.")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Epoch mode: N epochs (1-6) with per-epoch adapter leaves; no default.")
+    parser.add_argument("--epoch-context-limit", type=int, default=None,
+                        help="Measured total positions for the unchanged constructed batch; epoch mode requires it.")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--winner", action="store_true")
     parser.add_argument("--check-only", action="store_true", help="Validate rows and exit. No GPU and no report.")
     parser.add_argument("--probe", action="store_true", help="D-M1-F feasibility probe; writes metrics only.")
+    parser.add_argument("--probe-context-inputs", type=Path, default=None, help="Separate short input-only context probe JSONL.")
+    parser.add_argument("--probe-context-limit", type=int, default=None, help="Explicit context probe load request; not a qualification claim.")
     parser.add_argument("--probe-rows-total", type=int, default=None)
     parser.add_argument("--probe-seq-len", type=int, default=SEQ)
     parser.add_argument("--expected-digests", type=Path, default=None)
@@ -2178,7 +2344,11 @@ def main(argv: list[str] | None = None) -> None:
             fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
         if args.publication_binding is None:
             fail("--publication-binding is required in epoch mode")
+        if args.epoch_context_limit is None or args.epoch_context_limit <= SEQ:
+            fail("--epoch-context-limit must be explicit and greater than max_new_tokens")
     else:
+        if args.epoch_context_limit is not None:
+            fail("--epoch-context-limit is only valid in epoch mode")
         if args.publication_binding is not None:
             fail("--publication-binding is only valid in epoch mode")
         if not args.probe and not args.check_only and args.steps is None:
@@ -2198,6 +2368,15 @@ def main(argv: list[str] | None = None) -> None:
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
+    if args.probe_context_inputs is not None or args.probe_context_limit is not None:
+        if (not args.probe or args.probe_context_inputs is None or args.probe_context_limit is None
+                or args.probe_context_limit <= SEQ):
+            fail("context probe requires --probe, --probe-context-inputs and explicit --probe-context-limit > 2048")
+        report = run_context_probe(args.probe_context_inputs, args.base, args.revision, args.report,
+            context_limit=args.probe_context_limit, expected_digests_path=args.expected_digests,
+            trusted_digest_root_path=args.trusted_digest_root)
+        print(json.dumps(report, indent=2))
+        return
     try:
         if args.epochs is not None:
             if args.rows.name != "accepted.jsonl":
@@ -2253,6 +2432,7 @@ def main(argv: list[str] | None = None) -> None:
             expected_digests_path=args.expected_digests,
             trusted_digest_root_path=args.trusted_digest_root,
             epochs=args.epochs,
+            epoch_context_limit=args.epoch_context_limit,
             publication_binding_path=args.publication_binding,
             publication_rows_dir=args.rows.parent,
             publication_code_dir=Path(__file__).resolve().parent,
