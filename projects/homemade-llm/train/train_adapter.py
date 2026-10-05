@@ -1120,8 +1120,10 @@ class DevEvaluationCallback(TrainerCallback):
     def __init__(self, model: Any, run_dir: Path, checkpoints: list[dict[str, Any]],
                  frozen_dev_context: dict[str, Any], max_epochs: int,
                  predict_fn: Any = None, score_fn: Any = None,
-                 requested_epochs: int | None = None) -> None:
+                 requested_epochs: int | None = None, *,
+                 use_gradient_checkpointing: str | bool) -> None:
         self.model, self.run_dir, self.checkpoints = model, run_dir, checkpoints
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.best_primary = None
         self.best_per_field = {}
         self.best_epoch_end_primary = None
@@ -1214,14 +1216,13 @@ class DevEvaluationCallback(TrainerCallback):
             }
             # Pass isolated copies: an injected hook cannot mutate the frozen cohort.
             import copy
-            checkpointing = self.model.is_gradient_checkpointing
             try:
                 FastLanguageModel.for_inference(self.model)
                 preds = self.predict_fn(copy.deepcopy(self.dev_rows), self.model, tokenizer,
                     frozen_roster=list(self.frozen_roster), expected_packets=copy.deepcopy(self.expected_packets),
                     max_new_tokens=SEQ, source_label="checkpoint", identity=dict(identity))
             finally:
-                FastLanguageModel.for_training(self.model, use_gradient_checkpointing=checkpointing)
+                FastLanguageModel.for_training(self.model, use_gradient_checkpointing=self.use_gradient_checkpointing)
             if (not isinstance(preds, dict) or preds.get("complete") is not True
                     or preds.get("binding") != expected_binding
                     or type(preds["binding"].get("seed")) is not int
@@ -1503,6 +1504,7 @@ def train(
     expected_digests_path: Path | None = None,
     trusted_digest_root_path: Path | None = None,
     epochs: int | None = None,
+    use_gradient_checkpointing: str | bool = "unsloth",
 ) -> dict[str, Any]:
     """QLoRA on admitted rows, with synchronous bound dev gates in epoch mode."""
     started = time.time()
@@ -1570,7 +1572,8 @@ def train(
                 "template_sha256": ADMITTED_TEMPLATE_SHA256,
             })
             callback = DevEvaluationCallback(None, run_dir, checkpoints, context,
-                max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs)
+                max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs,
+                use_gradient_checkpointing=use_gradient_checkpointing)
             callbacks.append(callback)
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
@@ -1586,7 +1589,7 @@ def train(
             raise ValueError("loaded model differs from frozen dev identity")
         model = FastLanguageModel.get_peft_model(
             model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
-            use_gradient_checkpointing="unsloth",
+            use_gradient_checkpointing=use_gradient_checkpointing,
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
             random_state=SEED)
         if callback is not None:

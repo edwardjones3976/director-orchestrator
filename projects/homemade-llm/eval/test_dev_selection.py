@@ -73,6 +73,31 @@ class TestLiteralMultiset(unittest.TestCase):
 
 
 class TestPrimaryScore(unittest.TestCase):
+    def test_nonobject_reference_row_fails_entire_roster_closed(self):
+        roster = [f"g{i}" for i in range(20)]
+        refs = [_ref_row(f"r{i}", group, non_goals=["A"]) for i, group in enumerate(roster)]
+        predictions = {r["row_id"]: _full_cand(non_goals=["A"]) for r in refs}
+        manifest = {r["source_group"]: [r["row_id"]] for r in refs}
+        valid = evaluate_primary_score(refs, predictions, roster, expected_packets=manifest)
+        self.assertEqual(primary_fraction(valid), Fraction(1))
+        for bad in (None, 5, "text", [1]):
+            for rows in ([bad], [*refs[:10], bad, *refs[10:]]):
+                with self.subTest(bad=bad, mixed=len(rows) > 1):
+                    result = evaluate_primary_score(rows, predictions, roster, expected_packets=manifest)
+                    self.assertEqual(set(result), set(valid))
+                    self.assertIs(result["incomplete"], True)
+                    self.assertIs(is_selectable(result), False)
+                    self.assertEqual(result["incomplete_groups"], roster)
+                    self.assertEqual(result["groups"], 20)
+                    self.assertEqual(result["primary_exact"], {"numerator": 0, "denominator": 1})
+                    self.assertEqual(result["primary"], 0.0)
+                    self.assertIs(result["roster_bound"], True)
+                    self.assertIs(result["diagnostic_only"], False)
+                    # No counted cells: retain the existing mathematical empty-cell convention.
+                    self.assertEqual(result["per_field_exact"], valid["per_field_exact"])
+                    with self.assertRaises(ValueError):
+                        primary_fraction(result)
+
     def test_malformed_reference_target_zeroes_bound_group(self):
         for target in ({}, None, [], 7, "text", {"non_goals": []},
                        dict(_full_cand(), extra=[]), _full_cand(non_goals=""),

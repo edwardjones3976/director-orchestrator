@@ -1,10 +1,14 @@
 """Offline mocked tests for predict_dev (no torch, no network, no real model)."""
 import hashlib
+import importlib.util
 import json
+import random
 import sys
+import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import predict_dev
 from predict_dev import DevPredictor, UnsupportedShape, run_predictions
@@ -123,15 +127,212 @@ def make_factory(callback):
     return factory, seen
 
 
+class RngStubs:
+    """Stateful stand-ins for the existing NumPy/torch APIs; never load CUDA."""
+
+    def __init__(self, initialized=False):
+        self.numpy_rng, self.cpu_rng = random.Random(71), random.Random(72)
+        self.cuda_rngs = [random.Random(73), random.Random(74)]
+        self.numpy = types.ModuleType("numpy")
+        self.numpy.random = types.SimpleNamespace(
+            get_state=self.numpy_rng.getstate, set_state=self.numpy_rng.setstate,
+            seed=Mock(side_effect=self.numpy_rng.seed))
+        self.torch = types.ModuleType("torch")
+        self.torch.get_rng_state = self.cpu_rng.getstate
+        self.torch.set_rng_state = self.cpu_rng.setstate
+        self.torch.default_generator = types.SimpleNamespace(manual_seed=Mock(side_effect=self.cpu_rng.seed))
+        self.torch.manual_seed = Mock(side_effect=AssertionError("would queue a CUDA seed"))
+        self.torch.cuda = Mock()
+        self.torch.cuda.is_initialized.return_value = initialized
+        for name, action in (
+            ("get_rng_state_all", lambda: [rng.getstate() for rng in self.cuda_rngs]),
+            ("set_rng_state_all", lambda states: [rng.setstate(state) for rng, state in zip(self.cuda_rngs, states)]),
+            ("manual_seed_all", lambda seed: [rng.seed(seed) for rng in self.cuda_rngs]),
+        ):
+            getattr(self.torch.cuda, name).side_effect = action if initialized else AssertionError("uninitialized CUDA")
+        self.torch.cuda.init.side_effect = AssertionError("CUDA initialization forbidden")
+        self.torch.cuda._lazy_call.side_effect = AssertionError("deferred CUDA callback forbidden")
+
+    def snapshot(self):
+        return (random.getstate(), self.numpy_rng.getstate(), self.cpu_rng.getstate(),
+                [rng.getstate() for rng in self.cuda_rngs])
+
+    def draw(self, initialized):
+        values = [random.random(), self.numpy_rng.random(), self.cpu_rng.random()]
+        if initialized:
+            values.extend(rng.random() for rng in self.cuda_rngs)
+        return values
+
+
 class OfflinePredictorTestCase(unittest.TestCase):
     """Scope a dependency stub to each mocked test; preserve production preflight."""
 
     def setUp(self):
         fake_transformers = types.ModuleType("transformers")
         fake_transformers.set_seed = lambda seed: None
-        stub = patch.dict(sys.modules, {"transformers": fake_transformers})
+        self.rng = RngStubs()
+        stub = patch.dict(sys.modules, {"transformers": fake_transformers,
+                                       "numpy": self.rng.numpy, "torch": self.rng.torch})
         stub.start()
         self.addCleanup(stub.stop)
+
+
+class TestRngPreservation(OfflinePredictorTestCase):
+    def test_roundtrip_deterministic_rows_and_exception_restoration(self):
+        original = random.getstate()
+        self.addCleanup(random.setstate, original)
+        for initialized in (False, True):
+            for fault in (None, "constraint", "tokenize", "seed", "generate", "decode"):
+                with self.subTest(cuda_initialized=initialized, fault=fault):
+                    rng = RngStubs(initialized)
+                    random.seed(777)
+                    before = rng.snapshot()
+                    draws = []
+                    failure = RuntimeError("synthetic " + str(fault))
+                    def generate(**kwargs):
+                        values = rng.draw(initialized)
+                        draws.append(values)
+                        if fault == "generate":
+                            raise failure
+                        text = json.dumps(dict(VALID, constraints=[repr(values)]))
+                        return [list(kwargs["input_ids"][0]) + [BASE + ord(c) for c in text]]
+                    model, tok = FakeModel([]), FakeTokenizer()
+                    model.generate = generate
+                    if initialized:
+                        model.device = "cuda:0"
+                    p = predictor(model, tok)
+                    del p._seed  # exercise the production seed, not the offline fixture override
+                    def fail_after_draw(*args, **kwargs):
+                        rng.draw(initialized)
+                        raise failure
+                    if fault == "constraint":
+                        p.constraint_factory = fail_after_draw
+                    elif fault == "tokenize":
+                        tok.apply_chat_template = fail_after_draw
+                    elif fault == "decode":
+                        tok.decode = fail_after_draw
+                    elif fault == "seed":
+                        def seed_then_fail():
+                            predict_dev._default_seed(predict_dev.DEV_SEED)
+                            raise failure
+                        p._seed = seed_then_fail
+                    with patch.dict(sys.modules, {"numpy": rng.numpy, "torch": rng.torch}):
+                        if fault:
+                            with self.assertRaises(RuntimeError) as caught:
+                                p.predict([row("r1"), row("r2")], ROSTER, PACKETS)
+                            self.assertIs(caught.exception, failure)
+                        else:
+                            result = p.predict([row("r1"), row("r2")], ROSTER, PACKETS)
+                            expected = [random.Random(1234).random()] * (5 if initialized else 3)
+                            self.assertEqual(draws, [expected, expected])
+                            self.assertEqual(result["predictions"]["r1"], result["predictions"]["r2"])
+                            self.assertEqual(result["binding"]["seed"], 1234)
+                            self.assertTrue(result["complete"])
+                            self.assertEqual(rng.numpy.random.seed.call_count, 2)
+                            self.assertEqual(rng.torch.default_generator.manual_seed.call_count, 2)
+                            self.assertEqual(rng.torch.cuda.manual_seed_all.call_count, 2 if initialized else 0)
+                    self.assertEqual(rng.snapshot(), before)
+                    rng.torch.manual_seed.assert_not_called()
+                    rng.torch.cuda.init.assert_not_called()
+                    rng.torch.cuda._lazy_call.assert_not_called()
+                    if not initialized:
+                        self.assertTrue(all(call[0] == "is_initialized" for call in rng.torch.cuda.mock_calls))
+
+    def test_preflight_refusals_never_touch_rng_or_cuda(self):
+        for fault in ("rows", "device", "dependency", "digest"):
+            with self.subTest(fault=fault):
+                before = self.rng.snapshot()
+                model = FakeModel([])
+                if fault == "device":
+                    model.device = "meta"
+                identity = good_identity()
+                if fault == "digest":
+                    identity["template_sha256"] = "0" * 64
+                dependency = None if fault == "dependency" else sys.modules["transformers"]
+                with patch.dict(sys.modules, {"transformers": dependency}):
+                    with self.assertRaises((ValueError, predict_dev.UnsupportedRuntime)):
+                        p = predictor(model, FakeTokenizer(), identity=identity)
+                        del p._seed
+                        p.predict([] if fault == "rows" else [row("r1")], ROSTER, {"g1": ["r1"]})
+                self.assertEqual(self.rng.snapshot(), before)
+                self.assertEqual(self.rng.torch.cuda.mock_calls, [])
+                self.rng.numpy.random.seed.assert_not_called()
+                self.rng.torch.default_generator.manual_seed.assert_not_called()
+                self.assertEqual(model.generate_calls, [])
+
+
+class TestPromptLayouts(unittest.TestCase):
+    def _layout(self, root, layout):
+        template = root / layout / "prompt_template.py"
+        template.parent.mkdir()
+        template.write_bytes(predict_dev.TRAIN_PROMPT_TEMPLATE.read_bytes())
+        predictor_path = root / "eval" / "predict_dev.py"
+        predictor_path.parent.mkdir()
+        predictor_path.write_bytes(Path(predict_dev.__file__).read_bytes())
+        spec = importlib.util.spec_from_file_location("layout_predict_dev", predictor_path)
+        module = importlib.util.module_from_spec(spec)
+        return template, spec, module
+
+    def test_both_layouts_bind_import_render_and_digest_to_source(self):
+        for layout in ("train", "code"):
+            for preload in (False, True):
+                with self.subTest(layout=layout, preload=preload), tempfile.TemporaryDirectory() as tmp, \
+                     patch.dict(sys.modules, {"torch": None, "numpy": None, "transformers": None, "unsloth": None}):
+                    template, spec, module = self._layout(Path(tmp), layout)
+                    source = template.read_bytes()
+                    if preload:
+                        template_spec = importlib.util.spec_from_file_location("prompt_template", template)
+                        preloaded = importlib.util.module_from_spec(template_spec)
+                        template_spec.loader.exec_module(preloaded)
+                        # Matching __file__ alone must not authenticate an injected callable.
+                        preloaded.render_messages = Mock(side_effect=AssertionError("preloaded renderer trusted"))
+                        sys.modules["prompt_template"] = preloaded
+                    else:
+                        sys.modules.pop("prompt_template", None)
+                    spec.loader.exec_module(module)
+                    self.assertEqual(module.TRAIN_PROMPT_TEMPLATE, template)
+                    self.assertEqual(module.render_messages(INPUT), predict_dev.render_messages(INPUT))
+                    self.assertEqual(module._default_template_source(), source)
+                    identity = dict(good_identity(), template_sha256=hashlib.sha256(source).hexdigest())
+                    model = FakeModel([])
+                    module.DevPredictor(model, FakeTokenizer(), max_new_tokens=8, source_label="base", identity=identity)
+                    with self.assertRaisesRegex(ValueError, "template_sha256"):
+                        module.DevPredictor(model, FakeTokenizer(), max_new_tokens=8, source_label="base",
+                                            identity=dict(identity, template_sha256="0" * 64))
+                    self.assertEqual(model.generate_calls, [])
+                    if preload:
+                        preloaded.render_messages.assert_not_called()
+                    # Later sys.modules metadata cannot redirect the source-byte binding.
+                    sys.modules["prompt_template"] = types.SimpleNamespace(__file__="untrusted.py")
+                    self.assertEqual(module._default_template_source(), source)
+                    template.write_bytes(source + b"\n# changed\n")
+                    with self.assertRaisesRegex(module.UnsupportedRuntime, "source changed"):
+                        module._default_template_source()
+                    template.unlink()
+                    with self.assertRaisesRegex(module.UnsupportedRuntime, "Missing or unreadable"):
+                        module._default_template_source()
+
+    def test_unexpected_module_missing_and_ambiguous_sources_refused(self):
+        for layout in ("train", "code"):
+            for fault in ("wrong_module", "missing", "ambiguous"):
+                with self.subTest(layout=layout, fault=fault), tempfile.TemporaryDirectory() as tmp, \
+                     patch.dict(sys.modules, {"torch": None, "transformers": None, "unsloth": None}):
+                    root = Path(tmp)
+                    template, spec, module = self._layout(root, layout)
+                    sys.modules.pop("prompt_template", None)
+                    if fault == "wrong_module":
+                        sys.modules["prompt_template"] = types.SimpleNamespace(__file__=str(root / "other" / template.name))
+                    elif fault == "missing":
+                        template.unlink()
+                        other = root / "other"
+                        other.mkdir()
+                        (other / template.name).write_bytes(predict_dev._default_template_source())
+                    else:
+                        other = root / ("code" if layout == "train" else "train")
+                        other.mkdir()
+                        (other / template.name).write_bytes(template.read_bytes())
+                    with self.assertRaisesRegex(RuntimeError, "unexpected location|exactly one prompt_template source"):
+                        spec.loader.exec_module(module)
 
 
 class TestPredictDev(OfflinePredictorTestCase):

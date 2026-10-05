@@ -1716,7 +1716,7 @@ $TrustedDigestRoot = ''
 
     def _maintenance_epoch_run(
         self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False, scores=None,
-        row_count: int = 64, cuda=None,
+        row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None,
     ):
         import predict_dev
         # Epoch mode uses the actual explicit winner pin even in offline fixtures.
@@ -1769,7 +1769,7 @@ $TrustedDigestRoot = ''
             for patch in (
                 mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models"),
                                              "ADAPTER_MODELS_HOST_DIR": str(root / "models")}),
-                mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(
+                mock.patch.object(train_adapter, "FastLanguageModel", flm or mock.Mock(
                     from_pretrained=mock.Mock(return_value=(model, tokenizer)),
                     get_peft_model=mock.Mock(return_value=model))),
                 mock.patch.object(train_adapter.torch, "cuda", cuda, create=True),
@@ -1785,7 +1785,30 @@ $TrustedDigestRoot = ''
             ):
                 stack.enter_context(patch)
             return train_adapter.train(rows, slice3_dev_rows(), base, revision, None,
-                                       report_path, winner=winner, epochs=epochs)
+                                       report_path, winner=winner, epochs=epochs,
+                                       use_gradient_checkpointing=use_gradient_checkpointing)
+
+    def test_train_shares_configured_checkpointing_with_peft_and_callback(self):
+        for mode in ("unsloth", True, False):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.WINNER_REVISION))
+                def save(directory):
+                    Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
+                    Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+                model.save_pretrained.side_effect = save
+                model.is_gradient_checkpointing = bool(mode)
+                def inference(model):
+                    model.is_gradient_checkpointing = False
+                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                                get_peft_model=mock.Mock(return_value=model),
+                                for_inference=mock.Mock(side_effect=inference))
+                report = self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=1,
+                    use_gradient_checkpointing=mode, flm=flm)
+                self.assertEqual(flm.get_peft_model.call_args.kwargs["use_gradient_checkpointing"], mode)
+                self.assertEqual(flm.for_inference.call_args_list, [mock.call(model)] * 2)
+                self.assertEqual(flm.for_training.call_args_list,
+                                 [mock.call(model, use_gradient_checkpointing=mode)] * 2)
+                self.assertTrue(report["operational_completion"])
 
     def test_completed_epoch_memory_admission_precedes_ready_handoff(self):
         class CompleteTrainer:
@@ -2637,7 +2660,8 @@ class TestFrozenDevCadence(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _callback(self, scores=None, *, context=None, max_epochs=6, predict_fn=None):
+    def _callback(self, scores=None, *, context=None, max_epochs=6, predict_fn=None,
+                  use_gradient_checkpointing="unsloth"):
         import dev_selection
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -2652,7 +2676,8 @@ class TestFrozenDevCadence(unittest.TestCase):
         self.predict_hook = mock.Mock(side_effect=predict_fn or slice3_predictions)
         cb = train_adapter.DevEvaluationCallback(model, root, checkpoints,
             context or slice3_context(), max_epochs=max_epochs,
-            predict_fn=self.predict_hook, score_fn=self.score_hook)
+            predict_fn=self.predict_hook, score_fn=self.score_hook,
+            use_gradient_checkpointing=use_gradient_checkpointing)
         return cb, types.SimpleNamespace(should_training_stop=False), checkpoints, root
 
     def _event(self, cb, control, progress, *, end=False, tokenizer=True):
@@ -2689,14 +2714,14 @@ class TestFrozenDevCadence(unittest.TestCase):
         self.assertEqual(self.predict_hook.call_count, 2)
 
     def test_generation_mode_transitions_restore_training_even_on_failure(self):
-        for checkpointing in (True, False):
+        for checkpointing in ("unsloth", True, False):
             for fault in (None, "inference", "generate", "score", "restore"):
                 with self.subTest(checkpointing=checkpointing, fault=fault):
                     events = []
                     failure = RuntimeError("synthetic " + str(fault))
-                    cb, control, _, root = self._callback()
+                    cb, control, _, root = self._callback(use_gradient_checkpointing=checkpointing)
                     cb.model.training = True
-                    cb.model.is_gradient_checkpointing = checkpointing
+                    cb.model.is_gradient_checkpointing = bool(checkpointing)
 
                     def inference(model):
                         events.append("inference")
@@ -2705,9 +2730,9 @@ class TestFrozenDevCadence(unittest.TestCase):
                             raise failure
 
                     def training(model, use_gradient_checkpointing=True):
-                        events.append("training")
+                        events.append(("training", use_gradient_checkpointing))
                         model.training = True
-                        model.is_gradient_checkpointing = use_gradient_checkpointing
+                        model.is_gradient_checkpointing = bool(use_gradient_checkpointing)
                         if fault == "restore":
                             raise failure
 
@@ -2739,12 +2764,12 @@ class TestFrozenDevCadence(unittest.TestCase):
                     expected = ["inference"]
                     if fault != "inference":
                         expected.append(("generate", False, False))
-                    expected.append("training")
+                    expected.append(("training", checkpointing))
                     if fault in (None, "score"):
-                        expected.append(("score", True, checkpointing))
+                        expected.append(("score", True, bool(checkpointing)))
                     self.assertEqual(events, expected)
                     self.assertIs(cb.model.training, True)
-                    self.assertIs(cb.model.is_gradient_checkpointing, checkpointing)
+                    self.assertIs(cb.model.is_gradient_checkpointing, bool(checkpointing))
 
     def test_exact_five_pp_and_one_count_unit_over_primary_and_field(self):
         from fractions import Fraction
@@ -2981,14 +3006,16 @@ class TestFrozenDevCadence(unittest.TestCase):
                         stack.enter_context(mock.patch.dict(sys.modules, {"predict_dev": None}))
                     with self.assertRaises((ValueError, ImportError, SystemExit)):
                         train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], context, max_epochs=6,
-                            predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1))
+                            predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
+                            use_gradient_checkpointing="unsloth")
                 self._assert_failed(Path(tmp))
 
     def test_callback_maximum_above_six_is_refused_with_failed_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises((ValueError, SystemExit)):
                 train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], slice3_context(), max_epochs=7,
-                    predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1))
+                    predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
+                    use_gradient_checkpointing="unsloth")
             self._assert_failed(Path(tmp))
 
     def test_load_dev_rows_refuses_bad_json_instead_of_silently_skipping(self):

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -31,24 +33,39 @@ OUTPUT_SCHEMA = {
 class UnsupportedRuntime(RuntimeError):
     """Raised for run-level refusal condition (e.g. invalid device, missing dependency)."""
 
-TRAIN_PROMPT_TEMPLATE = Path(__file__).resolve().parent.parent / "train" / "prompt_template.py"
+def _template_path() -> Path:
+    root = Path(__file__).resolve().parent.parent
+    # These are the repository and wrapper mount layouts, not a sys.path search.
+    candidates = [root / name / "prompt_template.py" for name in ("train", "code")]
+    existing = [path for path in candidates if path.is_file()]
+    if len(existing) != 1:
+        raise UnsupportedRuntime("Expected exactly one prompt_template source in train or code")
+    return existing[0]
 
-def _load_prompt_template() -> Any:
+
+TRAIN_PROMPT_TEMPLATE = _template_path()
+
+def _load_prompt_template() -> Tuple[Any, bytes]:
     if "prompt_template" in sys.modules:
         mod = sys.modules["prompt_template"]
         if getattr(mod, "__file__", None) != str(TRAIN_PROMPT_TEMPLATE):
             raise UnsupportedRuntime("prompt_template module loaded from unexpected location")
-        return mod
+    # A preloaded module's metadata is only a rejection check. Execute the
+    # allowed source bytes afresh; neither its callable nor cached bytecode is evidence.
+    try:
+        source = TRAIN_PROMPT_TEMPLATE.read_bytes()
+    except OSError as exc:
+        raise UnsupportedRuntime("Missing or unreadable prompt_template source") from exc
     import importlib.util
     spec = importlib.util.spec_from_file_location("prompt_template", str(TRAIN_PROMPT_TEMPLATE))
     if spec is None or spec.loader is None:
         raise UnsupportedRuntime("Could not load prompt_template module")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["prompt_template"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    exec(compile(source, str(TRAIN_PROMPT_TEMPLATE), "exec"), mod.__dict__)
+    return mod, source
 
-render_messages = _load_prompt_template().render_messages
+_prompt_template, _TEMPLATE_SOURCE = _load_prompt_template()
+render_messages = _prompt_template.render_messages
 
 
 class UnsupportedShape(ValueError):
@@ -126,8 +143,13 @@ def _validate_identity(identity: Any, source_label: str) -> Dict[str, str]:
 
 
 def _default_template_source() -> bytes:
-    path = Path(sys.modules[render_messages.__module__].__file__)
-    return path.read_bytes()
+    try:
+        source = TRAIN_PROMPT_TEMPLATE.read_bytes()
+    except OSError as exc:
+        raise UnsupportedRuntime("Missing or unreadable prompt_template source") from exc
+    if source != _TEMPLATE_SOURCE:
+        raise UnsupportedRuntime("prompt_template source changed after renderer load")
+    return source
 
 
 def parse_output(text: str) -> Optional[Dict[str, List[str]]]:
@@ -153,8 +175,32 @@ def _default_constraint_factory(tokenizer: Any, schema: Dict[str, Any]) -> Any:
 
 
 def _default_seed(seed: int) -> None:
-    import transformers
-    transformers.set_seed(seed)
+    import numpy as np
+    import torch
+    random.seed(seed)
+    np.random.seed(seed)
+    # torch.manual_seed/transformers.set_seed also queue CUDA seeds when CUDA
+    # is uninitialized. Seed the CPU generator directly on that path.
+    torch.default_generator.manual_seed(seed)
+    if torch.cuda.is_initialized():
+        torch.cuda.manual_seed_all(seed)
+
+
+@contextmanager
+def _preserve_rng():
+    import numpy as np
+    import torch
+    python_state, numpy_state = random.getstate(), np.random.get_state()
+    cpu_state = torch.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_initialized() else None
+    try:
+        yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        torch.set_rng_state(cpu_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
 
 
 class DevPredictor:
@@ -262,16 +308,17 @@ class DevPredictor:
         self._preflight()
         # Built once before the loop so a default-factory ImportError
         # propagates (fail closed) instead of becoming a per-row failure.
-        self._get_constraint_fn()
         rows = list(dev_rows)
         predictions: Dict[str, Dict[str, List[str]]] = {}
         invalid: List[str] = []
-        for row in rows:
-            parsed = parse_output(self._generate_text(row))
-            if parsed is None:
-                invalid.append(row["row_id"])
-            else:
-                predictions[row["row_id"]] = parsed
+        with _preserve_rng():
+            self._get_constraint_fn()
+            for row in rows:
+                parsed = parse_output(self._generate_text(row))
+                if parsed is None:
+                    invalid.append(row["row_id"])
+                else:
+                    predictions[row["row_id"]] = parsed
         return {
             "predictions": predictions,
             "schema_invalid_row_ids": sorted(invalid),

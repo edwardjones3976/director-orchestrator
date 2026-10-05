@@ -99,7 +99,11 @@ def evaluate_primary_score(
     invalid_ids = set(schema_invalid_row_ids)
 
     rows_by_group: Dict[str, List[Dict[str, Any]]] = {group: [] for group in frozen_roster}
+    malformed_row = False
     for row in reference_rows:
+        if not isinstance(row, dict):
+            malformed_row = True
+            continue
         sg = row.get("source_group")
         if sg in rows_by_group:
             rows_by_group[sg].append(row)
@@ -119,7 +123,7 @@ def evaluate_primary_score(
 
     for group in frozen_roster:
         packets = rows_by_group[group]
-        if manifest_malformed:
+        if manifest_malformed or malformed_row:
             broken = True
         else:
             broken = not packets
