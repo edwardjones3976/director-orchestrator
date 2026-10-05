@@ -4,7 +4,9 @@
 #       20-step dry run on the smoke base (the M0 pins).
 #   .\train-adapter.ps1 -Rows <jsonl> -Winner -Probe
 #       D-M2-6 probe on Qwen/Qwen3-14B at 40c069824f4251a91eefaf281ebe4c544efd3e18.
-#   .\train-adapter.ps1 -Rows <jsonl> -Epochs 4
+#   .\train-adapter.ps1 -Rows <jsonl> -Epochs <N> -Base 'Qwen/Qwen3-14B' `
+#       -Revision '40c069824f4251a91eefaf281ebe4c544efd3e18' `
+#       -ExpectedDigests <approved-list> -TimeoutMinutes <explicit-approved-bound>
 #       Epoch-mode training: one adapter leaf per epoch under models\m2\<run id>.
 # -Winner is only valid together with -Probe; -Epochs is a training mode and
 #   excludes -Steps, -Probe, -Winner and -Fallback.
@@ -45,8 +47,16 @@ if ($PSBoundParameters.ContainsKey('Epochs')) {
     if ($Probe) { Write-Error '-Epochs is a training mode and cannot be combined with -Probe' }
     if ($Winner) { Write-Error '-Epochs cannot be combined with -Winner (winner pinning is probe-only)' }
     if ($Fallback) { Write-Error '-Epochs cannot be combined with -Fallback' }
+    if (-not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { Write-Error '-Epochs requires explicit positive -TimeoutMinutes' }
+    if (-not $PSBoundParameters.ContainsKey('Base') -or -not $PSBoundParameters.ContainsKey('Revision') -or
+        $Base -cne $WinnerBase -or $Revision -cne $WinnerRevision) {
+        Write-Error "-Epochs requires explicit -Base $WinnerBase -Revision $WinnerRevision"
+    }
 }
 if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
+if ([double]::IsNaN($TimeoutMinutes) -or [double]::IsInfinity($TimeoutMinutes) -or $TimeoutMinutes -le 0) {
+    Write-Error '-TimeoutMinutes must be finite and positive'
+}
 if ($Winner) {
     foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
         if ($PSBoundParameters.ContainsKey($name)) { Write-Error "-Winner is pinned to $WinnerBase@$WinnerRevision; do not pass -$name" }
@@ -157,14 +167,17 @@ try {
         $mounts += @('-v', "${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro")
     }
     $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
+    $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
     $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
         '-v', "${code}:/code:ro",
+        '-v', "${evalCode}:/eval:ro",
         '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision") + $(if ($Epochs) {
         # Epoch mode runs against the persistent models/m2 mount and derives its
         # run directory from the report id; no steps env in epoch mode.
-        @('-e', 'ADAPTER_MODELS_DIR=/workspace/models/m2')
+        @('-e', 'ADAPTER_MODELS_DIR=/workspace/models/m2',
+          '-e', "ADAPTER_MODELS_HOST_DIR=$(Join-Path $HotRoot 'models\m2')")
     } else {
         @('-e', "ADAPTER_STEPS=$Steps")
     }) + @(
