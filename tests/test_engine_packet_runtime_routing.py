@@ -1476,6 +1476,24 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         if reset:
             from director_orchestrator.approvals import reset_for_owner_clarification
 
+            openai_finished = threading.Event()
+            reset_finished = threading.Event()
+            run_packet = activation.runtime.run_packet
+
+            def ordered_run_packet(work_packet, *, provider, **kwargs):
+                if provider == ProviderName.GEMINI.value:
+                    if not openai_finished.wait(timeout=5):
+                        raise RuntimeError("OpenAI packet did not finish")
+                    reset_finished.wait(timeout=0.5)
+                try:
+                    return run_packet(
+                        work_packet, provider=provider, **kwargs
+                    )
+                finally:
+                    if provider == ProviderName.OPENAI.value:
+                        openai_finished.set()
+
+            activation.runtime.run_packet = ordered_run_packet
             settle = engine._settle_packet_spend
             dispatch_generation = stored.plan_generation
             reset_done = False
@@ -1488,6 +1506,7 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                     current.plan_generation += 1
                     store.save(current)
                     reset_done = True
+                    reset_finished.set()
                 return settle(*args, **kwargs)
 
             with patch.object(engine, "_settle_packet_spend", side_effect=settle_after_reset):
