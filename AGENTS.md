@@ -40,6 +40,12 @@ These rules apply to every AI coding agent working in this repository.
 
 For draft-PR claims, the work board, check-before-edit, and foreman coordination, follow [Site coordination](docs/site-coordination.html).
 
+The acting Foreman also owns ongoing worktree and GitHub repository maintenance,
+project-specific issue/PR stewardship, and useful native GitHub configuration.
+Follow [Foreman project maintenance](docs/site-coordination.html#project-maintenance).
+Preserve active owners, recoverable work, exact-candidate review and all existing
+access, budget, security and release gates; maintain other projects separately.
+
 ## Foreman-controlled repairs
 
 All Director-Orchestrator repairs are routed to the acting Foreman. Only that
