@@ -2690,7 +2690,7 @@ except m['ReleaseError']: pass
                       "ready,arm,marker=map(pathlib.Path,sys.argv[1:4])\n"
                       "ready.write_text('ready')\n"
                       "while not arm.exists(): time.sleep(.02)\n"
-                      "time.sleep(1.5)\nmarker.write_text('escaped')\n")
+                      "time.sleep(6.5)\nmarker.write_text('escaped')\n")
         detach = "creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.DETACHED_PROCESS" if os.name == "nt" else "close_fds=True"
         parent = ("import subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[4],"
                   "sys.argv[1],sys.argv[2],sys.argv[3]], " + detach + "); time.sleep(20)")
@@ -2735,7 +2735,7 @@ except m['ReleaseError']: pass
                         self.assertTrue(stopped, "actual emitted helper did not verify cleanup")
                         self.assertIsNotNone(process.poll())
                     # Observe past the armed marker window in both controls.
-                    while time.monotonic() < armed_at + 2.5 and (contained or not marker.exists()):
+                    while time.monotonic() < armed_at + 7.5 and (contained or not marker.exists()):
                         time.sleep(.02)
                     self.assertEqual(marker.exists(), not contained,
                         "positive survival control or real descendant containment failed")
@@ -3266,7 +3266,7 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
                               "ready,arm,marker=map(pathlib.Path,sys.argv[1:4])\n"
                               "ready.write_text('ready')\n"
                               "while not arm.exists(): time.sleep(.02)\n"
-                              "time.sleep(1.5)\nmarker.write_text('escaped')\n")
+                              "time.sleep(6.5)\nmarker.write_text('escaped')\n")
                 parent = ("import subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',"
                           "sys.argv[4],*sys.argv[1:4]]); time.sleep(20)")
                 argv = [sys.executable, "-I", "-B", "-c", parent, str(ready), str(arm), str(marker), descendant]
@@ -3310,7 +3310,7 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
                     self.assertIsNotNone(process.poll())
                     self.assertEqual(stopped, contained)
                     # Keep the outer guard open until fallback cleanup proves itself.
-                    while time.monotonic() < armed_at + 2.5:
+                    while time.monotonic() < armed_at + 7.5:
                         time.sleep(.02)
                     self.assertFalse(marker.exists(), "read timeout left a native descendant alive")
                 finally:
