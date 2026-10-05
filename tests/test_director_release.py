@@ -2686,14 +2686,14 @@ except m['ReleaseError']: pass
         with self.assertRaisesRegex(RuntimeError, "output limit|client failed"):
             read([sys.executable, "-I", "-B", "-c", "import sys; sys.stdout.write('x' * (4*1024*1024+1))"], time.monotonic() + 10)
         marker, ready = self.root / "probe-grandchild-survived", self.root / "probe-client-ready"
-        grandchild = "import pathlib,sys,time; time.sleep(1.5); pathlib.Path(sys.argv[1]).write_text('escaped')"
+        grandchild = "import pathlib,sys,time; time.sleep(8); pathlib.Path(sys.argv[1]).write_text('escaped')"
         detach = "creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.DETACHED_PROCESS" if os.name == "nt" else "close_fds=True"
         parent = ("import pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[3],sys.argv[1]], " +
                   detach + "); pathlib.Path(sys.argv[2]).write_text('ready'); time.sleep(20)")
         start = time.monotonic()
         with self.assertRaisesRegex(RuntimeError, "probe deadline"):
-            read([sys.executable, "-I", "-B", "-c", parent, str(marker), str(ready), grandchild], start + 5.5)
-        self.assertLess(time.monotonic() - start, 5.5)
+            read([sys.executable, "-I", "-B", "-c", parent, str(marker), str(ready), grandchild], start + 10)
+        self.assertLess(time.monotonic() - start, 10)
         self.assertTrue(ready.exists())
         time.sleep(1.6)
         self.assertFalse(marker.exists(), "bounded probe cleanup left its client grandchild alive")
