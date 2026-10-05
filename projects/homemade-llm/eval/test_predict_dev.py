@@ -147,6 +147,45 @@ class TestPredictDev(OfflinePredictorTestCase):
             self.assertEqual(call["max_new_tokens"], 8)
         self.assertIs(seen[0][0], tok)
         self.assertIs(seen[0][1], predict_dev.OUTPUT_SCHEMA)
+        self.assertEqual(len(seen), 1)
+        # Check the actual decoder-factory argument against the maintained
+        # target contract, not just the parser or the schema's identity.
+        from pathlib import Path
+        canonical = json.loads((Path(__file__).resolve().parents[1] / "schemas" /
+                                "director-data-v1-row.schema.json").read_text(encoding="utf-8"))["properties"]["target"]
+        schema = seen[0][1]
+        self.assertEqual(schema["type"], canonical["type"])
+        self.assertEqual(set(schema["required"]), set(canonical["required"]))
+        self.assertIs(schema["additionalProperties"], False)
+        self.assertEqual(schema["properties"], canonical["properties"])
+
+    def test_each_required_array_and_each_empty_string_refused(self):
+        cases = [(field, []) for field in ("acceptance_checks", "evidence_requirements")]
+        cases += [(field, [""]) for field in predict_dev.TARGET_FIELDS]
+        for field, items in cases:
+            with self.subTest(field=field, items=items):
+                text = json.dumps(dict(VALID, **{field: items}))
+                self.assertIsNone(predict_dev.parse_output(text))
+                result = predictor(FakeModel([text]), FakeTokenizer()).predict(
+                    [row("r1")], ROSTER, {"g1": ["r1"]})
+                self.assertEqual(result["predictions"], {})
+                self.assertEqual(result["schema_invalid_row_ids"], ["r1"])
+                self.assertIs(result["complete"], False)
+
+    def test_allowed_empty_arrays_and_literal_strings_preserved(self):
+        literals = [" ", "\t\n", " A ", "a", "\uff21", "e\u0301", "\u00e9", "A", "A"]
+        cases = [dict(VALID, **{field: []}) for field in ("constraints", "non_goals")]
+        cases.append(dict(VALID, constraints=[], non_goals=[]))
+        cases.append({field: list(literals) for field in predict_dev.TARGET_FIELDS})
+        for value in cases:
+            with self.subTest(value=value):
+                text = json.dumps(value)
+                self.assertEqual(predict_dev.parse_output(text), value)
+                result = predictor(FakeModel([text]), FakeTokenizer()).predict(
+                    [row("r1")], ROSTER, {"g1": ["r1"]})
+                self.assertEqual(result["predictions"], {"r1": value})
+                self.assertEqual(result["schema_invalid_row_ids"], [])
+                self.assertIs(result["complete"], True)
 
     def test_template_kwargs(self):
         tok, model = FakeTokenizer(), FakeModel([VALID_TEXT])
@@ -188,11 +227,13 @@ class TestPredictDev(OfflinePredictorTestCase):
     def test_invalid_outputs_rejected(self):
         bad = {
             "invalid json": "{not json",
-            "duplicate key": '{"acceptance_checks": ["A"], "acceptance_checks": ["A"], "constraints": [], "evidence_requirements": [], "non_goals": []}',
-            "nan": '{"acceptance_checks": [NaN], "constraints": [], "evidence_requirements": [], "non_goals": []}',
-            "missing field": '{"acceptance_checks": [], "constraints": [], "evidence_requirements": []}',
-            "extra field": '{"acceptance_checks": [], "constraints": [], "evidence_requirements": [], "non_goals": [], "extra": []}',
-            "wrong type": '{"acceptance_checks": "x", "constraints": [], "evidence_requirements": [], "non_goals": []}',
+            "duplicate key": VALID_TEXT.replace('"acceptance_checks": ["A"]', '"acceptance_checks": ["A"], "acceptance_checks": ["A"]'),
+            "nan": VALID_TEXT.replace('["A"]', '[NaN]'),
+            "infinity": VALID_TEXT.replace('["A"]', '[Infinity]'),
+            "negative infinity": VALID_TEXT.replace('["A"]', '[-Infinity]'),
+            "missing field": json.dumps({key: value for key, value in VALID.items() if key != "non_goals"}),
+            "extra field": json.dumps(dict(VALID, extra=[])),
+            "wrong type": json.dumps(dict(VALID, acceptance_checks="x")),
             "truncated": VALID_TEXT[:-5],
         }
         for name, text in bad.items():

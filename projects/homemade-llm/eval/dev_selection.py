@@ -341,14 +341,15 @@ def whole_group_counts(
     # Given (non-None) but not fully valid: do not trust any single group's
     # entry either; every group is forced to neither pass nor be complete.
     manifest_malformed = expected_packets is not None and not roster_bound
+    arms_malformed = not isinstance(before, dict) or not isinstance(after, dict)
 
     b = 0
     c = 0
-    complete = True
+    complete = not arms_malformed
     group_results: List[Dict[str, Any]] = []
 
     for group in frozen_roster:
-        if manifest_malformed:
+        if manifest_malformed or arms_malformed:
             before_pass = after_pass = False
             before_complete = after_complete = False
         else:

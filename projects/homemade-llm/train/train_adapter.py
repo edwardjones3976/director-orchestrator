@@ -1509,6 +1509,7 @@ def train(
     run_dir = create_run_directory(report_path) if epochs is not None else None
     checkpoints: list[dict[str, Any]] = []
     digest_verification, callback, trainer, peak, result = None, None, None, None, None
+    memory_tracking_initialized = False
     resolved, mask_coverage = revision, 0.0
 
     def retained_report(*, state: str, selected: Any = None, completed: bool = False) -> dict[str, Any]:
@@ -1553,6 +1554,10 @@ def train(
                 _validate_dev_row(row, "train")
             for row in dev_rows:
                 _validate_dev_row(row, "dev")
+            # Batch size is fixed at one. With <= 8 rows the first optimizer
+            # update is already epoch end, so no interior midpoint can exist.
+            if len(rows) <= TRAIN_GRAD_ACCUM:
+                raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
         digest_verification = digest_verification_before_load(
             base, revision, expected_digests_path, trusted_digest_root_path)
         callbacks = []
@@ -1569,6 +1574,7 @@ def train(
             callbacks.append(callback)
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
+        memory_tracking_initialized = True
         load_kwargs: dict[str, Any] = {}
         if digest_verification is not None:
             load_kwargs["local_files_only"] = True
@@ -1621,6 +1627,14 @@ def train(
         return report
     except BaseException as exc:
         if epochs is not None:
+            if memory_tracking_initialized:
+                try:
+                    sampled_peak = torch.cuda.max_memory_reserved() / 2**30
+                    peak = sampled_peak if peak is None else max(peak, sampled_peak)
+                except BaseException:
+                    # Best-effort telemetry must not replace the original
+                    # failure or erase an already observed peak.
+                    pass
             if callback is None:
                 _initial_failure_state(run_dir, "initialization_" + type(exc).__name__)
             elif callback.state != "failed":

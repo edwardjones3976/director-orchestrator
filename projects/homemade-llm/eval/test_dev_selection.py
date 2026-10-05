@@ -347,6 +347,42 @@ class TestWholeGroupConfirmation(unittest.TestCase):
 
 
 class TestExpectedPacketRoster(unittest.TestCase):
+    def test_nonobject_outer_arms_are_incomplete_even_with_empty_roster(self):
+        for roster in ([f"g{i}" for i in range(1, 21)], []):
+            for bad in (7, "text", [1], None):
+                for arm in ("before", "after", "both"):
+                    for evaluate in (whole_group_counts, confirm_whole_groups):
+                        for manifest in (self._expected(roster), None):
+                            with self.subTest(roster=roster, bad=bad, arm=arm,
+                                              entrypoint=evaluate.__name__, manifest=manifest):
+                                before, after = self._arms(roster)
+                                if arm in ("before", "both"):
+                                    before = bad
+                                if arm in ("after", "both"):
+                                    after = bad
+                                result = evaluate(roster, before, after, manifest)
+                                self.assertFalse(result["complete"])
+                                self.assertFalse(result["evidence_complete"])
+                                self.assertFalse(is_selectable(result))
+                                self.assertEqual(result["groups"], len(roster))
+                                self.assertEqual((result["b"], result["c"]), (0, 0))
+                                if evaluate is confirm_whole_groups:
+                                    self.assertFalse(result["passes"])
+
+    def test_valid_outer_arms_preserve_b_c_direction(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        before, after = self._arms(roster)
+        for evaluate in (whole_group_counts, confirm_whole_groups):
+            for left, right, expected in ((before, after, (6, 0)), (after, before, (0, 6))):
+                with self.subTest(entrypoint=evaluate.__name__, expected=expected):
+                    result = evaluate(roster, left, right, self._expected(roster))
+                    self.assertTrue(result["complete"])
+                    self.assertTrue(result["evidence_complete"])
+                    self.assertTrue(is_selectable(result))
+                    self.assertEqual((result["b"], result["c"]), expected)
+                    if evaluate is confirm_whole_groups:
+                        self.assertEqual(result["passes"], expected == (6, 0))
+
     def test_nonobject_packets_block_bound_counts_and_confirmation(self):
         roster = [f"g{i}" for i in range(1, 21)]
         for bad in (7, [], "text", None):

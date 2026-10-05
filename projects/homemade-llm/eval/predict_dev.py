@@ -19,7 +19,11 @@ DEV_SEED = 1234
 SOURCE_LABELS = ("base", "checkpoint")
 OUTPUT_SCHEMA = {
     "type": "object",
-    "properties": {f: {"type": "array", "items": {"type": "string"}} for f in TARGET_FIELDS},
+    "properties": {
+        f: {"type": "array", "items": {"type": "string", "minLength": 1},
+            **({"minItems": 1} if f in ("acceptance_checks", "evidence_requirements") else {})}
+        for f in TARGET_FIELDS
+    },
     "required": list(TARGET_FIELDS),
     "additionalProperties": False,
 }
@@ -127,15 +131,17 @@ def _default_template_source() -> bytes:
 
 
 def parse_output(text: str) -> Optional[Dict[str, List[str]]]:
-    """Strict parse: exactly the four fields, each a list of str, else None."""
+    """Strict canonical target parse, preserving every literal string, else None."""
     try:
         value = json.loads(text, object_pairs_hook=_no_duplicate_keys, parse_constant=_reject_constant)
     except (ValueError, TypeError):
         return None
     if not isinstance(value, dict) or set(value) != set(TARGET_FIELDS):
         return None
-    if any(not isinstance(value[f], list) or not all(isinstance(x, str) for x in value[f])
+    if any(not isinstance(value[f], list) or not all(isinstance(x, str) and len(x) >= 1 for x in value[f])
            for f in TARGET_FIELDS):
+        return None
+    if not value["acceptance_checks"] or not value["evidence_requirements"]:
         return None
     return {f: list(value[f]) for f in TARGET_FIELDS}
 

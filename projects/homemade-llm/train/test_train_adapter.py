@@ -418,7 +418,7 @@ class TrainAdapterTests(unittest.TestCase):
                     train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
                                         "--epochs", "1", *pin])
                 rows.assert_not_called()
-        with mock.patch.object(train_adapter, "load_training_rows", return_value=[row()]), \
+        with mock.patch.object(train_adapter, "load_training_rows", return_value=slice3_train_rows()), \
              mock.patch.object(train_adapter, "load_dev_rows", return_value=slice3_dev_rows()), \
              mock.patch.object(train_adapter, "train", return_value={}) as training, \
              contextlib.redirect_stdout(io.StringIO()):
@@ -1635,11 +1635,88 @@ $TrustedDigestRoot = ''
             self.assertEqual(report["dev_cadence"]["evaluations"][0]["kind"], "midpoint")
             self.assertEqual([e["kind"] for e in report["dev_cadence"]["evaluations"]].count("epoch_end"), 3)
 
+    def test_epoch_small_cohorts_refused_before_seed_cuda_model_or_trainer(self):
+        self.assertEqual(train_adapter.TRAIN_GRAD_ACCUM, 8)
+        for count in range(9):
+            with self.subTest(rows=count), tempfile.TemporaryDirectory() as tmp, \
+                 mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(Path(tmp) / "models")}), \
+                 mock.patch.object(train_adapter, "set_seed") as seed, \
+                 mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda, \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                 mock.patch.object(train_adapter, "SFTTrainer") as trainer, \
+                 mock.patch.object(train_adapter, "digest_verification_before_load") as digests:
+                path = Path(tmp) / "report.json"
+                with self.assertRaisesRegex(ValueError, "interior first-epoch update"):
+                    train_adapter.train(slice3_train_rows(count), slice3_dev_rows(),
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, None,
+                        path, winner=False, epochs=1)
+                seed.assert_not_called()
+                self.assertEqual(cuda.mock_calls, [])
+                self.assertEqual(model.mock_calls, [])
+                trainer.assert_not_called()
+                digests.assert_not_called()
+                report = json.loads(path.read_bytes())
+                self.assertEqual(report["rows"], count)
+                self.assertEqual(report["state"], "failed")
+                self.assertIsNone(report["peak_reserved_vram_gib"])
+                self.assertFalse(report["operational_completion"])
+                self.assertFalse(report["qualified"])
+                self.assertFalse(report["export_ready"])
+                self.assertIsNone(report["selected_adapter"])
+
+    def test_epoch_nine_row_boundary_has_interior_optimizer_update(self):
+        class NineRowTrainer(Slice3CompleteTrainer):
+            def train(self):
+                self.state.epoch, self.state.global_step = 1.0, 2
+                self.callback.on_epoch_end(None, self.state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        step_end = train_adapter.DevEvaluationCallback.on_step_end
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter.DevEvaluationCallback, "on_step_end",
+                               autospec=True, side_effect=step_end) as midpoint:
+            report = self._maintenance_epoch_run(Path(tmp), NineRowTrainer, epochs=1, row_count=9)
+            self.assertEqual(midpoint.call_count, 1)
+            progress = midpoint.call_args.args[2]
+            self.assertEqual(progress.global_step, 1)
+            self.assertEqual(progress.epoch, 8 / 9)
+            self.assertEqual(report["rows"], 9)
+            self.assertEqual(report["completed_epoch_ids"], [1])
+            self.assertEqual(report["checkpoints"][0]["global_step"], 2)
+            self.assertEqual([e["kind"] for e in report["dev_cadence"]["evaluations"]],
+                             ["midpoint", "epoch_end"])
+            self.assertTrue(report["operational_completion"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
+
+    def test_single_row_legacy_steps_still_train(self):
+        model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION))
+        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}]
+        trainer = mock.Mock(train=mock.Mock(return_value=types.SimpleNamespace(training_loss=1.25)))
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+             mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(
+                 from_pretrained=mock.Mock(return_value=(model, mock.Mock())), get_peft_model=mock.Mock(return_value=model))), \
+             mock.patch.object(train_adapter.torch, "cuda", mock.Mock(max_memory_reserved=mock.Mock(return_value=2**30)), create=True), \
+             mock.patch.object(train_adapter, "encode_rows", return_value=encoded), \
+             mock.patch.object(train_adapter, "Dataset", mock.Mock(from_list=mock.Mock(side_effect=list))), \
+             mock.patch.object(train_adapter, "SFTConfig", side_effect=lambda **kw: types.SimpleNamespace(**kw)), \
+             mock.patch.object(train_adapter, "SFTTrainer", return_value=trainer) as factory:
+            report = train_adapter.train([row()], [], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                         20, Path(tmp) / "report.json", winner=False)
+            trainer.train.assert_called_once_with()
+            self.assertEqual(factory.call_args.kwargs["callbacks"], [])
+            self.assertEqual(len(factory.call_args.kwargs["train_dataset"]), 1)
+            self.assertEqual(report["rows"], 1)
+            self.assertEqual(report["steps"], 20)
+            self.assertEqual(report["peak_reserved_vram_gib"], 1.0)
+            self.assertNotIn("requested_epochs", report)
 
 
 
     def _maintenance_epoch_run(
         self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False, scores=None,
+        row_count: int = 64, cuda=None,
     ):
         import predict_dev
         # Epoch mode uses the actual explicit winner pin even in offline fixtures.
@@ -1650,10 +1727,17 @@ $TrustedDigestRoot = ''
             Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
         model.save_pretrained.side_effect = save
         tokenizer = mock.Mock()
-        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}]
+        rows = slice3_train_rows(row_count)
+        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}
+                   for _ in rows]
+        if cuda is None:
+            cuda = mock.Mock(max_memory_reserved=mock.Mock(return_value=peak_gib * 2**30))
         report_path = root / "reports" / "maintenance.json"
 
         def offline_trainer(**kwargs):
+            self.assertEqual(len(kwargs["train_dataset"]), len(rows))
+            self.assertEqual(kwargs["args"].per_device_train_batch_size, 1)
+            self.assertEqual(kwargs["args"].gradient_accumulation_steps, 8)
             callback = kwargs["callbacks"][0]
             control = types.SimpleNamespace(should_training_stop=False)
             class Events:
@@ -1665,7 +1749,11 @@ $TrustedDigestRoot = ''
             kwargs["callbacks"] = [Events()]
             inner = trainer_type(**kwargs)
             def run():
-                callback.on_step_end(None, types.SimpleNamespace(epoch=0.5, global_step=4), control,
+                # Synthetic optimizer-update progress at fixed batch 1/accum 8;
+                # this is not a claim about the pinned HF runtime.
+                midpoint_step = (len(rows) + 15) // 16
+                progress = min(midpoint_step * 8, len(rows)) / len(rows)
+                callback.on_step_end(None, types.SimpleNamespace(epoch=progress, global_step=midpoint_step), control,
                                      processing_class=tokenizer)
                 result = inner.train()
                 callback.on_train_end(None, getattr(inner, "state", None), control,
@@ -1684,9 +1772,8 @@ $TrustedDigestRoot = ''
                 mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(
                     from_pretrained=mock.Mock(return_value=(model, tokenizer)),
                     get_peft_model=mock.Mock(return_value=model))),
-                mock.patch.object(train_adapter.torch, "cuda", mock.Mock(
-                    max_memory_reserved=mock.Mock(return_value=peak_gib * 2**30)), create=True),
-                mock.patch.object(train_adapter, "Dataset", mock.Mock()),
+                mock.patch.object(train_adapter.torch, "cuda", cuda, create=True),
+                mock.patch.object(train_adapter, "Dataset", mock.Mock(from_list=mock.Mock(side_effect=list))),
                 mock.patch.object(train_adapter, "encode_rows", return_value=encoded),
                 mock.patch.object(train_adapter, "digest_verification_before_load",
                                   return_value={"upstream_digest_list_sha256": "b" * 64}),
@@ -1697,7 +1784,7 @@ $TrustedDigestRoot = ''
                 mock.patch.object(train_adapter, "SFTTrainer", offline_trainer),
             ):
                 stack.enter_context(patch)
-            return train_adapter.train(slice3_train_rows(), slice3_dev_rows(), base, revision, None,
+            return train_adapter.train(rows, slice3_dev_rows(), base, revision, None,
                                        report_path, winner=winner, epochs=epochs)
 
     def test_completed_epoch_memory_admission_precedes_ready_handoff(self):
@@ -1761,12 +1848,15 @@ $TrustedDigestRoot = ''
                 return types.SimpleNamespace(training_loss=1.25)
 
         refusal = SystemExit("original memory refusal")
+        cuda = mock.Mock(max_memory_reserved=mock.Mock(
+            side_effect=[12.001 * 2**30, RuntimeError("later telemetry failed")]))
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(train_adapter, "require_vram", side_effect=refusal) as gate:
             root = Path(tmp)
             with self.assertRaises(SystemExit) as caught:
-                self._maintenance_epoch_run(root, CompleteTrainer, epochs=1, peak_gib=12.001)
+                self._maintenance_epoch_run(root, CompleteTrainer, epochs=1, cuda=cuda)
             self.assertIs(caught.exception, refusal)
+            self.assertEqual(cuda.max_memory_reserved.call_count, 2)
             gate.assert_called_once_with(12.001, winner=False)
             payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
             self.assertEqual(payload["peak_reserved_vram_gib"], 12.001)
@@ -1984,23 +2074,65 @@ $TrustedDigestRoot = ''
                     train_adapter.create_run_directory(root / "reports" / "m2-other.json")
 
     def test_epoch_train_failure_leaves_evidence_but_no_export_ready_record(self):
+        failure = RuntimeError("training exploded")
         class FailingTrainer(Slice3CompleteTrainer):
             def train(self):
                 self.state.epoch, self.state.global_step = 1.0, 8
                 self.callback.on_epoch_end(None, self.state, None)
-                raise RuntimeError("training exploded")
+                raise failure
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with self.assertRaisesRegex(RuntimeError, "training exploded"):
-                self._maintenance_epoch_run(root, FailingTrainer, epochs=3)
+            with self.assertRaisesRegex(RuntimeError, "training exploded") as caught:
+                self._maintenance_epoch_run(root, FailingTrainer, epochs=3, peak_gib=2.0)
+            self.assertIs(caught.exception, failure)
             report = json.loads((root / "reports" / "maintenance.json").read_text(encoding="utf-8"))
             self.assertEqual(report["completed_epochs"], 1)
             self.assertEqual(report["state"], "failed")
+            self.assertEqual(report["peak_reserved_vram_gib"], 2.0)
             self.assertFalse(report["operational_completion"])
             self.assertFalse(report["qualified"])
             self.assertFalse(report["export_ready"])
             self.assertIsNone(report["selected_adapter"])
             self.assertIsNone(report["final_adapter"])
+
+    def test_failure_telemetry_error_preserves_exact_training_exception(self):
+        failure = RuntimeError("original training failure")
+        class FailingTrainer(Slice3CompleteTrainer):
+            def train(self):
+                raise failure
+        for telemetry_error in (RuntimeError("sampling failed"), SystemExit("sampling aborted")):
+            with self.subTest(telemetry=type(telemetry_error).__name__), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                cuda = mock.Mock(max_memory_reserved=mock.Mock(side_effect=telemetry_error))
+                with self.assertRaises(RuntimeError) as caught:
+                    self._maintenance_epoch_run(root, FailingTrainer, epochs=1, cuda=cuda)
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(cuda.reset_peak_memory_stats.call_count, 2)
+                cuda.max_memory_reserved.assert_called_once_with()
+                report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+                self.assertEqual(report["state"], "failed")
+                self.assertIsNone(report["peak_reserved_vram_gib"])
+                self.assertFalse(report["operational_completion"])
+                self.assertFalse(report["qualified"])
+                self.assertFalse(report["export_ready"])
+                self.assertIsNone(report["selected_adapter"])
+
+    def test_failed_memory_initialization_never_samples_cuda(self):
+        failure = RuntimeError("memory tracking initialization failed")
+        cuda = mock.Mock(reset_peak_memory_stats=mock.Mock(side_effect=failure))
+        trainer = mock.Mock(side_effect=AssertionError("trainer must not be built"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(RuntimeError) as caught:
+                self._maintenance_epoch_run(root, trainer, epochs=1, cuda=cuda)
+            self.assertIs(caught.exception, failure)
+            self.assertEqual(cuda.mock_calls, [mock.call.reset_peak_memory_stats()])
+            trainer.assert_not_called()
+            report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(report["state"], "failed")
+            self.assertIsNone(report["peak_reserved_vram_gib"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
 
     def test_from_pretrained_uses_local_files_only_when_digests_verified(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2353,11 +2485,14 @@ $TrustedDigestRoot = ''
                 stack.enter_context(mock.patch.object(train_adapter, "digest_verification_before_load", return_value={"upstream_digest_list_sha256": "b" * 64}))
                 stack.enter_context(mock.patch.object(predict_dev, "_default_template_source", return_value=bad))
                 stack.enter_context(mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(from_pretrained=loader)))
-                stack.enter_context(mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True))
+                cuda = stack.enter_context(mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True))
+                seed = stack.enter_context(mock.patch.object(train_adapter, "set_seed"))
                 with self.assertRaisesRegex((ValueError, SystemExit), "template digest mismatch"):
                     train_adapter.train(slice3_train_rows(), slice3_dev_rows(), train_adapter.WINNER_BASE,
                         train_adapter.WINNER_REVISION, None, Path(tmp) / "report.json", winner=True, epochs=1)
                 loader.assert_not_called()
+                seed.assert_not_called()
+                self.assertEqual(cuda.mock_calls, [])
 
     def test_selected_primary_is_epoch_end_score_not_midpoint_reference(self):
         from fractions import Fraction
@@ -2408,10 +2543,15 @@ $TrustedDigestRoot = ''
 
 
 
-def slice3_train_rows():
-    item = row()
-    item.update(row_id="train-synthetic", source_group="train-group")
-    return [item]
+def slice3_train_rows(count=64):
+    # 64 rows give eight optimizer updates: midpoint step 4, epoch end step 8.
+    items = []
+    for index in range(count):
+        item = row()
+        item.update(row_id=f"train-synthetic-{index:02d}", source_group="train-group")
+        item["input"] = dict(item["input"], id=item["row_id"])
+        items.append(item)
+    return items
 
 
 def slice3_dev_rows():
@@ -2426,10 +2566,11 @@ def slice3_dev_rows():
 
 def slice3_context():
     dev = slice3_dev_rows()
+    training = slice3_train_rows()
     return {
         "dev_rows": dev,
-        "train_rows": slice3_train_rows(),
-        "train_ids": {"train-synthetic"},
+        "train_rows": training,
+        "train_ids": {item["row_id"] for item in training},
         "roster": sorted(item["source_group"] for item in dev),
         "expected_packets": {item["source_group"]: [item["row_id"]] for item in dev},
         "identity": {"base_revision": train_adapter.SMOKE_REVISION,
@@ -2826,7 +2967,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                     context["expected_packets"]["dev-group-00"] = ["other"]
                 elif fault == "row_overlap":
                     context["train_rows"][0]["row_id"] = "dev-00"
-                    context["train_ids"] = {"dev-00"}
+                    context["train_ids"] = {item["row_id"] for item in context["train_rows"]}
                 elif fault == "group_overlap":
                     context["train_rows"][0]["source_group"] = "dev-group-00"
                 elif fault == "missing_target":
