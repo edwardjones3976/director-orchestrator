@@ -1760,7 +1760,7 @@ Write-Output 'PASS'
         text = script.read_text(encoding="utf-8")
         self.assertIn("-Winner is only valid together with -Probe", text)
         self.assertIn("-Rows <jsonl> -Winner -Probe", text)
-        self.assertIn("-Rows <jsonl> -Epochs <N> -Base 'Qwen/Qwen3-14B'", text)
+        self.assertIn("-Rows <jsonl> -Batch <published-batch-id> -Epochs <N> -Base 'Qwen/Qwen3-14B'", text)
         self.assertIn("-TimeoutMinutes <explicit-approved-bound>", text)
         self.assertIn("'-Epochs must be between 1 and 6'", text)
         self.assertIn("'-Epochs and -Steps are mutually exclusive; pass exactly one'", text)
