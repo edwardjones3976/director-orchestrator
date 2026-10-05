@@ -4,10 +4,11 @@
 #       20-step dry run on the smoke base (the M0 pins).
 #   .\train-adapter.ps1 -Rows <jsonl> -Winner -Probe
 #       D-M2-6 probe on Qwen/Qwen3-14B at 40c069824f4251a91eefaf281ebe4c544efd3e18.
-#   .\train-adapter.ps1 -Rows <jsonl> -Epochs <N> -Base 'Qwen/Qwen3-14B' `
+#   .\train-adapter.ps1 -Rows <jsonl> -Batch <published-batch-id> -Epochs <N> -Base 'Qwen/Qwen3-14B' `
 #       -Revision '40c069824f4251a91eefaf281ebe4c544efd3e18' `
 #       -ExpectedDigests <approved-list> -TimeoutMinutes <explicit-approved-bound>
 #       Epoch-mode training: one adapter leaf per epoch under models\m2\<run id>.
+#       Epoch summaries are saved under reports\adapter-output\<run id>.json.
 # -Winner is only valid together with -Probe; -Epochs is a training mode and
 #   excludes -Steps, -Probe, -Winner and -Fallback.
 # Refuses a short revision, a winner probe pointed at any other base, a hot root

@@ -401,6 +401,13 @@ function Get-GitBlobBytes {
     if ($ExpectedSha256 -cnotmatch '^[0-9a-f]{64}$') { Write-Error "expected SHA-256 is invalid: $ExpectedSha256" }
     $gitExe = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
+    # A tree can resolve commit:path too; annotated tags peel to a different
+    # object. Require the supplied full id itself to be a commit first.
+    $commitOut = @(Invoke-Bounded $gitExe @('-C', $RepoRoot, 'rev-parse', '--verify', "$($Commit)^{commit}") 60)
+    if ($commitOut.Count -ne 2 -or $commitOut[-1] -cne '__EXIT__0' -or $commitOut[0] -cne $Commit) {
+        Write-Error "git commit id must name the exact commit object: $Commit"
+    }
+
     $oidOut = @(Invoke-Bounded $gitExe @('-C', $RepoRoot, 'rev-parse', '--verify', "$($Commit):$($Path)") 60)
     if ($oidOut[-1] -ne '__EXIT__0') { Write-Error "git object not found: ${Commit}:${Path}" }
     # @(...) keeps a one-line result an array (a scalar string's [0] is a CHARACTER).
@@ -571,10 +578,20 @@ function New-TrainerCommonMounts {
         [switch]$EpochMode
     )
     $mounts = @()
-    foreach ($pair in @(@('hf', 'hf'), @('runs', 'runs'), @('models\m2', 'models/m2'), @('reports', 'reports'))) {
+    # Epoch outputs need no runs mount. Mount only report outputs, never the
+    # reports parent containing Route R custody. Keep smoke/probe destinations.
+    $pairs = if ($EpochMode) {
+        @(@('hf', 'hf'), @('models\m2', 'models/m2'), @('reports\adapter-output', 'reports'))
+    } else {
+        @(@('hf', 'hf'), @('runs', 'runs'), @('models\m2', 'models/m2'), @('reports', 'reports'))
+    }
+    foreach ($pair in $pairs) {
         $hostDir = Join-Path $HotRoot $pair[0]
         New-Item -ItemType Directory -Force $hostDir | Out-Null
-        $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])")
+        # Epoch loads are pinned, complete-cache and local-files-only. Preserve
+        # legitimate HF blob links without exposing any of their targets for write.
+        $access = if ($EpochMode -and $pair[1] -ceq 'hf') { ':ro' } else { '' }
+        $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])${access}")
     }
     if (-not $EpochMode) {
         $mounts += @('-v', "${RowsDir}:/workspace/rows:ro")
@@ -586,6 +603,40 @@ function New-TrainerCommonMounts {
         $mounts += @('-v', "${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro")
     }
     return $mounts
+}
+
+# Reject writable aliases before constructing the epoch launch vector. A
+# read-only child bind does not protect bytes exposed through another parent.
+function Assert-TrainerMountIsolation {
+    [CmdletBinding()]
+    param([string[]]$Mounts, [string[]]$ProtectedPaths)
+    for ($i = 0; $i -lt $Mounts.Count; $i += 2) {
+        if ($Mounts[$i] -cne '-v' -or $i + 1 -ge $Mounts.Count -or
+            $Mounts[$i + 1] -cnotmatch '^(.+):(/[^:]+)(:ro)?$') {
+            Write-Error 'unexpected trainer common mount syntax'
+        }
+        $hostPath = [IO.Path]::GetFullPath($Matches[1]).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ($Matches[3] -ceq ':ro') { continue }
+        foreach ($protected in $ProtectedPaths) {
+            $protectedFull = [IO.Path]::GetFullPath($protected).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $separator = [IO.Path]::DirectorySeparatorChar
+            if ($hostPath.Equals($protectedFull, [StringComparison]::OrdinalIgnoreCase) -or
+                $protectedFull.StartsWith($hostPath + $separator, [StringComparison]::OrdinalIgnoreCase) -or
+                $hostPath.StartsWith($protectedFull + $separator, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-Error "writable trainer mount overlaps protected publication path: $hostPath"
+            }
+        }
+        Assert-NoReparsePointInAncestry $hostPath
+        # Do not follow aliases within an otherwise safe writable directory.
+        # The read-only HF cache is skipped above; model payload bytes are not read.
+        if (Test-Path -LiteralPath $hostPath) {
+            foreach ($entry in (Get-ChildItem -LiteralPath $hostPath -Force -Recurse)) {
+                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                    Write-Error "writable trainer mount contains a junction or symbolic link: $($entry.FullName)"
+                }
+            }
+        }
+    }
 }
 
 function New-TrainerDockerArgs {
@@ -601,8 +652,11 @@ function New-TrainerDockerArgs {
         [Parameter(Mandatory)][string]$ReportContainerPath,
         [Parameter(Mandatory)][int]$Epochs,
         [string]$ModelsHostDir,
-        [string[]]$ExtraEnv = @()
+        [string[]]$ExtraEnv = @(),
+        [hashtable]$Locations = (Get-ProductionLocations)
     )
+    Assert-TrainerMountIsolation -Mounts $CommonMounts -ProtectedPaths @(
+        $Stage.Train, $Stage.Eval, $Stage.Input, $BindingPath, $Locations.PinFile, $Locations.CustodyRoot)
     @('run', '--rm', '--name', $Name, '--gpus', 'all', '--shm-size', '4g') + $CommonMounts + @(
         '-v', "$($Stage.Train):/train:ro",
         '-v', "$($Stage.Eval):/eval:ro",

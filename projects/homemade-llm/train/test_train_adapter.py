@@ -174,11 +174,11 @@ def make_reparse_link(link: Path, target: Path) -> bool:
 
 
 def _wrapper_mount_construction(source: str) -> str:
-    """Extract only mount/argument functions and the wrapper's mount call."""
-    helper = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1").read_text(encoding="utf-8")
+    """Load the real helper and extract only the wrapper's mount call."""
+    helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
     start = source.index("$mounts = New-TrainerCommonMounts")
     end = source.index("\n$code =", start)
-    return helper[helper.index("function New-TrainerCommonMounts {"):] + "\n" + source[start:end] + "\n"
+    return ". '" + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n"
 
 
 class TrainAdapterTests(unittest.TestCase):
@@ -572,14 +572,122 @@ ConvertTo-Json -InputObject $args_ -Compress
     def _assert_common_mounts(self, options, root, *, epoch_mode, digests):
         mounts = [options[index + 1].replace("\\", "/")
                   for index, value in enumerate(options) if value == "-v"]
-        for directory in ("hf", "runs", "models/m2", "reports"):
-            self.assertIn(f"{root.as_posix()}/{directory}:/workspace/{directory}", mounts)
+        for directory in (("hf", "models/m2") if epoch_mode else ("hf", "runs", "models/m2", "reports")):
+            self.assertIn(f"{root.as_posix()}/{directory}:/workspace/{directory}"
+                          + (":ro" if epoch_mode and directory == "hf" else ""), mounts)
+        if epoch_mode:
+            self.assertIn(f"{root.as_posix()}/reports/adapter-output:/workspace/reports", mounts)
+            self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
+            self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
         rows_mounts = [mount for mount in mounts if ":/workspace/rows" in mount]
         self.assertEqual(rows_mounts, ["C:/synthetic/Input:/workspace/rows:ro"] if epoch_mode
                          else [f"{root.as_posix()}:/workspace/rows:ro"])
         for filename, host in (("expected-digests", "dummy-digests"), ("trusted-digest-root", "dummy-root")):
             actual = [mount for mount in mounts if f":/workspace/{filename}.json" in mount]
             self.assertEqual(actual, [f"{host}.json:/workspace/{filename}.json:ro"] if digests else [])
+
+    def test_epoch_mounts_refuse_writable_protected_aliases(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate mount isolation")
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            protected = root / "runs" / "stage" / "m2-01234567"
+            protected.mkdir(parents=True)
+            link = root / "output" / "custody-link"
+            link.parent.mkdir()
+            linked = make_reparse_link(link, protected)
+            command = f". '{helper.as_posix()}'\n" + r"""
+$ErrorActionPreference = 'Stop'
+function Refuses($Mount, $Protected, $Message) {
+    try { Assert-TrainerMountIsolation @('-v', $Mount) @($Protected) }
+    catch { if ($_.Exception.Message.Contains($Message)) { return }; throw }
+    throw "unsafe mount accepted: $Mount"
+}
+""" + f"""
+$root = '{root.as_posix()}'; $protected = '{protected.as_posix()}'
+Refuses "$root/runs:/workspace/runs" $protected 'overlaps protected'
+Refuses "$protected`:/alternate" $protected 'overlaps protected'
+Refuses "$protected/child:/alternate" $protected 'overlaps protected'
+Assert-TrainerMountIsolation @('-v', "$root/runs:/workspace/runs:ro") @($protected)
+Assert-TrainerMountIsolation @('-v', "$root/runs-other:/workspace/output") @($protected)
+"""
+            if linked:
+                command += f"Refuses '{link.parent.as_posix()}:/workspace/output' $protected 'junction or symbolic link'\n"
+            completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                       capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_epoch_readonly_cache_keeps_linked_layout_without_recursive_scan(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate mount isolation")
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "hf" / "hub"
+            shared = hub / "blobs"
+            shared.mkdir(parents=True)
+            repo = hub / "models--synthetic--model"
+            snapshot = repo / "snapshots" / ("a" * 40)
+            snapshot.mkdir(parents=True)
+            # Directory links also work without Windows file-symlink privilege.
+            # This tests mount traversal only, not model snapshot admission.
+            linked = make_reparse_link(repo / "blobs", shared)
+            if linked:
+                linked = make_reparse_link(snapshot / "linked", repo / "blobs")
+            command = f". '{helper.as_posix()}'\n" + f"""
+$ErrorActionPreference = 'Stop'
+$m = @(New-TrainerCommonMounts -HotRoot '{root.as_posix()}' -RowsDir '{root.as_posix()}/rows' -EpochMode)
+$cache = @($m | Where-Object {{ $_ -like '*:/workspace/hf*' }})
+if ($cache.Count -ne 1 -or -not $cache[0].EndsWith(':/workspace/hf:ro')) {{ throw 'cache not read-only' }}
+# A scan of HF would fail this control even on hosts without link privilege.
+function Get-ChildItem {{ throw 'read-only cache must not be recursively traversed' }}
+Assert-TrainerMountIsolation @('-v', $cache[0]) @('{root.as_posix()}/custody')
+Write-Output 'PASS'
+"""
+            completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                       capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            if linked:
+                self.assertTrue((snapshot / "linked").is_dir())
+
+    def test_git_payload_requires_commit_object_before_path_lookup(self):
+        # The transport is synthetic; assert refusal precedes path extraction,
+        # including tags that peel successfully but are not the supplied commit.
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate the Git object guard")
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        command = f". '{helper.as_posix()}'\n" + r"""
+$ErrorActionPreference = 'Stop'
+$script:count = 0
+function Invoke-Bounded($Exe, $A, $Seconds) {
+    $script:count++
+    if ($script:count -eq 2 -and $script:validCommit) {
+        if ($A[-1] -cne (('a' * 40) + ':payload.py')) { throw 'unexpected path lookup' }
+        throw 'verified commit reached path lookup'
+    }
+    if ($A[-1] -cne (('a' * 40) + '^{commit}')) { throw 'path lookup happened before commit verification' }
+    return $script:reply
+}
+$script:validCommit = $false
+foreach ($reply in @(@('__EXIT__128'), @(('b' * 40), '__EXIT__0'), @(('a' * 40), 'extra', '__EXIT__0'))) {
+    $script:reply = $reply; $script:count = 0
+    try { Get-GitBlobBytes -RepoRoot '.' -Commit ('a' * 40) -Path 'payload.py' -ExpectedSha256 ('0' * 64); throw 'accepted invalid commit' }
+    catch { if (-not $_.Exception.Message.Contains('must name the exact commit object')) { throw } }
+    if ($script:count -ne 1) { throw 'invalid commit reached a second Git call' }
+}
+$script:validCommit = $true; $script:count = 0; $script:reply = @(('a' * 40), '__EXIT__0')
+try { Get-GitBlobBytes -RepoRoot '.' -Commit ('a' * 40) -Path 'payload.py' -ExpectedSha256 ('0' * 64); throw 'missing path lookup' }
+catch { if (-not $_.Exception.Message.Contains('verified commit reached path lookup')) { throw } }
+if ($script:count -ne 2) { throw 'valid commit did not reach path lookup' }
+Write-Output 'PASS'
+"""
+        completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                   capture_output=True, text=True, timeout=30)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_wrapper_epoch_mode_requires_batch_and_runs_the_binding_chain_before_the_mutex(self):
         # Structural proof, no execution: -Batch is gated with -Epochs, the
@@ -3467,6 +3575,15 @@ class PublicationBindingTests(unittest.TestCase):
                             self._load_epoch(fx)
                     self.assertEqual(row_parses, [])
                     self.assertEqual(count, mutation_read)
+
+    def test_epoch_report_requires_exact_producer_format(self):
+        for value in ("route-r-validation-report/v2", "other/v1", "", None, 1):
+            with self.subTest(format=value), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), rows=slice3_train_rows(2) + slice3_dev_rows()[:1], report_overrides={"format": value})
+                with self.assertRaisesRegex(SystemExit, "format must be route-r-validation-report/v1"):
+                    self._load_epoch(fx)
+        with tempfile.TemporaryDirectory() as tmp:
+            self._load_epoch(_build_publication_fixture(Path(tmp), rows=slice3_train_rows(2) + slice3_dev_rows()[:1]))
 
     def test_epoch_consumer_refuses_admitted_row_and_group_count_disagreement(self):
         rows = slice3_train_rows(2) + slice3_dev_rows()[:1]

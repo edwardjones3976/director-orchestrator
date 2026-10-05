@@ -1726,8 +1726,8 @@ def _read_publication_rows(
         fail(f"report.json is not usable: {exc}")
     if not isinstance(validation_report, dict) or set(validation_report) != PUBLICATION_REPORT_KEYS:
         fail("report.json has an unexpected key set")
-    if not isinstance(validation_report["format"], str) or not validation_report["format"].strip():
-        fail("report.json format is invalid")
+    if validation_report["format"] != "route-r-validation-report/v1":
+        fail("report.json format must be route-r-validation-report/v1")
     if validation_report["batch"] != batch:
         fail("report.json batch does not match the publication binding")
     for key in ("rows_in", "rows_admitted", "schema_valid"):
