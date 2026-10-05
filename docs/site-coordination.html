@@ -34,11 +34,43 @@ Windows separators and a leading <code>./</code> are accepted. Existing claims, 
 your own PR, are listed. Resolve overlapping ownership with the foreman before
 editing; do not take over another writer's assignment. A clear snapshot cannot
 prevent a concurrent claim.</p>
-<p>The acting Director serves as foreman for this work order: reconcile claims,
+<p>The overall ChatGPT/Codex Director serves as site foreman, with recorded succession
+when unavailable and existing project-specific completion appointments preserved: reconcile claims,
 sequence overlapping edits, and route work and independent review within the
 owner's existing authority. The board is coordination evidence, not assignment,
 acceptance, merge, deployment, or spending authority. All deterministic gates
 and the one non-author exact-head reviewer requirement remain in force.</p>
+<h2 id="repair-routing">Foreman-controlled repairs</h2>
+<p>All Director-Orchestrator repairs route to the acting Foreman. Claude retains completion priorities and delivery coordination. Only the Foreman issues the mandatory solution and sequence; providers need a revised order before applying alternatives or omissions. Unknown causes get read-only investigation orders first. Ordinary assignments retain provider judgment. Follow the <a href="foreman-repair-work-orders.html">repair procedure</a> and its <a href="templates/html/repair-work-order.html">order</a> and <a href="templates/html/repair-report.html">report</a> templates.</p>
+<p>Link each issued revision and report from the existing issue/PR and repair register. Preserve user edits, append history, and record actual acknowledgments. Reconcile already merged fixes before creating work. A takeover records one acting Foreman and inherited orders; silence does not establish absence. A board claim or Foreman instruction adds no access, budget or gate bypass.</p>
+<h2 id="project-maintenance">Foreman project maintenance</h2>
+<p>The acting Foreman keeps the Director-Orchestrator worktrees and GitHub repository clean, organized and maintained throughout the project. This includes issue and pull-request stewardship, shared-resource coordination, and the configuration and accessibility of the project's native GitHub controls. Codex carries this responsibility under the existing succession; Claude remains completion lead and Cursor administrator #3. Other projects retain their own appointments.</p>
+<h3 id="worktree-stewardship">Worktree stewardship</h3>
+<ul>
+<li>At assignment intake, handoff and closeout, reconcile each affected checkout's owner/session, purpose, branch and exact head against active claims, reservations and uncertain operations. Reuse the existing work board and register; age or an idle-looking checkout is not evidence that its owner released it.</li>
+<li>Use isolated checkouts, stage only the authorized files, and keep generated files, local secrets and temporary output in their documented ignored or artifact locations. Preserve user edits and other writers' files. Only the branch owner or Foreman updates a branch from main or cancels its runs; arrange the handoff before touching shared resources.</li>
+<li>Retire a released checkout only after confirming its assignment, review, merge and recovery needs. Preserve uncommitted work, unpushed commits, required untracked files and needed ignored evidence in a recoverable snapshot or existing artifact location. Prefer the managed worktree archive/restore facility when available; record the snapshot and recovery location before removing the checkout.</li>
+<li>Keep frozen candidates, live deployments, active writers and unresolved external effects available. Do not run broad clean/reset/prune operations, delete another session's evidence, or rewrite history as housekeeping. Irreversible deletion retains the owner's explicit approval requirement. Schedule broad mechanical maintenance in a quiet window.</li>
+</ul>
+<h3 id="issue-and-pr-stewardship">Issues and pull requests</h3>
+<ul>
+<li>Reuse the existing project issue before opening a duplicate. Keep its scope, evidence, accountable session, next action, dependencies and disposition current; use a project label and native saved views to distinguish Director work in a shared repository. A shared GitHub account does not identify the provider or responsible session.</li>
+<li>Reconcile closed issues against their outstanding findings. Reopen the original with a reason when verified work remains; close or archive only after the scoped acceptance evidence is satisfied, linking the result and any separately owned follow-up. An unchecked old list alone does not reopen a completed repair.</li>
+<li>Keep draft PR claims and file scopes current, resolve overlap before edits, sequence dependent PRs, and retain one accountable writer and one eligible final reviewer. Bind each handoff to head, tree, target-tip base and review merge base; verify current required CI, security, unresolved threads and merge holds. Record implemented, tested, reviewed, merged, deployed and live-verified separately.</li>
+<li>Route defects through <a href="foreman-repair-work-orders.html">Foreman repair orders</a>. Relevant Firecrawl or Perplexity research is mandatory for every repair case, normally at intake or at a prescribed checkpoint before any repair limit. Reuse applicable receipts and keep cumulative limits. A maintenance assignment cannot reset an exhausted repair case, replay an ambiguous dispatch or approve the author's own work.</li>
+</ul>
+<h3 id="github-configuration">GitHub configuration and navigation</h3>
+<p>Use the platform's existing controls and the <a href="https://github.com/users/edwardjones3976/projects/1">private Director project</a>, with <a href="https://github.com/edwardjones3976/director-orchestrator/issues/299">issue #299</a> retaining coordination and claim authority. Capture the current configuration, intended change, authorization, readback and rollback in the existing maintained HTML report. Change only what the current project needs.</p>
+<table>
+<thead><tr><th scope="col">Native surface</th><th scope="col">Foreman's responsibility</th></tr></thead>
+<tbody>
+<tr><th scope="row">Code and project information</th><td>Keep the repository description, relevant topics, canonical HTML overview and guidance links accurate. Native GitHub text fields may contain short summaries and links; maintain the full human-facing procedure in HTML.</td></tr>
+<tr><th scope="row">Issues, pull requests and Projects</th><td>Maintain project-specific labels, linked issues/PRs and useful board, backlog and review views. Reuse the existing project and built-in fields. Treat board status as workflow metadata, not acceptance evidence; do not infer live qualification from a closed issue or merged PR.</td></tr>
+<tr><th scope="row">Agents</th><td>Keep the existing agent instructions, profiles, accountable sessions and bounded assignment links accessible. Opening or organizing this tab does not authorize a new cloud-agent job, paid dispatch or additional reviewer.</td></tr>
+<tr><th scope="row">Actions</th><td>Make the current CI and security workflows easy to find with native pins and filters. Pins are the signed-in account's navigation preferences. Sequence shared runners, preserve executed-step evidence and historical failures, and classify a failure before an authorized targeted rerun.</td></tr>
+<tr><th scope="row">Settings and access</th><td>Preserve visibility, branch protection, review requirements, workflow permissions, evidence retention and release gates. Use the supported authentication flow to repair an authorized access gap and verify the specific route; keep credentials in the existing secret store. Obtain owner authorization for expanded security-sensitive access, spending, deployment or irreversible deletion.</td></tr>
+</tbody></table>
+<p>Review affected controls at intake and closeout and include actual maintenance, unresolved ownership/access gaps and the next responsible action in the existing 22:45 Pacific input and 23:00 pass-down. Reuse fresh receipts rather than launching models for status, duplicating validation or adding another monitoring service.</p>
 <pre><code class="language-powershell">python scripts/site-board.py
 python scripts/site-board.py --post 299
 </code></pre>
