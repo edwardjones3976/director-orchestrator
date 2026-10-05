@@ -14,7 +14,7 @@ display_name: "GitHub Copilot"
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -159,12 +159,12 @@ authority:
 
 platform_limitations:
   - limitation: "Without an authenticated contact the lane fails closed as unavailable; unavailability or quota exhaustion records no verdict and counts as waste."
-    source: "docs/team-operating-charter.md, GitHub Copilot Lite hygiene review"
+    source: "docs/team-operating-charter.html, GitHub Copilot Lite hygiene review"
   - limitation: "No provider adapter or automatic routing exists; the legacy registry has no Copilot adapter and the primary capability validator refuses production authority for this lane."
     source: "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
   - limitation: "A new commit invalidates the observation without automatically requesting a new run."
-    source: "docs/team-operating-charter.md, GitHub Copilot Lite hygiene review"
-  - limitation: "No Copilot variable appears in .env.example or docs/provider-setup.md; the credential names exist only in the primary transport and host-bridge authentication maps."
+    source: "docs/team-operating-charter.html, GitHub Copilot Lite hygiene review"
+  - limitation: "No Copilot variable appears in .env.example or docs/provider-setup.html; the credential names exist only in the primary transport and host-bridge authentication maps."
     source: "src/director_orchestrator/primary_transports.py:_PROVIDER_AUTH_ENVIRONMENT"
 
 transports:
@@ -225,11 +225,11 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/team-operating-charter.md"
+  - document: "docs/team-operating-charter.html"
     anchor: "GitHub Copilot Lite is an optional capability-routed quality-observation lane with no"
-  - document: "docs/provider-setup.md"
+  - document: "docs/provider-setup.html"
     anchor: "GitHub Copilot Lite is not another provider bridge."
-  - document: "docs/provider-allocation-profiles.md"
+  - document: "docs/provider-allocation-profiles.html"
     anchor: "GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;"
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
     anchor: "github_copilot_lite:"

@@ -206,6 +206,12 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.directory.name)
         self.work = load_json_document(SCHEMAS / "model-work-packet-v1.example.json")
         self.result = load_json_document(SCHEMAS / "model-result-packet-v1.example.json")
+        for packet in (self.work, self.result):
+            packet["task_id"] = "DIR-PACKET-ROUTING"
+            packet["assignment_id"] = "DIR-PACKET-ROUTING-1"
+            # Match the production router's task:generation:assignment binding;
+            # _record seeds the first plan at generation 1.
+            packet["idempotency_key"] = "DIR-PACKET-ROUTING:1:1:" + "a" * 64
         self.ledger_path = self.root / "runtime-ledger.sqlite3"
 
     def _settings(self, **overrides) -> Settings:
@@ -364,6 +370,9 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await engine._execute_assignment(stopped, assignment))
         self.assertFalse(await engine._route_live_dispatch(stopped, assignment))
         self.assertEqual(transport.sends, 1)
+        # Native metadata cannot claim the engine has already consumed this packet.
+        stopped.provider_runs[-1].raw["packet_result_digest"] = "f" * 64
+        store.save(stopped)
         self.assertTrue(engine._retry_spend_settlements(stopped))
         with patch.object(
             consumer, "consume", side_effect=DirectorPacketResultConsumer().consume
@@ -375,6 +384,8 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         recovered = store.get(record.task_id).provider_runs[-1]
         self.assertEqual(recovered.run_id, result["run_reference"])
         self.assertEqual(recovered.raw["packet_result_digest"], document_digest(result))
+        self.assertEqual(store.get(record.task_id).consumed_packet_results[recovered.interaction_id],
+                         document_digest(result))
         self.assertEqual(transport.sends, 1)
 
     async def test_top_level_packet_ack_read_failure_and_public_restart_reconciliation(self):

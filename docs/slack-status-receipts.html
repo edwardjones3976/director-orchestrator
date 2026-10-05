@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Slack status receipts (Issue #230) · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#api-surface">API surface</a></li><li class="top"><a href="#gateway-routing">Gateway routing</a></li><li class="top"><a href="#provider-lanes-and-passive-status-september-14-investigation">Provider lanes and passive status (September 14 investigation)</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]] -->
+<!-- Administrative attribution only; material implementation remains Cursor-authored. -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:43 UTC | BEGIN]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:19 UTC | BEGIN]] -->
+<h1 id="slack-status-receipts-issue-230">Slack status receipts (Issue #230)</h1>
+<p>Director-owned status receipts are separate from work intake. Only explicit
+<code>DIRECTOR</code> prose or <code>/director</code> starts planning, assignments, or provider
+dispatch. A non-command owner app mention in a thread that is already bound to
+exactly one LangGraph-primary task is recorded as a digest-only status receipt
+through <code>POST /v1/status-receipts</code>.</p>
+<h2 id="api-surface">API surface</h2>
+<ul>
+<li><code>GET /v1/slack-thread-bindings?channel_id=&amp;thread_ts=</code> resolves <code>task_id</code> from
+the persisted primary task projection intake binding. Unknown threads return
+<strong>404</strong>; ambiguous threads (more than one task share the binding) return
+<strong>409</strong>. Client-supplied task IDs do not authenticate a binding.</li>
+<li><code>POST /v1/status-receipts</code> accepts <code>SlackStatusReceipt</code> (source event identity,
+channel, thread, owner user, task id, <code>text_digest</code>, <code>received_at</code>) and returns
+<code>StatusReceiptRecord</code>. The Slack gateway must supply the same signed
+attestation pattern as intake (<code>X-Director-Status-Receipt-*</code> headers). Raw
+status text is never persisted.</li>
+<li>Receipt persistence takes a per-<code>source_event_id</code> advisory lock and a
+per-thread lock before re-reading the intake binding inside the same
+transaction. That recheck linearizes receipt inserts against binding drift; it
+does not serialize primary task projection creation, which uses separate
+control-plane locks.</li>
+</ul>
+<h2 id="gateway-routing">Gateway routing</h2>
+<p>The Slack gateway resolves the binding with the GET endpoint, then posts the
+signed receipt. Overlapping <code>message</code> and <code>app_mention</code> deliveries reconcile on
+the canonical <code>channel:ts</code> source-event identity. A failed HTTP write releases
+the in-memory claim so Slack redelivery can reach the durable receipt store.</p>
+<h2 id="provider-lanes-and-passive-status-september-14-investigation">Provider lanes and passive status (September 14 investigation)</h2>
+<p>The table summarizes the September 14 provider status-mention investigation
+and its Grok addendum. The historical source supplied only a
+<code>&lt;report-path&gt;</code> placeholder, not a verified report location.
+Do not treat that placeholder as retrievable evidence. Without a demonstrated route-level result, native
+zero-new-work behavior is <strong>unsupported/unverified</strong>; use the controlled
+Director status-receipt path above.</p>
+<table>
+<thead>
+<tr>
+<th>Lane / contact route</th>
+<th>Native Slack continuation / chat</th>
+<th>Truly passive status receipt</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI Codex (native Slack app)</td>
+<td>Documented cloud-task entry; new task confirmed in channel evidence</td>
+<td><strong>Unsupported</strong> — not reliable</td>
+</tr>
+<tr>
+<td>OpenAI ChatGPT alias / Responses bridge</td>
+<td>Opening alias only; inline mentions ignored</td>
+<td><strong>Unsupported</strong> for passive inbox</td>
+</tr>
+<tr>
+<td>OpenAI ChatGPT app / cloud teammate</td>
+<td>Sidebar chat; workspace agents may start work</td>
+<td><strong>Unverified</strong> for channel mentions</td>
+</tr>
+<tr>
+<td>Claude</td>
+<td>Code + Chat modes; session-linked replies observed</td>
+<td><strong>Unsupported</strong> for passive receipt</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>Thread-associated Cloud Agent continuation documented</td>
+<td><strong>Unsupported</strong> for passive receipt</td>
+</tr>
+<tr>
+<td>Direct Grok / xAI</td>
+<td>Thread-aware replies documented</td>
+<td><strong>Unverified</strong> locally; not passive guarantee</td>
+</tr>
+<tr>
+<td>Gemini / Antigravity</td>
+<td>No demonstrated inbox in project channel</td>
+<td><strong>Unsupported/unverified</strong></td>
+</tr>
+<tr>
+<td>Perplexity</td>
+<td>Ongoing Computer task continuation documented</td>
+<td><strong>Unsupported</strong> for zero-work receipt</td>
+</tr>
+<tr>
+<td>Firecrawl</td>
+<td>No verified inbound mention route</td>
+<td><strong>Unsupported/unverified</strong></td>
+</tr>
+<tr>
+<td>GitHub Copilot / GitHub Slack app</td>
+<td>Existing Slack Code session updates documented</td>
+<td><strong>Unverified</strong> without session proof</td>
+</tr>
+<tr>
+<td>Grok Bot (Cursor product)</td>
+<td>Native agent conversation; inbound Slack unverified</td>
+<td><strong>Unsupported/unverified</strong></td>
+</tr>
+<tr>
+<td>Z.ai</td>
+<td>API/SDK lane; no enrolled Slack identity</td>
+<td><strong>Unsupported/unverified</strong></td>
+</tr>
+<tr>
+<td>VS Code Coding Bot contact route</td>
+<td>Editor host contact; no verified Slack listener</td>
+<td><strong>Unsupported/unverified</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Distinctions:</p>
+<ul>
+<li><strong>Native Slack continuation</strong> — vendor app resumes chat or an existing agent
+session; may avoid a new task object but still performs inference or tool use.</li>
+<li><strong>Chat / inference</strong> — model consumes the update and may reply; not zero work.</li>
+<li><strong>Truly passive status receipt</strong> — records the update without new tasks,
+assignments, provider attempts, or inference; Director status receipts target
+this property for the owner gateway path only.</li>
+</ul>
+<p>The separate ChatGPT bridge scope is unchanged: alias parsing, approval, and
+Responses dispatch remain outside status receipt intake.</p>
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:19 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:43 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

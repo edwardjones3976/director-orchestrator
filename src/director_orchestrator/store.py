@@ -48,6 +48,7 @@ import time
 import hmac
 import math
 import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -309,6 +310,7 @@ class TaskStore:
             # free pages, so every writer enables physical page scrubbing before
             # any migration or update.
             connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("PRAGMA journal_size_limit = 0")
             with connection:
                 yield connection
 
@@ -349,6 +351,20 @@ class TaskStore:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS runtime_result_payloads (
+                    idempotency_key TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    plan_generation INTEGER NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    payload_json TEXT,
+                    closed INTEGER NOT NULL DEFAULT 0
+                )"""
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS runtime_result_lifecycle "
+                "ON runtime_result_payloads(task_id, closed, correlation_id)"
             )
             connection.execute(
                 """INSERT OR IGNORE INTO privacy_cleanup_state(
@@ -966,6 +982,7 @@ class TaskStore:
         try:
             connection.execute("PRAGMA busy_timeout = 200")
             connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("PRAGMA journal_size_limit = 0")
             row = connection.execute(
                 """SELECT pending_generation, completed_generation
                 FROM privacy_cleanup_state WHERE singleton = 1"""
@@ -1248,12 +1265,88 @@ class TaskStore:
         had_private_projection = previous_projection is None or bool(previous_projection)
         if changed_private_projection:
             self._compact_spend_settlements(connection, json.loads(replacement_json)["task_id"])
+        replacement = json.loads(replacement_json)
+        previous = json.loads(previous_json)
+        if (replacement.get("plan") is None
+                or replacement.get("plan_generation") != previous.get("plan_generation")):
+            removed = connection.execute(
+                "UPDATE runtime_result_payloads SET payload_json=NULL, closed=1 "
+                "WHERE task_id=? AND closed=0", (replacement["task_id"],))
+        else:
+            consumed = list(replacement.get("consumed_packet_results", {}))
+            removed = connection.execute(
+                "UPDATE runtime_result_payloads SET payload_json=NULL, closed=1 "
+                "WHERE task_id=? AND closed=0 AND correlation_id IN ("
+                + ",".join("?" for _ in consumed) + ")",
+                (replacement["task_id"], *consumed),
+            )
+        if removed.rowcount:
+            self._mark_privacy_cleanup_pending(connection)
         if (
             changed_private_projection
             and had_private_projection
             and self._journal_mode(connection) == "wal"
         ):
             self._mark_privacy_cleanup_pending(connection)
+
+    @staticmethod
+    def _packet_plan_generation(work: dict) -> int | None:
+        """Return the generation encoded in a production idempotency key, if any."""
+        task_id = str(work["task_id"])
+        key = str(work["idempotency_key"])
+        match = re.fullmatch(re.escape(task_id) + r":(\d+):\d+:[0-9a-fA-F]{64}", key)
+        if match is None:
+            return None
+        return int(match.group(1))
+
+    def reserve_runtime_result(self, work: dict) -> None:
+        """Bind recovery storage before I/O; a reset deletes this authority too."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT record_json FROM tasks WHERE task_id=?",
+                                     (work["task_id"],)).fetchone()
+            record = json.loads(row[0]) if row else {}
+            correlation = work["correlation"]["correlation_id"]
+            if not record.get("plan") or correlation in record.get("consumed_packet_results", {}):
+                raise ValueError("packet recovery storage has no current unconsumed task")
+            claimed_generation = self._packet_plan_generation(work)
+            # Unrecognized key shapes cannot opt out of current-generation
+            # binding. Short fixture/legacy suffixes still need the exact prefix.
+            if (claimed_generation is not None and claimed_generation != record["plan_generation"]
+                    or not work["idempotency_key"].startswith(f'{work["task_id"]}:{record["plan_generation"]}:')):
+                raise ValueError("packet recovery storage generation is stale")
+            expected = (work["task_id"], record["plan_generation"], correlation, 0)
+            existing = connection.execute(
+                "SELECT task_id, plan_generation, correlation_id, closed FROM runtime_result_payloads "
+                "WHERE idempotency_key=?", (work["idempotency_key"],)).fetchone()
+            if existing is not None and tuple(existing) != expected:
+                raise ValueError("packet recovery storage identity changed")
+            connection.execute("INSERT OR IGNORE INTO runtime_result_payloads VALUES (?, ?, ?, ?, NULL, 0)",
+                               (work["idempotency_key"], *expected[:3]))
+
+    def save_runtime_result(self, work: dict, encoded: str) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT r.plan_generation, t.record_json, r.payload_json "
+                "FROM runtime_result_payloads r JOIN tasks t ON t.task_id=r.task_id "
+                "WHERE r.idempotency_key=? AND r.task_id=? AND r.correlation_id=? AND r.closed=0",
+                (work["idempotency_key"], work["task_id"], work["correlation"]["correlation_id"]),
+            ).fetchone()
+            record = json.loads(row[1]) if row else {}
+            if (row is None or not record.get("plan") or row[0] != record["plan_generation"]
+                    or work["correlation"]["correlation_id"] in record.get("consumed_packet_results", {})):
+                raise ValueError("packet recovery storage was reset or consumed")
+            if row[2] is not None and row[2] != encoded:
+                raise ValueError("packet recovery result is immutable")
+            connection.execute("UPDATE runtime_result_payloads SET payload_json=? WHERE idempotency_key=?",
+                               (encoded, work["idempotency_key"]))
+
+    def read_runtime_result(self, idempotency_key: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload_json FROM runtime_result_payloads WHERE idempotency_key=? AND closed=0",
+                                     (idempotency_key,)).fetchone()
+            return row[0] if row else None
 
     def _compact_spend_settlements(self, connection: sqlite3.Connection, task_id: str | None = None) -> None:
         from .providers import ProviderDailySpendLedger

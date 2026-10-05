@@ -858,6 +858,26 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         self.assertEqual((other["authorized"], other["authorized_command_digest"], other["authorized_fence"]),
                          (True, False, False))
 
+    def test_approval_receipt_read_is_capped_per_task_and_reports_truncation(self):
+        """#287 item 12: one busy task cannot hide behind a global limit or starve another task's receipts."""
+        busy = self.intake()  # activates intake once; a second activation would be refused as a stale fence
+        quiet = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        self.coordinator.create_intake(self.coordinator_fixtures.request(quiet))
+        with self.handle.pool.connection() as connection:
+            for task, count in ((busy, 101), (quiet, 3)):
+                for number in range(count):
+                    connection.execute(
+                        f"INSERT INTO {self.schema}.director_primary_command_receipt(task_id, operation, command_id,"
+                        " command_digest, resulting_projection_digest, resulting_projection_version,"
+                        " writer_fencing_generation) VALUES (%s, 'approval_resume', %s, %s, %s, 2, 1)",
+                        (task, f"cmd-{task}-{number}", "sha256:" + "6" * 64, "sha256:" + "7" * 64))
+        tasks = self.report(tasks=[busy, quiet])["tasks"]
+        self.assertEqual((len(tasks[busy]["approval_receipts"]), tasks[busy]["approval_receipts_truncated"]),
+                         (100, True))
+        self.assertEqual((len(tasks[quiet]["approval_receipts"]), tasks[quiet]["approval_receipts_truncated"]),
+                         (3, False))
+        self.assertNotIn("task_ordinal", json.dumps(tasks))
+
     def test_task_settlement_rows(self):
         task_id = self.intake()
         budget = {"task_id": task_id, "project_id": "fixture-project", "day": "2026-09-12",
@@ -879,7 +899,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 ("sha256:" + "a" * 64, json.dumps({"provider_id": "openai", "metering_evidence": metering})))
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
         self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
-                                             "approval_receipts": [], "application": None, "result_artifacts": [],
+                                             "approval_receipts": [], "approval_receipts_truncated": False,
+                                             "application": None, "result_artifacts": [],
                                              "work_packets": [], "effect_approval_bindings": [],
                                              "registered_plan": None,  # no batch: nothing registered to recompute
                                              "terminal_evidence_without_reservation": 0,

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>n8n operations · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#n8n-is-a-relay-not-a-normalizer">n8n is a relay, not a normalizer</a></li><li class="top"><a href="#which-n8n">Which n8n</a></li><li class="top"><a href="#credentials">Credentials</a></li><li class="top"><a href="#director-intake">Director Intake</a></li><li class="top"><a href="#director-status">Director Status</a></li><li class="top"><a href="#no-env-in-expressions">No $env in expressions</a></li><li class="top"><a href="#repointing-between-profiles">Repointing between profiles</a></li><li class="top"><a href="#importing">Importing</a></li><li class="top"><a href="#testing-the-connection">Testing the connection</a></li><li class="top"><a href="#what-these-workflows-are-not">What these workflows are not</a></li></ul></details></nav>
+<main id="content">
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]] -->
+<!-- [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:43 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | BEGIN]] -->
+<h1 id="n8n-operations">n8n operations</h1>
+<p>Two workflows. <code>Director Intake</code> relays owner requests from the Slack gateway
+into the orchestrator; <code>Director Status</code> watches readiness and speaks only when
+something changes. Both are imported and activated by hand after inspection.</p>
+<p>Neither workflow contains a secret, a token, a channel ID or a DSN. Credentials
+are bound in the n8n UI. The <code>REPLACE_WITH_CREDENTIAL_ID</code> and
+<code>REPLACE_WITH_CHANNEL_ID</code> placeholders are meant to be replaced on import, and a
+workflow that still carries one fails closed rather than running unauthenticated
+or posting to the wrong channel.</p>
+<h2 id="n8n-is-a-relay-not-a-normalizer">n8n is a relay, not a normalizer</h2>
+<p>This is the single fact the intake workflow is built around, and getting it
+backwards produces a workflow that looks correct and fails on every message.</p>
+<p><code>slack_bot._forward</code> does the normalization <strong>before</strong> n8n sees anything. It
+builds the canonical <code>SlackIntake</code> — <code>source_event_id</code>, <code>channel_id</code>,
+<code>thread_ts</code>, <code>user_id</code>, <code>text</code>, <code>allocation_profile</code>,
+<code>primary_required_capabilities</code>, <code>permalink</code>, <code>received_at</code> — HMAC-signs it with
+<code>build_slack_intake_attestation</code>, and POSTs that object to
+<code>N8N_DIRECTOR_WEBHOOK_URL</code> when that setting is nonempty. When it is empty, the
+gateway posts directly to <code>ORCHESTRATOR_BASE_URL</code> plus <code>/v1/intake</code> and bypasses
+n8n. When configured as the relay, n8n receives an already-normalized intake,
+not a raw Slack event envelope.</p>
+<p>Three consequences bind the workflow:</p>
+<ul>
+<li><strong>The body is forwarded unchanged.</strong> <code>SlackIntake</code> sets <code>extra=&quot;forbid&quot;</code>, so an
+added field is a 422. <code>allocation_profile</code> and <code>primary_required_capabilities</code>
+are owner-set deployment configuration read from settings — injecting either in
+n8n overrides the owner and, once paid runs are on, breaks the signature.</li>
+<li><strong><code>received_at</code> is not regenerated.</strong> The attestation covers
+<code>intake.model_dump(mode=&quot;json&quot;)</code>, so rewriting any field invalidates it.</li>
+<li><strong>The three <code>X-Director-Intake-*</code> headers are forwarded.</strong> They are unused
+while <code>ALLOW_PAID_RUNS=false</code> — the handler falls back to <code>BEARER_DRY_RUN</code> —
+and required the moment it is true. Dropping them is a defect that stays
+invisible until the exact moment paid execution is enabled.</li>
+</ul>
+<h2 id="which-n8n">Which n8n</h2>
+<p>The relay only works from <strong>inside the Director Compose project</strong>. The HTTP node
+resolves <code>orchestrator:8080</code> by Docker DNS. To use this relay, configure the
+Slack bot's <code>N8N_DIRECTOR_WEBHOOK_URL</code> as
+<code>http://n8n:5678/webhook/director-intake</code> — the internal hostname, which resolves
+to whichever n8n container shares that project's network. An n8n on another
+project, or a standalone install, can neither reach the orchestrator nor receive
+the bot's traffic.</p>
+<table>
+<thead>
+<tr>
+<th>Namespace</th>
+<th>env file</th>
+<th>n8n host port</th>
+<th>orchestrator host port</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Primary Director</td>
+<td><code>.env</code></td>
+<td>5678 (compose default; <code>N8N_HOST_PORT</code> unset)</td>
+<td>8080</td>
+</tr>
+<tr>
+<td>Project Uppercut</td>
+<td><code>.env.uppercut</code></td>
+<td>15678</td>
+<td>18080</td>
+</tr>
+<tr>
+<td>Edge Oracle</td>
+<td><code>.env.edge-oracle</code></td>
+<td>25678</td>
+<td>28080</td>
+</tr>
+</tbody>
+</table>
+<p>The host port is only how <em>you</em> reach the editor. It has no bearing on the relay
+path, which is entirely internal. Confirm the project before importing:</p>
+<pre><code>docker ps --format &quot;{{.Names}}\t{{.Ports}}&quot;
+docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' &lt;n8n container&gt;
+</code></pre>
+<p>The n8n container and the orchestrator container must appear on the same network.</p>
+<h2 id="credentials">Credentials</h2>
+<table>
+<thead>
+<tr>
+<th>n8n credential type</th>
+<th>Name used in the workflows</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Slack API</td>
+<td><code>Director Slack bot</code></td>
+<td>The bot token for the status posts</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Intake has no bound n8n credential.</strong> The webhook is unauthenticated and the
+relay forwards the caller's own <code>Authorization</code> header downstream, leaving the
+orchestrator as the authenticator. That bearer contains
+<code>ORCHESTRATOR_SHARED_SECRET</code>, so n8n processes the secret and may persist it
+transiently in webhook or execution data. The absence of a bound credential does
+not guarantee that n8n's database never contains the secret. The retention
+settings below limit saved executions; they do not prove zero transient storage.</p>
+<p>The trade is that any process able to reach <code>127.0.0.1:&lt;n8n port&gt;</code> can make the
+relay forward a request. That process still needs a valid bearer to get past
+<code>/v1/intake</code>, which returns 401 without one, so the relay grants no authority it
+did not already have. Do not &quot;harden&quot; this by binding a Header Auth credential
+unless you also name it exactly <code>Authorization</code>: <code>slack_bot._forward</code> sends that
+header and no custom gateway header, so any other name rejects the orchestrator's
+own caller.</p>
+<h2 id="director-intake">Director Intake</h2>
+<pre><code>Slack Gateway Webhook → Create Director Task ─┬─ success → Exactly 202? ─┬─ yes → Accepted                    (202)
+                                              │                          └─ no  → Unexpected Upstream Success (502)
+                                              └─ error   → Definite refusal? ─┬─ yes → Intake Failed          (502)
+                                                                              └─ no  → Ambiguous - Stop  (n8n default 200)
+</code></pre>
+<p><strong>Inbound.</strong> The Webhook node carries no authentication and no credential; the
+caller's <code>Authorization</code> header is forwarded downstream instead. <strong>Ignore Bots is
+deliberately off</strong>: the caller is <code>python-httpx</code>, and user-agent bot filters can
+classify HTTP-library agents as bots and drop the request before it is relayed.
+n8n also offers an IP allowlist under the node's options; set it if the gateway
+has a fixed address.</p>
+<p><strong>Idempotency.</strong> <code>source_event_id</code> is the stable Slack event ID and the
+orchestrator deduplicates on it, so a re-delivered Slack event creates no second
+task. Do not substitute a generated ID, a timestamp, or the n8n execution ID.</p>
+<p><strong>The success response is the orchestrator's <code>TaskRecord</code>, verbatim.</strong>
+<code>slack_bot._intake_receipt_task_id</code> requires exactly one <code>task_id</code> matching
+<code>DIR-(?:LG-)?[A-F0-9]+</code>, at the top level or under <code>data</code>, and <code>_forward</code>
+additionally requires HTTP <strong>202</strong> exactly — not 200, not 201. A summarised or
+renamed response body makes the bot post <code>DIRECTOR — BLOCKED</code> on an intake that
+actually succeeded.</p>
+<p><strong>Failure.</strong> <code>Create Director Task</code> uses <code>onError: continueErrorOutput</code>, so an
+error takes the second output. Only a numeric <strong>401</strong>, <strong>403</strong> or <strong>422</strong> reaches
+<code>Intake Failed</code>, which responds <strong>502</strong>. A <strong>409</strong>, other non-401/403/422 <strong>4xx</strong>, a
+<strong>5xx</strong>, or a transport error with no status goes to the ambiguity branch for
+reconciliation instead.
+Only the upstream status code is echoed; no response body, provider output or
+secret-shaped value is relayed back through the webhook.</p>
+<p><strong>Definite refusal and ambiguous delivery are not the same thing, and the whole
+design turns on the difference.</strong></p>
+<p>Only an upstream <strong>401</strong>, <strong>403</strong> or <strong>422</strong> is treated as a definite refusal before intake
+is reserved, so the gateway can be told plainly and the error branch responds
+<strong>502</strong>. Other <strong>4xx</strong> values are not that proof: a <strong>409</strong> from
+<code>SlackIntakeReplayConflict</code> (<code>main.py</code>, <code>store.py</code>) means a conflicting task may
+already exist, so the workflow sends those statuses down the ambiguity branch
+instead of asserting a clean refusal.</p>
+<p><strong>A 5xx is not proof of anything.</strong> Primary intake is reserved before later
+operations can fail (<code>primary_coordinator.py</code>, <code>primary_default.py</code>), and
+<code>main.py</code> wraps such exceptions as <strong>503</strong> — so a task may already exist behind
+one. 5xx is therefore classified as unproven and takes the same path as a
+missing status code.</p>
+<p><strong>No</strong> status code — a timeout, a dropped socket, a response lost after the task
+was written — means the outcome is genuinely unknown. The task may exist.
+Answering 502 there would assert a failure that may not have happened, and 202
+would assert a success that may not have happened. So that branch deliberately
+reaches <strong>no Respond node at all</strong>, n8n answers with n8n's standard message with a 200 status, and the
+gateway posts <em>&quot;Acceptance could not be confirmed. The request state must be
+reconciled before retrying.&quot;</em> — which is exactly right for an unknown delivery.</p>
+<p>That is documented n8n behaviour: a workflow finishing without executing a
+Respond to Webhook node returns a standard message with a 200 status, while a
+workflow that <em>errors</em> before the first Respond node returns 500.</p>
+<p><strong>Do not assert the body shape.</strong> n8n does not document the standard message's
+text, and the gateway rejects any non-202 before it parses a body, so nothing
+depends on it. Historically, probes on 2026-09-09 against the <em>pre-fix</em> workflow
+— which used <code>onError: stopWorkflow</code> — measured a zero-byte body at 200. That
+observation stands as measured and is not the contract; do not generalise it to
+the corrected design.</p>
+<p><strong>The citation explains the mechanism, not the cause.</strong> Scope it correctly: a
+non-202 does <strong>not</strong> prove the execution ended without responding — <code>Intake Failed</code> and <code>Unexpected Upstream Success</code> are Respond nodes and both answer 502.
+Only n8n's <strong>default 200</strong> indicates the NoOp path, where no Respond node ran.
+Even then the status alone does not identify which upstream condition produced
+it. For that, read the n8n container logs, which carry the upstream status.</p>
+<p><strong>Execution retention stays <code>none</code>, and that is a security setting, not a
+diagnostic one.</strong> The webhook item includes <code>$json.headers</code>, which carries the
+caller's <code>Authorization: Bearer &lt;shared secret&gt;</code>. Retaining error executions
+would retain that secret in n8n's database despite the absence of a bound
+credential. Diagnose from the container logs instead. Even <code>none</code> controls
+completion cleanup rather than proving zero transient storage.</p>
+<p><strong>Strict 202.</strong> The gateway requires 202 exactly, so the success output passes
+through an <code>Exactly 202</code> gate; any other 2xx is a contract violation and answers
+502 rather than being relayed as an acceptance.</p>
+<p><strong>Redirects are refused.</strong> Following one would resend the caller's
+<code>Authorization</code> header to another host.</p>
+<p><strong>The relay timeout is below the gateway's.</strong> <code>slack_bot._forward</code> posts with
+<code>httpx</code> <code>timeout=20</code>. A relay that waits longer than its caller cannot classify
+anything for anyone — the gateway has already given up. 15 s leaves the decision
+with the relay.</p>
+<h2 id="director-status">Director Status</h2>
+<pre><code>Every 5 minutes  →  Read Health  →  Diff Readiness  →  Post Status
+</code></pre>
+<p><strong>Quiet by default.</strong> <code>Diff Readiness</code> compares a fixed whitelist of readiness
+booleans against the previous run, held in workflow static data, and returns an
+empty array when nothing changed — which ends the execution without posting.
+<strong>Silence means nothing changed, which is the normal state.</strong> A channel that has
+been quiet for a day is not a broken workflow.</p>
+<p><strong>It speaks anyway</strong> — regardless of change — on three conditions: the health
+endpoint is unreachable, <code>ambiguous_effect_count</code> is above zero, or the parallel dispatch kill switch is engaged while parallel dispatch is enabled. An engaged switch with parallel dispatch disabled is the expected offline posture: it posts once as a readiness change and is then silent. The ambiguous-effects alarm matters most:
+rollback is refused while that count is non-zero.</p>
+<p><strong>Every watched key is verified against the <code>/health</code> builder in <code>main.py</code>.</strong>
+<code>paid_runs_enabled</code> is top level. Most <code>langgraph_primary</code> keys come from
+<code>primary_default.health()</code> or the disabled-path literals at <code>main.py</code>;
+<code>paid_off_primary_intake_active</code> is set only by <code>primary_default.health()</code> and is
+absent from that disabled-path literal. The kill switch is
+<code>parallel_dispatch.kill_switch_open</code>, from <code>parallel_dispatch_health_readiness()</code>
+— <strong>not</strong> a <code>langgraph_primary</code> key, and its polarity is inverted: <em>open</em> means
+the switch is not engaged, so the alarm fires on <code>false</code>. Its companion <code>parallel_dispatch.enabled</code> comes from the same builder and gates the alarm.</p>
+<p><code>/health</code> returns readiness booleans only, but the whitelist means a future field
+cannot leak into Slack without someone adding it deliberately.</p>
+<h2 id="no-env-in-expressions">No <code>$env</code> in expressions</h2>
+<p><code>docker-compose.yml</code> sets <code>N8N_BLOCK_ENV_ACCESS_IN_NODE: &quot;true&quot;</code>. An expression
+using <code>$env.ANYTHING</code> resolves to an access-denied error, not a value, and a node
+built on one fails at run time rather than at import.</p>
+<p>So the health URL is the literal compose-internal hostname — not a secret; it is
+already in <code>docker-compose.yml</code> — and the Slack channel is a
+<code>REPLACE_WITH_CHANNEL_ID</code> placeholder bound once in the editor, which keeps the
+channel ID out of the repository. If you prefer environment indirection, remove
+that compose setting deliberately and record the decision; do not work around it
+by committing the value.</p>
+<h2 id="repointing-between-profiles">Repointing between profiles</h2>
+<p>To watch a different profile, change the health URL in the editor on that
+deployment's own n8n instance. Each profile has its own n8n container, so the
+literal internal hostname is correct in each.</p>
+<p><strong>One intake surface at a time.</strong> Slack and n8n are single instances. Before a
+second deployment is given new-intake authority, the first one's <code>slackbot</code> and
+<code>n8n</code> must be stopped. Two deployments accepting the same Slack events is the
+dual-writer no-go regardless of their databases.</p>
+<h2 id="importing">Importing</h2>
+<ol>
+<li>Confirm the n8n container shares a network with the orchestrator container.</li>
+<li>Import each workflow file.</li>
+<li><code>Director Intake</code> needs no credential. For <code>Director Status</code>, create the Slack
+API credential and bind it on <code>Post Status</code>, replacing the
+<code>REPLACE_WITH_CREDENTIAL_ID</code> placeholder.</li>
+<li>Open <code>Post Status</code> and replace <code>REPLACE_WITH_CHANNEL_ID</code> with the Director
+channel.</li>
+<li>Activate <code>Director Status</code> first and watch one cycle; it is read-only.</li>
+<li>Activate <code>Director Intake</code> only when the orchestrator is up.</li>
+</ol>
+<h2 id="testing-the-connection">Testing the connection</h2>
+<p>Test in this order. Each step isolates one hop, so a failure names its own cause.</p>
+<p><strong>1. n8n can reach the orchestrator.</strong> From the n8n container:</p>
+<pre><code>docker compose exec n8n sh -lc 'wget -qO- http://orchestrator:8080/health | head -c 200'
+</code></pre>
+<p>A DNS failure here means the containers are not on one network, and nothing
+below can pass.</p>
+<p><strong>2. The orchestrator rejects an unauthenticated intake.</strong> Post to
+<code>/v1/intake</code> directly, with no <code>Authorization</code> header. Expect <strong>401</strong> and
+<code>{&quot;detail&quot;:&quot;Unauthorized&quot;}</code>. This creates nothing, so it is the safe first probe.</p>
+<p><strong>3. The relay surfaces that rejection rather than swallowing it.</strong> Post the same
+unauthenticated request to <code>/webhook/director-intake</code>. A 401 is one of the three
+definite-refusal statuses (with 403 and 422), so expect <strong>502</strong>. <strong>Any 200 here is a
+failure of this check</strong> — it means the execution ended without reaching a
+<code>Respond to Webhook</code> node, which is correct for 5xx, a transport error, or a
+non-401/403/422 4xx such as 409, and wrong for a 401, 403 or 422 the orchestrator
+actually returned. Assert the status code, not the body.</p>
+<p><strong>Confirm you are on the Director instance first.</strong> More than one n8n runs on
+this host. Check <code>environment</code> in the orchestrator's <code>/health</code> before trusting
+any relay measurement: the Director stack reports <code>local</code>, and a different
+<code>environment</code> value means you are measuring another project's relay.</p>
+<p><strong>4. A valid intake returns 202.</strong> Post a body shaped exactly like <code>SlackIntake</code>
+— a <code>source_event_id</code> you have not used before, the configured channel and owner
+IDs, a <code>thread_ts</code>, a short <code>text</code>, <code>received_at</code> in ISO-8601 — with a real
+bearer. Expect <strong>202</strong> and a body containing a <code>DIR-…</code> <code>task_id</code>.</p>
+<p><strong>5. Idempotency.</strong> Re-post the identical body. Expect 202 again and the <strong>same</strong>
+<code>task_id</code>. A second, different ID means deduplication is not working and the
+gateway will double-book every Slack retry.</p>
+<p><strong>6. The extra-field guard.</strong> Add one field the model does not define. Expect the
+relay to return <strong>502</strong>, driven by a 422 from <code>/v1/intake</code>. This is the check
+that catches a workflow that has drifted back into rebuilding the body.</p>
+<p><strong>7. Failure surfaces correctly, never 202. Two fixtures, two outcomes.</strong> These
+are different paths and must be exercised separately.</p>
+<p><em>7a — HTTP error with a status.</em> Drive a fixture that answers <strong>422</strong> or <strong>401</strong>.
+Expect the relay to respond <strong>502</strong> carrying that <code>upstream_status</code>.</p>
+<p><em>7b — transport error with no status.</em> Point the relay at a <strong>closed port</strong>. A
+refused connection carries no status code, so it reaches <code>Ambiguous Delivery - Stop</code> and n8n answers n8n's standard message with a 200 status — <strong>not 502, and not
+necessarily an empty body.</strong> Assert the status only. The gateway rejects the
+non-202 before parsing and posts the reconciliation message. Expecting 502 here
+was wrong and was corrected on 2026-09-10.</p>
+<p><strong>Do not stop the real orchestrator to produce either</strong> — it is a shared service.</p>
+<p><strong>8. End to end through Slack, last.</strong> Post <code>DIRECTOR …</code> in the configured
+channel as the owner and confirm the bot replies <code>&lt;task id&gt; — ACCEPTED</code>. A
+<code>DIRECTOR — BLOCKED</code> reply with a 202 in the n8n execution log means the response
+shape is wrong, not the intake.</p>
+<p>Record the n8n execution IDs and the resulting task IDs. An execution log is
+evidence of relay behaviour only; it is not evidence that any provider ran.</p>
+<h2 id="what-these-workflows-are-not">What these workflows are not</h2>
+<p>They carry requests and report readiness. They grant no authority: they cannot
+approve an assignment, widen access, spend, merge, deploy, or override a stop.
+A status post is coordination evidence, not a gate result, and a 202 from intake
+means the request was accepted for planning — not that any work was done.</p>
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:43 UTC | END]] -->
+<!-- [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

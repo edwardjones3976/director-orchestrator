@@ -22,7 +22,7 @@ display_name: Claude
 authority_granted: "none"
 
 source_of_truth:
-  charter_document: "docs/team-operating-charter.md"
+  charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
   allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
@@ -173,15 +173,15 @@ authority:
 
 platform_limitations:
   - limitation: "Claude Cowork exposes no on-demand inbound API trigger for a real-time Slack loop; the supported programmable bridge is a Claude Code Routine with an API trigger, and Cowork tasks report into Slack rather than acting as a synchronous adapter."
-    source: "docs/provider-setup.md, Important Claude Cowork boundary"
+    source: "docs/provider-setup.html, Important Claude Cowork boundary"
   - limitation: "The Routine trigger returns a session URL; completion arrives through the signed callback or a manual owner report, and callback evidence never substitutes for pre-work evidence or any gate."
-    source: "docs/provider-setup.md; src/director_orchestrator/callbacks.py"
+    source: "docs/provider-setup.html; src/director_orchestrator/callbacks.py"
   - limitation: "Live dispatch requires a dedicated callback bearer secret stored only by the orchestrator and the trusted callback sender."
-    source: "docs/provider-setup.md"
+    source: "docs/provider-setup.html"
   - limitation: "Owner-reported account context is Claude Max 5x. It is a capacity signal for allocation, not an API entitlement, and never proves remaining quota or zero cost."
-    source: "docs/provider-allocation-profiles.md, Capacity, roles, and authority"
+    source: "docs/provider-allocation-profiles.html, Capacity, roles, and authority"
   - limitation: "The native security issuer is dormant: it needs the owner-installed protected runtime, separate broker and worker identities, and a native claude.ai login before it can sign a receipt."
-    source: "docs/native-acceptance-issuers.md"
+    source: "docs/native-acceptance-issuers.html"
   - limitation: "CLAUDE_ACCOUNT_CONTEXT holds the owner-reported account context string surfaced in the provider strategy; it is informational and never an entitlement, quota, or budget."
     source: "src/director_orchestrator/config.py:provider_strategy"
 
@@ -293,13 +293,13 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-- document: docs/team-operating-charter.md
+- document: docs/team-operating-charter.html
   anchor: The policy target is a ChatGPT/Codex Director lane for priorities,
-- document: docs/provider-setup.md
+- document: docs/provider-setup.html
   anchor: The supported programmable bridge here is a **Claude Code Routine** with an API trigger.
-- document: docs/provider-allocation-profiles.md
+- document: docs/provider-allocation-profiles.html
   anchor: The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
-- document: docs/native-acceptance-issuers.md
+- document: docs/native-acceptance-issuers.html
   anchor: Claude owns the security role; Cursor owns independent
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

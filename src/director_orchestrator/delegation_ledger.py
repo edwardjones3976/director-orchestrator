@@ -6,7 +6,7 @@
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 """Phase 2 of human-out-of-the-loop operation: the audit record format.
 
-``docs/human-out-of-the-loop-operation.md`` sequences this capability across six
+``docs/human-out-of-the-loop-operation.html`` sequences this capability across six
 phases. Phase 1 is the grant schema; this is phase 2, the audit ledger and record
 format, and nothing beyond it.
 

@@ -1,0 +1,946 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Human-out-of-the-loop operation · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#purpose">Purpose</a></li><li class="top"><a href="#operating-states">Operating states</a></li><li class="top"><a href="#decision-classes">Decision classes</a></li><li class="sub"><a href="#tier-1---closed-classes-with-explicitly-bounded-authority">Tier 1 - closed classes with explicitly bounded authority</a></li><li class="sub"><a href="#tier-0---never-delegable-under-any-configuration">Tier 0 - never delegable, under any configuration</a></li><li class="top"><a href="#standing-owner-authority-for-pull-request-merge-execution">Standing owner authority for pull-request merge execution</a></li><li class="top"><a href="#the-evidence-bar">The evidence bar</a></li><li class="top"><a href="#why-one-independent-verdict">Why one independent verdict</a></li><li class="top"><a href="#grants">Grants</a></li><li class="top"><a href="#trip-conditions">Trip conditions</a></li><li class="top"><a href="#audit-record">Audit record</a></li><li class="top"><a href="#standing-grant-for-small-read-only-tasks">Standing grant for small read-only tasks</a></li><li class="top"><a href="#relationship-to-the-existing-rules">Relationship to the existing rules</a></li><li class="top"><a href="#how-the-existing-gates-are-satisfied-not-substituted">How the existing gates are satisfied, not substituted</a></li><li class="sub"><a href="#the-independent-exact-sha-review-gate">The independent exact-SHA review gate</a></li><li class="sub"><a href="#rule-3s-no-self-merge-bar">Rule 3&#x27;s no-self-merge bar</a></li><li class="top"><a href="#implementation-phases">Implementation phases</a></li><li class="top"><a href="#the-evaluated-form">The evaluated form</a></li><li class="top"><a href="#provider-activation-evidence-does-not-stop-expiring-at-live_ok">Provider activation evidence does not stop expiring at LIVE_OK</a></li><li class="top"><a href="#known-limitations">Known limitations</a></li></ul></details></nav>
+<main id="content">
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | BEGIN]] -->
+<h1 id="human-out-of-the-loop-operation">Human-out-of-the-loop operation</h1>
+<p><strong>Status:</strong> Documented authority only for deployment-granted classes. Default off. No delegated decision is
+executable until the implementation phases below are separately built, gated,
+and accepted by the owner. The presence of this document grants nothing.
+The separately recorded standing owner merge authority below is the sole
+exception to the per-deployment grant requirement; it does not activate a route.</p>
+<p><strong>Schema authority:</strong> <code>director-delegated-authority/v1</code></p>
+<p><strong>Frozen starting point:</strong> <code>70217f258430843b936df7c13030aff957cfb782</code></p>
+<h2 id="purpose">Purpose</h2>
+<p>The Director stops in <code>OWNER_DECISION_REQUIRED</code> whenever an action touches
+merge, deployment, publication, deletion, purchases, external representation,
+sensitive data, credentials, or expanded access. That is correct as a default
+and stays the default. It also means that when the owner is away, work halts
+even where every deterministic gate has already passed and independent review
+is available.</p>
+<p>Human-out-of-the-loop operation is the bounded, revocable delegation that lets
+an enumerated class of those decisions be resolved without the owner present.</p>
+<p>It is defined by one rule, and everything else in this document follows from it:</p>
+<blockquote>
+<p>Delegation changes <strong>who supplies a verdict</strong>.
+It never changes <strong>whether a gate runs</strong>.</p>
+</blockquote>
+<p>No deterministic gate is removed, relaxed, skipped, or made advisory by any
+grant described here. A delegated decision must clear strictly more evidence
+than an attended one, because the owner's judgment is no longer present to
+catch what the gates do not model.</p>
+<p>The one pre-execution class, <code>execute_small_read_only_task</code>, is stated here as
+an explicit carve-out rather than left to be read as a relaxation. It resolves
+no decision about a candidate, because none exists yet. The attended act it
+replaces is the per-task execution button, which reads no evidence at all; the
+grant replaces that click with the pre-execution bar in
+<a href="#standing-grant-for-small-read-only-tasks">Standing grant for small read-only tasks</a>,
+and every gate the attended task passes afterwards still runs unchanged. That
+is how this class also clears strictly more evidence than the attended act. The
+carve-out is itself a tier-0 change and holds only with the owner's explicit
+sign-off.</p>
+<h2 id="operating-states">Operating states</h2>
+<p>Exactly one state is in force per deployment profile at any time.</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ATTENDED</code></td>
+<td>Default. Every non-merge <code>OWNER_DECISION_REQUIRED</code> waits for the owner. Only the standing owner merge authority below can authorize merge execution after its full evidence bar.</td>
+</tr>
+<tr>
+<td><code>DELEGATED</code></td>
+<td>A live grant may resolve an enumerated tier-1 decision class when the full evidence bar holds, or start the one pre-execution class when its pre-execution bar holds. Everything else still waits.</td>
+</tr>
+<tr>
+<td><code>SUSPENDED</code></td>
+<td>Entered automatically on any trip condition. Holds merge execution too until the owner clears it explicitly.</td>
+</tr>
+</tbody>
+</table>
+<p>A deployment starts in <code>ATTENDED</code> and returns to it whenever configuration is
+absent, invalid, expired, or unreadable. There is no path from <code>SUSPENDED</code> to
+<code>DELEGATED</code> that does not pass through an explicit owner action, except the
+pre-execution class's process-level ledger hold described next, which is not
+recorded as <code>SUSPENDED</code>.</p>
+<p>For the pre-execution class, <code>SUSPENDED</code> is recorded per grant: a durable
+<code>delegation_trip</code> record holds that <code>grant_id</code> in every process until the owner
+writes a new one. An absent, unreadable, or unwritable audit ledger holds the
+process attended without such a record, because the ledger is what failed; a
+restart re-arms the grant only if the ledger then reads, verifies, and writes
+cleanly. Accepting that restart behaviour is part of the owner's sign-off on
+the class.</p>
+<h2 id="decision-classes">Decision classes</h2>
+<h3 id="tier-1---closed-classes-with-explicitly-bounded-authority">Tier 1 - closed classes with explicitly bounded authority</h3>
+<ul>
+<li>Executing an eligible merge of a pull request into a non-protected branch.</li>
+<li>Executing an eligible merge of a pull request into a protected branch.</li>
+<li>Marking a pull request ready for review.</li>
+<li>Posting to the project's own designated Slack channel.</li>
+<li>Executing a small read-only task that <code>policy.small_read_only_eligible()</code> admits.</li>
+</ul>
+<p>Tier 1 is exhaustive and every entry names a specific act. There is no
+residual or catch-all delegable class, and none may be added by describing a
+decision as routine: a category whose membership is a judgement call is not a
+closed enumeration, and it would silently reopen the fail-closed rule below.
+Only the two merge-execution entries use standing owner authority. Every other
+tier-1 entry remains default-off, only while a live grant names it; <code>ATTENDED</code>
+blocks those entries. Standing merge authority cannot mark a draft ready,
+publish, deploy, or supply any other decision.</p>
+<h3 id="tier-0---never-delegable-under-any-configuration">Tier 0 - never delegable, under any configuration</h3>
+<ul>
+<li>Production deployment, activation, or runtime cutover.</li>
+<li>Publication, external representation, or any message to a party outside the
+project's own designated channel.</li>
+<li>Deletion of data, force-push, or history rewrite.</li>
+<li>Purchases, billing changes, or raising a budget ceiling.</li>
+<li>Credential, secret, token, or access-scope changes.</li>
+<li>Editing this document, a grant, an allowlist, or any deterministic gate.</li>
+<li>Anything AGENTS.md rule 10 names that is not explicitly listed in tier 1.</li>
+</ul>
+<p>Tier 0 is enumerated, and the enumeration fails closed: a decision that is not
+plainly a listed tier-1 class is tier 0. A novel decision class is tier 0 until
+the owner adds it deliberately, which is itself a tier-0 act.</p>
+<h2 id="standing-owner-authority-for-pull-request-merge-execution">Standing owner authority for pull-request merge execution</h2>
+<p>Owner law, 2026-09-26 approximately 21:53 UTC, verbatim:</p>
+<blockquote>
+<p>&quot;Any provider that has reviewed the work thoroughly can merge it. The owner/sole-author (other ME), can never merge their own work; only correct work reviewed by the reviewer/ other providers. That should be law in Director-Orchestrator and everywhere it touches.&quot;</p>
+</blockquote>
+<p>This is standing owner authority for pull-request merge execution only, into
+protected and non-protected branches, identified as
+<code>owner-merge-law-2026-09-26</code>. It requires no per-deployment grant and remains in
+force until the owner explicitly revokes it. Suspension holds it; missing,
+ambiguous or unreadable authority evidence also holds execution. Protection
+status alone is not a prohibition and never permits bypassing protections or
+rulesets. Every other tier-0 item, including framework edits, remains unchanged.</p>
+<p>The merging identity must have supplied its own thorough exact-head <code>ACCEPT</code>
+and be neither the producer nor any material contributor, even with no counted
+lines. Complete authenticated provenance, required trusted CI and independent
+security evidence must bind the same head. Repository and path scope, budget,
+attempt and hop bounds, cancellation, and durable pre-execution audit remain
+mandatory. Branch protections and rulesets must be satisfied with no bypass,
+including implicit administrator bypass. The transport uses an expected-head
+guard and revalidates the candidate and all evidence immediately before merging.
+Changed evidence holds; an ambiguous mutation is reserved for reconciliation,
+never automatically replayed.</p>
+<p><code>hotl_execution.MergeExecutionBoundary</code> extends the existing
+<code>MergeEvidenceBundle</code>: a trusted observer authenticates complete source records
+and signs the full observation, including identity bindings, authority status,
+protection/ruleset readback and numeric ledgers. Request callers cannot supply
+passing booleans. Trusted application wiring supplies the observer key and an
+identity-bound transport that cannot bypass protections; absent wiring holds.
+The durable append-only reservation precedes the final revalidation and blocks
+duplicate attempts across processes, crashes and ambiguous outcomes. This phase
+does not provision credentials, activate Oracle, or widen sandbox/project scope.</p>
+<p>This framework PR cannot authorize its own merge. The joint transition decision
+(consult 3, S2) assigns Cursor, after its own thorough review and green CI at the
+exact head, to perform this one merge under the owner law and delegation.</p>
+<h2 id="the-evidence-bar">The evidence bar</h2>
+<p>A tier-1 decision may be resolved without the owner only when <strong>every</strong> item
+below holds for the exact candidate commit. These are conjunctive. There is no
+weighting, no majority, and no discretion.</p>
+<ol>
+<li>Every required CI check is green at the exact candidate head.</li>
+<li>Independent security evidence exists at that same head.</li>
+<li>An independent exact-SHA review returns <code>ACCEPT</code> from a provider that is
+neither the producer nor a material author of the candidate.</li>
+<li>That <code>ACCEPT</code> is the whole verdict requirement. Owner ruling 2026-09-12,
+verbatim: &quot;it's a one-non-author-reviewer project-wide&quot;. A second verdict
+is never required and never substitutes for any other item.</li>
+<li>The author and the reviewer are two distinct identities, and the reviewer
+that accepts is the identity that merges. Owner protocol, 2026-09-12, verbatim: &quot;each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback.&quot;</li>
+<li>The change touches only paths inside the assignment's <code>owned_paths</code> and none
+of its <code>prohibited_paths</code>.</li>
+<li>No tier-0 class is implicated, directly or as a consequence.</li>
+<li>Budget, attempt, and hop ledgers are all within their configured bounds.</li>
+<li>For merge execution, the standing owner merge authority is verified active
+and unsuspended, with repository, branch and assignment scope enforced.
+Every other class requires a grant that is live, unexpired, unrevoked, and
+scoped to this repository, this branch, this decision class, and this assignment.</li>
+<li>The audit record for the decision has been durably written before the
+decision is executed.</li>
+</ol>
+<p>Any element that is missing, stale, ambiguous, unavailable, or unreadable sends
+the decision to <code>OWNER_DECISION_REQUIRED</code>. <strong>Absence of evidence is never
+consent.</strong> A provider that is out of quota, unauthenticated, or silent has not
+approved anything, and its silence may not be counted, inferred, or waited out.</p>
+<p><strong>The pre-execution carve-out.</strong> The one pre-execution class is not resolved
+against this bar at its decision point, because no candidate commit and no
+verdict exist yet, so items 1 to 5 cannot hold there. It is resolved against the
+pre-execution bar in
+<a href="#standing-grant-for-small-read-only-tasks">Standing grant for small read-only tasks</a>,
+which evaluates items 6 to 10 in their pre-execution form and never records
+items 1 to 5 as passing. Items 1 to 5 are not waived: the task's own exact-SHA
+review and CI/security gates must still hold, exactly as for an attended task,
+and the class authorizes no merge, publication, or other effect. This is the
+only pre-execution carve-out. The merge-only authority substitution in item 9
+waives no evidence item.</p>
+<h2 id="why-one-independent-verdict">Why one independent verdict</h2>
+<p>A single agent verdict is a single point of failure, and this repository's own
+record shows it is a fragile one. Historical delegation failures included
+ambiguous results, authentication and usage limits, and CLI permission denials
+misreported as provider outages; the limitations below preserve that correction.
+The owner has ruled that one non-author <code>ACCEPT</code> is the bar, project-wide;
+what this section protects is that the one verdict is genuinely independent.</p>
+<p>The reviewer must be distinct from the producer and every material author.
+A reviewer and a producer that share a backing
+model are not distinct for this purpose, and neither are two runs of the same
+provider. Independence is a property of the failure mode, not of the label.</p>
+<h2 id="grants">Grants</h2>
+<p>This section applies to deployment-granted classes. The two merge-execution
+classes use the standing owner authority above instead of a deployment grant.</p>
+<p>A grant is the exact form the charter's &quot;owner may explicitly authorize a
+designated agent&quot; takes. It is data, written by the owner, and it is bounded on
+every axis:</p>
+<ul>
+<li>exact repository, and the branch pattern it applies to;</li>
+<li>the enumerated tier-1 decision classes it covers, and no others;</li>
+<li>the named providers eligible to supply verdicts;</li>
+<li>a wall-clock expiry;</li>
+<li>a maximum number of exercises before it must be renewed;</li>
+<li>a revocation switch that takes effect before the next decision, not after.</li>
+</ul>
+<p>A grant that is expired, exhausted, revoked, malformed, or silent on the class
+being decided does not apply. Grants do not compose, inherit, or extend by
+analogy: authority for one repository, class, or assignment is never authority
+for another.</p>
+<h2 id="trip-conditions">Trip conditions</h2>
+<p>Any of these moves the deployment to <code>SUSPENDED</code> immediately, before the
+decision in flight completes. For the pre-execution class two are narrower, as
+its carve-out: a failed pre-authorized task is recorded against that <code>grant_id</code>
+at the grant's next exercise attempt and suspends that grant only, and an audit
+ledger that cannot be written holds only the process attended, as described
+under operating states:</p>
+<ul>
+<li>a gate result changes after a verdict was recorded;</li>
+<li>a new commit appears on the candidate, which invalidates every prior review,
+security, CI, and merge evidence item;</li>
+<li>any reviewer returns <code>SERIOUS_SAFETY_STOP</code>;</li>
+<li>the owner reverses two consecutive delegated decisions;</li>
+<li>a provider authentication or quota failure occurs mid-decision;</li>
+<li>a tier-0 class is implicated at any point;</li>
+<li>a task a pre-execution grant started ends other than <code>SUCCEEDED</code>, is left
+with an ambiguous slot, or cannot be read (recorded against that grant);</li>
+<li>the audit ledger cannot be written.</li>
+</ul>
+<p>The last one is not a formality. A decision that cannot be recorded cannot be
+reviewed afterward, and an unreviewable autonomous action is exactly what this
+framework exists to prevent.</p>
+<h2 id="audit-record">Audit record</h2>
+<p>Every delegated decision, and every refusal to make one, writes an immutable
+record containing the grant identifier (or standing merge authority identifier), the decision class, the exact candidate
+commit, each verdict with its provider and run identifier, every gate result
+consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
+before the action, not after it. For the pre-execution class, a refusal made
+before the ledger is consulted (no grant for the class, delegation off or
+suspended, a workload hold, a deployment that cannot execute, or a ledger that
+is absent or latched) and an exercise lost to a concurrent writer write no
+record; nothing runs without the button in either case. Neither does an
+exercise whose audit history is too long or too slow to read within its bound
+(more than 10,000 records, a history of exactly 10,000 being read whole, or
+five seconds, the deadline enforced inside the ledger's
+own verifying scan, and in the verification every audit append repeats; the
+wait for the store's lock and SQLite's busy wait spend the same deadline, which
+is checked again before the audit anchor advances, and every anchor read and
+advance is given only what is left of it; an anchor read that runs out refuses
+cleanly, while an advance that runs out is an anchor failure, since the
+checkpoint may have moved): it keeps the button.</p>
+<h2 id="standing-grant-for-small-read-only-tasks">Standing grant for small read-only tasks</h2>
+<p>The tier-1 class <code>execute_small_read_only_task</code> lets a live grant start one
+small read-only task without the per-task execution button. It is the only
+pre-execution class: it authorizes starting that task and nothing else, never a
+merge, a publication, or any other effect.</p>
+<p><strong>Eligibility.</strong> <code>policy.small_read_only_eligible()</code> alone decides membership,
+deterministically, from the owner's intake text, the frozen plan, and
+configuration. A task is eligible only when no deterministic approval reason
+matches the intake or any generated plan string; the plan is low risk and
+carries no approval requirement, approval reason, or debate; the intake carries
+no public research query or required capability; the plan has exactly one
+producer and one independent reviewer from another provider family; neither
+assignment requires approval, opens a draft pull request, carries a public
+query or a closed directive, or runs on the Perplexity, Firecrawl, or Gemini
+lane; both lanes' configured transports show the model only the compact
+provider view described below; the producer is not implementation work; the
+intake and the producer's task are each a read-shaped request, meaning every
+sentence opens with a read verb (summarize, explain, describe, review, list,
+compare, answer, analyse), every clause of it does too (a sentence is split at
+any character that is not part of a word or a path, such as a comma, colon,
+dash, bracket, quote or bullet, and at joining words such as and, then, so,
+but or or;
+a clause after a split may otherwise be only paths or identifiers, the second
+object of &quot;compare A and B&quot;), every &quot;to ...&quot; and &quot;...ing it&quot; names a read
+action (every term check below also reads identifiers split into words, so
+<code>openai_api_key</code>, <code>db-password</code>, <code>auth.token</code> or <code>authToken</code> count as their
+words), no raw identifier of the kinds listed under Bounded provider traffic
+appears, no verb that asks for a change (improve, revise, make, fix, update,
+rename, format, set, open, file, post and a long list more, in any
+inflection) appears anywhere in it, it names at least one path (a
+repository-wide request would reach the model with an empty inventory), and
+no shell syntax, dotfile, home, parent or
+absolute path, secret-like word or variable name, write-shaped word, or outward
+or mutating verb appears (the gateway's <code>DIRECTOR</code> command word and a leading
+<code>Project:</code> value are not sentences, while every <code>Outcome:</code> and <code>Constraints:</code>
+sentence is); nothing in the request names personal or sensitive data: the
+people a record describes (customers, clients, employees, users, patients and
+the like), an identifying attribute (a name, address, e-mail, phone, birth
+date, ID, or health, financial or genealogy data), or a tabular or database
+file or data-like directory, and wording that plainly names personal
+identifiers is also a deterministic <code>sensitive data</code> approval reason for every
+task; and the frozen plan total is at most $1 and within the task
+budget, with the reviewer inside its own cap, and the plan's frozen hop and
+revision limits are within the current <code>MAX_AGENT_HOPS</code> and <code>MAX_REVISIONS</code>.
+Model or plan output can only remove eligibility. Every plan, assignment, and
+intake model forbids extra fields, so nothing a model writes can assert it.
+&quot;Read-only&quot; means the packet grants only <code>READ_REPOSITORY</code>: no test
+execution, no write tool and no effect. The router grants the class only that
+tool, and a class packet carrying any other tool or effect is refused at
+dispatch (<code>small_task_packet_not_read_only</code>). It does not
+mean a sandboxed process: native and bridge CLIs still run in a host
+workspace. Membership is a lexical filter over the owner's words, not a
+semantic guarantee: a keyword scan cannot show that no tier-0 class is
+implicated, so evidence-bar item 7 is not evaluated before execution, and
+whether this filter is enough to replace the per-task button is part of the
+owner's sign-off on the class.</p>
+<p><strong>Exercise.</strong> The execution button is skipped only when all of these hold at
+intake: <code>DELEGATION_ENABLED</code> is true and <code>DELEGATION_SUSPENDED</code> is false; a live
+grant, unexpired and unrevoked, names this class, the task's repository as a
+lowercase <code>owner/name</code>, its branch, and both of its provider lanes; the grant is
+not exhausted; no <code>delegation_trip</code> record exists for its <code>grant_id</code> and no task
+it pre-authorized must write one (see Trips); both lanes send the compact view;
+and the intake is a Slack-gateway-attested message from the configured owner in the
+configured channel that is not a replay. Only the request that created the
+intake claim evaluates a grant; a retry that finds the claim before its task
+exists keeps the button. A bearer intake never evaluates a
+grant. Any other case stops for the button exactly as before.</p>
+<p><strong>What is evaluated, and when.</strong> At the decision point no candidate change and
+no verdict exists yet, so evidence-bar items 1-5 cannot hold. The decision is
+made by <code>hotl_execution.decide_pre_execution</code>, never by <code>H(a)</code>, over its own
+closed terms: <code>authorization</code> (item 9, including an attested owner intake and
+an untripped, unexhausted grant), <code>eligibility</code> (the lexical membership test
+above; not item 7, which is not evaluated before execution), <code>bounds</code> (item 8),
+<code>verification</code> (the exact starting commit and snapshot digest),
+<code>lane_independence</code> (two distinct lanes from different provider families),
+<code>safe_stopping</code>, <code>owned_paths_declared</code> (item 6 before any change), and <code>audit</code>
+(item 10). <code>H(a)</code> holds this class, and no record uses the <code>gates</code> or
+<code>independence</code> names for it, so nothing ever records items 1-5 as passing.
+Items 1-5 are carried by the task's own unchanged graph
+gates, <code>exact_sha_review</code> and <code>ci_security_completion</code>, which this class
+never skips or relaxes.</p>
+<p><strong>Audit.</strong> A <code>PRE_AUTHORIZED</code> record is written before execution. It names the
+grant, carries its snapshot and the exact starting commit, lists every
+evaluated pre-execution term as <code>PASS</code>, and holds no verdict. A refusal writes a
+<code>REFUSED</code> record naming the failed terms; a task outside the class is refused on
+<code>eligibility</code> alone, without reading history, and claims no other term, and an
+eligible intake that is not an attested owner message, or that uses a lane the
+grant does not name, is refused on <code>authorization</code> alone, also without reading
+history. The refusals that write no record are listed under Audit record. The
+record that spends an exercise is appended only if the ledger still holds the
+history it was counted from, so concurrent writers cannot overspend a grant.
+<code>PRE_AUTHORIZED</code> is valid only for this class, and this class can never record
+<code>DELEGATED</code> or <code>WOULD_DELEGATE</code>.</p>
+<p><strong>Trips.</strong> Trips are derived from durable state at every exercise, not from the
+path a task happened to finish on. Before a grant is exercised again, every task
+it pre-authorized is read: one that ended other than <code>SUCCEEDED</code>, one whose
+parallel aggregate ended failed before the graph classified it, one left with
+an ambiguous slot, or one that cannot be read writes a <code>delegation_trip</code> record,
+which suspends that grant. That covers a task settled through a provider
+callback and one whose process stopped after its terminal was persisted. A task
+whose intake failed after its <code>PRE_AUTHORIZED</code> record never started; it spends
+an exercise and trips nothing. Nor does a task that stopped for the owner
+having sent no provider request at all (a proven no-run): every assignment is
+held for the owner or blocked behind one, none succeeded, failed or is
+ambiguous, and every admitted attempt of every assignment was settled
+<code>FAILED</code> with reason <code>provider_refused_before_io</code>. A task in which any provider
+ran, such as a succeeded producer whose reviewer was then refused, is an
+incomplete task and trips. A small task's attempt is
+settled that way when a hold is raised after admission but before the
+transport is called (a lapsed grant, a stale bridge attestation, a cancelled
+wave, a changed selection or enrollment), when the host returns its signed
+attestation refusal, or when the transport cannot build the view (a named
+file that cannot be read before admission is an owner hold with no attempt at
+all); the reason
+is not transient, so it authorizes no retry and the ordinal cannot be replayed.
+A hold raised inside the transport, an attempt left <code>STARTED</code>, a transient
+failure, or any provider outcome is not proof, and trips as before. A task
+whose first intake recorded <code>PRE_AUTHORIZED</code> but stopped before creating it,
+and which a replay then created attended, never ran under the grant: before
+the attended task is created, an append-only <code>REFUSED</code> record with the gate
+<code>pre_authorization_superseded</code> retires that authorization, so neither the
+prior-task scan nor the terminal observer counts the task and no dispatch
+accepts it; its exercise stays spent. The trip is also recorded as soon as a
+pre-authorized task's failed terminal is persisted, without waiting for another
+intake. The coordinator skips that observer for a task whose graph kept the
+button, and gives it one absolute deadline (at most five seconds, never past
+its own) for its aggregate read, history read and append together. That write
+is best effort: a trip it could not record in time is still derived from the
+durable failed terminal at the next exercise and at every dispatch recheck,
+which stays the authority. An absent, unreadable, or unwritable audit ledger
+holds the process attended, as described under operating states. Clearing a
+trip takes an explicit owner action, a new grant_id.</p>
+<p><strong>Bounded provider traffic.</strong> Providers on the native CLI work-packet lanes,
+the OpenAI Responses lane, and the Claude and Grok host-bridge lanes receive a
+compact view of the work packet: its commit, digest, and file count, plus only
+the snapshot entries under owned paths or named in the objective; an
+attended assignment that names no path keeps the first 64 entries outside
+prohibited paths, as the full packet gave it. The view is
+defined by <code>docs/schemas/director-compact-work-view-v1.schema.json</code>, and every
+view is validated against it before any transport sends it. For a small
+read-only task the view also carries the text of every path the request names
+(a path-shaped token, a conventional extensionless file such as <code>Makefile</code> or
+<code>Dockerfile</code>, or any token that is exactly a path in the snapshot, each of which
+must resolve to a snapshot entry). Every path match in this class, named,
+owned and prohibited alike, uses one normalizer: the workload policy's
+canonical repository-relative form (backslashes as separators, <code>./</code> segments
+and trailing slashes dropped) compared case-insensitively, since the bridge
+runs on Windows. A prohibited <code>Vendor</code> excludes <code>vendor/license.md</code>; a path or
+root that is not unambiguously repository-relative (absolute, a drive, <code>..</code>, a
+glob, a trailing dot) counts as prohibited and owns nothing; a name matching
+two snapshot entries that differ only in case keeps the task out. The text is
+read from the git blob its snapshot binds at the packet's commit (never a
+working tree; the blob's size is checked before it is read, and the read is
+streamed and stops at the cap) and bound by that blob hash, so a tool-less lane such as OpenAI
+Responses can read them; the reviewer's objective names the same paths, so
+both models see the same text. The OpenAI Responses lane may produce a small
+task but never review one: it reports every acceptance check NOT_RUN, which a
+review can never pass. With native lanes excluded and the Claude bridge lane
+not attestable, the one pair that could complete a small task is an OpenAI
+Responses producer with an attested Grok bridge reviewer, whose result must
+carry structured acceptance evidence with every check PASS; readiness reports
+armed only when the deployment has one starting ref (its project pin, or the
+sole <code>ALLOWED_STARTING_REFS</code> entry, from the same helper <code>preview_plan</code> uses
+for every task's ref and branch; several refs and no pin arm nothing and
+pre-authorize nothing), when such a pair exists and, by the same budget and token predicate
+eligibility applies, could be eligible: the costs the deployment's plan
+builder would freeze for that pair (each lane's configured attempt budget
+times three when live, so the default equal split of a $2 task budget never
+qualifies) are within $1 and the task budget, the reviewer's within its cap,
+and <code>SMALL_TASK_REVIEW_MAX_TOKENS</code> is at least 1. A review accepts only when its result
+disposes of exactly the review packet's <code>acceptance_checks</code>: each required
+check once, none missing, no extra and no duplicate, all PASS, and no risk,
+blocker or requested decision. Any other result is a rejection.</p>
+<p><strong>Post-hoc reviewer cap.</strong> Owner ruling, 2026-09-24: &quot;Accept post-hoc cap&quot;.
+The attested Grok host-bridge reviewer is admitted even though the Grok CLI
+cannot enforce a token or dollar cap before launch. The reviewer's dollar and
+token cap is checked after the call: the bridge result's reported usage is
+compared with the attempt's limits as soon as it returns, an overage fails the
+attempt and so the task, and that failure suspends the grant through the
+ordinary trip; a result that reports no usage fails as
+<code>small_task_usage_unmeasured</code>. In practice the spend is bounded by the attested
+configuration: one turn, no tools, read-only, and a bounded compact input. Each file is at most 4 KB, the total at most
+8 KB, and at most eight files. A named path missing from the snapshot,
+prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
+credential approval gate or the request text's personal-data exclusion (as
+written or with identifiers split into words), holding a secret-shaped value,
+or holding a credential-bearing value (a vendor-prefixed token: any prefix in
+the one <code>VENDOR_TOKEN_PREFIXES</code> table the public-research query block shares,
+modelled on GitHub secret scanning and gitleaks (OpenAI, Anthropic, xAI,
+GitHub, GitLab, npm, PyPI, Hugging Face, Slack, Shopify, DigitalOcean,
+SendGrid, Stripe, Square, Meta, Google, Linear, Notion, Databricks,
+Atlassian, AWS), followed by 8 or more token characters that are not
+lower-case words joined by separators; a generic prefixed token, 2-10 letters
+and a separator before 16 or more token characters, when the prefix ends in
+<code>pat</code>, <code>key</code>, <code>token</code>, <code>secret</code> or <code>api</code> (or is <code>sk</code>) or the suffix holds a
+12-character segment mixing cases and digits; URI user information, an Authorization
+or Bearer value, a JWT, an AWS access key, a connection-string password, a
+Slack, Discord or Office webhook URL, a URL whose query carries a <code>token</code>,
+<code>key</code>, <code>sig</code>, <code>signature</code>, <code>access_token</code>, <code>api_key</code> or <code>secret</code> parameter in
+any case, or a high-entropy value assigned in an env or config line), or
+holding an opaque high-entropy token of any format (the backstop: a run of 24
+or more token characters, split at <code>/</code>, <code>=</code> and <code>_</code>, with a segment of 12 or
+more that mixes lower case, upper case and digits, has no six-digit run, is
+not mostly lower-case words and carries at least 3.0 bits a character;
+lower-case hex digests and UUIDs never match, and it passes every tracked
+doc, prompt and source file of this repository), or holding a raw
+identifier with no label (an e-mail address, social security
+number, card, IBAN or routing number that passes its checksum, street
+address, a date next to a birth label, or a passport-like identifier; any
+token the standard library parses as an IP address, compressed IPv6 forms
+and zones included; and any phone-like run of 9 to 15 digits in groups
+joined by single spaces, dots, dashes or parentheses, with an optional
+leading &quot;+&quot;, in any country's format, once ISO dates and times, dotted
+versions, UUIDs and hex digests are set aside) keeps the task out
+of the class: the grant is refused on <code>eligibility</code> at intake, and a dispatch
+fails with <code>small_task_named_contents_unavailable</code>. Dispatch builds and
+validates the view once, contents required, and keeps it by the packet's
+digest; every transport sends exactly those bytes. A transport that must
+rebuild it and cannot read the files refuses before any provider request, a
+hold that sends nothing and does not trip the grant, never a view carrying
+hashes only. Every blob read spends the caller's deadline: an assignment's
+reads spend its readiness selection's absolute deadline (a small task with no
+selection is held before any read), intake's check one bounded window for all
+files, and a read that reaches the deadline ends its process within what is
+left, never a fresh cleanup window. The cursor,
+github-copilot, native Codex, and Antigravity host-bridge lanes still post the
+full packet or a closed directive, so a task using any of them is outside the
+class and keeps the button. Every native CLI lane (Claude, Grok, Cursor, GitHub
+Copilot) is outside the class as well although it sends the compact view, by
+the owner's ruling of 2026-09-24 (&quot;Exclude native lanes&quot;): a native CLI runs in
+the host workspace with its own tools and web access this deployment does not
+control, and native Cursor and GitHub Copilot also never refuse a result whose
+reported usage exceeds the admitted attempt. Native lanes stay available for
+every other task; the small class runs only on the OpenAI Responses and
+host-bridge lanes, and <code>/health</code> counts only those toward readiness.</p>
+<p><strong>Attested bridge lanes.</strong> Owner ruling, 2026-09-24: &quot;Bridge with attested
+sandbox&quot;. A host-bridge lane joins the class only when the bridge's
+HMAC-authenticated challenge reports the exact argv it runs for that lane, the
+Director re-checks that argv against the lane's read-only restriction set in
+<code>bridge_attestation.py</code>, and its digest equals the owner's pin in
+<code>LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON</code>. Every bridge HTTP body,
+the challenge, the dispatch response, its signed refusal and the host's
+request body, is read in small chunks against one absolute deadline, each
+chunk's socket wait clamped to what is left, so a peer that trickles bytes
+cannot keep a read open past it. Name resolution runs in a thread given only
+the time remaining, and each resolved address is connected with its timeout
+clamped to what is left. The client's connect, TLS handshake, status
+line and headers are bounded by the same deadline: a watchdog shuts the
+request's socket down when it arrives, and the resulting failure is the
+deadline, never a success. A small task's dispatch
+re-challenges the bridge before admission, and again immediately before every
+bridge send, each producer retry and reviewer attempt included; if the
+attestation is gone, changed, or cannot be authenticated, nothing is sent
+(<code>small_task_bridge_attestation_stale</code>). The signed dispatch request itself
+carries the pinned argv digest, and the bridge compares it, in constant time,
+with the digest of the argv it is about to run, immediately before starting it;
+a mismatch runs nothing and returns a signed refusal the Director also treats as
+<code>small_task_bridge_attestation_stale</code>. The bridge settles that attempt's claim
+as <code>REFUSED</code>, never <code>AMBIGUOUS</code>, and a replay of the same request returns the
+same signed refusal without running anything, so recovery treats it as a
+no-run refusal. The one value screen (<code>holds_sensitive_value</code>: identifiers,
+credentials, opaque tokens) applies alike to the owner's request text and to
+every file shown. Eligibility also screens every assignment's task and
+acceptance checks, and the one function that builds a small task's view
+(the prepared view and every transport rebuild) screens every string the
+view carries besides the files' own text: objective, acceptance checks,
+constraints, paths and identifiers, and for a reviewer the producer's result
+and summary embedded in its constraints. A view that fails is never sent:
+at dispatch it fails as <code>small_task_view_sensitive</code>, and a producer result
+that fails when its reviewer view is prepared fails as
+<code>small_task_producer_result_sensitive</code> before it is recorded. Owner ruling
+&quot;keep tripping&quot;: both are class-condition refusals and trip the grant, the
+second after a provider ran; a false positive on a producer's wording
+therefore trips and returns the task to the owner, which is the safe
+direction, where forwarding it would not be. Every identifier detector reads
+the original text; an exempt token (a valid ISO date and time, a UUID, a
+full 40- or 64-character digest, lower-case hex with three or more letters,
+or a dotted version with fewer than 9 digits) only discards a hit it wholly
+contains, and any overlap resolves toward the protected format. A value in
+the passport shape (one or two letters and 6 to 8 digits) is a hit even when
+it is a short SHA; a group inside a UUID is not. Usage for every token and
+dollar cap comes from the provider's native envelope only, never from a
+&quot;usage&quot; the model writes into its own output; without native usage a result
+fails as <code>small_task_usage_unmeasured</code>. Paths are validated as written before
+they are canonicalized: surrounding whitespace, or a component that starts
+with a space or ends with a dot or a space, has no path key. A no-run the Director cannot record (the write fails twice
+within the dispatch deadline) is logged and leaves the attempt <code>STARTED</code>, so
+the task trips the grant: by the owner's ruling, missing evidence that
+nothing ran is not proof of it. Every transport builds the bytes it sends
+first (the view prepared for that packet digest, or a rebuild on a cache miss
+that may read files), then runs its final authority recheck, then sends, so
+nothing slow runs between the recheck and the request. A replay of any claimed attempt must carry the attested argv
+digest and attempt limits it was claimed under: otherwise a <code>SUCCEEDED</code>
+attempt's cached result is never returned (the replay is rejected as a binding
+conflict, which the Director treats as ambiguous, since that command did run),
+a <code>REFUSED</code> one is refused again, and an <code>AMBIGUOUS</code> one stays ambiguous. The same signed request carries the
+attempt's dollar budget and token limit; the bridge passes them to the host
+command as <code>DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD</code> and
+<code>DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT</code> and records them with the attempt, and
+refuses a small task's request that lacks them. The lane's attestation reports
+whether its command enforces them before inference (today only
+<code>scripts/xai-responses-command.py</code> does; the Grok CLI does not), and by the
+ruling above the Director admits an attested lane either way. The restriction sets use only flags this repository
+already passes to each CLI. Grok needs plan permission mode, <code>--max-turns 1</code>,
+<code>--disable-web-search</code>, <code>--no-subagents</code>, the canonical <code>--disallowed-tools</code>
+list and <code>--deny</code> for Bash, Edit, Write and MCPTool. Claude needs plan
+permission mode, an empty <code>--tools</code> value, <code>--strict-mcp-config</code> with an empty
+MCP configuration, and <code>--safe-mode</code>; the bridge refuses empty argv items, so
+the Claude bridge lane cannot currently be attested. An argv that carries the
+whole set is still refused if it also carries any argument in
+<code>FORBIDDEN_ARGS</code>, alone or as <code>--flag=value</code> and in any letter case:
+<code>--yolo</code>, <code>--dangerously-skip-permissions</code>,
+<code>--allow-dangerously-skip-permissions</code>, <code>--allowedTools</code>/<code>--allowed-tools</code>,
+<code>--add-dir</code>, <code>--enable-web-search</code>, <code>--resume</code>, <code>--continue</code>, <code>--api-key</code>,
+<code>--base-url</code>, <code>--api</code>, <code>--json-schema</code>, or the <code>acp</code> and <code>exec</code> subcommands.
+Any permission mode other than plan, such as <code>bypassPermissions</code> or
+<code>acceptEdits</code>, already fails the set. This attests the CLI's
+configured command line, not an operating-system sandbox: the CLI still runs as
+a host process in the bridge workspace, and the restrictions are the CLI's own
+flags. The argv is also bound into each lane's configuration digest, which the
+bridge's <code>/v1/provider/configuration-digest</code> endpoint reports with the per-lane
+verdicts. The Director keeps the full packet and rebinds
+every result to it by digest. The compact view a small task's reviewer is sent
+is at most 16 KB, measured on the exact canonical bytes of the view prepared
+for that packet (its files' text required), never on a view whose contents
+were dropped; its transport's fixed instructions are extra. The reviewer is
+also capped by <code>SMALL_TASK_REVIEW_MAX_USD</code> (default 0.50) and
+<code>SMALL_TASK_REVIEW_MAX_TOKENS</code> (default 40,000), one allowance for the whole
+review: only a transport failure is ever retried and its usage is unmeasured,
+so a small task's reviewer is never retried. Every producer and reviewer result
+of a small task must report complete usage, integer token counts and a cost;
+the OpenAI Responses lane, which refuses any reply over its token allowance
+before returning it and is priced by its meter, reports tokens only. A result
+without that usage fails, which trips the grant. The producer's packet states the
+outcome size that fits, and a producer result whose prepared review view would
+exceed 16 KB (or cannot carry its files' text) is refused when it is accepted, before it is recorded and before any reviewer
+work. A result refused there still spent the producer's attempt. A
+pre-authorized task, one whose persisted graph skips the execution button, is
+refused at dispatch unless delegation is still enabled and unsuspended under a
+live grant for the class whose canonical document is the snapshot recorded
+when the task was pre-authorized and which still covers the task's repository,
+branch and both lanes (<code>small_task_pre_authorization_revoked</code>), the verified
+audit chain holds this task's own <code>PRE_AUTHORIZED</code> record under that grant's
+grant_id, carrying every pre-execution term but <code>audit</code> exactly once and each
+<code>PASS</code> (<code>small_task_pre_authorization_unaudited</code>; a record with only some of
+the terms, an extra one or a repeat counts as none; an absent, unreadable or
+replaced ledger has none, and a history past its bound counts as unread),
+no <code>delegation_trip</code> for that grant_id exists anywhere in it and no task that
+grant pre-authorized has failed, stopped ambiguous, or become unreadable
+according to durable task state, whether or not a trip was written yet
+(<code>small_task_pre_authorization_tripped</code>; that scan of prior tasks is bounded
+by one deadline and, when it runs out, refuses as unaudited without tripping),
+the packet being dispatched works from the exact commit recorded as the
+pre-authorization's candidate (<code>small_task_pre_authorization_commit_changed</code>),
+and it still qualifies
+(<code>small_task_pre_authorization_lapsed</code>, for example after a restart under a
+lower reviewer cap, different lanes, or a <code>MAX_AGENT_HOPS</code> or <code>MAX_REVISIONS</code>
+below the plan's frozen hop or revision limit), rather than run without the class's
+bounds; a task whose graph keeps the button is never affected. That failure
+trips the grant, with one exception: when the refusal is about the grant's own
+state (<code>small_task_pre_authorization_revoked</code>,
+<code>small_task_pre_authorization_unaudited</code> or
+<code>small_task_pre_authorization_commit_changed</code>) and the assignment is the first,
+with no predecessor and nothing yet run, it is an owner hold with no
+reservation, so the task stops as a proven no-run. Once a predecessor has run
+the task is incomplete and the refusal fails and trips; the class-condition
+refusals (<code>small_task_pre_authorization_lapsed</code> and the other <code>small_task_*</code>
+checks, <code>live_lane_budget_unauthorized</code>, <code>provider_activation_not_ready</code>)
+always fail and trip. The same check runs again immediately before every provider
+send of a pre-authorized task, each retry included, and inside the transport
+before each provider request it makes (the OpenAI Responses token count and
+its generation alike); a lapse sends nothing. Those rechecks spend what is left
+of the dispatch's shared deadline, never a fresh window, and with nothing left
+refuse before any read; the first check at dispatch, and the bridge
+re-attestation before admission, spend it too. Each check re-reads the clock
+after its history and prior-task scans, so a grant that expires, or a deadline
+that runs out, during them authorizes nothing; and before a send the bridge
+re-attestation runs first, so the grant is the last thing read before I/O. Every identifier, personal-data and credential screen
+ignores letter case except where the format itself is case-sensitive (token
+prefixes such as <code>AKIA</code>, JWTs, upper-case variable names).</p>
+<p><strong>Prerequisites.</strong> The frozen plan total must be at most $1, for example by
+setting <code>LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON</code>; the default task
+budget splits above that. The ledger also needs a durable, separately protected
+audit anchor. With no production anchor, every exercise holds and the button is
+unchanged. Roster selection ranks lanes through the existing
+<code>TRUSTED_PROVIDER_COST_RANKS</code>; a small-task deployment is expected to rank
+grok &lt; openai &lt; claude, e.g. <code>{&quot;grok&quot;:1,&quot;openai&quot;:2,&quot;claude&quot;:3}</code>; this change
+does not set it.</p>
+<p>Adding this class was a tier-0 act; it takes effect only with the owner's
+explicit sign-off on the pull request that adds it.</p>
+<h2 id="relationship-to-the-existing-rules">Relationship to the existing rules</h2>
+<ul>
+<li><strong>AGENTS.md rule 3 is unchanged.</strong> No agent merges its own pull request.
+Delegation never makes a producer its own merger; it supplies a different
+agent, and evidence-bar item 5 enforces the separation.</li>
+<li><strong>AGENTS.md rule 10 is unchanged as the default.</strong> It still stops for every
+tier-0 class, and for every non-merge tier-1 class where no live grant applies.
+The standing owner merge law resolves only the merge-execution owner decision.</li>
+<li><strong>The deterministic gates in <code>policy.py</code> are unchanged and remain
+authoritative.</strong> Model output may add approval requirements and may never
+remove them. That includes output from a delegated reviewer.</li>
+<li><strong>The charter's review-to-merge handoff is unchanged.</strong> Delegation supplies
+the single reviewer identity, who also merges; it does not alter what
+a review must contain or when evidence is invalidated.</li>
+<li><strong>The charter's Director and provider authorship boundary supplies the
+identity terms used here.</strong> &quot;Producer&quot; and &quot;material author&quot; mean whoever
+actually produced or materially authored the candidate. Delegation, routing,
+coordination, QA, review orchestration, relay, merge eligibility evaluation,
+and merge execution create no authorship, so performing them neither makes an
+identity the producer for evidence-bar items 3, 4, and 5 nor makes an actual
+author eligible under them.</li>
+<li><strong>The charter's Director maintenance routing changes nothing here.</strong> It
+sends maintenance to OpenAI Codex, adds no authority, and removes no gate.
+Codex's maintenance edits are assistance, not authorship: they do not make
+OpenAI the candidate's producer or sole author for evidence-bar items 3, 4,
+and 5 (the sole-author rule, PR #284).</li>
+</ul>
+<h2 id="how-the-existing-gates-are-satisfied-not-substituted">How the existing gates are satisfied, not substituted</h2>
+<p>Two objections have to be answered explicitly, because on a fast reading the
+existing rules look like they forbid this framework outright. They do not, and
+the reasons matter more than the conclusion.</p>
+<h3 id="the-independent-exact-sha-review-gate">The independent exact-SHA review gate</h3>
+<p>The charter says owner authorization &quot;never substitutes for applicable
+deterministic approval, exact-SHA review, security, CI, budget, allowlist, or
+rollback gates.&quot; That sentence stays exactly as written, and this framework does
+not weaken it. It governs what an authorization may <em>skip</em>, and the answer is
+nothing.</p>
+<p>It is not in tension with a delegated decision, because the exact-SHA review
+gate has never consumed an owner verdict. The charter's own review-to-merge
+handoff assigns review to &quot;a rotating different-provider review assignment,
+choosing the least-recent eligible non-author,&quot; and that reviewer returns
+<code>ACCEPT</code>, <code>CHANGES_REQUIRED</code>, or <code>SERIOUS_SAFETY_STOP</code>. A named provider's
+exact-SHA <code>ACCEPT</code> is therefore the gate being <strong>satisfied in its ordinary
+form</strong>, not an authorization substituting for it.</p>
+<p>What delegation changes is narrower than it first appears. Previously the gate
+could be satisfied while the <em>merge decision that follows it</em> still waited for
+the owner. Under the verified standing owner merge authority, that following decision may proceed, and only
+then, and only when every other item on the evidence bar also holds. The
+framework requires the same one non-author provider verdict the charter
+requires, so a delegated decision clears the same review bar as an attended
+one, never a lower one.</p>
+<h3 id="rule-3s-no-self-merge-bar">Rule 3's no-self-merge bar</h3>
+<p>AGENTS.md rule 3 forbids an agent from merging its own pull request. That bar
+never lifts, and this framework does not create an exception to it.</p>
+<p>&quot;Your own&quot; is a property of identity, not of species. Two agents are not one
+agent. Evidence-bar item 5 requires the author and the reviewer to be two
+distinct identities, so a delegated merge is
+by construction never a self-merge. An agent that produced or materially
+authored a candidate is permanently ineligible to review or merge it, and no
+grant can make it eligible: delegation names who <em>may</em> act, and never widens
+<em>what</em> an ineligible actor may do.</p>
+<p>This has a consequence the owner should expect rather than be surprised by.
+When only one agent is available, a delegated merge cannot proceed at all,
+because two distinct identities cannot be found. That is the framework
+working, not failing. It is also the present condition of this repository.</p>
+<h2 id="implementation-phases">Implementation phases</h2>
+<p>Each phase is separately built, reviewed, and accepted. No phase begins before
+its predecessor is accepted, and acceptance of one grants nothing to the next.
+Row 4S names its own predecessor below.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Content</th>
+<th>Executes a decision?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>This document. Authority definition only.</td>
+<td>No</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Grant schema, settings, validation, <code>/health</code> readiness booleans, all default off.</td>
+<td>No</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Audit ledger and record format.</td>
+<td>No</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Shadow mode: record <code>would_delegate</code> and <code>would_stop</code> over a bounded set of decisions, changing nothing.</td>
+<td>No</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Enable tier-1 merge only, one repository, owner observing.</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Broaden tier-1 classes only after a clean shadow record and a clean live record.</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>4S</td>
+<td>The pre-execution class <code>execute_small_read_only_task</code> only, one repository, live grant, owner-signed PR.</td>
+<td>Yes</td>
+</tr>
+</tbody>
+</table>
+<p>Row 4S is a separate track, not a step after phase 5. Its predecessor is
+phase 2, and it does not depend on phase 4. For this one class only, it waives
+phase 3's shadow record and phase 5's clean-shadow and clean-live
+preconditions. That waiver is part of the tier-0 act the owner's sign-off on
+its pull request accepts; without that sign-off, row 4S does not exist.</p>
+<h2 id="the-evaluated-form">The evaluated form</h2>
+<p>Phase 0 now has an executable form in <code>src/director_orchestrator/hotl_execution.py</code>,
+described in <a href="hotl-execution-predicate.html"><code>hotl-execution-predicate.md</code></a>. It
+implements the rules above and adds none. The rules above include the
+pre-execution carve-out, so <code>decide_pre_execution</code>, which decides only
+<code>execute_small_read_only_task</code> over its own closed terms, is part of that form
+and not an addition. Where the two disagree, this document wins and the code
+is wrong.</p>
+<p>Every other action, which is candidate-bound, runs without returning to the
+owner only when every term holds:</p>
+<pre><code>H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
+</code></pre>
+<p>authorization, gates, bounds, verification, independence, safe stopping, path
+scope, durable audit. It is a conjunction, not a score; one unmet term is
+decisive.</p>
+<p><code>P</code> and <code>D</code> were absent from this formula while items 6 and 10 of the evidence
+bar above were not. An implementation following the six-letter form returned
+<code>execute</code> for a change reaching a prohibited path with no audit record, and an
+independent review found the omission here rather than only in the code. This
+page is authoritative, so leaving the short form would have recreated the same
+gap in the next implementation to read it.</p>
+<p>Two properties carry the weight, and both are pinned by tests that assert the
+negative:</p>
+<ul>
+<li><strong>The tier check runs before the conjunction, and fails closed.</strong> No
+combination of satisfied terms can carry a tier-0 act. Evaluating the terms
+first would let eight green terms authorise a production deployment.</li>
+<li><strong>A hold names its blocker and is never a permission question.</strong> Missing
+evidence routes to verification; a temporary failure routes to its authorised
+recovery; only a blocker needing authority outside the standing grant reaches
+a person. A system that renames an interruption has not removed one.</li>
+</ul>
+<p>The measure is the autonomous completion rate over a denominator fixed before
+execution, so blocked or failed work cannot leave it by later reclassification.
+An empty population reports no rate rather than a flattering one.</p>
+<h2 id="provider-activation-evidence-does-not-stop-expiring-at-live_ok">Provider activation evidence does not stop expiring at LIVE_OK</h2>
+<p>There is no expiry-window constant. <code>expires_at</code> is supplied per record.</p>
+<p><code>ProviderActivationRegistry._surface_readiness</code> scans <strong>every</strong> record in the
+five-stage chain and reports the surface not ready if any one has expired. Two
+consequences follow, and both differ from the intuitive reading:</p>
+<ul>
+<li>Reaching <code>LIVE_OK</code> does not settle the question. The earliest record,
+<code>INSTALLED</code>, keeps the surface live only while it is unexpired; when it
+lapses, <code>live_ready</code> goes false and live dispatch stops however recent
+<code>LIVE_OK</code> is. The condition is continuing, not a race to activation.</li>
+<li>Letting the prior stage lapse mid-chain does not cost a retry. Advancing then
+raises <em>the prior activation stage expired; use a new binding version</em>, which
+discards the whole chain for that binding.</li>
+</ul>
+<p>So advances belong immediately before activation, and the expiry chosen at
+advance time must cover the lane's intended operating life rather than the gap
+to <code>Activate</code>.</p>
+<h2 id="known-limitations">Known limitations</h2>
+<p>These are stated plainly because a framework that hides them is worse than none.</p>
+<ul>
+<li>An agent verdict is not equivalent to human judgment on novel risk. The
+evidence bar is good at catching what it models and blind to what it does not.</li>
+<li>Providers that share a base model can fail in correlated ways. The non-author
+rule reduces independent error, not common-mode error.</li>
+<li>Reviews read untrusted material. A diff, an issue, or a CI log can carry
+instructions aimed at the reviewer, and a delegated reviewer has no owner
+looking over its shoulder.</li>
+<li>Delegation had not produced a verdict when this was written, and the failures
+were attributed to quota, authentication, or availability. That diagnosis was
+wrong for most of them. Provider CLIs read permissions from a shared settings
+file with no <code>gh</code> rule, and a denied command surfaces as a cancelled session,
+which reads exactly like a broken provider. Measured on 2026-09-08:
+<code>git rev-parse</code> returned <code>end_turn</code>, <code>gh pr view</code> returned <code>cancelled</code>, and
+the same prompt with <code>--allow 'Bash(gh pr view:*)'</code> returned the answer. Four
+dispatches were abandoned on the misreading, and the delegation pool was
+reported to the owner as empty on the strength of it. Cursor's CLI is
+separately blocked by usage quota, which is a real availability failure.
+Phases 3 and 4 still exist before any broadening of the candidate-bound
+classes (row 4S is the stated exception); the reason is caution, not this
+evidence.</li>
+<li>This document was drafted by an agent. An agent writing the rules that govern
+agents is a conflict of interest, and the owner should read it as a proposal
+to be checked rather than as settled policy.</li>
+</ul>
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:33 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:28 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

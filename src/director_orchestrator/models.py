@@ -1132,6 +1132,8 @@ class TaskRecord(BaseModel):
     revision_count: int = 0
     revision_prompt_digests: list[str] = Field(default_factory=list, max_length=20)
     retry_basis_digests: list[str] = Field(default_factory=list, max_length=20)
+    revision_authority_by_effect: dict[str, tuple[str, str]] = Field(default_factory=dict, max_length=20)
+    consumed_packet_results: dict[str, str] = Field(default_factory=dict, max_length=20)
     # A cancellation is retry authority, not transient process state. Persist the
     # authenticated request so recovery cannot silently recreate retry headroom.
     cancellation_requested_at: datetime | None = None

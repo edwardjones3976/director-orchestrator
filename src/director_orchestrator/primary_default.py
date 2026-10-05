@@ -2511,7 +2511,7 @@ class DefaultDryRunServices:
 
 
 # The charter requires this exact label, verbatim, for any test, projection or
-# replay that contacted no provider (docs/team-operating-charter.md).  The
+# replay that contacted no provider (docs/team-operating-charter.html).  The
 # offline dispatcher persists outcomes into the human-visible TaskRecord
 # projection, so the label has to travel with them.
 _SIMULATION_LABEL = "SIMULATION — NO PROVIDER INTERACTION"

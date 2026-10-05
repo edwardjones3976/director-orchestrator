@@ -378,7 +378,7 @@ def execute_shards(shards, dsns, modules, timeout, record, start="tests"):
 def docs_only(paths):
     return bool(paths) and all(
         PurePosixPath(path).name not in {"AGENTS.md", "CLAUDE.md"}
-        and (path.startswith("docs/") or path.endswith(".md"))
+        and (path.startswith("docs/") or path.endswith(".md") or path == "README.html")
         for path in paths
     )
 
