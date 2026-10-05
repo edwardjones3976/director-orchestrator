@@ -107,6 +107,7 @@ for name, attrs in {
     sys.modules.setdefault(name, module)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "eval"))
 import train_adapter  # noqa: E402
 
 
@@ -386,9 +387,46 @@ class TrainAdapterTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 train_adapter.main([
                     "--rows", str(path), "--report", str(Path(tmp, "out.json")),
-                    "--winner", "--base", train_adapter.SMOKE_BASE, "--revision", train_adapter.SMOKE_REVISION,
-                    "--check-only",
+                    "--winner", "--probe", "--base", train_adapter.SMOKE_BASE, "--revision", train_adapter.SMOKE_REVISION,
                 ])
+
+    def test_winner_cli_requires_probe_before_rows_or_training(self):
+        for mode in (["--steps", "20"], ["--epochs", "1"], ["--check-only"]):
+            with self.subTest(mode=mode), mock.patch.object(train_adapter, "load_training_rows") as rows, \
+                 mock.patch.object(train_adapter, "train") as training:
+                with self.assertRaisesRegex(SystemExit, "--winner is only valid together with --probe"):
+                    train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
+                                        "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                                        "--winner", *mode])
+                rows.assert_not_called()
+                training.assert_not_called()
+
+    def test_epoch_cli_requires_explicit_production_pin(self):
+        cases = (
+            [],
+            ["--base", train_adapter.WINNER_BASE],
+            ["--revision", train_adapter.WINNER_REVISION],
+            ["--base", train_adapter.SMOKE_BASE, "--revision", train_adapter.SMOKE_REVISION],
+            ["--base", train_adapter.WINNER_BASE, "--revision", "a" * 40],
+        )
+        for pin in cases:
+            with self.subTest(pin=pin), \
+                 mock.patch.dict(os.environ, {"ADAPTER_BASE": train_adapter.WINNER_BASE,
+                                              "ADAPTER_REVISION": train_adapter.WINNER_REVISION}), \
+                 mock.patch.object(train_adapter, "load_training_rows") as rows:
+                with self.assertRaisesRegex(SystemExit, "epoch mode requires explicit --base"):
+                    train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
+                                        "--epochs", "1", *pin])
+                rows.assert_not_called()
+        with mock.patch.object(train_adapter, "load_training_rows", return_value=slice3_train_rows()), \
+             mock.patch.object(train_adapter, "load_dev_rows", return_value=slice3_dev_rows()), \
+             mock.patch.object(train_adapter, "train", return_value={}) as training, \
+             contextlib.redirect_stdout(io.StringIO()):
+            train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
+                                "--epochs", "1", "--base", train_adapter.WINNER_BASE,
+                                "--revision", train_adapter.WINNER_REVISION])
+            self.assertEqual(training.call_args.args[2:4], (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
+            self.assertEqual(training.call_args.kwargs["epochs"], 1)
 
     def test_wrapper_carries_the_same_winner_pin(self):
         script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
@@ -420,7 +458,7 @@ $ErrorActionPreference = 'Stop'
 $mounts = @('-v', 'dummy:/workspace/hf')
 $name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
 $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
-$Rows = 'accepted.jsonl'; $runId = 'dummy-run'
+$Rows = 'accepted.jsonl'; $runId = 'dummy-run'; $HotRoot = 'C:\\synthetic'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
 """ + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
@@ -468,7 +506,7 @@ $ErrorActionPreference = 'Stop'
 $mounts = @('-v', 'dummy:/workspace/models/m2')
 $name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
 $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20; $Epochs = 4
-$Rows = 'accepted.jsonl'; $runId = 'dummy-run'
+$Rows = 'accepted.jsonl'; $runId = 'dummy-run'; $HotRoot = 'C:\\synthetic'
 $Winner = $false; $Probe = $false; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{}
 $ExpectedDigests = ''
@@ -488,6 +526,7 @@ $TrustedDigestRoot = ''
         self.assertNotIn("--steps", args)
         self.assertNotIn("ADAPTER_STEPS=20", args)
         self.assertEqual(options[options.index("ADAPTER_MODELS_DIR=/workspace/models/m2") - 1], "-e")
+        self.assertIn("ADAPTER_MODELS_HOST_DIR=C:\\synthetic\\models\\m2", options)
         self.assertIn("ADAPTER_BASE=dummy-base", options)
         self.assertIn("HF_HOME=/workspace/hf", options)
         self.assertNotIn("HF_HUB_OFFLINE=1", args)
@@ -514,21 +553,28 @@ $TrustedDigestRoot = ''
             ({"Epochs": "7"}, "-Epochs must be between 1 and 6"),
             ({"Epochs": "4", "Steps": "20"}, "-Epochs and -Steps are mutually exclusive"),
             ({"Epochs": "4", "Probe": "$true"}, "-Epochs is a training mode"),
-            ({"Epochs": "4"}, None),
+            ({"Epochs": "4"}, "requires explicit positive -TimeoutMinutes"),
+            ({"Epochs": "4", "TimeoutMinutes": "1"}, "requires explicit -Base"),
+            ({"Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}, None),
+            ({"Epochs": "4", "TimeoutMinutes": "1", "Base": "'smoke'", "Revision": "$WinnerRevision"}, "requires explicit -Base"),
+            *[({"Epochs": "4", "TimeoutMinutes": value, "Base": "$WinnerBase", "Revision": "$WinnerRevision"},
+               "must be finite and positive") for value in ("0", "-1", "[double]::NaN", "[double]::PositiveInfinity")],
             ({"Winner": "$true", "Probe": "$true"}, None),
         ]
         for overrides, message in cases:
             with self.subTest(overrides=overrides, message=message):
                 bound = "@{ " + "; ".join(
-                    f"{name} = {value}" for name, value in overrides.items() if name in ("Epochs", "Steps")
+                    f"{name} = {value}" for name, value in overrides.items()
+                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes")
                 ) + " }"
                 setup = "\n".join(
                     f"${name} = {value}" for name, value in overrides.items()
                 )
                 command = (
                     "$ErrorActionPreference = 'Stop'\n"
+                    f"$WinnerBase = '{train_adapter.WINNER_BASE}'; $WinnerRevision = '{train_adapter.WINNER_REVISION}'\n"
                     "$Winner = $false; $Fallback = $false; $Probe = $false; "
-                    "$Epochs = 0; $Steps = 20; $PSBoundParameters = @{}\n"
+                    "$Epochs = 0; $Steps = 20; $TimeoutMinutes = 90; $PSBoundParameters = @{}\n"
                     + setup + "\n"
                     + (f"$PSBoundParameters = {bound}\n" if bound != "@{  }" else "")
                     + guards + "\n'GUARDS-PASSED'"
@@ -1421,7 +1467,9 @@ $TrustedDigestRoot = ''
             self.assertIsNone(payload["memory_pass"])
             self.assertIsNone(payload["seconds_per_microstep"])
             self.assertIsNone(payload["peak_reserved_vram_gib"])
-            self.assertEqual(payload["warmup_discarded_microsteps"], 2)
+            self.assertEqual(payload["warmup_discarded_microsteps"], 0)
+            self.assertFalse(payload["probe_executed"])
+            self.assertEqual(payload["warmup_pending_gradients"], "not_run")
 
     def test_probe_mode_and_authoritative_matrix(self):
         def report_for(base: str, revision: str, seq_len: int) -> dict:
@@ -1490,7 +1538,8 @@ $TrustedDigestRoot = ''
         text = script.read_text(encoding="utf-8")
         self.assertIn("-Winner is only valid together with -Probe", text)
         self.assertIn("-Rows <jsonl> -Winner -Probe", text)
-        self.assertIn("-Rows <jsonl> -Epochs 4", text)
+        self.assertIn("-Rows <jsonl> -Epochs <N> -Base 'Qwen/Qwen3-14B'", text)
+        self.assertIn("-TimeoutMinutes <explicit-approved-bound>", text)
         self.assertIn("'-Epochs must be between 1 and 6'", text)
         self.assertIn("'-Epochs and -Steps are mutually exclusive; pass exactly one'", text)
         self.assertIn("ContainsKey('Epochs')", text)
@@ -1559,6 +1608,7 @@ $TrustedDigestRoot = ''
                                 with self.assertRaises(SystemExit) as raised:
                                     train_adapter.train(
                                         [row()],
+                                        [],
                                         train_adapter.SMOKE_BASE,
                                         train_adapter.SMOKE_REVISION,
                                         20,
@@ -1569,139 +1619,196 @@ $TrustedDigestRoot = ''
             trainer_mock.assert_not_called()
 
     def test_epoch_train_creates_leaves_and_a_truthful_report(self):
-        class FakeModel:
-            def __init__(self):
-                self.config = types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION)
-                self.saves = 0
-
-            def save_pretrained(self, directory):
-                # PEFT-style adapter save: mandatory files plus an optional README.
-                Path(directory, "adapter_config.json").write_text('{"r": 16}', encoding="utf-8")
-                Path(directory, "adapter_model.safetensors").write_bytes(b"adapter weights")
-                Path(directory, "README.md").write_text("adapter", encoding="utf-8")
-                self.saves += 1
-
-        class FakeTrainer:
-            seen_args = None
-
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-                FakeTrainer.seen_args = kwargs["args"].__dict__
-                self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
-
-            def train(self):
-                callback = self.kwargs["callbacks"][0]
-                for epoch in range(1, self.kwargs["args"].num_train_epochs + 1):
-                    self.state.epoch = float(epoch)
-                    self.state.global_step = epoch * 8
-                    callback.on_epoch_end(None, self.state, None)
-                return types.SimpleNamespace(training_loss=1.25)
-
-        fake_model = FakeModel()
-        fake_tokenizer = mock.MagicMock()
-        fake_tokenizer.apply_chat_template = mock.MagicMock(
-            side_effect=lambda *args, **kwargs: [1, 2, 3, 4] if kwargs.get("add_generation_prompt") else [1, 2, 3, 4, 5, 6])
-        fake_flm = mock.MagicMock()
-        fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
-        fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
-        cuda = mock.MagicMock()
-        cuda.max_memory_reserved = mock.MagicMock(return_value=8.0 * 2**30)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            report_path = root / "reports" / "m2-run.json"
-            with mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}):
-                with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
-                    with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
-                        with mock.patch.object(train_adapter, "Dataset", mock.MagicMock()):
-                            with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
-                                with mock.patch.object(train_adapter, "SFTConfig", lambda **kwargs: types.SimpleNamespace(**kwargs)):
-                                    with mock.patch.object(train_adapter, "SFTTrainer", FakeTrainer):
-                                        report = train_adapter.train(
-                                            [row()],
-                                            train_adapter.SMOKE_BASE,
-                                            train_adapter.SMOKE_REVISION,
-                                            None,
-                                            report_path,
-                                            winner=False,
-                                            epochs=3,
-                                        )
-            run_dir = root / "models" / "m2-run"
-            self.assertEqual(report["completed_epochs"], 3)
+            report = self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=3)
             self.assertEqual(report["completed_epoch_ids"], [1, 2, 3])
-            self.assertEqual(report["trainer_epoch"], 3.0)
-            self.assertEqual(report["export_ready"], True)
-            self.assertEqual(report["output_dir"], str(run_dir))
-            self.assertEqual(FakeTrainer.seen_args["num_train_epochs"], 3)
-            self.assertEqual(FakeTrainer.seen_args["max_steps"], -1)
-            self.assertEqual(FakeTrainer.seen_args["save_strategy"], "epoch")
-            self.assertEqual([entry["epoch"] for entry in report["checkpoints"]], [1, 2, 3])
+            self.assertTrue(report["operational_completion"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
+            self.assertIsNone(report["final_adapter"])
+            self.assertEqual(report["selected_adapter"]["dir"], str(root / "models" / "maintenance" / "epoch-01"))
+            self.assertEqual(report["dev_selection_status"], "selected_on_frozen_dev")
             for entry in report["checkpoints"]:
-                leaf = Path(entry["dir"])
-                self.assertEqual(leaf.name, f"epoch-{entry['epoch']:02d}")
-                self.assertEqual(entry["global_step"], entry["epoch"] * 8)
                 self.assertRegex(entry["manifest_sha256"], r"^[0-9a-f]{64}$")
-                self.assertEqual(
-                    sorted(path.name for path in leaf.iterdir()),
-                    ["README.md", "adapter-hashes.json", "adapter_config.json", "adapter_model.safetensors"],
-                )
-                self.assertEqual(entry["files"], ["README.md", "adapter_config.json", "adapter_model.safetensors"])
-                manifest = json.loads((leaf / "adapter-hashes.json").read_text(encoding="utf-8"))
-                self.assertEqual(set(manifest["files"]), set(entry["files"]))
-                self._assert_exporter_adapter_hashes(leaf)
-            final = report["final_adapter"]
-            self.assertEqual(final["dir"], str(run_dir / "epoch-03"))
-            self.assertEqual(final["manifest_sha256"], report["checkpoints"][-1]["manifest_sha256"])
-            self.assertFalse((run_dir / "epoch-03" / "adapter_model.safetensors").samefile(run_dir / "epoch-01" / "adapter_model.safetensors"))
+                self._assert_exporter_adapter_hashes(Path(entry["dir"]))
+            self.assertEqual(report["dev_cadence"]["evaluations"][0]["kind"], "midpoint")
+            self.assertEqual([e["kind"] for e in report["dev_cadence"]["evaluations"]].count("epoch_end"), 3)
 
-    def test_epoch_callback_supports_handler_lifecycle_and_preserves_control(self):
-        model = mock.Mock()
-        checkpoints = []
-        callback = train_adapter.EpochLeafCallback(model, Path("unused"), checkpoints)
-        self.assertIsInstance(callback, train_adapter.TrainerCallback)
-        handler = OfflineCallbackHandler([callback], model)
-        state = types.SimpleNamespace(epoch=1.0, global_step=8)
-        control = types.SimpleNamespace(should_training_stop=False)
-        entry = {"epoch": 1, "global_step": 8, "manifest_sha256": "a" * 64}
-        with mock.patch.object(train_adapter, "write_adapter_leaf", return_value=Path("epoch-01")) as save, \
-             mock.patch.object(train_adapter, "leaf_report_entry", return_value=entry):
-            for event in ("on_init_end", "on_train_begin", "on_epoch_begin", "on_step_begin",
-                          "on_pre_optimizer_step", "on_optimizer_step", "on_substep_end",
-                          "on_step_end", "on_log", "on_evaluate", "on_predict",
-                          "on_prediction_step", "on_epoch_end", "on_save", "on_train_end"):
-                self.assertIs(handler.call_event(event, None, state, control), control)
-        save.assert_called_once()
-        self.assertEqual(checkpoints, [entry])
+    def test_epoch_small_cohorts_refused_before_seed_cuda_model_or_trainer(self):
+        self.assertEqual(train_adapter.TRAIN_GRAD_ACCUM, 8)
+        for count in range(9):
+            with self.subTest(rows=count), tempfile.TemporaryDirectory() as tmp, \
+                 mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(Path(tmp) / "models")}), \
+                 mock.patch.object(train_adapter, "set_seed") as seed, \
+                 mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda, \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                 mock.patch.object(train_adapter, "SFTTrainer") as trainer, \
+                 mock.patch.object(train_adapter, "digest_verification_before_load") as digests:
+                path = Path(tmp) / "report.json"
+                with self.assertRaisesRegex(ValueError, "interior first-epoch update"):
+                    train_adapter.train(slice3_train_rows(count), slice3_dev_rows(),
+                        train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, None,
+                        path, winner=False, epochs=1)
+                seed.assert_not_called()
+                self.assertEqual(cuda.mock_calls, [])
+                self.assertEqual(model.mock_calls, [])
+                trainer.assert_not_called()
+                digests.assert_not_called()
+                report = json.loads(path.read_bytes())
+                self.assertEqual(report["rows"], count)
+                self.assertEqual(report["state"], "failed")
+                self.assertIsNone(report["peak_reserved_vram_gib"])
+                self.assertFalse(report["operational_completion"])
+                self.assertFalse(report["qualified"])
+                self.assertFalse(report["export_ready"])
+                self.assertIsNone(report["selected_adapter"])
+
+    def test_epoch_nine_row_boundary_has_interior_optimizer_update(self):
+        class NineRowTrainer(Slice3CompleteTrainer):
+            def train(self):
+                self.state.epoch, self.state.global_step = 1.0, 2
+                self.callback.on_epoch_end(None, self.state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        step_end = train_adapter.DevEvaluationCallback.on_step_end
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter.DevEvaluationCallback, "on_step_end",
+                               autospec=True, side_effect=step_end) as midpoint:
+            report = self._maintenance_epoch_run(Path(tmp), NineRowTrainer, epochs=1, row_count=9)
+            self.assertEqual(midpoint.call_count, 1)
+            progress = midpoint.call_args.args[2]
+            self.assertEqual(progress.global_step, 1)
+            self.assertEqual(progress.epoch, 8 / 9)
+            self.assertEqual(report["rows"], 9)
+            self.assertEqual(report["completed_epoch_ids"], [1])
+            self.assertEqual(report["checkpoints"][0]["global_step"], 2)
+            self.assertEqual([e["kind"] for e in report["dev_cadence"]["evaluations"]],
+                             ["midpoint", "epoch_end"])
+            self.assertTrue(report["operational_completion"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
+
+    def test_single_row_legacy_steps_still_train(self):
+        model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION))
+        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}]
+        trainer = mock.Mock(train=mock.Mock(return_value=types.SimpleNamespace(training_loss=1.25)))
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+             mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(
+                 from_pretrained=mock.Mock(return_value=(model, mock.Mock())), get_peft_model=mock.Mock(return_value=model))), \
+             mock.patch.object(train_adapter.torch, "cuda", mock.Mock(max_memory_reserved=mock.Mock(return_value=2**30)), create=True), \
+             mock.patch.object(train_adapter, "encode_rows", return_value=encoded), \
+             mock.patch.object(train_adapter, "Dataset", mock.Mock(from_list=mock.Mock(side_effect=list))), \
+             mock.patch.object(train_adapter, "SFTConfig", side_effect=lambda **kw: types.SimpleNamespace(**kw)), \
+             mock.patch.object(train_adapter, "SFTTrainer", return_value=trainer) as factory:
+            report = train_adapter.train([row()], [], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                         20, Path(tmp) / "report.json", winner=False)
+            trainer.train.assert_called_once_with()
+            self.assertEqual(factory.call_args.kwargs["callbacks"], [])
+            self.assertEqual(len(factory.call_args.kwargs["train_dataset"]), 1)
+            self.assertEqual(report["rows"], 1)
+            self.assertEqual(report["steps"], 20)
+            self.assertEqual(report["peak_reserved_vram_gib"], 1.0)
+            self.assertNotIn("requested_epochs", report)
+
+
 
     def _maintenance_epoch_run(
-        self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False,
+        self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False, scores=None,
+        row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None,
     ):
-        base = train_adapter.WINNER_BASE if winner else train_adapter.SMOKE_BASE
-        revision = train_adapter.WINNER_REVISION if winner else train_adapter.SMOKE_REVISION
+        import predict_dev
+        # Epoch mode uses the actual explicit winner pin even in offline fixtures.
+        base, revision = train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION
         model = mock.Mock(config=types.SimpleNamespace(_commit_hash=revision))
-
         def save(directory):
             Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
             Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
-
         model.save_pretrained.side_effect = save
-        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}]
+        tokenizer = mock.Mock()
+        rows = slice3_train_rows(row_count)
+        encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}
+                   for _ in rows]
+        if cuda is None:
+            cuda = mock.Mock(max_memory_reserved=mock.Mock(return_value=peak_gib * 2**30))
         report_path = root / "reports" / "maintenance.json"
+
+        def offline_trainer(**kwargs):
+            self.assertEqual(len(kwargs["train_dataset"]), len(rows))
+            self.assertEqual(kwargs["args"].per_device_train_batch_size, 1)
+            self.assertEqual(kwargs["args"].gradient_accumulation_steps, 8)
+            callback = kwargs["callbacks"][0]
+            control = types.SimpleNamespace(should_training_stop=False)
+            class Events:
+                def __getattr__(self, name):
+                    return getattr(callback, name)
+                def on_epoch_end(self, args, state, supplied_control=None, **event_kwargs):
+                    return callback.on_epoch_end(args, state, supplied_control or control,
+                        processing_class=tokenizer, **event_kwargs)
+            kwargs["callbacks"] = [Events()]
+            inner = trainer_type(**kwargs)
+            def run():
+                # Synthetic optimizer-update progress at fixed batch 1/accum 8;
+                # this is not a claim about the pinned HF runtime.
+                midpoint_step = (len(rows) + 15) // 16
+                progress = min(midpoint_step * 8, len(rows)) / len(rows)
+                callback.on_step_end(None, types.SimpleNamespace(epoch=progress, global_step=midpoint_step), control,
+                                     processing_class=tokenizer)
+                result = inner.train()
+                callback.on_train_end(None, getattr(inner, "state", None), control,
+                                      processing_class=tokenizer)
+                return result
+            return types.SimpleNamespace(train=run, state=getattr(inner, "state", None))
+
+        fixture_template = b"synthetic shared template bytes\n"
         with contextlib.ExitStack() as stack:
+            if scores is not None:
+                import dev_selection
+                stack.enter_context(mock.patch.object(dev_selection, "evaluate_primary_score", side_effect=scores))
             for patch in (
-                mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}),
-                mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(
-                    from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models"),
+                                             "ADAPTER_MODELS_HOST_DIR": str(root / "models")}),
+                mock.patch.object(train_adapter, "FastLanguageModel", flm or mock.Mock(
+                    from_pretrained=mock.Mock(return_value=(model, tokenizer)),
                     get_peft_model=mock.Mock(return_value=model))),
-                mock.patch.object(train_adapter.torch, "cuda", mock.Mock(
-                    max_memory_reserved=mock.Mock(return_value=peak_gib * 2**30)), create=True),
-                mock.patch.object(train_adapter, "Dataset", mock.Mock()),
+                mock.patch.object(train_adapter.torch, "cuda", cuda, create=True),
+                mock.patch.object(train_adapter, "Dataset", mock.Mock(from_list=mock.Mock(side_effect=list))),
                 mock.patch.object(train_adapter, "encode_rows", return_value=encoded),
-                mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None),
+                mock.patch.object(train_adapter, "digest_verification_before_load",
+                                  return_value={"upstream_digest_list_sha256": "b" * 64}),
+                mock.patch.object(predict_dev, "_default_template_source", return_value=fixture_template),
+                mock.patch.object(train_adapter, "ADMITTED_TEMPLATE_SHA256", hashlib.sha256(fixture_template).hexdigest()),
+                mock.patch.object(predict_dev, "run_predictions", side_effect=slice3_predictions),
                 mock.patch.object(train_adapter, "SFTConfig", lambda **kw: types.SimpleNamespace(**kw)),
-                mock.patch.object(train_adapter, "SFTTrainer", trainer_type),
+                mock.patch.object(train_adapter, "SFTTrainer", offline_trainer),
             ):
                 stack.enter_context(patch)
-            return train_adapter.train([row()], base, revision, None, report_path, winner=winner, epochs=epochs)
+            return train_adapter.train(rows, slice3_dev_rows(), base, revision, None,
+                                       report_path, winner=winner, epochs=epochs,
+                                       use_gradient_checkpointing=use_gradient_checkpointing)
+
+    def test_train_shares_configured_checkpointing_with_peft_and_callback(self):
+        for mode in ("unsloth", True, False):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                model = mock.Mock(config=types.SimpleNamespace(_commit_hash=train_adapter.WINNER_REVISION))
+                def save(directory):
+                    Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
+                    Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+                model.save_pretrained.side_effect = save
+                model.is_gradient_checkpointing = bool(mode)
+                def inference(model):
+                    model.is_gradient_checkpointing = False
+                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                                get_peft_model=mock.Mock(return_value=model),
+                                for_inference=mock.Mock(side_effect=inference))
+                report = self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=1,
+                    use_gradient_checkpointing=mode, flm=flm)
+                self.assertEqual(flm.get_peft_model.call_args.kwargs["use_gradient_checkpointing"], mode)
+                self.assertEqual(flm.for_inference.call_args_list, [mock.call(model)] * 2)
+                self.assertEqual(flm.for_training.call_args_list,
+                                 [mock.call(model, use_gradient_checkpointing=mode)] * 2)
+                self.assertTrue(report["operational_completion"])
 
     def test_completed_epoch_memory_admission_precedes_ready_handoff(self):
         class CompleteTrainer:
@@ -1726,7 +1833,8 @@ $TrustedDigestRoot = ''
                 if admitted:
                     returned = self._maintenance_epoch_run(
                         root, CompleteTrainer, epochs=2, peak_gib=peak_gib, winner=winner)
-                    self.assertTrue(returned["export_ready"])
+                    self.assertTrue(returned["checkpoint_artifacts_ready"])
+                    self.assertFalse(returned["export_ready"])
                 else:
                     with self.assertRaisesRegex(SystemExit, message):
                         self._maintenance_epoch_run(
@@ -1736,11 +1844,16 @@ $TrustedDigestRoot = ''
                 self.assertEqual(payload["completed_epoch_ids"], [1, 2])
                 self.assertEqual(payload["completed_epochs"], 2)
                 self.assertEqual(payload["trainer_epoch"], 2.0)
-                self.assertEqual(payload["export_ready"], admitted)
+                self.assertEqual(payload["checkpoint_artifacts_ready"], admitted)
+                self.assertEqual(payload["artifacts_complete"], admitted)
+                self.assertFalse(payload["export_ready"])
                 if admitted:
-                    self.assertEqual(payload["final_adapter"]["dir"], str(root / "models" / "maintenance" / "epoch-02"))
+                    self.assertIsNotNone(payload["selected_adapter"])
                 else:
-                    self.assertIsNone(payload["final_adapter"])
+                    self.assertIsNone(payload["selected_adapter"])
+                self.assertIsNone(payload["final_adapter"])
+                self.assertEqual(payload["last_epoch_adapter"]["dir"], str(root / "models" / "maintenance" / "epoch-02"))
+                if not admitted:
                     self.assertIsNone(payload["loss"])
                 for epoch in (1, 2):
                     leaf = root / "models" / "maintenance" / f"epoch-{epoch:02d}"
@@ -1758,17 +1871,76 @@ $TrustedDigestRoot = ''
                 return types.SimpleNamespace(training_loss=1.25)
 
         refusal = SystemExit("original memory refusal")
+        cuda = mock.Mock(max_memory_reserved=mock.Mock(
+            side_effect=[12.001 * 2**30, RuntimeError("later telemetry failed")]))
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(train_adapter, "require_vram", side_effect=refusal) as gate:
             root = Path(tmp)
             with self.assertRaises(SystemExit) as caught:
-                self._maintenance_epoch_run(root, CompleteTrainer, epochs=1, peak_gib=12.001)
+                self._maintenance_epoch_run(root, CompleteTrainer, epochs=1, cuda=cuda)
             self.assertIs(caught.exception, refusal)
+            self.assertEqual(cuda.max_memory_reserved.call_count, 2)
             gate.assert_called_once_with(12.001, winner=False)
             payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
             self.assertEqual(payload["peak_reserved_vram_gib"], 12.001)
             self.assertFalse(payload["export_ready"])
             self.assertIsNone(payload["final_adapter"])
+
+    def test_complete_epoch_artifacts_selected_on_frozen_dev_still_not_exportable(self):
+        class CompleteTrainer:
+            def __init__(self, **kwargs):
+                self.callback = kwargs["callbacks"][0]
+                self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
+
+            def train(self):
+                for epoch in (1, 2):
+                    self.state.epoch, self.state.global_step = float(epoch), epoch * 8
+                    self.callback.on_epoch_end(None, self.state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = self._maintenance_epoch_run(root, CompleteTrainer, epochs=2)
+            self.assertEqual(report["requested_epochs"], 2)
+            self.assertEqual(report["completed_epoch_ids"], [1, 2])
+            self.assertTrue(report["checkpoint_artifacts_ready"])
+            self.assertTrue(report["artifacts_complete"])
+            self.assertEqual(report["last_epoch_adapter"]["epoch"], 2)
+            self.assertRegex(report["last_epoch_adapter"]["manifest_sha256"], r"^[0-9a-f]{64}$")
+            self.assertIsNotNone(report["selected_adapter"])
+            self.assertIsNone(report["final_adapter"])
+            self.assertFalse(report["export_ready"])
+            self.assertEqual(report["dev_selection_status"], "selected_on_frozen_dev")
+            self.assertTrue(report["operational_completion"])
+            self.assertFalse(report["qualified"])
+            persisted = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(persisted, report)
+
+    def test_epoch_report_binds_mount_relative_identifiers_to_host_root(self):
+        class CompleteTrainer:
+            def __init__(self, **kwargs):
+                self.callback = kwargs["callbacks"][0]
+                self.state = types.SimpleNamespace(epoch=1.0, global_step=8)
+
+            def train(self):
+                self.callback.on_epoch_end(None, self.state, None)
+                return types.SimpleNamespace(training_loss=1.25)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = self._maintenance_epoch_run(root, CompleteTrainer, epochs=1)
+            self.assertEqual(report["requested_epochs"], 1)
+            self.assertEqual(report["adapter_mount"], {"container_root": str(root / "models"),
+                                                       "host_root": str(root / "models")})
+            self.assertEqual(report["output_mount_relative_dir"], "maintenance")
+            self.assertEqual(report["last_epoch_adapter"]["mount_relative_dir"], "maintenance/epoch-01")
+            self.assertEqual(report["checkpoints"][0]["mount_relative_dir"], "maintenance/epoch-01")
+            host_adapter = Path(report["adapter_mount"]["host_root"]) / report["last_epoch_adapter"]["mount_relative_dir"]
+            self.assertTrue((host_adapter / "adapter-hashes.json").is_file())
+            self.assertTrue(report["artifacts_complete"])
+            self.assertFalse(report["export_ready"])
+            self.assertIsNotNone(report["selected_adapter"])
+            self.assertIsNone(report["final_adapter"])
 
     def test_epoch_normal_early_return_cannot_claim_completed_partial_epoch(self):
         for progress in (0.75, 1.75):
@@ -1786,7 +1958,12 @@ $TrustedDigestRoot = ''
                         self.callback.on_epoch_end(None, self.state, None)
                         return types.SimpleNamespace(training_loss=1.25)
 
-                report = self._maintenance_epoch_run(Path(tmp), EarlyTrainer, epochs=2 if progress > 1 else 1)
+                root = Path(tmp)
+                requested = 2 if progress > 1 else 1
+                with self.assertRaises((ValueError, SystemExit)):
+                    self._maintenance_epoch_run(root, EarlyTrainer, epochs=requested)
+                report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+                self.assertEqual(report["requested_epochs"], requested)
                 self.assertEqual(report["trainer_epoch"], progress)
                 self.assertEqual(report["completed_epoch_ids"], [1] if progress > 1 else [])
                 self.assertEqual(report["completed_epochs"], 1 if progress > 1 else 0)
@@ -1797,23 +1974,21 @@ $TrustedDigestRoot = ''
     def test_epoch_readiness_requires_ordered_ids_and_final_actual_progress(self):
         for observed, final_progress in (([2, 1], 2.0), ([1, 2], 1.75), ([1, 2], None)):
             with self.subTest(observed=observed, final=final_progress), tempfile.TemporaryDirectory() as tmp:
-                class IncompleteTrainer:
-                    def __init__(self, **kwargs):
-                        self.callback = kwargs["callbacks"][0]
-                        self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
-
+                class IncompleteTrainer(Slice3CompleteTrainer):
                     def train(self):
                         for epoch in observed:
                             self.state.epoch, self.state.global_step = float(epoch), epoch * 8
                             self.callback.on_epoch_end(None, self.state, None)
                         self.state.epoch = final_progress
                         return types.SimpleNamespace(training_loss=1.25)
-
-                report = self._maintenance_epoch_run(Path(tmp), IncompleteTrainer, epochs=2)
-                self.assertEqual(report["completed_epoch_ids"], observed)
-                self.assertEqual(report["trainer_epoch"], final_progress)
+                root = Path(tmp)
+                with self.assertRaises((ValueError, SystemExit)):
+                    self._maintenance_epoch_run(root, IncompleteTrainer, epochs=2)
+                report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+                self.assertFalse(report["operational_completion"])
+                self.assertFalse(report["qualified"])
                 self.assertFalse(report["export_ready"])
-                self.assertIsNone(report["final_adapter"])
+                self.assertIsNone(report["selected_adapter"])
 
     def test_epoch_constructor_failure_preserves_truthful_report(self):
         def broken_constructor(**kwargs):
@@ -1922,60 +2097,65 @@ $TrustedDigestRoot = ''
                     train_adapter.create_run_directory(root / "reports" / "m2-other.json")
 
     def test_epoch_train_failure_leaves_evidence_but_no_export_ready_record(self):
-        class FakeModel:
-            def __init__(self):
-                self.config = types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION)
-
-            def save_pretrained(self, directory):
-                Path(directory, "adapter_config.json").write_text('{"r": 16}', encoding="utf-8")
-                Path(directory, "adapter_model.safetensors").write_bytes(b"adapter weights")
-
-        class FailingTrainer:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-
+        failure = RuntimeError("training exploded")
+        class FailingTrainer(Slice3CompleteTrainer):
             def train(self):
-                callback = self.kwargs["callbacks"][0]
-                state = types.SimpleNamespace(epoch=1.0, global_step=8)
-                callback.on_epoch_end(None, state, None)
-                raise RuntimeError("training exploded")
-
-        fake_model = FakeModel()
-        fake_tokenizer = mock.MagicMock()
-        fake_tokenizer.apply_chat_template = mock.MagicMock(
-            side_effect=lambda *args, **kwargs: [1, 2, 3, 4] if kwargs.get("add_generation_prompt") else [1, 2, 3, 4, 5, 6])
-        fake_flm = mock.MagicMock()
-        fake_flm.from_pretrained = mock.MagicMock(return_value=(fake_model, fake_tokenizer))
-        fake_flm.get_peft_model = mock.MagicMock(return_value=fake_model)
-        cuda = mock.MagicMock()
-        cuda.max_memory_reserved = mock.MagicMock(return_value=8.0 * 2**30)
+                self.state.epoch, self.state.global_step = 1.0, 8
+                self.callback.on_epoch_end(None, self.state, None)
+                raise failure
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            report_path = root / "reports" / "m2-fail.json"
-            with mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}):
-                with mock.patch.object(train_adapter.torch, "cuda", cuda, create=True):
-                    with mock.patch.object(train_adapter, "FastLanguageModel", fake_flm):
-                        with mock.patch.object(train_adapter, "Dataset", mock.MagicMock()):
-                            with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None):
-                                with mock.patch.object(train_adapter, "SFTConfig", lambda **kwargs: types.SimpleNamespace(**kwargs)):
-                                    with mock.patch.object(train_adapter, "SFTTrainer", FailingTrainer):
-                                        with self.assertRaises(RuntimeError):
-                                            train_adapter.train(
-                                                [row()],
-                                                train_adapter.SMOKE_BASE,
-                                                train_adapter.SMOKE_REVISION,
-                                                None,
-                                                report_path,
-                                                winner=False,
-                                                epochs=3,
-                                            )
-            report = json.loads(report_path.read_text(encoding="utf-8"))
+            with self.assertRaisesRegex(RuntimeError, "training exploded") as caught:
+                self._maintenance_epoch_run(root, FailingTrainer, epochs=3, peak_gib=2.0)
+            self.assertIs(caught.exception, failure)
+            report = json.loads((root / "reports" / "maintenance.json").read_text(encoding="utf-8"))
             self.assertEqual(report["completed_epochs"], 1)
-            self.assertEqual(report["export_ready"], False)
+            self.assertEqual(report["state"], "failed")
+            self.assertEqual(report["peak_reserved_vram_gib"], 2.0)
+            self.assertFalse(report["operational_completion"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
+            self.assertIsNone(report["selected_adapter"])
             self.assertIsNone(report["final_adapter"])
-            leaf = root / "models" / "m2-fail" / "epoch-01"
-            self.assertTrue((leaf / "adapter_config.json").is_file())
-            self.assertTrue((leaf / "adapter-hashes.json").is_file())
+
+    def test_failure_telemetry_error_preserves_exact_training_exception(self):
+        failure = RuntimeError("original training failure")
+        class FailingTrainer(Slice3CompleteTrainer):
+            def train(self):
+                raise failure
+        for telemetry_error in (RuntimeError("sampling failed"), SystemExit("sampling aborted")):
+            with self.subTest(telemetry=type(telemetry_error).__name__), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                cuda = mock.Mock(max_memory_reserved=mock.Mock(side_effect=telemetry_error))
+                with self.assertRaises(RuntimeError) as caught:
+                    self._maintenance_epoch_run(root, FailingTrainer, epochs=1, cuda=cuda)
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(cuda.reset_peak_memory_stats.call_count, 2)
+                cuda.max_memory_reserved.assert_called_once_with()
+                report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+                self.assertEqual(report["state"], "failed")
+                self.assertIsNone(report["peak_reserved_vram_gib"])
+                self.assertFalse(report["operational_completion"])
+                self.assertFalse(report["qualified"])
+                self.assertFalse(report["export_ready"])
+                self.assertIsNone(report["selected_adapter"])
+
+    def test_failed_memory_initialization_never_samples_cuda(self):
+        failure = RuntimeError("memory tracking initialization failed")
+        cuda = mock.Mock(reset_peak_memory_stats=mock.Mock(side_effect=failure))
+        trainer = mock.Mock(side_effect=AssertionError("trainer must not be built"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(RuntimeError) as caught:
+                self._maintenance_epoch_run(root, trainer, epochs=1, cuda=cuda)
+            self.assertIs(caught.exception, failure)
+            self.assertEqual(cuda.mock_calls, [mock.call.reset_peak_memory_stats()])
+            trainer.assert_not_called()
+            report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(report["state"], "failed")
+            self.assertIsNone(report["peak_reserved_vram_gib"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
 
     def test_from_pretrained_uses_local_files_only_when_digests_verified(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1992,6 +2172,7 @@ $TrustedDigestRoot = ''
                         with self.assertRaises(SystemExit):
                             train_adapter.train(
                                 [row()],
+                                [],
                                 train_adapter.WINNER_BASE,
                                 train_adapter.WINNER_REVISION,
                                 20,
@@ -2276,6 +2457,609 @@ $TrustedDigestRoot = ''
         self.assertTrue(winner["memory_pass"])
         self.assertTrue(smoke["time_pass"])
 
+    def test_early_stop_is_operational_but_not_qualified_or_exportable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=6)
+            self.assertEqual(report["completed_epoch_ids"], [1, 2, 3])
+            self.assertTrue(report["operational_completion"])
+            self.assertEqual(report["state"], "stopped")
+            self.assertEqual(report["dev_cadence"]["stop_reason"], "two_epochs_without_improvement")
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
+
+    def test_midpoint_only_return_has_no_selectable_leaf_and_fails_completion(self):
+        class MidpointOnly(Slice3CompleteTrainer):
+            def train(self):
+                self.state.epoch, self.state.global_step = 0.75, 6
+                return types.SimpleNamespace(training_loss=1.25)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises((ValueError, SystemExit)):
+                self._maintenance_epoch_run(root, MidpointOnly, epochs=1)
+            report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(report["completed_epochs"], 0)
+            self.assertFalse(report["operational_completion"])
+            self.assertEqual(report["dev_selection_status"], "not_selected")
+            self.assertIsNone(report["selected_adapter"])
+            self.assertFalse(report["qualified"])
+            self.assertFalse(report["export_ready"])
+
+    def test_selection_error_is_run_failure_not_successful_unselected_report(self):
+        import dev_selection
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(dev_selection, "select_checkpoint", side_effect=ValueError("synthetic selection failure")):
+            root = Path(tmp)
+            with self.assertRaises((ValueError, SystemExit)):
+                self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1)
+            report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(report["state"], "failed")
+            self.assertFalse(report["operational_completion"])
+            self.assertIsNone(report["selected_adapter"])
+            self.assertFalse(report["export_ready"])
+
+    def test_template_mismatch_refuses_before_any_model_load(self):
+        import predict_dev
+        template_path = Path(train_adapter.__file__).with_name("prompt_template.py")
+        admitted_lf = template_path.read_bytes().replace(b"\r\n", b"\n")
+        self.assertEqual(hashlib.sha256(admitted_lf).hexdigest(), train_adapter.ADMITTED_TEMPLATE_SHA256)
+        for bad in (b"unadmitted template\n", admitted_lf.replace(b"\n", b"\r\n")):
+            with self.subTest(bytes=bad), tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(Path(tmp) / "models")}))
+                loader = mock.Mock(side_effect=AssertionError("must refuse before model load"))
+                stack.enter_context(mock.patch.object(train_adapter, "digest_verification_before_load", return_value={"upstream_digest_list_sha256": "b" * 64}))
+                stack.enter_context(mock.patch.object(predict_dev, "_default_template_source", return_value=bad))
+                stack.enter_context(mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock(from_pretrained=loader)))
+                cuda = stack.enter_context(mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True))
+                seed = stack.enter_context(mock.patch.object(train_adapter, "set_seed"))
+                with self.assertRaisesRegex((ValueError, SystemExit), "template digest mismatch"):
+                    train_adapter.train(slice3_train_rows(), slice3_dev_rows(), train_adapter.WINNER_BASE,
+                        train_adapter.WINNER_REVISION, None, Path(tmp) / "report.json", winner=True, epochs=1)
+                loader.assert_not_called()
+                seed.assert_not_called()
+                self.assertEqual(cuda.mock_calls, [])
+
+    def test_selected_primary_is_epoch_end_score_not_midpoint_reference(self):
+        from fractions import Fraction
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=1,
+                scores=[slice3_score(Fraction(9, 10)), slice3_score(Fraction(43, 50))])
+            self.assertTrue(report["operational_completion"])
+            self.assertEqual(report["dev_cadence"]["best_primary"], {"numerator": 9, "denominator": 10})
+            self.assertEqual(report["selected_primary"], {"numerator": 43, "denominator": 50})
+            self.assertEqual(report["dev_cadence"]["best_epoch"], 1)
+
+    def test_smoke_steps_probe_and_check_only_never_load_dev_rows(self):
+        for mode in (["--steps", "20"], ["--probe"], ["--check-only"]):
+            with self.subTest(mode=mode), mock.patch.object(train_adapter, "load_training_rows", return_value=[row()]), \
+                 mock.patch.object(train_adapter, "load_dev_rows", side_effect=AssertionError("epoch-only dev load")) as dev_load, \
+                 mock.patch.object(train_adapter, "train", return_value={}) as training, \
+                 mock.patch.object(train_adapter, "run_probe", return_value={}), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
+                    "--base", train_adapter.SMOKE_BASE, "--revision", train_adapter.SMOKE_REVISION, *mode])
+                dev_load.assert_not_called()
+                if "--steps" in mode:
+                    self.assertEqual(training.call_args.args[1], [])
+
+    def test_durable_constructor_failure_sequence_and_reason_survive_train_wrapper(self):
+        actual_callback = train_adapter.DevEvaluationCallback
+        captured = {}
+        def fail_after_durable_initialization(*args, **kwargs):
+            callback = actual_callback(*args, **kwargs)
+            callback._mark_failed("specific_constructor_failure")
+            captured["path"] = callback.run_dir / "best-state.json"
+            captured["bytes"] = captured["path"].read_bytes()
+            raise ValueError("synthetic constructor failed")
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter, "DevEvaluationCallback", side_effect=fail_after_durable_initialization):
+            root = Path(tmp)
+            with self.assertRaisesRegex(ValueError, "synthetic constructor failed"):
+                self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1)
+            self.assertEqual(captured["path"].read_bytes(), captured["bytes"])
+            state = json.loads(captured["bytes"])
+            self.assertEqual(state["state"], "failed")
+            self.assertEqual(state["stop_reason"], "specific_constructor_failure")
+            self.assertGreater(state["sequence"], 1)
+            report = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(report["state"], "failed")
+            self.assertFalse(report["operational_completion"])
+            self.assertIsNone(report["selected_adapter"])
+
+
+
+def slice3_train_rows(count=64):
+    # 64 rows give eight optimizer updates: midpoint step 4, epoch end step 8.
+    items = []
+    for index in range(count):
+        item = row()
+        item.update(row_id=f"train-synthetic-{index:02d}", source_group="train-group")
+        item["input"] = dict(item["input"], id=item["row_id"])
+        items.append(item)
+    return items
+
+
+def slice3_dev_rows():
+    items = []
+    for index in range(20):
+        item = row("dev")
+        item.update(row_id=f"dev-{index:02d}", source_group=f"dev-group-{index:02d}")
+        item["input"] = dict(item["input"], id=item["row_id"])
+        items.append(item)
+    return items
+
+
+def slice3_context():
+    dev = slice3_dev_rows()
+    training = slice3_train_rows()
+    return {
+        "dev_rows": dev,
+        "train_rows": training,
+        "train_ids": {item["row_id"] for item in training},
+        "roster": sorted(item["source_group"] for item in dev),
+        "expected_packets": {item["source_group"]: [item["row_id"]] for item in dev},
+        "identity": {"base_revision": train_adapter.SMOKE_REVISION,
+                     "weights_manifest_sha256": "b" * 64,
+                     "template_sha256": train_adapter.ADMITTED_TEMPLATE_SHA256},
+    }
+
+
+def slice3_predictions(dev_rows, model, tokenizer, **kwargs):
+    canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "predictions": {item["row_id"]: item["target"] for item in dev_rows},
+        "schema_invalid_row_ids": [], "complete": True,
+        "binding": {
+            "source_label": kwargs["source_label"], "seed": 1234,
+            "max_new_tokens": kwargs["max_new_tokens"], "thinking": False,
+            "roster": list(kwargs["frozen_roster"]),
+            "row_ids": sorted(item["row_id"] for item in dev_rows),
+            "identity": dict(kwargs["identity"]),
+            "expected_packets_sha256": hashlib.sha256(canonical(kwargs["expected_packets"])).hexdigest(),
+            "input_sha256": {item["row_id"]: hashlib.sha256(canonical(item["input"])).hexdigest() for item in dev_rows},
+        },
+    }
+
+
+def slice3_score(primary, field=None):
+    from fractions import Fraction
+    primary = Fraction(primary)
+    fields = {name: Fraction(field if field is not None else primary) for name in train_adapter.TARGET_FIELDS}
+    return {
+        "primary": float(primary),
+        "primary_exact": {"numerator": primary.numerator, "denominator": primary.denominator},
+        "per_field": {name: float(value) for name, value in fields.items()},
+        "per_field_exact": {name: {"numerator": value.numerator, "denominator": value.denominator} for name, value in fields.items()},
+        "groups": 20, "incomplete_groups": [],
+        "incomplete": False, "roster_bound": True, "diagnostic_only": False,
+    }
+
+
+class Slice3CompleteTrainer:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.callback = kwargs["callbacks"][0]
+        self.state = types.SimpleNamespace(epoch=0.0, global_step=0)
+
+    def train(self):
+        for epoch in range(1, int(self.kwargs["args"].num_train_epochs) + 1):
+            self.state.epoch, self.state.global_step = float(epoch), epoch * 8
+            control = self.callback.on_epoch_end(None, self.state, None)
+            if control.should_training_stop:
+                break
+        return types.SimpleNamespace(training_loss=1.25)
+
+
+class TestFrozenDevCadence(unittest.TestCase):
+    def setUp(self):
+        import predict_dev
+        fixture_template = b"synthetic pinned callback template\n"
+        for patcher in (
+            mock.patch.object(predict_dev, "_default_template_source", return_value=fixture_template),
+            mock.patch.object(train_adapter, "ADMITTED_TEMPLATE_SHA256", hashlib.sha256(fixture_template).hexdigest()),
+            mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock()),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _callback(self, scores=None, *, context=None, max_epochs=6, predict_fn=None,
+                  use_gradient_checkpointing="unsloth"):
+        import dev_selection
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        checkpoints = []
+        model = mock.Mock()
+        def save(directory):
+            Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
+            Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+        model.save_pretrained.side_effect = save
+        self.score_hook = mock.Mock(side_effect=scores or [slice3_score(1)] * 8)
+        self.predict_hook = mock.Mock(side_effect=predict_fn or slice3_predictions)
+        cb = train_adapter.DevEvaluationCallback(model, root, checkpoints,
+            context or slice3_context(), max_epochs=max_epochs,
+            predict_fn=self.predict_hook, score_fn=self.score_hook,
+            use_gradient_checkpointing=use_gradient_checkpointing)
+        return cb, types.SimpleNamespace(should_training_stop=False), checkpoints, root
+
+    def _event(self, cb, control, progress, *, end=False, tokenizer=True):
+        method = cb.on_epoch_end if end else cb.on_step_end
+        kwargs = {"processing_class": object()} if tokenizer else {}
+        return method(None, types.SimpleNamespace(epoch=progress, global_step=int(progress * 8)), control, **kwargs)
+
+    def _state(self, root):
+        return json.loads((root / "best-state.json").read_text(encoding="utf-8"))
+
+    def _assert_failed(self, root):
+        state = self._state(root)
+        self.assertEqual(state["state"], "failed")
+        self.assertTrue(state["stop_reason"])
+        return state
+
+    def test_midpoint_once_duplicate_idempotence_and_completed_epoch_evidence(self):
+        cb, control, leaves, root = self._callback()
+        initial = self._state(root) if (root / "best-state.json").exists() else None
+        self._event(cb, control, 0.49)
+        self.assertEqual(self._state(root) if (root / "best-state.json").exists() else None, initial)
+        self._event(cb, control, 0.5)
+        first = self._state(root)
+        self.assertEqual(first["evaluations"][0]["kind"], "midpoint")
+        self.assertEqual(leaves, [])
+        self._event(cb, control, 0.75)
+        self.assertEqual(self._state(root), first)
+        self._event(cb, control, 1.0, end=True)
+        second = self._state(root)
+        self._event(cb, control, 1.0, end=True)
+        self.assertEqual(self._state(root), second)
+        self.assertEqual([e["kind"] for e in cb.evaluations], ["midpoint", "epoch_end"])
+        self.assertEqual([entry["epoch"] for entry in leaves], [1])
+        self.assertEqual(self.predict_hook.call_count, 2)
+
+    def test_generation_mode_transitions_restore_training_even_on_failure(self):
+        for checkpointing in ("unsloth", True, False):
+            for fault in (None, "inference", "generate", "score", "restore"):
+                with self.subTest(checkpointing=checkpointing, fault=fault):
+                    events = []
+                    failure = RuntimeError("synthetic " + str(fault))
+                    cb, control, _, root = self._callback(use_gradient_checkpointing=checkpointing)
+                    cb.model.training = True
+                    cb.model.is_gradient_checkpointing = bool(checkpointing)
+
+                    def inference(model):
+                        events.append("inference")
+                        model.training = model.is_gradient_checkpointing = False
+                        if fault == "inference":
+                            raise failure
+
+                    def training(model, use_gradient_checkpointing=True):
+                        events.append(("training", use_gradient_checkpointing))
+                        model.training = True
+                        model.is_gradient_checkpointing = bool(use_gradient_checkpointing)
+                        if fault == "restore":
+                            raise failure
+
+                    def predict(*args, **kwargs):
+                        events.append(("generate", cb.model.training, cb.model.is_gradient_checkpointing))
+                        if fault == "generate":
+                            raise failure
+                        return slice3_predictions(*args, **kwargs)
+
+                    def score(*args, **kwargs):
+                        events.append(("score", cb.model.training, cb.model.is_gradient_checkpointing))
+                        if fault == "score":
+                            raise failure
+                        return slice3_score(1)
+
+                    self.predict_hook.side_effect = predict
+                    self.score_hook.side_effect = score
+                    api = types.SimpleNamespace(for_inference=inference, for_training=training)
+                    with mock.patch.object(train_adapter, "FastLanguageModel", api):
+                        if fault:
+                            with self.assertRaises(RuntimeError) as raised:
+                                self._event(cb, control, 0.5)
+                            self.assertIs(raised.exception, failure)
+                            self._assert_failed(root)
+                        else:
+                            self._event(cb, control, 0.5)
+                            self.assertEqual(cb.state, "running")
+                            self.assertFalse(control.should_training_stop)
+                    expected = ["inference"]
+                    if fault != "inference":
+                        expected.append(("generate", False, False))
+                    expected.append(("training", checkpointing))
+                    if fault in (None, "score"):
+                        expected.append(("score", True, bool(checkpointing)))
+                    self.assertEqual(events, expected)
+                    self.assertIs(cb.model.training, True)
+                    self.assertIs(cb.model.is_gradient_checkpointing, bool(checkpointing))
+
+    def test_exact_five_pp_and_one_count_unit_over_primary_and_field(self):
+        from fractions import Fraction
+        for which in ("primary", "field"):
+            for drop, stopped in ((Fraction(5, 100), False), (Fraction(51, 1000), True)):
+                with self.subTest(which=which, drop=drop):
+                    baseline = slice3_score(Fraction(4, 5))
+                    later = slice3_score(Fraction(4, 5) - drop if which == "primary" else Fraction(4, 5),
+                                         Fraction(4, 5) - drop if which == "field" else Fraction(4, 5))
+                    cb, control, _, root = self._callback([baseline, later])
+                    self._event(cb, control, 0.5)
+                    self.assertFalse(control.should_training_stop)
+                    self._event(cb, control, 1.0, end=True)
+                    self.assertIs(control.should_training_stop, stopped)
+                    self.assertEqual(self._state(root)["state"], "stopped" if stopped else "running")
+                    if stopped:
+                        self.assertEqual(cb.stop_reason, f"{which}_drop_gt_5pp")
+
+    def test_two_nonimproving_epoch_ends_midpoint_does_not_count(self):
+        from fractions import Fraction
+        cb, control, _, _ = self._callback([slice3_score(Fraction(4, 5))] * 4)
+        self._event(cb, control, 0.5)
+        for epoch in (1, 2, 3):
+            self._event(cb, control, float(epoch), end=True)
+            self.assertEqual(cb.epochs_without_improvement, epoch - 1)
+            self.assertIs(control.should_training_stop, epoch == 3)
+        self.assertEqual(cb.stop_reason, "two_epochs_without_improvement")
+
+    def test_strict_improvement_resets_counter_and_six_epoch_limit(self):
+        from fractions import Fraction
+        scores = [slice3_score(Fraction(i, 10)) for i in (1, 2, 3, 4, 5, 6, 7)]
+        cb, control, _, root = self._callback(scores)
+        self._event(cb, control, 0.5)
+        for epoch in range(1, 7):
+            self._event(cb, control, float(epoch), end=True)
+            self.assertIs(control.should_training_stop, epoch == 6)
+            self.assertEqual(cb.epochs_without_improvement, 0)
+        self.assertEqual(self._state(root)["stop_reason"], "max_epochs")
+
+    def test_exact_primary_selection_earlier_tie_only_epoch_ends(self):
+        from fractions import Fraction
+        import dev_selection
+        cb, control, leaves, _ = self._callback([slice3_score(Fraction(4, 5))] * 4)
+        self._event(cb, control, 0.5)
+        for epoch in (1, 2, 3):
+            self._event(cb, control, float(epoch), end=True)
+        entries = [(f"epoch-{e['epoch']:02d}", e["epoch"], Fraction(e["primary"]["numerator"], e["primary"]["denominator"]))
+                   for e in cb.evaluations if e["kind"] == "epoch_end"]
+        self.assertEqual(dev_selection.select_checkpoint(entries), "epoch-01")
+        self.assertEqual(cb.best_epoch, 1)
+        self.assertNotIn("midpoint-epoch-01", [name for name, _, _ in entries])
+
+    def test_state_sequence_atomic_sync_replace_and_no_row_text(self):
+        cb, control, _, root = self._callback()
+        events = []
+        real_fsync, real_replace = os.fsync, os.replace
+        def fsync(fd):
+            events.append("fsync")
+            return real_fsync(fd)
+        def replace(src, dst):
+            events.append("replace")
+            self.assertEqual(Path(src).parent, Path(dst).parent)
+            return real_replace(src, dst)
+        with mock.patch.object(os, "fsync", side_effect=fsync), mock.patch.object(os, "replace", side_effect=replace):
+            self._event(cb, control, 0.5)
+            first = self._state(root)
+            self._event(cb, control, 1.0, end=True)
+        second = self._state(root)
+        self.assertEqual(events, ["fsync", "replace", "fsync", "replace"])
+        self.assertEqual(second["sequence"], first["sequence"] + 1)
+        required = {"format", "dev_roster_sha256", "expected_packets_sha256", "evaluations", "best_epoch", "best_primary", "best_per_field", "epochs_without_improvement", "stop_reason", "state", "sequence"}
+        self.assertTrue(required <= set(second))
+        raw = (root / "best-state.json").read_text(encoding="utf-8")
+        for forbidden in ("Retry three times.", "the client stops at three attempts", '"predictions"', '"target"', '"input"'):
+            self.assertNotIn(forbidden, raw)
+
+    def test_skipped_midpoint_is_failed_and_fractional_epoch_not_complete(self):
+        cb, control, leaves, root = self._callback()
+        with self.assertRaises((ValueError, SystemExit)):
+            self._event(cb, control, 1.0, end=True)
+        self.assertEqual(self._assert_failed(root)["stop_reason"], "midpoint_missing")
+        self.assertEqual(self.predict_hook.call_count, 0)
+        cb, control, leaves, root = self._callback()
+        with self.assertRaises((ValueError, SystemExit)):
+            self._event(cb, control, 0.75, end=True)
+        self.assertEqual(leaves, [])
+        self._assert_failed(root)
+
+    def test_midpoint_only_train_end_is_failed_without_selection(self):
+        cb, control, leaves, root = self._callback()
+        self._event(cb, control, 0.5)
+        with self.assertRaises((ValueError, SystemExit)):
+            cb.on_train_end(None, types.SimpleNamespace(epoch=0.75), control)
+        self.assertEqual(leaves, [])
+        self.assertEqual([e["kind"] for e in cb.evaluations], ["midpoint"])
+        self.assertEqual(self._state(root)["state"], "failed")
+
+    def test_predictor_score_and_nonselectable_exceptions_leave_failed_state(self):
+        for fault in ("predictor", "scorer", "nonselectable"):
+            with self.subTest(fault=fault):
+                cb, control, _, root = self._callback()
+                if fault == "predictor":
+                    self.predict_hook.side_effect = RuntimeError("synthetic predictor failure")
+                elif fault == "scorer":
+                    self.score_hook.side_effect = RuntimeError("synthetic scorer failure")
+                else:
+                    invalid = slice3_score(1)
+                    invalid["incomplete"] = True
+                    self.score_hook.side_effect = [invalid]
+                with self.assertRaises(RuntimeError if fault in ("predictor", "scorer") else (ValueError, SystemExit)):
+                    self._event(cb, control, 0.5)
+                self._assert_failed(root)
+
+    def test_malformed_primary_and_wrong_result_kind_refuse(self):
+        for fault in ("boolean", "zero_denominator", "out_of_range", "nan_summary", "wrong_kind", "group_count"):
+            with self.subTest(fault=fault):
+                value = slice3_score(1)
+                if fault == "boolean":
+                    value["primary_exact"]["numerator"] = True
+                elif fault == "zero_denominator":
+                    value["primary_exact"]["denominator"] = 0
+                elif fault == "out_of_range":
+                    value["primary_exact"]["numerator"] = 2
+                elif fault == "nan_summary":
+                    value["primary"] = float("nan")
+                elif fault == "wrong_kind":
+                    value["group_results"] = {}
+                else:
+                    value["groups"] = True
+                cb, control, _, root = self._callback([value])
+                with self.assertRaises((ValueError, SystemExit)):
+                    self._event(cb, control, 0.5)
+                self._assert_failed(root)
+
+    def test_missing_tokenizer_and_leaf_save_failure_are_failed(self):
+        for fault in ("tokenizer", "leaf"):
+            with self.subTest(fault=fault):
+                cb, control, _, root = self._callback()
+                with contextlib.ExitStack() as stack:
+                    if fault == "leaf":
+                        stack.enter_context(mock.patch.object(train_adapter, "write_adapter_leaf", side_effect=OSError("synthetic disk failure")))
+                    with self.assertRaises((OSError, ValueError, SystemExit)):
+                        self._event(cb, control, 0.5, tokenizer=fault != "tokenizer")
+                self._assert_failed(root)
+                self.assertEqual(self.predict_hook.call_count, 0)
+
+    def test_malformed_exact_pairs_and_nonfinite_float_refuse(self):
+        field = train_adapter.TARGET_FIELDS[0]
+        for fault in ("missing", "boolean", "denominator_zero", "outside_range", "inconsistent", "float_nan", "float_bool"):
+            with self.subTest(fault=fault):
+                value = slice3_score(1)
+                if fault == "missing":
+                    del value["per_field_exact"][field]
+                elif fault == "boolean":
+                    value["per_field_exact"][field]["numerator"] = True
+                elif fault == "denominator_zero":
+                    value["per_field_exact"][field]["denominator"] = 0
+                elif fault == "outside_range":
+                    value["per_field_exact"][field]["numerator"] = 2
+                else:
+                    value["per_field"][field] = {"inconsistent": 0.5, "float_nan": float("nan"), "float_bool": True}[fault]
+                cb, control, _, root = self._callback([value])
+                with self.assertRaises((ValueError, SystemExit)):
+                    self._event(cb, control, 0.5)
+                self._assert_failed(root)
+
+    def test_incomplete_or_mismatched_prediction_binding_refuses(self):
+        for fault in ("incomplete", "identity", "roster", "input_digest", "expected_packets", "row_ids", "thinking"):
+            with self.subTest(fault=fault):
+                def predict(*args, **kwargs):
+                    result = slice3_predictions(*args, **kwargs)
+                    if fault == "incomplete":
+                        result["complete"] = False
+                    elif fault == "identity":
+                        result["binding"]["identity"]["adapter_sha256"] = "0" * 64
+                    elif fault == "roster":
+                        result["binding"]["roster"] = []
+                    elif fault == "input_digest":
+                        result["binding"]["input_sha256"]["dev-00"] = "0" * 64
+                    elif fault == "expected_packets":
+                        result["binding"]["expected_packets_sha256"] = "0" * 64
+                    elif fault == "row_ids":
+                        result["binding"]["row_ids"] = []
+                    else:
+                        result["binding"]["thinking"] = True
+                    return result
+                cb, control, _, root = self._callback(predict_fn=predict)
+                with self.assertRaises((ValueError, SystemExit)):
+                    self._event(cb, control, 0.5)
+                self._assert_failed(root)
+                self.score_hook.assert_not_called()
+
+    def test_handler_lifecycle_preserves_control_and_requested_completion_stops(self):
+        cb, control, _, root = self._callback(max_epochs=1)
+        handler = OfflineCallbackHandler([cb], cb.model)
+        state = types.SimpleNamespace(epoch=0.0, global_step=0)
+        for event in ("on_init_end", "on_train_begin", "on_epoch_begin", "on_step_begin", "on_pre_optimizer_step",
+                      "on_optimizer_step", "on_substep_end", "on_log", "on_evaluate", "on_predict", "on_prediction_step", "on_save"):
+            self.assertIs(handler.call_event(event, None, state, control), control)
+        self._event(cb, control, 0.5)
+        self.assertIs(self._event(cb, control, 1.0, end=True), control)
+        self.assertIs(handler.call_event("on_train_end", None, types.SimpleNamespace(epoch=1.0), control), control)
+        self.assertEqual(self._state(root)["state"], "stopped")
+
+    def test_init_roster_disjointness_and_eval_import_refusals_record_failure(self):
+        for fault in ("fewer_groups", "duplicate_roster", "empty_group", "roster_mismatch", "packets_mismatch", "row_overlap", "group_overlap", "missing_target", "wrong_split", "identity", "import"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                context = slice3_context()
+                if fault == "fewer_groups":
+                    context["dev_rows"] = context["dev_rows"][:-1]
+                    context["roster"] = context["roster"][:-1]
+                    context["expected_packets"].pop("dev-group-19")
+                elif fault == "duplicate_roster":
+                    context["roster"][1] = context["roster"][0]
+                elif fault == "empty_group":
+                    context["dev_rows"][0]["source_group"] = ""
+                elif fault == "roster_mismatch":
+                    context["roster"][0] = "other"
+                elif fault == "packets_mismatch":
+                    context["expected_packets"]["dev-group-00"] = ["other"]
+                elif fault == "row_overlap":
+                    context["train_rows"][0]["row_id"] = "dev-00"
+                    context["train_ids"] = {item["row_id"] for item in context["train_rows"]}
+                elif fault == "group_overlap":
+                    context["train_rows"][0]["source_group"] = "dev-group-00"
+                elif fault == "missing_target":
+                    del context["dev_rows"][0]["target"]
+                elif fault == "wrong_split":
+                    context["dev_rows"][0]["split"] = "train"
+                elif fault == "identity":
+                    context["identity"]["weights_manifest_sha256"] = "not-a-digest"
+                with contextlib.ExitStack() as stack:
+                    if fault == "import":
+                        stack.enter_context(mock.patch.dict(sys.modules, {"predict_dev": None}))
+                    with self.assertRaises((ValueError, ImportError, SystemExit)):
+                        train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], context, max_epochs=6,
+                            predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
+                            use_gradient_checkpointing="unsloth")
+                self._assert_failed(Path(tmp))
+
+    def test_callback_maximum_above_six_is_refused_with_failed_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises((ValueError, SystemExit)):
+                train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], slice3_context(), max_epochs=7,
+                    predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
+                    use_gradient_checkpointing="unsloth")
+            self._assert_failed(Path(tmp))
+
+    def test_load_dev_rows_refuses_bad_json_instead_of_silently_skipping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "accepted.jsonl"
+            path.write_text('{not json}\n' + json.dumps(slice3_dev_rows()[0]) + '\n', encoding="utf-8")
+            (Path(tmp) / "report.json").write_text(json.dumps({"n_accepted": 2, "rows_per_split": {"train": 0, "dev": 1}}), encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                train_adapter.load_dev_rows(path)
+
+    def test_flat_leaf_refuses_added_nested_directory_linked_and_nonregular_entry(self):
+        for mutation in ("nested_directory", "linked_entry", "nonregular_entry"):
+            with self.subTest(mutation=mutation):
+                cb, control, leaves, root = self._callback(max_epochs=1)
+                self._event(cb, control, 0.5)
+                self._event(cb, control, 1.0, end=True)
+                self.assertEqual(cb.completed_selection()["dir"], leaves[0]["dir"])
+                leaf = Path(leaves[0]["dir"])
+                if mutation == "nested_directory":
+                    notes = leaf / "notes"
+                    notes.mkdir()
+                    (notes / "notes.txt").write_bytes(b"synthetic checkpoint notes")
+                    with self.assertRaises((ValueError, SystemExit)):
+                        cb.completed_selection()
+                elif mutation == "linked_entry":
+                    original_is_symlink = Path.is_symlink
+                    with mock.patch.object(Path, "is_symlink", lambda path: path.name == "adapter_config.json" or original_is_symlink(path)):
+                        with self.assertRaises((ValueError, SystemExit)):
+                            cb.completed_selection()
+                else:
+                    original_is_file = Path.is_file
+                    with mock.patch.object(Path, "is_file", lambda path: path.name != "adapter_config.json" and original_is_file(path)):
+                        with self.assertRaises((ValueError, SystemExit)):
+                            cb.completed_selection()
+
+    def test_initial_failure_state_refuses_corruption_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "best-state.json"
+            corrupt = b'{not strict json}\n'
+            state_path.write_bytes(corrupt)
+            with self.assertRaises((ValueError, SystemExit)):
+                train_adapter._initial_failure_state(root, "new generic reason")
+            self.assertEqual(state_path.read_bytes(), corrupt)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
