@@ -10,7 +10,7 @@
 </head>
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="slack-collaboration-bus.html">Slack coordination</a></nav></header>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a><a href="slack-collaboration-bus.html">Slack coordination</a></nav></header>
 <main id="content">
 <p class="eyebrow">Team communication · Version 1 · 4 October 2026 Pacific</p>
 <h1>Slack discussion tagging protocol</h1>
@@ -32,7 +32,7 @@
 
 <section id="tags" aria-labelledby="tags-heading">
 <h2 id="tags-heading">A small, consistent vocabulary</h2>
-<p>Use uppercase text inside square brackets. The project tag is always <code>[Director-Orchestrator]</code>; the work tag is the existing work-order ID, or <code>[PR-123]</code>/<code>[ISSUE-123]</code> until a work order exists. Do not invent a second task ID for the same work. Follow with one kind and, when useful, one actual state. Ordinary replies may omit the repeated header when the thread already supplies context.</p>
+<p>Use uppercase kind and state tags inside square brackets. Keep the project tag exactly <code>[Director-Orchestrator]</code>. Choose the existing work-order ID as the work tag; if none exists, use <code>[PR-123]</code> or <code>[ISSUE-123]</code>. Retain that first work tag throughout the discussion. If a work order or PR is added later, link its ID on the <code>Source:</code> line as an alias rather than replacing the thread's work tag or creating another task. Follow with one kind and, when useful, one actual state. Ordinary replies may omit the repeated header when the thread already supplies context.</p>
 <table><caption>Message kinds</caption><thead><tr><th scope="col">Tag</th><th scope="col">Use</th></tr></thead><tbody>
 <tr><td><code>[QUESTION]</code></td><td>One answerable question, with its owner and response checkpoint.</td></tr>
 <tr><td><code>[ASSIGNMENT]</code></td><td>A bounded, authorized job issued once by the responsible lead; include scope, limits and acceptance evidence.</td></tr>
@@ -110,7 +110,7 @@ Owner: responsible person/provider (plain name; verify before adding a mention).
 Stage/evidence: what is verified, what is missing, and the evidence link.
 Next checkpoint: YYYY-MM-DD HH:MM America/Los_Angeles; UTC if useful.</code></pre>
 <h3>Review handoff</h3>
-<pre><code>[Director-Orchestrator] [PR-NUMBER] [REVIEW] [AWAITING_REVIEW]
+<pre><code>[Director-Orchestrator] [EXISTING-WORK-ID] [REVIEW] [AWAITING_REVIEW]
 Action: Review the fixed candidate; return ACCEPT, CHANGES_REQUIRED or blocker.
 Owner/reviewer: one eligible non-author reviewer and its established session.
 Candidate: PR URL; branch; full head; tree; review base; target tip/merge base as needed.
@@ -123,12 +123,12 @@ Result: The assigned document is written and locally validated.
 Stage: implemented and tested; independent review pending.
 Evidence: candidate and validation receipt links.
 Owner/next action: named reviewer receives the fixed candidate at the stated checkpoint.</code></pre>
-<p>The result pattern closes only the stated authoring assignment, not the independent review or project. For an acknowledgement, use <code>[ACK] Received; next action: …; checkpoint: …</code>, or give the actual blocker. Search an existing work ID with <code>in:project-director "EXISTING-WORK-ID" "BLOCKED"</code>; do not rely on an emoji, display-name alias or a new parallel channel.</p>
+<p>The result pattern closes only the stated authoring assignment, not the independent review or project. For an acknowledgement, use <code>[ACK] Received; next action: …; checkpoint: …</code>, or give the actual blocker. Search an existing work ID with <code>in:#project-director "EXISTING-WORK-ID" "BLOCKED"</code>; do not rely on an emoji, display-name alias or a new parallel channel. <a href="https://slack.com/help/articles/202528808-Search-in-Slack">Slack's documented search modifiers</a>.</p>
 </section>
 
 <section id="verification" aria-labelledby="verification-heading">
 <h2 id="verification-heading">Sender, receipts and maintenance</h2>
-<p>Use the provider's authenticated native identity where established. Under the owner's current temporary connector authorization, otherwise authorized messages through Edward's connector begin exactly: <strong>“Codex Director — sent through Edward's connector with his temporary authorization.”</strong> Preserve assistant authorship and the actual sender separately. The owner-connected sender does not make an assistant message an owner approval or prove a native provider bot reply. Use the maintained contact/briefing record for the current authorization and return to the verified native route after repair.</p>
+<p>Use the provider's authenticated native identity where established. Messages sent under the Codex Director's current temporary owner-connector authorization begin exactly: <strong>“Codex Director — sent through Edward's connector with his temporary authorization.”</strong> Put this prefix on the first line and the discussion-tag header on the next line. Other providers use their own verified route or the explicitly authorized Director relay; the prefix does not grant them independent permission to use Edward's account. Preserve the actual assistant/provider author and sender separately, including when the Director relays another provider's result. The owner-connected sender does not make an assistant message an owner approval or prove a native provider bot reply. Use the maintained contact/briefing record for the current authorization and return to the verified native route after repair.</p>
 <p>For each substantive send, retain the destination/channel, parent and reply timestamps, permalink, actual sender/app identity, assistant/provider author, work ID, source/run correlation and evidence time in the existing delivery record. Read back once to verify the expected message and intended recipient. Then distinguish delivered, acknowledged, substantive provider response and executed/accepted work. If send outcome is uncertain, search/read the existing thread before any resend; retain the failure and configured fallback when no delivery is proved.</p>
 <p>The Foreman owns protocol upkeep and unresolved questions. Correct a misleading tag with an explicit thread correction; preserve the original evidence and avoid silently relabelling an old review or owner decision. Material decisions remain in the authorized issue/PR. Tag names and mention syntax cannot expand an assignment, grant access, change policy gates, remove a freeze or authorize merge/deployment.</p>
 <p>Research: sanitized public Firecrawl queries covered Slack mentions, private access, broad-notification limits and app/API formatting. Primary references: <a href="https://docs.slack.dev/messaging/formatting-message-text/">Slack formatting and explicit IDs</a>, <a href="https://slack.com/help/articles/205240127-Use-mentions-in-Slack">member mentions</a>, <a href="https://slack.com/help/articles/202009646-Notify-a-channel-or-workspace">channel notifications</a> and <a href="https://slack.com/help/articles/360056534254-Manage-notifications-for-specific-channels-and-direct-messages">conversation notification preferences</a>. Team-specific decisions and follow-up targets come from owner direction and Foreman judgment, not Slack product guarantees.</p>
