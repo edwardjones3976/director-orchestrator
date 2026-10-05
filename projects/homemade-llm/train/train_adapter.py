@@ -1163,6 +1163,7 @@ class DevEvaluationCallback(TrainerCallback):
             self.predict_fn = predict_dev.run_predictions if predict_fn is None else predict_fn
             self.score_fn = dev_selection.evaluate_primary_score if score_fn is None else score_fn
             self.primary_fraction_fn = dev_selection.primary_fraction
+            self.exact_score_fn = dev_selection.exact_score
             self.select_checkpoint_fn = dev_selection.select_checkpoint
             if self.checkpoints:
                 raise ValueError("callback requires a fresh checkpoint list")
@@ -1198,21 +1199,6 @@ class DevEvaluationCallback(TrainerCallback):
         })
         self.sequence = next_sequence
 
-    @staticmethod
-    def _exact_score(pair: Any, summary: Any, label: str) -> Any:
-        from fractions import Fraction
-        if not isinstance(pair, dict) or set(pair) != {"numerator", "denominator"}:
-            raise ValueError("malformed exact " + label)
-        numerator, denominator = pair["numerator"], pair["denominator"]
-        if type(numerator) is not int or type(denominator) is not int or denominator <= 0:
-            raise ValueError("invalid exact " + label)
-        value = Fraction(numerator, denominator)
-        if value < 0 or value > 1 or (value.numerator, value.denominator) != (numerator, denominator):
-            raise ValueError("out of range or unreduced " + label)
-        if type(summary) not in (int, float) or not math.isfinite(summary) or abs(float(value) - summary) > 1e-12:
-            raise ValueError("invalid or inconsistent summary " + label)
-        return value
-
     def _evaluate(self, epoch: int, kind: str, manifest_sha256: str, control: Any, tokenizer: Any) -> None:
         from fractions import Fraction
         try:
@@ -1228,9 +1214,14 @@ class DevEvaluationCallback(TrainerCallback):
             }
             # Pass isolated copies: an injected hook cannot mutate the frozen cohort.
             import copy
-            preds = self.predict_fn(copy.deepcopy(self.dev_rows), self.model, tokenizer,
-                frozen_roster=list(self.frozen_roster), expected_packets=copy.deepcopy(self.expected_packets),
-                max_new_tokens=SEQ, source_label="checkpoint", identity=dict(identity))
+            checkpointing = self.model.is_gradient_checkpointing
+            try:
+                FastLanguageModel.for_inference(self.model)
+                preds = self.predict_fn(copy.deepcopy(self.dev_rows), self.model, tokenizer,
+                    frozen_roster=list(self.frozen_roster), expected_packets=copy.deepcopy(self.expected_packets),
+                    max_new_tokens=SEQ, source_label="checkpoint", identity=dict(identity))
+            finally:
+                FastLanguageModel.for_training(self.model, use_gradient_checkpointing=checkpointing)
             if (not isinstance(preds, dict) or preds.get("complete") is not True
                     or preds.get("binding") != expected_binding
                     or type(preds["binding"].get("seed")) is not int
@@ -1254,13 +1245,11 @@ class DevEvaluationCallback(TrainerCallback):
                     or type(scores.get("groups")) is not int or scores["groups"] != len(self.frozen_roster)
                     or scores.get("incomplete_groups") != []):
                 raise ValueError("non-selectable primary result")
-            primary_frac = self._exact_score(scores.get("primary_exact"), scores.get("primary"), "primary")
-            if self.primary_fraction_fn(scores) != primary_frac:
-                raise ValueError("primary helper mismatch")
+            primary_frac = self.primary_fraction_fn(scores)
             exact, summaries = scores.get("per_field_exact"), scores.get("per_field")
             if not isinstance(exact, dict) or set(exact) != set(TARGET_FIELDS) or not isinstance(summaries, dict) or set(summaries) != set(TARGET_FIELDS):
                 raise ValueError("malformed per_field_exact")
-            fields = {field: self._exact_score(exact[field], summaries[field], field) for field in TARGET_FIELDS}
+            fields = {field: self.exact_score_fn(exact[field], summaries[field], field) for field in TARGET_FIELDS}
             self.evaluations.append({"epoch": epoch, "kind": kind,
                 "primary": {"numerator": primary_frac.numerator, "denominator": primary_frac.denominator},
                 "per_field": {field: {"numerator": value.numerator, "denominator": value.denominator} for field, value in fields.items()},

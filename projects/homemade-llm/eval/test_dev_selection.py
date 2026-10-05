@@ -73,6 +73,28 @@ class TestLiteralMultiset(unittest.TestCase):
 
 
 class TestPrimaryScore(unittest.TestCase):
+    def test_malformed_reference_target_zeroes_bound_group(self):
+        for target in ({}, None, [], 7, "text", {"non_goals": []},
+                       dict(_full_cand(), extra=[]), _full_cand(non_goals=""),
+                       _full_cand(non_goals=[1])):
+            with self.subTest(target=target):
+                ref = dict(_ref_row("r1", "g1"), target=target)
+                res = evaluate_primary_score([ref], {"r1": _full_cand()}, ["g1"],
+                                             expected_packets={"g1": ["r1"]})
+                self.assertEqual(res["primary"], 0.0)
+                self.assertEqual(res["incomplete_groups"], ["g1"])
+                self.assertFalse(is_selectable(res))
+                with self.assertRaises(ValueError):
+                    primary_fraction(res)
+        ref = _ref_row("r1", "g1")
+        del ref["target"]
+        missing = evaluate_primary_score([ref], {"r1": _full_cand()}, ["g1"],
+                                         expected_packets={"g1": ["r1"]})
+        self.assertFalse(is_selectable(missing))
+        valid = evaluate_primary_score([_ref_row("r1", "g1")], {"r1": _full_cand()},
+                                       ["g1"], expected_packets={"g1": ["r1"]})
+        self.assertEqual(primary_fraction(valid), Fraction(1))
+
     def test_onegroup4field_counts_a(self):
         # primary 1/4, micro 200/203
         refs = [_ref_row("r1", "g1", acceptance_checks=["A"] * 100, constraints=["B"],
@@ -325,6 +347,22 @@ class TestWholeGroupConfirmation(unittest.TestCase):
 
 
 class TestExpectedPacketRoster(unittest.TestCase):
+    def test_nonobject_packets_block_bound_counts_and_confirmation(self):
+        roster = [f"g{i}" for i in range(1, 21)]
+        for bad in (7, [], "text", None):
+            for arm in ("before", "after"):
+                with self.subTest(packet=bad, arm=arm):
+                    before, after = self._arms(roster)
+                    (before if arm == "before" else after)["g7"][1] = bad
+                    for evaluate in (whole_group_counts, confirm_whole_groups):
+                        res = evaluate(roster, before, after, self._expected(roster))
+                        self.assertEqual((res["b"], res["c"]), (6, 0))
+                        self.assertFalse(res["complete"])
+                        self.assertFalse(res["evidence_complete"])
+                        self.assertFalse(is_selectable(res))
+                        if evaluate is confirm_whole_groups:
+                            self.assertFalse(res["passes"])
+
     def _packet(self, packet_id, schema_valid=True, grok_as_is=True, zai_as_is=True):
         return {"packet_id": packet_id, "schema_valid": schema_valid,
                 "grok_as_is": grok_as_is, "zai_as_is": zai_as_is}
@@ -662,6 +700,36 @@ class TestManifestValidationPrimaryScore(unittest.TestCase):
 
 
 class TestStrictStatusBooleans(unittest.TestCase):
+    def test_primary_fraction_rejects_tampered_evidence(self):
+        for numerator, denominator, summary in (
+            (2, 1, 2.0), (-1, 2, -0.5), (2, 4, 0.5), (0, 2, 0.0),
+            (2, 2, 1.0), (1, True, 1.0), (1, 2, 0.75),
+            (1, 2, float("nan")), (1, 2, float("inf")),
+            (1, 1, True), (1, 2, "0.5"), (1, 2, None),
+        ):
+            with self.subTest(pair=(numerator, denominator), summary=summary):
+                res = self._primary_result()
+                res.update(primary_exact={"numerator": numerator, "denominator": denominator},
+                           primary=summary)
+                with self.assertRaises(ValueError):
+                    primary_fraction(res)
+        for fault in ("extra_exact_key", "missing_summary", "nonobject"):
+            with self.subTest(fault=fault):
+                res = self._primary_result()
+                if fault == "extra_exact_key":
+                    res["primary_exact"]["extra"] = 0
+                elif fault == "missing_summary":
+                    del res["primary"]
+                else:
+                    res = []
+                with self.assertRaises(ValueError):
+                    primary_fraction(res)
+        for value in (Fraction(0), Fraction(1), Fraction(1, 3), Fraction(19, 20)):
+            res = self._primary_result()
+            res.update(primary_exact={"numerator": value.numerator, "denominator": value.denominator},
+                       primary=float(value))
+            self.assertEqual(primary_fraction(res), value)
+
     """Every status flag must be the literal boolean: a missing key or a
     truthy/falsy stand-in ("yes", 1, 0, [], "False") never makes a result
     selectable, and `primary_fraction` refuses exactly what `is_selectable`

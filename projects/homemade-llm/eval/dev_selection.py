@@ -133,7 +133,8 @@ def evaluate_primary_score(
                 if row_id not in predictions or row_id in invalid_ids:
                     broken = True
                     break
-                if not _is_valid_prediction(predictions[row_id]):
+                if (not _is_valid_prediction(row.get("target"))
+                        or not _is_valid_prediction(predictions[row_id])):
                     broken = True
                     break
 
@@ -146,7 +147,7 @@ def evaluate_primary_score(
             ref_items: List[str] = []
             cand_items: List[str] = []
             for row in packets:
-                ref_items.extend(row.get("target", {}).get(field, []))
+                ref_items.extend(row["target"][field])
                 cand_items.extend(predictions[row["row_id"]][field])
             tp, fp, fn = evaluate_cell_counts(ref_items, cand_items)
             cell_fractions.append(_fraction_f1(tp, fp, fn))
@@ -203,7 +204,7 @@ def is_selectable(result: Dict[str, Any]) -> bool:
     never selectable, and neither is a result of neither kind. Every status
     flag must be the literal boolean: a missing key or a stand-in like
     "yes"/1/0/[] never qualifies."""
-    if result.get("roster_bound") is not True:
+    if not isinstance(result, dict) or result.get("roster_bound") is not True:
         return False
     if result.get("diagnostic_only") is not False:
         return False
@@ -212,6 +213,22 @@ def is_selectable(result: Dict[str, Any]) -> bool:
     if "group_results" in result:
         return result.get("evidence_complete") is True
     return False
+
+
+def exact_score(pair: Any, summary: Any, label: str) -> Fraction:
+    """Validate canonical score evidence shared by primary and per-field gates."""
+    if not isinstance(pair, dict) or set(pair) != {"numerator", "denominator"}:
+        raise ValueError("malformed exact " + label)
+    numerator, denominator = pair["numerator"], pair["denominator"]
+    if type(numerator) is not int or type(denominator) is not int or denominator <= 0:
+        raise ValueError("invalid exact " + label)
+    value = Fraction(numerator, denominator)
+    if value < 0 or value > 1 or (value.numerator, value.denominator) != (numerator, denominator):
+        raise ValueError("out of range or unreduced " + label)
+    if (type(summary) not in (int, float) or not 0 <= summary <= 1
+            or not math.isfinite(summary) or abs(float(value) - summary) > 1e-12):
+        raise ValueError("invalid or inconsistent summary " + label)
+    return value
 
 
 def primary_fraction(result: Dict[str, Any]) -> Fraction:
@@ -227,24 +244,7 @@ def primary_fraction(result: Dict[str, Any]) -> Fraction:
             "must be True, diagnostic_only must be False, and the result "
             "must be complete"
         )
-    exact = result.get("primary_exact")
-    if not isinstance(exact, dict):
-        raise ValueError(
-            "primary_fraction requires a primary result with a "
-            "primary_exact dict of numerator/denominator ints"
-        )
-    numerator = exact.get("numerator")
-    denominator = exact.get("denominator")
-    if (
-        type(numerator) is not int
-        or type(denominator) is not int
-        or denominator <= 0
-    ):
-        raise ValueError(
-            "primary_fraction requires primary_exact to hold two ints "
-            "with a positive denominator"
-        )
-    return Fraction(numerator, denominator)
+    return exact_score(result.get("primary_exact"), result.get("primary"), "primary")
 
 
 def select_checkpoint(checkpoints: List[Tuple[str, int, Any]]) -> str:
@@ -299,8 +299,8 @@ def evaluate_confirmation(b: int, c: int) -> Dict[str, Any]:
 _FLAG_KEYS = ("schema_valid", "grok_as_is", "zai_as_is")
 
 
-def _packet_flags_real(packet: Dict[str, Any]) -> bool:
-    return all(type(packet.get(key)) is bool for key in _FLAG_KEYS)
+def _packet_flags_real(packet: Any) -> bool:
+    return isinstance(packet, dict) and all(type(packet.get(key)) is bool for key in _FLAG_KEYS)
 
 
 def _group_arm_status(

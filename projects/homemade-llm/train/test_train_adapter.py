@@ -2491,6 +2491,7 @@ class TestFrozenDevCadence(unittest.TestCase):
         for patcher in (
             mock.patch.object(predict_dev, "_default_template_source", return_value=fixture_template),
             mock.patch.object(train_adapter, "ADMITTED_TEMPLATE_SHA256", hashlib.sha256(fixture_template).hexdigest()),
+            mock.patch.object(train_adapter, "FastLanguageModel", mock.Mock()),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -2545,6 +2546,64 @@ class TestFrozenDevCadence(unittest.TestCase):
         self.assertEqual([e["kind"] for e in cb.evaluations], ["midpoint", "epoch_end"])
         self.assertEqual([entry["epoch"] for entry in leaves], [1])
         self.assertEqual(self.predict_hook.call_count, 2)
+
+    def test_generation_mode_transitions_restore_training_even_on_failure(self):
+        for checkpointing in (True, False):
+            for fault in (None, "inference", "generate", "score", "restore"):
+                with self.subTest(checkpointing=checkpointing, fault=fault):
+                    events = []
+                    failure = RuntimeError("synthetic " + str(fault))
+                    cb, control, _, root = self._callback()
+                    cb.model.training = True
+                    cb.model.is_gradient_checkpointing = checkpointing
+
+                    def inference(model):
+                        events.append("inference")
+                        model.training = model.is_gradient_checkpointing = False
+                        if fault == "inference":
+                            raise failure
+
+                    def training(model, use_gradient_checkpointing=True):
+                        events.append("training")
+                        model.training = True
+                        model.is_gradient_checkpointing = use_gradient_checkpointing
+                        if fault == "restore":
+                            raise failure
+
+                    def predict(*args, **kwargs):
+                        events.append(("generate", cb.model.training, cb.model.is_gradient_checkpointing))
+                        if fault == "generate":
+                            raise failure
+                        return slice3_predictions(*args, **kwargs)
+
+                    def score(*args, **kwargs):
+                        events.append(("score", cb.model.training, cb.model.is_gradient_checkpointing))
+                        if fault == "score":
+                            raise failure
+                        return slice3_score(1)
+
+                    self.predict_hook.side_effect = predict
+                    self.score_hook.side_effect = score
+                    api = types.SimpleNamespace(for_inference=inference, for_training=training)
+                    with mock.patch.object(train_adapter, "FastLanguageModel", api):
+                        if fault:
+                            with self.assertRaises(RuntimeError) as raised:
+                                self._event(cb, control, 0.5)
+                            self.assertIs(raised.exception, failure)
+                            self._assert_failed(root)
+                        else:
+                            self._event(cb, control, 0.5)
+                            self.assertEqual(cb.state, "running")
+                            self.assertFalse(control.should_training_stop)
+                    expected = ["inference"]
+                    if fault != "inference":
+                        expected.append(("generate", False, False))
+                    expected.append("training")
+                    if fault in (None, "score"):
+                        expected.append(("score", True, checkpointing))
+                    self.assertEqual(events, expected)
+                    self.assertIs(cb.model.training, True)
+                    self.assertIs(cb.model.is_gradient_checkpointing, checkpointing)
 
     def test_exact_five_pp_and_one_count_unit_over_primary_and_field(self):
         from fractions import Fraction
