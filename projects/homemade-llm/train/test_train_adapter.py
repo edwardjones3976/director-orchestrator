@@ -2260,11 +2260,12 @@ Write-Output 'PASS'
                 model.is_gradient_checkpointing = bool(mode)
                 def inference(model):
                     model.is_gradient_checkpointing = False
-                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                tokenizer = ContextTokenizer()
+                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, tokenizer)),
                                 get_peft_model=mock.Mock(return_value=model),
                                 for_inference=mock.Mock(side_effect=inference))
                 report = self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=1,
-                    use_gradient_checkpointing=mode, flm=flm)
+                    use_gradient_checkpointing=mode, flm=flm, context_tokenizer=tokenizer)
                 self.assertEqual(flm.get_peft_model.call_args.kwargs["use_gradient_checkpointing"], mode)
                 self.assertEqual(flm.for_inference.call_args_list, [mock.call(model)] * 2)
                 self.assertEqual(flm.for_training.call_args_list,
