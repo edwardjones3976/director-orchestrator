@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import io
@@ -178,7 +179,9 @@ def _wrapper_mount_construction(source: str) -> str:
     helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
     start = source.index("$mounts = New-TrainerCommonMounts")
     end = source.index("\n$code =", start)
-    return ". '" + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n"
+    bounded = helper.with_name("invoke-bounded.ps1")
+    return (". '" + bounded.as_posix().replace("'", "''") + "'\n. '"
+            + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n")
 
 
 def synthetic_kep_input(item):
@@ -755,6 +758,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
             command = f"""
 $ErrorActionPreference = 'Stop'
 $HotRoot = '{hot_root}'; $Rows = '{hot_root}/accepted.jsonl'; $Epochs = 4
+$GpuMarker = '{hot_root}/synthetic-marker'
 $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 {_wrapper_mount_construction(source)}
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
@@ -767,6 +771,7 @@ ConvertTo-Json -InputObject $args_ -Compress
             completed = subprocess.run(
                 [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                 capture_output=True, text=True, timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         args = json.loads(completed.stdout)
@@ -831,7 +836,8 @@ ConvertTo-Json -InputObject $args_ -Compress
             link = root / "output" / "custody-link"
             link.parent.mkdir()
             linked = make_reparse_link(link, protected)
-            command = f". '{helper.as_posix()}'\n" + r"""
+            command = (f". '{helper.with_name('invoke-bounded.ps1').as_posix()}'\n"
+                       f". '{helper.as_posix()}'\n$GpuMarker = '{root.as_posix()}/synthetic-marker'\n") + r"""
 $ErrorActionPreference = 'Stop'
 function Refuses($Mount, $Protected, $Message) {
     try { Assert-TrainerMountIsolation @('-v', $Mount) @($Protected) }
@@ -849,8 +855,76 @@ Assert-TrainerMountIsolation @('-v', "$root/runs-other:/workspace/output") @($pr
             if linked:
                 command += f"Refuses '{link.parent.as_posix()}:/workspace/output' $protected 'junction or symbolic link'\n"
             completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
-                                       capture_output=True, text=True, timeout=30)
+                                       capture_output=True, text=True, timeout=30,
+                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
+    def test_writable_mount_scan_is_bounded_and_refuses_incomplete_receipts(self):
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "output-'quoted-\u00e9"
+            (output / "deep" / "leaf").mkdir(parents=True)
+            (output / "deep" / "leaf" / "payload.bin").write_bytes(b"synthetic\x00\xff")
+            command = (f". '{helper.with_name('invoke-bounded.ps1').as_posix()}'\n"
+                       f". '{helper.as_posix()}'\n") + r"""
+$ErrorActionPreference = 'Stop'
+$GpuMarker = '__ROOT__/synthetic-marker'
+$mount = '__OUTPUT__:/workspace/output'
+$protected = '__ROOT__/protected'
+$realBounded = ${function:Invoke-Bounded}
+function Require-Refusal($Message) {
+    try { Assert-TrainerMountIsolation @('-v', $mount) @($protected) }
+    catch { if ($_.Exception.Message.Contains($Message)) { return }; throw }
+    throw 'incomplete scan accepted'
+}
+# Real traversal of nested directories and an opaque payload; no model read.
+Assert-TrainerMountIsolation @('-v', $mount) @($protected)
+foreach ($fake in @('empty', 'nonzero', 'extra')) {
+    $script:receipt = $fake
+    function Invoke-Bounded {
+        switch ($script:receipt) {
+            'empty' { return @() }
+            'nonzero' { return @('TRAINER_MOUNT_SCAN_OK', '__EXIT__1') }
+            'extra' { return @('TRAINER_MOUNT_SCAN_OK', 'unexpected', '__EXIT__0') }
+        }
+    }
+    Require-Refusal 'mount scan failed'
+}
+# Inject a blocking filesystem call INSIDE the real encoded scanner/job.
+# The parent's timeout is not a deadline check around the blocking call.
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    if ($Seconds -ne 60) { throw 'production scan deadline changed' }
+    $scan = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($A[-1]))
+    $fault = "function Get-ChildItem { Set-Content -LiteralPath '__ROOT__/scan-pid' -Value `$PID; Start-Sleep -Seconds 30 }`n"
+    $A[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fault + $scan))
+    & $realBounded $Exe $A 2
+}
+$clock = [Diagnostics.Stopwatch]::StartNew()
+Require-Refusal '__EXIT__timeout'
+if ($clock.Elapsed.TotalSeconds -gt 12) { throw 'scanner was not bounded' }
+$scanPid = [int](Get-Content -LiteralPath '__ROOT__/scan-pid')
+if (Get-Process -Id $scanPid -ErrorAction SilentlyContinue) { throw 'blocked scanner survived cleanup' }
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) { throw 'unconfirmed cleanup; stop' }
+# Errors and cleanup uncertainty must never be converted to successful scans.
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    $scan = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($A[-1]))
+    $A[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("function Get-ChildItem { throw 'synthetic unreadable directory' }`n" + $scan))
+    & $realBounded $Exe $A $Seconds
+}
+Require-Refusal 'synthetic unreadable directory'
+function Invoke-Bounded { throw 'synthetic cleanup unconfirmed' }
+Require-Refusal 'synthetic cleanup unconfirmed'
+Write-Output 'nested, receipt, blocked scan cleanup, unreadable, cleanup propagation: PASS'
+"""
+            command = command.replace("__ROOT__", root.as_posix().replace("'", "''"))
+            command = command.replace("__OUTPUT__", output.as_posix().replace("'", "''"))
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", command],
+                capture_output=True, text=True, timeout=35, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("propagation: PASS", result.stdout)
+            self.assertEqual((output / "deep" / "leaf" / "payload.bin").read_bytes(), b"synthetic\x00\xff")
 
     def test_epoch_readonly_cache_keeps_linked_layout_without_recursive_scan(self):
         pwsh = shutil.which("pwsh")
@@ -3542,7 +3616,7 @@ _PUBLICATION_DEFAULT_ROWS = [
 
 
 def _publication_row_digest(row: dict) -> str:
-    return hashlib.sha256(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _publication_write_file(path: Path, data: bytes) -> dict:
@@ -3722,6 +3796,74 @@ class PublicationBindingTests(unittest.TestCase):
     def _load_epoch(self, fx):
         return train_adapter.load_epoch_rows(
             fx["binding_path"], fx["rows_dir"], fx["code_dir"], fx["eval_dir"])
+
+    def test_candidate_digests_bind_whole_rows_in_producer_order(self):
+        rows = copy.deepcopy(_PUBLICATION_DEFAULT_ROWS)
+        rows[0]["input"] = {"text": "caf\u00e9"}
+        # Independent literal vector: UTF-8, compact keys, no final newline.
+        canonical = b'{"input":{"text":"caf\xc3\xa9"},"row_id":"r1","source_group":"group-a","split":"train"}'
+        expected = hashlib.sha256(canonical).hexdigest()
+        self.assertEqual(_publication_row_digest(rows[0]), expected)
+        original = [_publication_row_digest(r) for r in rows]
+        for case in ("valid", "reordered", "invented", "whole_row_changed", "newline_digest"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                supplied, actual = list(original), copy.deepcopy(rows)
+                if case == "reordered": supplied.reverse()
+                if case == "invented": supplied[0] = "0" * 64
+                if case == "whole_row_changed": actual[0]["receipt_ref"] = "different original receipt"
+                if case == "newline_digest": supplied[0] = hashlib.sha256(canonical + b"\n").hexdigest()
+                fx = _build_publication_fixture(Path(tmp), rows=actual,
+                    profile_overrides={"candidate_row_sha256": supplied})
+                if case == "valid":
+                    self.assertEqual(self._verify(fx)["batch"], fx["binding"]["batch"])
+                else:
+                    with self.assertRaisesRegex(SystemExit, "ordered candidate_row_sha256"):
+                        self._verify(fx)
+
+    def test_rows_in_covers_all_admitted_and_schema_valid_rows(self):
+        for rows_in in (0, 2, 3, 7):
+            with self.subTest(rows_in=rows_in), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), report_overrides={"rows_in": rows_in})
+                if rows_in < len(_PUBLICATION_DEFAULT_ROWS):
+                    with self.assertRaisesRegex(SystemExit, "rows_in is less"):
+                        self._verify(fx)
+                else:
+                    self._verify(fx)
+
+    def test_epoch_check_only_validation_never_writes_run_or_report(self):
+        for case in ("valid", "count", "digest", "row_id", "missing_binding"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+                if case == "row_id": rows[-1]["row_id"] = "0" * 16
+                fx = _build_publication_fixture(root, rows=rows,
+                    report_overrides={"rows_in": 0} if case == "count" else None,
+                    profile_overrides={"candidate_row_sha256": ["0" * 64, "1" * 64, "2" * 64]} if case == "digest" else None)
+                if case == "missing_binding": fx["binding_path"].unlink()
+                report = root / "reports" / "m2-check.json"
+                models = root / "models"
+                def snapshot():
+                    return {p.relative_to(root).as_posix(): p.read_bytes() if p.is_file() else None
+                            for p in root.rglob("*")}
+                before = snapshot()
+                argv = ["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(report),
+                    "--epochs", "1", "--check-only", "--base", train_adapter.WINNER_BASE,
+                    "--revision", train_adapter.WINNER_REVISION, "--epoch-context-limit", "4096",
+                    "--publication-binding", str(fx["binding_path"])]
+                with mock.patch.object(train_adapter, "__file__", str(fx["code_dir"] / "train_adapter.py")), \
+                     mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(models)}), \
+                     mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                     mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    if case == "valid": train_adapter.main(argv)
+                    else:
+                        with self.assertRaises(ValueError if case == "row_id" else SystemExit):
+                            train_adapter.main(argv)
+                self.assertEqual(snapshot(), before)
+                self.assertFalse(models.exists())
+                self.assertFalse(report.parent.exists())
+                self.assertEqual(model.mock_calls, [])
+                self.assertEqual(cuda.mock_calls, [])
 
     def test_admitted_producer_rows_reach_epoch_check_only_without_legacy_schema(self):
         # Regression for the retained authenticated-chain RED: two training

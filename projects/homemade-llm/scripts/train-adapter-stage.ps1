@@ -621,15 +621,37 @@ function Assert-TrainerMountIsolation {
                 Write-Error "writable trainer mount overlaps protected publication path: $hostPath"
             }
         }
-        Assert-NoReparsePointInAncestry $hostPath
-        # Do not follow aliases within an otherwise safe writable directory.
-        # The read-only HF cache is skipped above; model payload bytes are not read.
-        if (Test-Path -LiteralPath $hostPath) {
-            foreach ($entry in (Get-ChildItem -LiteralPath $hostPath -Force -Recurse)) {
-                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                    Write-Error "writable trainer mount contains a junction or symbolic link: $($entry.FullName)"
-                }
+        # Filesystem calls (including ancestry checks) run inside the existing
+        # bounded job. A blocked enumeration cannot strand the wrapper before
+        # its deadline; timeout/uncertain cleanup refuses through Invoke-Bounded.
+        $path64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($hostPath))
+        $scan = "function Assert-NoReparsePointInAncestry {" + ${function:Assert-NoReparsePointInAncestry}.ToString() + "}`n" + @'
+$ErrorActionPreference = 'Stop'
+try {
+    $path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PATH64__'))
+    Assert-NoReparsePointInAncestry $path
+    $pending = [Collections.Generic.Stack[string]]::new()
+    if (Test-Path -LiteralPath $path) { $pending.Push($path) }
+    while ($pending.Count) {
+        $current = $pending.Pop()
+        # Enumerate one directory at a time; refuse links BEFORE descending.
+        foreach ($entry in (Get-ChildItem -LiteralPath $current -Force -ErrorAction Stop)) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "writable trainer mount contains a junction or symbolic link: $($entry.FullName)"
             }
+            if ($entry.PSIsContainer) { $pending.Push($entry.FullName) }
+        }
+    }
+    Write-Output 'TRAINER_MOUNT_SCAN_OK'
+} catch {
+    Write-Output ("TRAINER_MOUNT_SCAN_REFUSED: " + $_.Exception.Message)
+    exit 1
+}
+'@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scan.Replace('__PATH64__', $path64)))
+        $result = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) 60)
+        if ($result.Count -ne 2 -or $result[0] -cne 'TRAINER_MOUNT_SCAN_OK' -or $result[1] -cne '__EXIT__0') {
+            Write-Error "writable trainer mount scan failed: $($result -join '; ')"
         }
     }
 }

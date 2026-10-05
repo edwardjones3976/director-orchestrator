@@ -1733,6 +1733,8 @@ def _read_publication_rows(
     for key in ("rows_in", "rows_admitted", "schema_valid"):
         if type(validation_report[key]) is not int or validation_report[key] < 0:
             fail(f"report.json {key} is invalid")
+    if validation_report["rows_in"] < max(validation_report["rows_admitted"], validation_report["schema_valid"]):
+        fail("report.json rows_in is less than rows_admitted or schema_valid")
     splits = validation_report["splits"]
     if (not isinstance(splits, dict) or set(splits) != {"train", "dev"}
             or any(type(v) is not int or v < 0 for v in splits.values())):
@@ -1758,6 +1760,10 @@ def _read_publication_rows(
         group, split = parsed.get("source_group"), parsed.get("split")
         if not isinstance(group, str) or not group.strip() or split not in ("train", "dev"):
             fail(f"accepted.jsonl line {line_number} has an invalid source_group or split")
+        # route_r_row.canonical_bytes: whole row, compact sorted UTF-8, no LF.
+        canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if hashlib.sha256(canonical).hexdigest() != row_digests[line_number - 1]:
+            fail(f"accepted.jsonl line {line_number} does not match the ordered candidate_row_sha256")
         parsed_rows.append(parsed)
 
     if len(parsed_rows) != validation_report["rows_admitted"] or len(parsed_rows) != validation_report["schema_valid"]:
@@ -2393,7 +2399,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             rows, dev_rows = load_training_rows(args.rows), []
     except BaseException as exc:
-        if args.epochs is not None:
+        if args.epochs is not None and not args.check_only:
             run_dir = create_run_directory(args.report)
             _initial_failure_state(run_dir, "input_" + type(exc).__name__)
             report = build_report(run=args.report.stem, base=args.base, revision=args.revision,
