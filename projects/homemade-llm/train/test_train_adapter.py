@@ -743,6 +743,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 self.assertEqual(trainer[-2:], ["--probe-rows-total", "96"])
                 self.assertEqual(trainer[trainer.index("--probe-seq-len") + 1], "2048")
 
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
     def test_wrapper_epoch_mode_docker_args_use_the_staged_tree_not_code(self):
         # Epoch mode's docker-argument contract moved from an inline snippet to
         # New-TrainerDockerArgs (scripts/train-adapter-stage.ps1): call the real
@@ -758,9 +759,9 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
             command = f"""
 $ErrorActionPreference = 'Stop'
 $HotRoot = '{hot_root}'; $Rows = '{hot_root}/accepted.jsonl'; $Epochs = 4
-$GpuMarker = '{hot_root}/synthetic-marker'
 $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 {_wrapper_mount_construction(source)}
+$GpuMarker = '{hot_root}/synthetic-marker'
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
 $args_ = New-TrainerDockerArgs -Image 'dummy-image' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
     -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
@@ -824,6 +825,7 @@ ConvertTo-Json -InputObject $args_ -Compress
             actual = [mount for mount in mounts if f":/workspace/{filename}.json" in mount]
             self.assertEqual(actual, [f"{host}.json:/workspace/{filename}.json:ro"] if digests else [])
 
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
     def test_epoch_mounts_refuse_writable_protected_aliases(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
