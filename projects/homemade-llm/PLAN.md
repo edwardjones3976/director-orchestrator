@@ -163,7 +163,7 @@ Base licenses:
 8. **Roster and routing.** They follow the wired providers (see `provider-roles-contract.yaml`).
 9. **M0 and decisions.**
    - M0 is rewritten (see `workstream-plan.md`).
-   - The old §15/§16 are replaced by [`decision-log.md`](decision-log.md).
+   - The old §15/§16 are replaced by [`decision-log.html`](decision-log.html).
    - M0.3's smoke base is now an ungated Qwen3-class model, in line with the M1 shortlist. v1.2 named Qwen2.5-0.5B or Llama-3.2-1B.
 10. **v1.3.**
     - §2–§5 added.
