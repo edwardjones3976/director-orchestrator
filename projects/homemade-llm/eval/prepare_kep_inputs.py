@@ -34,6 +34,7 @@ MAX_SOURCE = 1024 * 1024
 MAX_SOURCE_TOTAL = 64 * 1024 * 1024
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_MEMBERS = 20000
+MAX_EXCLUDED_PATHS = 256
 SECRET_MARKERS = ("_KEY=", "_TOKEN=", "_SECRET=", "DSN=", "PASSWORD=", "xoxb-", "xapp-")
 RECORD_KEYS = frozenset({
     "protocol", "disposition", "source_group", "kep_number", "selection_rank", "source_ref",
@@ -694,11 +695,20 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
     last_time = started_at
     with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:gz") as tar:
         members = {}
+        excluded_links = set()
         for member in tar:
-            if len(members) >= MAX_MEMBERS or not safe_archive_name(member.name) or not (member.name == prefix.rstrip("/") or member.name.startswith(prefix)) or member.name in members or member.issym() or member.islnk():
+            if len(members) + len(excluded_links) >= MAX_MEMBERS or not safe_archive_name(member.name) or not (member.name == prefix.rstrip("/") or member.name.startswith(prefix)) or member.name in members or member.name in excluded_links or member.islnk():
                 raise Refusal("INVALID_ARCHIVE_MEMBER")
-            members[member.name] = member
+            if member.issym():
+                relative = member.name[len(prefix):] if member.name.startswith(prefix) else None
+                if not safe_archive_name(relative):
+                    raise Refusal("INVALID_ARCHIVE_MEMBER")
+                excluded_links.add(member.name)
+            else:
+                members[member.name] = member
         def read_member(path):
+            if prefix + path in excluded_links:
+                raise Refusal("SYMLINK_MEMBER")
             member = members.get(prefix + path)
             if member is None or not member.isfile() or not 0 <= member.size <= MAX_SOURCE:
                 raise Refusal("NO_BOUNDED_REGULAR_SOURCE")
@@ -758,9 +768,11 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 if str(exc) in {"SOURCE_GIT_BLOB_MISMATCH", "METADATA_PIN_MISMATCH", "CORPUS_SIZE_BOUND", "INVALID_CHRONOLOGY"}:
                     raise
                 decision["reason"] = str(exc)
+    excluded_symlink_paths = sorted(name[len(prefix):] for name in excluded_links)[:MAX_EXCLUDED_PATHS]
     decisions.sort(key=lambda item: item["path"])
     qualification = {"protocol": "kep-input-qualification/v2", "policy_sha256": policy_sha256, "order_sha256": order_hash,
-                     "qualified_at": next_clock(clock, last_time), "census": decisions}
+                     "qualified_at": next_clock(clock, last_time), "census": decisions, "excluded_symlink_members": len(excluded_links),
+                     "excluded_symlink_member_paths": excluded_symlink_paths}
     qualification_sha = digest(json_bytes(qualification))
     last_time = qualification["qualified_at"]
     records = []
@@ -777,7 +789,9 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         records.append(record)
     summary = {"metadata_candidates": len(decisions), "status_candidates": sum(item["status"] in ("implemented", "implementable") for item in decisions),
                "positive_unique_ids": len(ordered), "section_qualified": sum(item["section_qualified"] for item in decisions),
-               "usable_inputs": len(records), "refused": len(decisions) - len(records), "refused_by_reason": dict(sorted(Counter(item["reason"] for item in decisions if item["reason"]).items()))}
+               "usable_inputs": len(records), "refused": len(decisions) - len(records), "refused_by_reason": dict(sorted(Counter(item["reason"] for item in decisions if item["reason"]).items())),
+               "excluded_symlink_members": len(excluded_links),
+               "excluded_symlink_member_paths": excluded_symlink_paths}
     if not records:
         raise Refusal("NO_USABLE_INPUTS", summary)
     payloads = [json_bytes(record) + b"\n" for record in records]

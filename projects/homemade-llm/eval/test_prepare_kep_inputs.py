@@ -63,14 +63,20 @@ class Fixture:
     def blob(raw):
         return hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
 
-    def make_archive(self, extra=None):
+    def make_archive(self, extra=None, *, before=False):
+        extras = extra if isinstance(extra, list) else [extra] if extra else []
         with tarfile.open(self.paths["archive"], "w:gz") as archive:
+            def add_extras():
+                for member in extras:
+                    archive.addfile(member, io.BytesIO(b"x") if member.isfile() else None)
+            if before:
+                add_extras()
             for path, raw in self.files.items():
                 info = tarfile.TarInfo("enhancements-" + tool.COMMIT + "/" + path)
                 info.size = len(raw)
                 archive.addfile(info, io.BytesIO(raw))
-            if extra:
-                archive.addfile(extra, io.BytesIO(b"x") if extra.isfile() else None)
+            if not before:
+                add_extras()
 
     def refresh(self):
         for name in ("tree", "census", "policy"):
@@ -457,8 +463,112 @@ class PrepareKepInputsTests(unittest.TestCase):
             tool.prepare(**fixture.args())
         self.assertFalse((self.root / "out").exists())
 
-    def test_archive_links_escapes_and_duplicate_members_are_refused(self):
-        for kind in ("symlink", "hardlink", "escape", "duplicate"):
+    @staticmethod
+    def symlink_member(path):
+        member = tarfile.TarInfo("enhancements-" + tool.COMMIT + "/" + path)
+        member.type = tarfile.SYMTYPE
+        member.linkname = "../../DO_NOT_READ_SYNTHETIC_LINK_TARGET"
+        return member
+
+    def refresh_link_archive(self, fixture, members, *, before=False):
+        fixture.make_archive(members, before=before)
+        fixture.census["archive_sha256"] = tool.digest(fixture.paths["archive"].read_bytes())
+        fixture.refresh()
+
+    def test_unrelated_symlinks_are_excluded_with_sorted_relative_diagnostics(self):
+        fixture = Fixture(self.root)
+        paths = ["unrelated/z-link", "unrelated/a-link"]
+        self.refresh_link_archive(fixture, [self.symlink_member(path) for path in paths])
+        result = tool.prepare(**fixture.args())
+        _, rows, manifest = self.load()
+        self.assertEqual(len(rows), 1)
+        for diagnostic in (result, manifest["summary"], manifest["qualification"]):
+            self.assertEqual(diagnostic["excluded_symlink_members"], 2)
+            self.assertEqual(diagnostic["excluded_symlink_member_paths"], sorted(paths))
+            self.assertNotIn("DO_NOT_READ_SYNTHETIC_LINK_TARGET", json.dumps(diagnostic))
+
+    def test_no_symlink_has_zero_count_and_empty_paths(self):
+        fixture = Fixture(self.root)
+        result = tool.prepare(**fixture.args())
+        _, _, manifest = self.load()
+        for diagnostic in (result, manifest["summary"], manifest["qualification"]):
+            self.assertEqual(diagnostic["excluded_symlink_members"], 0)
+            self.assertEqual(diagnostic["excluded_symlink_member_paths"], [])
+
+    def test_symlink_diagnostic_paths_bounded_but_all_links_counted(self):
+        fixture = Fixture(self.root)
+        paths = [f"unrelated/link-{i:04d}" for i in reversed(range(tool.MAX_EXCLUDED_PATHS + 3))]
+        self.refresh_link_archive(fixture, [self.symlink_member(path) for path in paths])
+        result = tool.prepare(**fixture.args())
+        _, _, manifest = self.load()
+        for diagnostic in (result, manifest["summary"], manifest["qualification"]):
+            self.assertEqual(diagnostic["excluded_symlink_members"], tool.MAX_EXCLUDED_PATHS + 3)
+            self.assertEqual(diagnostic["excluded_symlink_member_paths"], sorted(paths)[:tool.MAX_EXCLUDED_PATHS])
+
+    def test_duplicate_regular_and_symlink_member_refused_in_both_orders(self):
+        for before in (False, True):
+            with self.subTest(link_before_regular=before):
+                root = self.root / str(before)
+                root.mkdir()
+                fixture = Fixture(root)
+                self.refresh_link_archive(fixture, self.symlink_member("LICENSE"), before=before)
+                with self.assertRaisesRegex(tool.Refusal, "INVALID_ARCHIVE_MEMBER"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((root / "out").exists())
+
+    def test_linked_readme_is_censused_while_regular_other_kep_is_retained(self):
+        fixture = Fixture(self.root, [dict(number=19, sig="sig-example", status="implemented", text=source(19)),
+                                     dict(number=29, sig="sig-example", status="implemented", text=source(29))])
+        linked = "keps/sig-example/19-synthetic/README.md"
+        fixture.files.pop(linked)
+        self.refresh_link_archive(fixture, self.symlink_member(linked))
+        result = tool.prepare(**fixture.args())
+        _, rows, manifest = self.load()
+        self.assertEqual([row["kep_number"] for row in rows], [29])
+        decision = next(item for item in manifest["qualification"]["census"] if item["kep_number"] == 19)
+        self.assertEqual(decision["reason"], "SYMLINK_MEMBER")
+        self.assertEqual(result["refused_by_reason"], {"SYMLINK_MEMBER": 1})
+        self.assertEqual(result["excluded_symlink_member_paths"], [linked])
+
+    def test_only_linked_readme_refuses_with_retained_census_counter(self):
+        fixture = Fixture(self.root)
+        linked = "keps/sig-example/19-synthetic/README.md"
+        fixture.files.pop(linked)
+        self.refresh_link_archive(fixture, self.symlink_member(linked))
+        with self.assertRaisesRegex(tool.Refusal, "NO_USABLE_INPUTS") as raised:
+            tool.prepare(**fixture.args())
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"SYMLINK_MEMBER": 1})
+        self.assertEqual(raised.exception.summary["excluded_symlink_members"], 1)
+        self.assertEqual(raised.exception.summary["excluded_symlink_member_paths"], [linked])
+        self.assertFalse((self.root / "out").exists())
+
+    def test_license_and_metadata_symlinks_refuse_globally(self):
+        for linked in ("LICENSE", "keps/sig-example/19-synthetic/kep.yaml"):
+            with self.subTest(path=linked):
+                root = self.root / ("license" if linked == "LICENSE" else "metadata")
+                root.mkdir()
+                fixture = Fixture(root)
+                fixture.files.pop(linked)
+                self.refresh_link_archive(fixture, self.symlink_member(linked))
+                with self.assertRaisesRegex(tool.Refusal, "SYMLINK_MEMBER"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((root / "out").exists())
+
+    def test_symlink_escaped_or_root_member_refused_without_target_read(self):
+        for name in ("enhancements-" + tool.COMMIT, "enhancements-" + tool.COMMIT + "/../escape"):
+            with self.subTest(name=name):
+                root = self.root / ("root-link" if name.endswith(tool.COMMIT) else "escape-link")
+                root.mkdir()
+                fixture = Fixture(root)
+                member = self.symlink_member("unused")
+                member.name = name
+                self.refresh_link_archive(fixture, member)
+                with self.assertRaisesRegex(tool.Refusal, "INVALID_ARCHIVE_MEMBER"):
+                    tool.prepare(**fixture.args())
+                self.assertFalse((root / "out").exists())
+
+    def test_archive_hardlinks_escapes_and_duplicate_members_are_refused(self):
+        for kind in ("hardlink", "escape", "duplicate"):
             with self.subTest(kind=kind):
                 root = self.root / kind
                 root.mkdir()
