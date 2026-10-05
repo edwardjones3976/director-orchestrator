@@ -181,7 +181,18 @@ def _wrapper_mount_construction(source: str) -> str:
     return ". '" + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n"
 
 
-class TrainAdapterTests(unittest.TestCase):
+class AuthorityFixtureCase(unittest.TestCase):
+    def setUp(self):
+        import epoch_authority
+        self._authority_patch = mock.patch.object(train_adapter, '_epoch_authority', return_value=epoch_authority)
+        self._authority_patch.start()
+        self.addCleanup(self._authority_patch.stop)
+        paths = mock.patch.object(epoch_authority, 'production_paths', side_effect=lambda *args: _TEST_AUTHORITY_PATHS)
+        paths.start()
+        self.addCleanup(paths.stop)
+
+
+class TrainAdapterTests(AuthorityFixtureCase):
     def test_response_mask_ignores_the_prompt_and_covers_the_answer(self):
         labels = train_adapter.labels_for_token_ids([4, 5, 6, 7], [4, 5, 6, 7, 8, 9, 10])
         self.assertEqual(labels, [-100, -100, -100, -100, 8, 9, 10])
@@ -519,6 +530,9 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as tmp:
             hot_root = Path(tmp).as_posix().replace("'", "''")
+            (Path(tmp) / 'authority' / 'publication').mkdir(parents=True)
+            for name in ('pin.py', 'route-r-trust-root-v2r4.json', 'publication/batch-0001.publication.json'):
+                (Path(tmp) / 'authority' / name).write_text('{}')
             # These functions create directories only beneath the temporary HotRoot.
             command = f"""
 $ErrorActionPreference = 'Stop'
@@ -527,6 +541,8 @@ $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 {_wrapper_mount_construction(source)}
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
 $args_ = New-TrainerDockerArgs -Image 'dummy-image' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
+    -AuthoritySource '# synthetic authenticated source' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+    -Locations @{{ PinFile = '{hot_root}/authority/pin.py'; CustodyRoot = '{hot_root}/authority' }} `
     -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
     -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -ModelsHostDir 'C:/synthetic/models/m2' `
     -ExtraEnv @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
@@ -540,8 +556,9 @@ ConvertTo-Json -InputObject $args_ -Compress
         args = json.loads(completed.stdout)
         image = args.index("dummy-image")
         self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
-        self.assertEqual(args[image + 1:image + 3], ["-B", "/train/train_adapter.py"])
-        options, trainer = args[:image], args[image + 3:]
+        self.assertEqual(args[image + 1:image + 4], ["-I", "-B", "-c"])
+        self.assertTrue(args[image + 4].endswith('bootstrap()\n'))
+        options, trainer = args[:image], args[image + 5:]
         self._assert_common_mounts(options, Path(tmp), epoch_mode=True, digests=True)
         self.assertNotIn("/code", " ".join(args))
         self.assertNotIn("/code:ro", options)
@@ -3387,7 +3404,7 @@ def _build_publication_fixture(
     profile = {
         "format": "route-r-publication-profile/v1",
         "batch": batch,
-        "built_by": "route_r_publish.py/test",
+        "built_by": "codex",
         "accepted_jsonl_sha256": accepted_info["sha256"],
         "candidate_row_sha256": row_digests,
         "bundle_manifest_sha256": "1" * 64,
@@ -3417,13 +3434,44 @@ def _build_publication_fixture(
     }
     candidate.update(candidate_overrides or {})
 
+    # Independent synthetic admin files: mutation of stage/binding never rewrites
+    # these anchors. Tests patch fixed production locations, not a CLI override.
+    global _TEST_AUTHORITY_PATHS
+    authority_dir = root / 'authority'
+    authority_dir.mkdir()
+    authority_root = {
+        'format': 'route-r-trust-root/v2r4', 'row_schema': {'sha256': '3' * 64},
+        'custody': {'admins': ['codex']},
+        'adapter_consumption': {
+            'candidate': dict(candidate),
+            **{key: {'path': 'synthetic-' + key, 'sha256': 'f' * 64}
+               for key in ('bridge', 'interpreter', 'resolver_entry')},
+        },
+    }
+    root_data = json.dumps(authority_root, sort_keys=True).encode()
+    root_sha = hashlib.sha256(root_data).hexdigest()
+    root_path = authority_dir / 'root.json'
+    root_path.write_bytes(root_data)
+    pin_path = authority_dir / 'root-pin.py'
+    pin_path.write_text(f"ROOT_FILE = 'route-r-trust-root-v2r4.json'\nROOT_FORMAT = 'route-r-trust-root/v2r4'\nAPPROVED_TRUST_ROOT_SHA256 = '{root_sha}'\n")
+    if not profile_overrides or 'trust_root_sha256' not in profile_overrides:
+        profile['trust_root_sha256'] = root_sha
+    profile_info = _publication_write_file(rows_dir / 'profile.json', json.dumps(profile, sort_keys=True).encode())
+    publication_path = authority_dir / 'publication.json'
+    publication_path.write_text(json.dumps({
+        'format': 'route-r-publication/v1', 'batch': batch, 'published_by': 'codex',
+        'publication_profile_sha256': profile_info['sha256'], 'accepted_jsonl_sha256': accepted_info['sha256'],
+        'bundle_manifest_sha256': profile['bundle_manifest_sha256'], 'recount_sha256': profile['recount_sha256'],
+    }, sort_keys=True))
+    _TEST_AUTHORITY_PATHS = (pin_path, root_path, publication_path)
+
     resolution = {
         "format": "route-r-resolution/v1",
         "batch": batch,
         "verified": True,
         "accepted_jsonl_sha256": accepted_info["sha256"],
         "profile_sha256": profile_info["sha256"],
-        "publication_sha256": "e" * 64,
+        "publication_sha256": hashlib.sha256(publication_path.read_bytes()).hexdigest(),
         "trust_root_sha256": profile["trust_root_sha256"],
         "validation_report_sha256": report_info["sha256"],
         "bridge_sha256": "f" * 64,
@@ -3467,12 +3515,13 @@ def _build_publication_fixture(
     return {
         "binding_path": binding_path, "rows_dir": rows_dir, "code_dir": code_dir, "eval_dir": eval_dir,
         "binding": binding, "profile": profile, "report": report, "rows": rows, "row_digests": row_digests,
+        "authority_paths": _TEST_AUTHORITY_PATHS,
         "train_kwargs": {"publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
                          "publication_code_dir": code_dir, "publication_eval_dir": eval_dir},
     }
 
 
-class PublicationBindingTests(unittest.TestCase):
+class PublicationBindingTests(AuthorityFixtureCase):
     """verify_publication_binding and the --publication-binding CLI gate."""
 
     def _verify(self, fx):
@@ -3891,9 +3940,15 @@ class PublicationBindingTests(unittest.TestCase):
         "set ADAPTER_TEST_STAGE_DIR to a tree built by scripts/test-train-adapter.ps1 to run this probe",
     )
     def test_wrapper_staged_tree_verifies(self):
+        import epoch_authority
         stage = Path(os.environ["ADAPTER_TEST_STAGE_DIR"])
-        result = train_adapter.verify_publication_binding(
-            stage / "Meta" / "publication-binding.json", stage / "Input", stage / "Train", stage / "Eval")
+        # Test-only host fixture transport; production has no anchor override.
+        paths = json.loads(os.environ["ADAPTER_TEST_AUTHORITY_PATHS"])
+        self.assertEqual(len(paths), 3)
+        self.assertTrue(all(isinstance(path, str) and Path(path).is_absolute() for path in paths))
+        with mock.patch.object(epoch_authority, 'production_paths', return_value=tuple(map(Path, paths))):
+            result = train_adapter.verify_publication_binding(
+                stage / "Meta" / "publication-binding.json", stage / "Input", stage / "Train", stage / "Eval")
         self.assertEqual(set(result), {"batch", "profile_sha256", "root_sha256"})
 
 

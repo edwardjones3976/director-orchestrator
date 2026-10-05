@@ -163,6 +163,7 @@ if ($Epochs) {
     $root = Read-ApprovedRoot -CustodyRoot $locations.CustodyRoot -Pin $pin
     $resolution = Invoke-PublicationResolver -Root $root -ApprovedTrustRootSHA256 $pin.APPROVED_TRUST_ROOT_SHA256 -Batch $Batch
     $records = Read-PublicationRecords -CustodyRoot $locations.CustodyRoot -Batch $Batch -Resolution $resolution -Rows $Rows
+    if ($records.Profile['row_schema_sha256'] -cne $root['row_schema']['sha256']) { Write-Error 'publication row schema differs from approved contract' }
     # The candidate commit is assumed to live in the repository this worktree
     # belongs to; worktrees share one object database, so any worktree root
     # resolves any reachable commit's blobs.
@@ -175,6 +176,13 @@ if ($Epochs) {
     $candidate = $root['adapter_consumption']['candidate']
     $stage = New-StageTree -HotRoot $HotRoot -RunId $runId
     $trainerBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/train/train_adapter.py' -ExpectedSha256 $candidate['trainer_sha256']
+    # Acyclic identity: approved root -> trainer bytes -> verifier bytes. Parse
+    # only one literal constant from the authenticated trainer, never execute it.
+    $trainerText = [Text.Encoding]::UTF8.GetString($trainerBytes)
+    $authorityDefinitions = [regex]::Matches($trainerText, '(?m)^EPOCH_AUTHORITY_SHA256\s*=')
+    $authorityPins = [regex]::Matches($trainerText, '(?m)^EPOCH_AUTHORITY_SHA256 = "([0-9a-f]{64})"\r?$')
+    if ($authorityDefinitions.Count -ne 1 -or $authorityPins.Count -ne 1) { Write-Error 'candidate trainer must pin exactly one epoch authority digest' }
+    $authorityBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/train/epoch_authority.py' -ExpectedSha256 $authorityPins[0].Groups[1].Value
     $predictorBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/eval/predict_dev.py' -ExpectedSha256 $candidate['predictor_sha256']
     $scorerBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/eval/dev_selection.py' -ExpectedSha256 $candidate['scorer_sha256']
     $rendererBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $AdmittedRendererCommit -Path $AdmittedRendererPath -ExpectedOid $AdmittedRendererBlobId -ExpectedSha256 $AdmittedRendererSHA256
@@ -189,6 +197,7 @@ if ($Epochs) {
     )
     $bindingPath = New-PublicationBinding -Batch $Batch -Candidate $candidate -Resolution $resolution -RootSha256 $pin.APPROVED_TRUST_ROOT_SHA256 -Files $stagedFiles -MetaDir $stage.Meta
     $epochDockerArgs = New-TrainerDockerArgs -Image $Image -Name $name -CommonMounts $mounts -Stage $stage -BindingPath $bindingPath `
+        -AuthoritySource ([Text.Encoding]::UTF8.GetString($authorityBytes)) -Batch $Batch -RootFile $pin.ROOT_FILE `
         -Base $Base -Revision $Revision -ReportContainerPath "/workspace/reports/$runId.json" -Epochs $Epochs `
         -ModelsHostDir (Join-Path $HotRoot 'models\m2') `
         -ExtraEnv @(if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) { @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1') } else { @() })

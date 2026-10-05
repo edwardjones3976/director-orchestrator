@@ -270,6 +270,9 @@ function Read-ApprovedRoot {
     # with extra, missing or mistyped keys, is indistinguishable from an
     # unqualified one and refuses identically before any GPU, Docker or model step.
     if (-not $consumptionOk) { Write-Error 'admission authority missing or unqualified' }
+    $schema = $root['row_schema']
+    if ($schema -isnot [System.Collections.IDictionary] -or $schema['sha256'] -isnot [string] -or
+        $schema['sha256'] -cnotmatch '^[0-9a-f]{64}$') { Write-Error 'approved row schema missing or unqualified' }
     return $root
 }
 
@@ -651,13 +654,47 @@ function New-TrainerDockerArgs {
         [Parameter(Mandatory)][string]$Revision,
         [Parameter(Mandatory)][string]$ReportContainerPath,
         [Parameter(Mandatory)][int]$Epochs,
+        [Parameter(Mandatory)][string]$AuthoritySource,
+        [Parameter(Mandatory)][string]$Batch,
+        [Parameter(Mandatory)][string]$RootFile,
         [string]$ModelsHostDir,
         [string[]]$ExtraEnv = @(),
         [hashtable]$Locations = (Get-ProductionLocations)
     )
+    if ($Batch -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$' -or $RootFile -cnotmatch '^route-r-trust-root-v[0-9a-z]+\.json$') {
+        Write-Error 'invalid authority batch or root file'
+    }
+    $authorityMounts = @()
+    foreach ($pair in @(@($Locations.PinFile, 'root-pin.py'),
+            @((Join-Path $Locations.CustodyRoot $RootFile), 'root.json'),
+            @((Join-Path $Locations.CustodyRoot "publication/$Batch.publication.json"), 'publication.json'))) {
+        Assert-NoReparsePointInAncestry $pair[0]
+        if (-not (Test-Path -LiteralPath $pair[0] -PathType Leaf)) { Write-Error "authority file missing: $($pair[0])" }
+        $authorityMounts += @('-v', "$($pair[0]):/run/route-r-authority/$($pair[1]):ro")
+    }
+    # Read-only aliases can also shadow a trusted destination. Reserve the
+    # complete authority namespace and all fixed stage mount destinations.
+    $seenDestinations = @()
+    foreach ($mount in $CommonMounts) {
+        if ($mount -ceq '-v') { continue }
+        if ($mount -cnotmatch '^(.+):(/[^:]+)(:ro)?$') { Write-Error 'unexpected trainer common mount syntax' }
+        $dest = $Matches[2].TrimEnd('/')
+        if ($dest -match '(^|/)\.\.?(/|$)' -or $dest.Contains('//')) { Write-Error 'noncanonical mount destination' }
+        foreach ($seen in $seenDestinations) {
+            if ($dest -ceq $seen -or $dest.StartsWith($seen + '/', [StringComparison]::Ordinal) -or $seen.StartsWith($dest + '/', [StringComparison]::Ordinal)) {
+                Write-Error "overlapping trainer mount destinations: $dest and $seen"
+            }
+        }
+        $seenDestinations += $dest
+        foreach ($reserved in '/run/route-r-authority', '/train', '/eval', '/workspace/rows', '/workspace/publication-binding.json') {
+            if ($dest -ceq $reserved -or $dest -ceq '' -or $dest.StartsWith($reserved + '/', [StringComparison]::Ordinal) -or $reserved.StartsWith($dest + '/', [StringComparison]::Ordinal)) {
+                Write-Error "trainer mount shadows reserved destination: $dest"
+            }
+        }
+    }
     Assert-TrainerMountIsolation -Mounts $CommonMounts -ProtectedPaths @(
         $Stage.Train, $Stage.Eval, $Stage.Input, $BindingPath, $Locations.PinFile, $Locations.CustodyRoot)
-    @('run', '--rm', '--name', $Name, '--gpus', 'all', '--shm-size', '4g') + $CommonMounts + @(
+    @('run', '--rm', '--name', $Name, '--gpus', 'all', '--shm-size', '4g') + $CommonMounts + $authorityMounts + @(
         '-v', "$($Stage.Train):/train:ro",
         '-v', "$($Stage.Eval):/eval:ro",
         '-v', "$($Stage.Input):/workspace/rows:ro",
@@ -667,7 +704,7 @@ function New-TrainerDockerArgs {
         '-e', "ADAPTER_MODELS_HOST_DIR=$ModelsHostDir",
         '-e', 'PYTHONDONTWRITEBYTECODE=1') + $ExtraEnv + @(
         '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token',
-        '--entrypoint', 'python', $Image, '-B', '/train/train_adapter.py',
+        '--entrypoint', 'python', $Image, '-I', '-B', '-c', ($AuthoritySource + "`nbootstrap()`n"),
         '--rows', '/workspace/rows/accepted.jsonl',
         '--base', $Base, '--revision', $Revision,
         '--report', $ReportContainerPath,
