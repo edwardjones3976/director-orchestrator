@@ -176,11 +176,21 @@ $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $mounts = @()
 if ($Epochs) {
     $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
+        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:(-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -RunId $runId
 }
 $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
 $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+# A context probe authenticates the admitted LF renderer, but this working tree
+# is CRLF: its renderer is staged from Git after admission (below), as epoch
+# mode does. Resolving the repository here is read-only.
+$repoRoot = $null
+if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
+    $contextRootOut = @(Invoke-Bounded 'git' @('-C', $PSScriptRoot, 'rev-parse', '--show-toplevel') 30)
+    $contextRootLines = @(if ($contextRootOut.Count -gt 1) { $contextRootOut[0..($contextRootOut.Count - 2)] } else { @() })
+    if ($contextRootOut[-1] -ne '__EXIT__0' -or $contextRootLines.Count -ne 1) { Write-Error 'could not resolve the repository root for the admitted renderer' }
+    $repoRoot = $contextRootLines[0]
+}
 
 $epochDockerArgs = $null
 if ($Epochs) {
@@ -252,14 +262,20 @@ try {
     # and preflight admission. Epoch staging retains its separate early check.
     if (-not $Epochs) {
         $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
+            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:(-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -RunId $runId
         if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
             $mounts += @('-v', "${ProbeContextInputs}:/workspace/context-inputs.jsonl:ro")
+            # Stage the exact admitted renderer blob (commit/blob/SHA pinned in the stage helper) and bind it
+            # read-only over /code/prompt_template.py, so the probe hashes and executes the LF bytes it admits.
+            $rendererBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $AdmittedRendererCommit -Path $AdmittedRendererPath -ExpectedOid $AdmittedRendererBlobId -ExpectedSha256 $AdmittedRendererSHA256
+            $rendererStage = New-StageTree -HotRoot $HotRoot -RunId $runId
+            [void](Write-StageFile -DirLabel Train -Dir $rendererStage.Train -Name 'prompt_template.py' -Bytes $rendererBytes -ExpectedSha256 $AdmittedRendererSHA256)
+            $stagedRenderer = Join-Path $rendererStage.Train 'prompt_template.py'
         }
         $locations = Get-ProductionLocations
         Assert-TrainerMountIsolation -Mounts $mounts -ProtectedPaths @(
             (Join-Path $HotRoot 'runs\stage'), $Rows, $code, $evalCode, $locations.PinFile, $locations.CustodyRoot;
-            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs })
+            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs; $stagedRenderer })
     }
     if (Get-Command lms -ErrorAction SilentlyContinue) {
         $r = @(Invoke-Bounded 'lms' @('unload', '--all') 60)
@@ -271,8 +287,9 @@ try {
         $epochDockerArgs
     } else {
         $d = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
-            '-v', "${code}:/code:ro",
-            '-v', "${evalCode}:/eval:ro",
+            '-v', "${code}:/code:ro"
+            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { '-v', "${stagedRenderer}:/code/prompt_template.py:ro" }
+            if ([string]::IsNullOrWhiteSpace($ProbeContextInputs)) { '-v', "${evalCode}:/eval:ro" }
             '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision",
             '-e', "ADAPTER_STEPS=$Steps",
             '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')

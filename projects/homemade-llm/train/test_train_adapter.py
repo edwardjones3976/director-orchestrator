@@ -200,6 +200,18 @@ def synthetic_kep_input(item):
         "context_spans": [{"start": 6, "end": 8}]}
 
 
+@contextlib.contextmanager
+def admitted_probe_template():
+    # Production requires exact admitted LF bytes; fixture copies may normalize
+    # checkout CRLF, but the runtime verifier never normalizes source.
+    data = Path(train_adapter.__file__).with_name("prompt_template.py").read_bytes().replace(b"\r\n", b"\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "prompt_template.py"
+        path.write_bytes(data)
+        with mock.patch.object(train_adapter, "__file__", str(Path(tmp) / "train_adapter.py")):
+            yield path
+
+
 class ContextTokenizer:
     def __init__(self, prompt=2, full=3, truncate=False):
         self.prompt, self.full, self.truncate = prompt, full, truncate
@@ -208,6 +220,37 @@ class ContextTokenizer:
         if self.truncate and "truncation" not in kwargs:
             length -= 1
         return list(range(length))
+
+
+class VerifiedSourceLoaderTests(unittest.TestCase):
+    def test_epoch_loader_retains_exact_pin_and_same_buffer_execution(self):
+        data = Path(train_adapter.__file__).with_name('epoch_authority.py').read_bytes().replace(b'\r\n', b'\n')
+        self.assertEqual(hashlib.sha256(data).hexdigest(), train_adapter.EPOCH_AUTHORITY_SHA256)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'epoch_authority.py'
+            sentinel = Path(tmp) / 'executed'
+            replacement = f"from pathlib import Path\nPath({str(sentinel)!r}).touch()\n".encode()
+            path.write_bytes(data)
+            original_read = Path.read_bytes
+
+            def read_then_replace(source):
+                result = original_read(source)
+                if source == path:
+                    source.write_bytes(replacement)
+                return result
+
+            with mock.patch.object(train_adapter, '__file__', str(Path(tmp) / 'train_adapter.py')):
+                with mock.patch.object(Path, 'read_bytes', read_then_replace):
+                    authority = train_adapter._epoch_authority()
+                self.assertTrue(callable(authority.load))
+                self.assertTrue(callable(authority.bootstrap))
+                self.assertFalse(sentinel.exists())
+                with self.assertRaisesRegex(SystemExit, 'epoch authority source differs from trainer pin'):
+                    train_adapter._epoch_authority()
+                self.assertFalse(sentinel.exists())
+                with mock.patch.dict(train_adapter.__dict__, {'_BOOTSTRAP_AUTHORITY': authority}):
+                    with mock.patch.object(Path, 'read_bytes', side_effect=AssertionError('bootstrap must retain its buffer')):
+                        self.assertIs(train_adapter._epoch_authority(), authority)
 
 
 class AuthorityFixtureCase(unittest.TestCase):
@@ -539,6 +582,7 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("cleanup: PASS", result.stdout)
 
+    @admitted_probe_template()
     def test_context_probe_longest_real_input_full_generation_and_refusals(self):
         from contextlib import nullcontext
         class Tokenizer(ContextTokenizer):
@@ -583,6 +627,7 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                         self.assertTrue(result["context_pass"])
                         self.assertFalse(result["qualified"])
                         self.assertEqual(result["inputs_sha256"], hashlib.sha256(raw).hexdigest())
+                        self.assertEqual(result["template_sha256"], train_adapter.ADMITTED_TEMPLATE_SHA256)
                         self.assertEqual(result["record_position"], 2)
                         self.assertEqual(result["prompt_max"], 4)
                         self.assertEqual(result["total_positions"], 2052)
@@ -603,6 +648,162 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                         model.generate.assert_called_once()
                         flm.for_training.assert_called_once_with(model, use_gradient_checkpointing="unsloth")
 
+    def test_context_input_stream_enforces_exact_and_exceeded_limits(self):
+        with tempfile.TemporaryDirectory() as tmp, admitted_probe_template() as template_path:
+            template = train_adapter._verified_source_module(template_path.read_bytes(), template_path,
+                train_adapter.ADMITTED_TEMPLATE_SHA256, 'synthetic_context_template', 'mismatch')
+            path = Path(tmp) / 'inputs.jsonl'
+            raw = json.dumps(row()['input'], ensure_ascii=False).encode('utf-8')
+            line_limit = train_adapter.CONTEXT_INPUT_MAX_LINE_BYTES
+            byte_limit = train_adapter.CONTEXT_INPUT_MAX_BYTES
+            record_limit = train_adapter.CONTEXT_INPUT_MAX_RECORDS
+            line = raw + b' ' * (line_limit - len(raw) - 2) + b'\r\n'
+            # Actual production byte and line boundaries, streamed fixture writes.
+            expected_hash = hashlib.sha256()
+            with path.open('wb') as handle:
+                for _ in range(byte_limit // line_limit):
+                    handle.write(line)
+                    expected_hash.update(line)
+            records, digest = train_adapter._read_context_probe_inputs(path, template)
+            self.assertEqual(len(records), byte_limit // line_limit)
+            self.assertEqual(digest, expected_hash.hexdigest())
+            with path.open('ab') as handle:
+                handle.write(b' ')
+            with self.assertRaisesRegex(ValueError, 'input byte limit'):
+                train_adapter._read_context_probe_inputs(path, template)
+            path.write_bytes(line[:-2] + b' \r\n')
+            with mock.patch.object(train_adapter, '_load_strict_json') as parse:
+                with self.assertRaisesRegex(ValueError, 'record byte limit'):
+                    train_adapter._read_context_probe_inputs(path, template)
+                parse.assert_not_called()
+            # Enforce record count BEFORE parsing/materializing record 1,025.
+            bounded_line = raw + b'\n'
+            path.write_bytes(bounded_line * record_limit)
+            records, digest = train_adapter._read_context_probe_inputs(path, template)
+            self.assertEqual(len(records), record_limit)
+            self.assertEqual(digest, hashlib.sha256(bounded_line * record_limit).hexdigest())
+            with path.open('ab') as handle:
+                handle.write(bounded_line)
+            with mock.patch.object(train_adapter, '_load_strict_json', wraps=train_adapter._load_strict_json) as parse:
+                with self.assertRaisesRegex(ValueError, 'record count limit'):
+                    train_adapter._read_context_probe_inputs(path, template)
+                self.assertEqual(parse.call_count, record_limit)
+            # Hash exact bytes, including blank lines, Unicode and no final LF.
+            exact = b'\r\n \n' + json.dumps(dict(row()['input'], title='unicode é'), ensure_ascii=False).encode() + b' \r\n' + raw
+            path.write_bytes(exact)
+            records, digest = train_adapter._read_context_probe_inputs(path, template)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(digest, hashlib.sha256(exact).hexdigest())
+            # A single oversized physical line cannot request an unbounded read.
+            class ReadSpy(io.BytesIO):
+                def readline(self, size=-1):
+                    self.assert_size(size)
+                    return super().readline(size)
+                def assert_size(self, size):
+                    if not 0 < size <= line_limit + 1:
+                        raise AssertionError('unbounded input read')
+            with mock.patch.object(Path, 'open', return_value=ReadSpy(b'x' * (line_limit + 2))):
+                with self.assertRaisesRegex(ValueError, 'record byte limit'):
+                    train_adapter._read_context_probe_inputs(path, template)
+
+    @admitted_probe_template()
+    def test_context_probe_persists_all_early_failures_without_input_leaks(self):
+        good = json.dumps(row()['input']).encode()
+        cases = [('missing', None, FileNotFoundError), ('utf8', b'\xff', UnicodeDecodeError),
+                 ('json', b'{SECRET_INPUT_SENTINEL', ValueError), ('blank', b' \r\n', ValueError),
+                 ('not-object', b'[]\n', ValueError), ('contract', b'{"private":"SECRET_INPUT_SENTINEL"}', ValueError),
+                 ('later-invalid', good + b'\n{SECRET_INPUT_SENTINEL', ValueError),
+                 ('bytes', good, ValueError), ('records', good + b'\n' + good, ValueError)]
+        for label, raw, expected in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp, \
+                 mock.patch.object(train_adapter, 'FastLanguageModel') as flm, \
+                 mock.patch.object(train_adapter, 'digest_verification_before_load') as digests, \
+                 mock.patch.object(train_adapter, 'set_seed') as seed:
+                inputs = Path(tmp) / 'inputs.jsonl'
+                report = Path(tmp) / 'reports' / 'probe.json'
+                if raw is not None:
+                    inputs.write_bytes(raw)
+                with contextlib.ExitStack() as stack:
+                    if label == 'bytes':
+                        stack.enter_context(mock.patch.object(train_adapter, 'CONTEXT_INPUT_MAX_BYTES', 1))
+                    if label == 'records':
+                        stack.enter_context(mock.patch.object(train_adapter, 'CONTEXT_INPUT_MAX_RECORDS', 1))
+                    with self.assertRaises(expected):
+                        train_adapter.run_context_probe(inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                        report, context_limit=4096)
+                result = json.loads(report.read_text())
+                self.assertFalse(result['context_pass'])
+                self.assertFalse(result['generation_executed'])
+                self.assertIsNone(result['inputs_sha256'])
+                self.assertIsNone(result['input_count'])
+                self.assertEqual(result['template_sha256'], train_adapter.ADMITTED_TEMPLATE_SHA256)
+                self.assertIn('error_type', result)
+                self.assertNotIn('SECRET_INPUT_SENTINEL', report.read_text())
+                self.assertFalse(report.with_name(report.name + '.tmp').exists())
+                flm.from_pretrained.assert_not_called()
+                digests.assert_not_called()
+                seed.assert_not_called()
+        original = ValueError('synthetic original error')
+        with mock.patch.object(train_adapter, '_read_context_probe_inputs', side_effect=original), \
+             mock.patch.object(train_adapter, 'write_report', side_effect=OSError('report destination unavailable')):
+            with self.assertRaises(ValueError) as caught:
+                train_adapter.run_context_probe(Path('synthetic'), train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                Path('unwritable'), context_limit=4096)
+            self.assertIs(caught.exception, original)
+            self.assertIn('failure report could not be persisted: OSError', original.__notes__[0])
+
+    def test_context_probe_authenticates_same_template_buffer_before_render_or_load(self):
+        with tempfile.TemporaryDirectory() as tmp, admitted_probe_template() as template_path:
+            root = Path(tmp)
+            inputs, report = root / 'inputs.jsonl', root / 'report.json'
+            inputs.write_text(json.dumps(row()['input']))
+            admitted = template_path.read_bytes()
+            sentinel = root / 'executed'
+            bad = ("from pathlib import Path\nPath(" + repr(str(sentinel)) + ").write_text('unexpected')\n").encode()
+            template_path.write_bytes(bad)
+            with mock.patch.object(train_adapter, 'FastLanguageModel') as flm, \
+                 mock.patch.object(train_adapter, 'context_probe_input') as contract:
+                with self.assertRaisesRegex(SystemExit, 'template digest mismatch'):
+                    train_adapter.run_context_probe(inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                    report, context_limit=4096)
+                flm.from_pretrained.assert_not_called()
+                contract.assert_not_called()
+            self.assertFalse(sentinel.exists())
+            failed = json.loads(report.read_text())
+            self.assertFalse(failed['context_pass'])
+            self.assertIsNone(failed['template_sha256'])
+            self.assertIsNone(failed['inputs_sha256'])
+            # Rewrite source after the read and poison the cached module. Neither
+            # later path bytes nor its callable may supply the probe's renderer.
+            class SwapAfterRead(io.BytesIO):
+                def read(self, size=-1):
+                    result = super().read(size)
+                    template_path.write_bytes(bad)
+                    return result
+            real_open = Path.open
+            def guarded_open(path, *args, **kwargs):
+                if path == template_path and args == ('rb',):
+                    return SwapAfterRead(admitted)
+                return real_open(path, *args, **kwargs)
+            cached = types.ModuleType('prompt_template')
+            cached.render_messages = mock.Mock(side_effect=AssertionError('cached renderer used'))
+            before_model = RuntimeError('synthetic stop after admission')
+            with mock.patch.object(Path, 'open', guarded_open), mock.patch.dict(sys.modules, {'prompt_template': cached}), \
+                 mock.patch.object(train_adapter, 'digest_verification_before_load', side_effect=before_model), \
+                 mock.patch.object(train_adapter, 'FastLanguageModel') as flm:
+                with self.assertRaises(RuntimeError) as caught:
+                    train_adapter.run_context_probe(inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                    report, context_limit=4096)
+                self.assertIs(caught.exception, before_model)
+                cached.render_messages.assert_not_called()
+                flm.from_pretrained.assert_not_called()
+            result = json.loads(report.read_text())
+            self.assertEqual(result['template_sha256'], hashlib.sha256(admitted).hexdigest())
+            self.assertEqual(result['input_count'], 1)
+            self.assertEqual(result['inputs_sha256'], hashlib.sha256(inputs.read_bytes()).hexdigest())
+            self.assertFalse(sentinel.exists())
+
+    @admitted_probe_template()
     def test_context_probe_rejects_malformed_envelopes_before_model_load(self):
         import copy
         good = synthetic_kep_input(row()["input"])
@@ -816,6 +1017,105 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         with self.assertRaises(SystemExit):
             train_adapter.resolve_commit("b" * 40, "org/model", pin)
 
+    def test_snapshot_resolution_stays_on_hf_root_after_cache_redirect(self):
+        # Importing unsloth moves HF_HOME/HF_HUB_CACHE to /tmp when the mounted cache is read-only; resolution must not follow it.
+        calls, pin = [], "a" * 40
+        hub = types.ModuleType("huggingface_hub")
+        hub.snapshot_download = lambda **kw: calls.append(kw) or str(Path(kw["cache_dir"], "models--org--m", "snapshots", pin))
+        with mock.patch.dict(sys.modules, {"huggingface_hub": hub}), \
+                mock.patch.object(train_adapter, "HF_ROOT", Path("/workspace/hf")), \
+                mock.patch.dict(os.environ, {"HF_HOME": "/tmp/huggingface_0", "HF_HUB_CACHE": "/tmp/huggingface_0/hub"}):
+            snapshot = train_adapter.local_snapshot_dir("org/m", pin)
+        self.assertEqual(calls, [{"repo_id": "org/m", "revision": pin, "cache_dir": Path("/workspace/hf") / "hub",
+                                  "local_files_only": True}])
+        self.assertEqual(snapshot.name, pin)
+
+    def test_missing_cached_snapshot_refuses_before_any_load(self):
+        hub = types.ModuleType("huggingface_hub")
+
+        def missing(**_kw):
+            raise FileNotFoundError("snapshot not in the local cache")
+        hub.snapshot_download = missing
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(sys.modules, {"huggingface_hub": hub}), \
+                mock.patch.object(train_adapter, "FastLanguageModel") as flm:
+            with self.assertRaises(FileNotFoundError):
+                train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, Path(tmp, "probe.json"),
+                                        probe_rows_total=None, probe_seq_len=train_adapter.SEQ)
+            flm.from_pretrained.assert_not_called()
+
+    def test_commit_falls_back_to_the_loaded_snapshot_and_pins_still_match(self):
+        pin = "a" * 40
+        self.assertEqual(train_adapter.resolve_commit(None, "org/m", pin, Path("hub", "snapshots", pin)), pin)
+        self.assertEqual(train_adapter.resolve_commit(None, "org/m", "main", Path("hub", "snapshots", "c" * 40)), "c" * 40)
+        with self.assertRaises(SystemExit):
+            train_adapter.resolve_commit(None, "org/m", pin, Path("hub", "snapshots", "b" * 40))
+        with self.assertRaises(SystemExit):
+            train_adapter.resolve_commit("b" * 40, "org/m", pin, Path("hub", "snapshots", pin))
+
+    def test_digest_verification_hands_back_the_snapshot_it_verified(self):
+        snapshot = Path("hub", "models--org--m", "snapshots", "a" * 40)
+        resolved = []
+        with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot) as resolver, \
+                mock.patch.object(train_adapter, "load_expected_digests", return_value=[]), \
+                mock.patch.object(train_adapter, "verify_expected_digests", return_value={"files": 0}) as verify:
+            train_adapter.digest_verification_before_load("org/m", "a" * 40, Path("digests.json"), resolved=resolved)
+        resolver.assert_called_once_with("org/m", "a" * 40)
+        self.assertIs(verify.call_args.args[0], snapshot)
+        self.assertEqual(resolved, [snapshot])
+
+    def test_every_mode_loads_the_verified_snapshot_by_path_without_revision(self):
+        snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
+
+        def verified(*_a, resolved=None, **_k):  # admission and verification pass, handing back the verified snapshot
+            resolved.append(snapshot)
+            return {"files": 1, "reads": 2, "bytes": 1, "weight_files": 1, "weight_map_checked": False}
+        for mode in ("train", "context", "probe"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                flm = mock.MagicMock()
+                flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
+                inputs = Path(tmp, "inputs.jsonl")
+                short, longest = dict(row()["input"]), dict(row()["input"], objective="longest real input")
+                inputs.write_text("\n".join(json.dumps(item) for item in (short, longest)) + "\n", encoding="utf-8")
+                with mock.patch.object(train_adapter, "local_snapshot_dir") as resolver, \
+                        mock.patch.object(train_adapter, "digest_verification_before_load", side_effect=verified), \
+                        mock.patch.object(train_adapter, "FastLanguageModel", flm), \
+                        mock.patch.object(train_adapter, "set_seed"), \
+                        mock.patch.object(train_adapter.torch, "cuda", mock.MagicMock(), create=True):
+                    try:
+                        if mode == "train":
+                            train_adapter.train([row()], [], train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 20,
+                                                Path(tmp, "out.json"), winner=True, expected_digests_path=Path(tmp, "d.json"))
+                        elif mode == "context":
+                            with admitted_probe_template():
+                                train_adapter.run_context_probe(inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                                Path(tmp, "ctx.json"), context_limit=2052)
+                        else:
+                            train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                    Path(tmp, "probe.json"), probe_rows_total=None, probe_seq_len=train_adapter.SEQ)
+                    except BaseException:  # the stub stops right after the load call; reports may wrap it
+                        pass
+                resolver.assert_not_called()  # no second lookup after verification
+                self.assertTrue(flm.from_pretrained.called, f"{mode} did not reach the load")
+                args, kwargs = flm.from_pretrained.call_args
+                self.assertEqual(args, (str(snapshot),))
+                self.assertNotIn("revision", kwargs)
+                self.assertTrue(kwargs["local_files_only"])
+                self.assertTrue(kwargs["use_exact_model_name"])
+
+    def test_unverified_mode_resolves_once_and_loads_that_path(self):
+        snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
+        flm = mock.MagicMock()
+        flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot) as resolver, \
+                mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+                mock.patch.object(train_adapter, "FastLanguageModel", flm), mock.patch.object(train_adapter, "set_seed"):
+            with self.assertRaises(SystemExit):
+                train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, Path(tmp, "probe.json"),
+                                        probe_rows_total=None, probe_seq_len=train_adapter.SEQ)
+        resolver.assert_called_once_with(train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION)
+        self.assertEqual(flm.from_pretrained.call_args.args, (str(snapshot),))
+
     def test_winner_probe_stops_above_the_card_and_the_eleven_gib_ceiling(self):
         train_adapter.require_vram(10.9, winner=True)
         with self.assertRaises(SystemExit):
@@ -936,6 +1236,80 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         self.assertIn("m2-expected-qwen3-14b-v2.json", text)
         self.assertIn("HF_HUB_OFFLINE", text)
 
+    def _context_wrapper_run(self, tmp: Path, code_dir: Path, override: str = ""):
+        """Run the REAL wrapper mount/staging block and argument construction for a context probe; return (completed, args)."""
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate the context-probe renderer staging")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        construction = source[source.index("    $dockerArgs = "):source.index("    function Get-AdapterState")]
+        setup = _wrapper_mount_construction(source)
+        marker = "$mounts = New-TrainerCommonMounts"
+        setup = setup.replace(marker, override + "\n" + marker, 1)
+        q = lambda p: Path(p).as_posix().replace("'", "''")
+        command = (
+            "$ErrorActionPreference = 'Stop'\n"
+            f"$name = 'dummy-container'; $code = '{q(code_dir)}'; $evalCode = 'dummy-eval'; $Image = 'dummy-image'\n"
+            "$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20; $Epochs = 0; $runId = 'm2-0123abcd'\n"
+            "$Winner = $false; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96; $PSBoundParameters = @{}\n"
+            "$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n"
+            f"$repoRoot = '{q(Path(__file__).resolve().parents[3])}'\n"
+            f"$HotRoot = '{q(tmp)}'\n$Rows = '{q(tmp)}/accepted.jsonl'\n$ExpectedDigests = ''\n$TrustedDigestRoot = ''\n"
+            + setup + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress")
+        completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                   capture_output=True, text=True, timeout=60)
+        args = json.loads(completed.stdout) if completed.returncode == 0 else None
+        return completed, args
+
+    def test_context_probe_wrapper_binds_the_admitted_lf_renderer_over_a_crlf_checkout(self):
+        # The Windows working tree is CRLF; the probe must still see the exact admitted LF renderer (#472 P1 4193399786).
+        admitted = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            code_dir = tmp / "checkout-train"
+            code_dir.mkdir()
+            lf = Path(train_adapter.__file__).with_name("prompt_template.py").read_bytes().replace(b"\r\n", b"\n")
+            (code_dir / "prompt_template.py").write_bytes(lf.replace(b"\n", b"\r\n"))
+            self.assertNotEqual(hashlib.sha256((code_dir / "prompt_template.py").read_bytes()).hexdigest(), admitted)
+            completed, args = self._context_wrapper_run(tmp, code_dir)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            image = args.index("dummy-image")
+            options = args[:image]
+            renderer_mounts = [options[i + 1] for i in range(len(options) - 1)
+                               if options[i] == "-v" and options[i + 1].endswith(":/code/prompt_template.py:ro")]
+            self.assertEqual(len(renderer_mounts), 1, options)
+            source = Path(renderer_mounts[0][:-len(":/code/prompt_template.py:ro")])
+            self.assertEqual(source, tmp / "runs" / "stage" / "m2-0123abcd" / "Train" / "prompt_template.py")
+            staged = source.read_bytes()
+            self.assertNotIn(b"\r\n", staged)
+            self.assertEqual(hashlib.sha256(staged).hexdigest(), admitted)
+            self.assertIn(f"{code_dir.as_posix()}:/code:ro", options)
+            self.assertLess(options.index(f"{code_dir.as_posix()}:/code:ro"), options.index(renderer_mounts[0]))
+            self.assertIn("C:/synthetic/inputs.jsonl:/workspace/context-inputs.jsonl:ro", options)
+
+    def test_context_probe_wrapper_refuses_tampered_renderer_bytes_before_any_container(self):
+        override = ("function Get-GitBlobBytes { param($RepoRoot, $Commit, $Path, $ExpectedOid, $ExpectedSha256) "
+                    "return [Text.Encoding]::UTF8.GetBytes('tampered renderer') }")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            code_dir = tmp / "checkout-train"
+            code_dir.mkdir()
+            completed, args = self._context_wrapper_run(tmp, code_dir, override)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIsNone(args)
+            self.assertIn("do not match the expected SHA-256", completed.stderr)
+            self.assertFalse((tmp / "runs" / "stage" / "m2-0123abcd" / "Train" / "prompt_template.py").exists())
+
+    def test_context_probe_renderer_staging_follows_gpu_admission_and_preflight(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        preflight = source.index("preflight did not pass ($($pf[-1]")
+        stage = source.index("$rendererStage = New-StageTree -HotRoot $HotRoot -RunId $runId")
+        mutex = source.index("$gpuLock.WaitOne(0)")
+        self.assertLess(mutex, preflight)
+        self.assertLess(preflight, stage)
+        self.assertLess(stage, source.index("    $dockerArgs = "))
+
     def test_wrapper_serialized_docker_arguments_keep_offline_flags_before_image(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -956,7 +1330,7 @@ $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
 $Epochs = 0; $runId = 'm2-01234567'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
-""" + ("$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n" if context_file else "") + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+""" + f"$repoRoot = '{Path(__file__).resolve().parents[3].as_posix()}'\n" + ("$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n" if context_file else "") + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
                 completed = subprocess.run(
                     [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True, text=True, timeout=30,
@@ -967,9 +1341,13 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
                 self.assertEqual(args[image + 1], "/code/train_adapter.py")
                 options, trainer = args[:image], args[image + 2:]
-                self._assert_common_mounts(options, Path(tmp), epoch_mode=False, digests=bool(digests))
+                self._assert_common_mounts(options, Path(tmp), epoch_mode=False, digests=bool(digests), context_probe=context_file)
                 self.assertIn("dummy-code:/code:ro", options)
-                self.assertIn("dummy-eval:/eval:ro", options)
+                if context_file:
+                    self.assertNotIn("dummy-eval:/eval:ro", options)
+                    self.assertFalse((Path(tmp) / "models").exists())
+                else:
+                    self.assertIn("dummy-eval:/eval:ro", options)
                 self.assertNotIn("-e", trainer)
                 for flag in ("HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1"):
                     if digests:
@@ -1067,19 +1445,22 @@ ConvertTo-Json -InputObject $args_ -Compress
         self.assertNotIn("--winner", trainer)
         self.assertNotIn("--probe", trainer)
 
-    def _assert_common_mounts(self, options, root, *, epoch_mode, digests):
+    def _assert_common_mounts(self, options, root, *, epoch_mode, digests, context_probe=False):
         mounts = [options[index + 1].replace("\\", "/")
                   for index, value in enumerate(options) if value == "-v"]
         self.assertIn(f"{root.as_posix()}/hf:/workspace/hf:ro", mounts)
         model_subdir = "models/m2" if epoch_mode else "models/m2/m2-01234567"
         report_subdir = "reports/adapter-output" if epoch_mode else "reports/adapter-output/m2-01234567"
-        self.assertIn(f"{root.as_posix()}/{model_subdir}:/workspace/models/m2", mounts)
+        if context_probe:
+            self.assertFalse(any(":/workspace/models" in mount for mount in mounts))
+        else:
+            self.assertIn(f"{root.as_posix()}/{model_subdir}:/workspace/models/m2", mounts)
         self.assertIn(f"{root.as_posix()}/{report_subdir}:/workspace/reports", mounts)
         self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
         self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
         rows_mounts = [mount for mount in mounts if ":/workspace/rows" in mount]
         self.assertEqual(rows_mounts, ["C:/synthetic/Input:/workspace/rows:ro"] if epoch_mode
-                         else [f"{root.as_posix()}:/workspace/rows:ro"])
+                         else [] if context_probe else [f"{root.as_posix()}:/workspace/rows:ro"])
         for filename, host in (("expected-digests", "dummy-digests"), ("trusted-digest-root", "dummy-root")):
             actual = [mount for mount in mounts if f":/workspace/{filename}.json" in mount]
             self.assertEqual(actual, [f"{host}.json:/workspace/{filename}.json:ro"] if digests else [])

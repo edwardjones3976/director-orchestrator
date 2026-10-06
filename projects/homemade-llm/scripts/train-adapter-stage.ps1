@@ -629,13 +629,17 @@ function New-TrainerCommonMounts {
         [string]$ExpectedDigests,
         [string]$TrustedDigestRoot,
         [switch]$EpochMode,
+        [switch]$ContextProbe,
         [string]$RunId
     )
     $mounts = @()
     # No mode exposes runs or custody-bearing reports parents for writes.
+    if ($EpochMode -and $ContextProbe) { Write-Error 'context probe mounts cannot be epoch mounts' }
     if (-not $EpochMode -and $RunId -cnotmatch '^m2-[0-9a-f]{8}$') { Write-Error 'smoke/probe mounts require a run id' }
     $pairs = if ($EpochMode) {
         @(@('hf', 'hf'), @('models\m2', 'models/m2'), @('reports\adapter-output', 'reports'))
+    } elseif ($ContextProbe) {
+        @(@('hf', 'hf'), @(('reports\adapter-output\' + $RunId), 'reports'))
     } else {
         @(@('hf', 'hf'), @(('models\m2\' + $RunId), 'models/m2'), @(('reports\adapter-output\' + $RunId), 'reports'))
     }
@@ -647,7 +651,7 @@ function New-TrainerCommonMounts {
         $access = if ($pair[1] -ceq 'hf') { ':ro' } else { '' }
         $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])${access}")
     }
-    if (-not $EpochMode) {
+    if (-not $EpochMode -and -not $ContextProbe) {
         $mounts += @('-v', "${RowsDir}:/workspace/rows:ro")
     }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {

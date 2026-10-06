@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Any
 
 os.environ["HF_HOME"] = os.environ.get("HF_HOME", "/workspace/hf")
+# Captured before any HF import: importing unsloth repoints HF_HOME/HF_HUB_CACHE to a writable /tmp fallback when the mounted
+# cache is read-only, and Hub freezes its default cache then. Snapshots are always resolved from this root.
+HF_ROOT = Path(os.environ["HF_HOME"])
 
 import torch  # noqa: E402
 from unsloth import FastLanguageModel  # noqa: E402
@@ -384,7 +387,7 @@ def load_authenticated_digests(
 def local_snapshot_dir(base: str, revision: str) -> Path:
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=base, revision=revision, local_files_only=True))
+    return Path(snapshot_download(repo_id=base, revision=revision, cache_dir=HF_ROOT / "hub", local_files_only=True))
 
 
 def digest_verification_before_load(
@@ -392,7 +395,11 @@ def digest_verification_before_load(
     revision: str,
     expected_digests_path: Path | None,
     trusted_digest_root_path: Path | None = None,
+    resolved: list[Path] | None = None,
 ) -> dict | None:
+    """Admission first (unchanged order), then the one snapshot resolution, then digest verification of that snapshot.
+
+    The verified snapshot is appended to ``resolved`` so the caller loads exactly those bytes, never a second lookup."""
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
@@ -410,13 +417,20 @@ def digest_verification_before_load(
     else:
         expected_files = load_expected_digests(expected_digests_path, base, revision)
     snapshot_dir = local_snapshot_dir(base, revision)
+    if resolved is not None:
+        resolved.append(snapshot_dir)
     blob_roots = authenticated_cache_blob_roots(snapshot_dir, base, revision) if binding else ()
     return {**verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots), **binding}
 
 
-def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
-    """The commit the base was actually loaded from. A pinned 40-hex revision must match."""
-    commit = config_commit or Path(snapshot_download(repo, revision=revision, local_files_only=True)).name
+def resolve_commit(config_commit: str | None, repo: str, revision: str, snapshot: Path | None = None) -> str:
+    """The commit the base was actually loaded from. A pinned 40-hex revision must match.
+
+    A local-path load usually leaves ``config._commit_hash`` empty; the commit is then the name of the snapshot that was verified and
+    loaded (``snapshot``), never a second lookup."""
+    if snapshot is None and not config_commit:
+        snapshot = local_snapshot_dir(repo, revision)
+    commit = config_commit or snapshot.name
     if not commit:
         fail(f"could not resolve the commit for {repo}@{revision}")
     if len(revision) == 40 and commit != revision:
@@ -1505,17 +1519,23 @@ def _epoch_authority():
     """Load the exact verifier buffer pinned by this authenticated trainer."""
     if '_BOOTSTRAP_AUTHORITY' in globals():
         return globals()['_BOOTSTRAP_AUTHORITY']
-    import types
     path = Path(__file__).with_name('epoch_authority.py')
     try:
         data = path.read_bytes()
     except OSError as exc:
         fail(f'epoch authority source unavailable: {exc}')
-    if hashlib.sha256(data).hexdigest() != EPOCH_AUTHORITY_SHA256:
-        fail('epoch authority source differs from trainer pin')
-    module = types.ModuleType('epoch_authority')
+    return _verified_source_module(data, path, EPOCH_AUTHORITY_SHA256, 'epoch_authority',
+                                   'epoch authority source differs from trainer pin')
+
+
+def _verified_source_module(data: bytes, path: Path, expected_sha256: str, name: str, mismatch: str):
+    """Hash and execute the same source buffer; never import a later path read."""
+    import types
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        fail(mismatch)
+    module = types.ModuleType(name)
     module.__file__ = str(path)
-    exec(compile(data, str(path), 'exec'), module.__dict__)
+    exec(compile(data, str(path), "exec"), module.__dict__)
     return module
 
 # WO-R5 slice 4: authenticate the staged publication binding (rows, trainer,
@@ -1843,10 +1863,10 @@ def _single_token_ids(encoded: Any) -> list[int]:
     return encoded
 
 
-def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any]) -> list[int]:
+def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any], *, template=None) -> list[int]:
     # Match predict_dev's exact input-only renderer and generation call. Compare
     # its default tokenization with explicit untruncated tokens before generation.
-    messages = _prompt_template().render_messages(input_block)
+    messages = (template if template is not None else _prompt_template()).render_messages(input_block)
     kwargs = dict(tokenize=True, add_generation_prompt=True, enable_thinking=False, return_tensors="pt")
     actual = _single_token_ids(tokenizer.apply_chat_template(messages, **kwargs))
     untruncated = _single_token_ids(tokenizer.apply_chat_template(messages, truncation=False, **kwargs))
@@ -1980,8 +2000,11 @@ def train(
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
+        resolved: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved)
+        # The one resolution (the verified snapshot when digests were checked), before any CUDA or model effect.
+        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)
         callbacks = []
         if epochs is not None:
             if not isinstance(digest_verification, dict):
@@ -1998,13 +2021,10 @@ def train(
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
         memory_tracking_initialized = True
-        load_kwargs: dict[str, Any] = {}
-        if digest_verification is not None:
-            load_kwargs["local_files_only"] = True
         model, tokenizer = FastLanguageModel.from_pretrained(
-            base, revision=revision, max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
-            use_exact_model_name=True, **load_kwargs)
-        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+            str(snapshot), max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
+            use_exact_model_name=True, local_files_only=True)
+        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         if callback is not None and callback.identity["base_revision"] != resolved:
             raise ValueError("loaded model differs from frozen dev identity")
         model = FastLanguageModel.get_peft_model(
@@ -2069,7 +2089,7 @@ def train(
         raise
 
 
-def context_probe_input(record: dict[str, Any]) -> dict[str, Any]:
+def context_probe_input(record: dict[str, Any], *, template) -> dict[str, Any]:
     """Accept bare inputs or the constructor's exact input-only envelope shape.
 
     This checks shape for rendering, not source custody or constructor admission.
@@ -2087,41 +2107,86 @@ def context_probe_input(record: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("context probe constructor input shape is invalid")
     if not isinstance(record, dict):
         raise ValueError("context probe input must be an object")
-    _prompt_template().input_contract(record)  # Reject targets and all other extra fields.
+    template.input_contract(record)  # Reject targets and all other extra fields.
     if any(not isinstance(record[key], str) or not record[key].strip() for key in ("objective", "repository", "title")):
         raise ValueError("context probe input fields must be nonempty strings")
-    if "context" in record and _prompt_template().context_shape_errors(record["context"]):
+    if "context" in record and template.context_shape_errors(record["context"]):
         raise ValueError("context probe input context shape is invalid")
-    _prompt_template().render_messages(record)  # Validate rendering before any model load.
+    template.render_messages(record)  # Validate rendering before any model load.
     return record
+
+
+# Route-specific safety ceilings, not corpus qualification. The v3 constructor
+# budgets 2,500 content characters per input and requires at least 200 inputs;
+# these limits leave envelope/UTF-8/JSON escaping headroom without unbounded lists.
+CONTEXT_INPUT_MAX_BYTES = 16 * 1024 * 1024
+CONTEXT_INPUT_MAX_RECORDS = 1024
+CONTEXT_INPUT_MAX_LINE_BYTES = 64 * 1024
+
+
+def _read_context_probe_inputs(path: Path, template) -> tuple[list[dict[str, Any]], str]:
+    inputs = []
+    total = 0
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            # Each read is bounded before allocation, including a missing newline.
+            line = handle.readline(min(CONTEXT_INPUT_MAX_LINE_BYTES, CONTEXT_INPUT_MAX_BYTES - total) + 1)
+            if not line:
+                break
+            total += len(line)
+            if total > CONTEXT_INPUT_MAX_BYTES:
+                raise ValueError("context input byte limit exceeded")
+            if len(line) > CONTEXT_INPUT_MAX_LINE_BYTES:
+                raise ValueError("context input record byte limit exceeded")
+            digest.update(line)  # Original bytes, including whitespace and CRLF.
+            text = line.decode("utf-8")
+            if not text.strip():
+                continue  # Existing JSONL blank-line handling; bytes still hashed.
+            if len(inputs) >= CONTEXT_INPUT_MAX_RECORDS:
+                raise ValueError("context input record count limit exceeded")
+            item = _load_strict_json(text)
+            if not isinstance(item, dict):
+                raise ValueError("context probe needs JSONL input objects")
+            inputs.append(context_probe_input(item, template=template))
+    if not inputs:
+        raise ValueError("context probe needs nonempty JSONL input records")
+    return inputs, digest.hexdigest()
 
 
 def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: Path, *,
                       context_limit: int, expected_digests_path: Path | None = None,
                       trusted_digest_root_path: Path | None = None) -> dict[str, Any]:
     """One real input, one forced full generation; output is discarded, never graded."""
-    if type(context_limit) is not int or context_limit <= SEQ:
-        raise ValueError("context probe requires an explicit load context limit greater than max_new_tokens")
-    raw = inputs_path.read_bytes()
-    inputs = [_load_strict_json(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
-    if not inputs or any(not isinstance(item, dict) for item in inputs):
-        raise ValueError("context probe needs nonempty JSONL input records")
-    inputs = [context_probe_input(item) for item in inputs]
     report = {"format": "adapter-context-probe/v1", "base": base, "revision": revision,
-              "inputs_sha256": hashlib.sha256(raw).hexdigest(), "input_count": len(inputs),
+              "inputs_sha256": None, "input_count": None,
               "requested_context_limit": context_limit, "max_new_tokens": SEQ,
-              "template_sha256": ADMITTED_TEMPLATE_SHA256, "seed": SEED, "thinking": False,
+              "template_sha256": None, "seed": SEED, "thinking": False,
               "generation_executed": False, "context_pass": False, "qualified": False,
               "truncation": None, "total_positions": None, "peak_reserved_gib": None}
     loaded = False
     try:
-        verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path)
+        if type(context_limit) is not int or context_limit <= SEQ:
+            raise ValueError("context probe requires an explicit load context limit greater than max_new_tokens")
+        template_path = Path(__file__).with_name("prompt_template.py")
+        # The admitted renderer is 8,462 bytes. Bound even a substituted source
+        # before hashing; execute only this verified buffer, never a cached module.
+        with template_path.open("rb") as handle:
+            template_bytes = handle.read(64 * 1024 + 1)
+        template = _verified_source_module(template_bytes, template_path, ADMITTED_TEMPLATE_SHA256,
+                                           "context_prompt_template", "context probe template digest mismatch")
+        report["template_sha256"] = hashlib.sha256(template_bytes).hexdigest()
+        inputs, input_sha256 = _read_context_probe_inputs(inputs_path, template)
+        report.update(inputs_sha256=input_sha256, input_count=len(inputs))
+        resolved: list[Path] = []
+        verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path,
+                                                       resolved=resolved)
+        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
         set_seed(SEED)
-        model, tokenizer = FastLanguageModel.from_pretrained(base, revision=revision,
-            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True,
-            **({"local_files_only": True} if verification is not None else {}))
+        model, tokenizer = FastLanguageModel.from_pretrained(str(snapshot),
+            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True, local_files_only=True)
         loaded = True
-        report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+        report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         report["digest_verification"] = verification
         for key, value in (("tokenizer_model_max_length", getattr(tokenizer, "model_max_length", None)),
                            ("model_max_seq_length", getattr(model, "max_seq_length", None)),
@@ -2130,7 +2195,7 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         # Keep just the longest prompt; nothing generated becomes a target or an evaluation input.
         lengths, longest = [], []
         for position, item in enumerate(inputs, 1):
-            tokens = input_prompt_ids(tokenizer, item)
+            tokens = input_prompt_ids(tokenizer, item, template=template)
             lengths.append(len(tokens))
             if len(tokens) > len(longest):
                 longest = tokens
@@ -2167,13 +2232,19 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         write_report(report_path, report)
         return report
     except BaseException as exc:
+        report["context_pass"] = False
         report["error_type"] = type(exc).__name__
         if loaded:
             try:
                 report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
             except BaseException:
                 pass
-        write_report(report_path, report)
+        try:
+            write_report(report_path, report)
+        except BaseException as report_exc:
+            # Retain the original refusal even if the report destination itself
+            # is unwritable. No input text or exception message enters telemetry.
+            exc.add_note("context probe failure report could not be persisted: " + type(report_exc).__name__)
         raise
 
 
@@ -2189,22 +2260,20 @@ def run_probe(
     trusted_digest_root_path: Path | None = None,
 ) -> dict[str, Any]:
     """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
+    resolved: list[Path] = []
     digest_verification = digest_verification_before_load(
-        base, revision, expected_digests_path, trusted_digest_root_path,
+        base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved,
     )
+    snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
     set_seed(SEED)
-    load_kwargs: dict[str, Any] = {}
-    if digest_verification is not None:
-        load_kwargs["local_files_only"] = True
     model, tokenizer = FastLanguageModel.from_pretrained(
-        base,
-        revision=revision,
+        str(snapshot),
         max_seq_length=probe_seq_len,
         load_in_4bit=True,
         use_exact_model_name=True,
-        **load_kwargs,
+        local_files_only=True,
     )
-    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
