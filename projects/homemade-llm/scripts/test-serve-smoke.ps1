@@ -129,13 +129,27 @@ Assert-Equal ([bool]($text -notmatch '(Remove-Item|Delete)[^\r\n]*ReceiptPath'))
 $sameAt = First-Offset { $_.Extent.Text -match '^Test-SameContent \$Gguf \$imported' }
 $revalAt = First-Offset { $_.Extent.Text -ceq 'Assert-GgufMatchesReport @($Gguf, $imported) $bound.GgufBytes $bound.GgufSha256' }
 Assert-Equal ([bool]($revalAt -and $sameAt -lt $revalAt -and $revalAt -lt $load)) $true 'revalidate: source and imported GGUF are checked against the report right before the load'
-Assert-Equal ($text.Contains("curl.exe -s -o `$bodyFile -w '%{http_code}'")) $true 'raw body: curl writes the body to its own file and reports the status separately'
+Assert-Equal ($text.Contains("curl.exe -s --noproxy '*' -o `$bodyFile -w '%{http_code}'")) $true 'raw body: curl writes the body to its own file and reports the status separately'
 Assert-Equal ($text.Contains('$responseSha = $raw.Sha256')) $true 'raw body: the receipt hashes the raw body bytes, not reconstructed text'
 Assert-Equal ($text.Contains('if (Test-Path -LiteralPath $bodyFile) { [IO.File]::Delete($bodyFile) }')) $true 'raw body: the temporary body file is deleted'
 $finalOwnerAt = First-Offset { $_.Extent.Text -ceq 'Get-ListenerOwners $listeners' }
 Assert-Equal ([bool]($finalOwnerAt -and $finalOwnerAt -gt $finalBind)) $true 'final owner: owners are resolved afresh from the final listeners'
 Assert-Equal ($text.Contains('-and $loopbackOnly -and $ownedByLmStudio')) $true 'final owner: PASS requires LM Studio ownership of the final listeners'
-Assert-Equal ($text.Contains('if (-not ($loopbackOnly -and $ownedByLmStudio)) {')) $true 'final owner: a missing or replaced owner unloads and stops the server'
+Assert-Equal ($text.Contains('if (-not ($loopbackOnly -and $ownedByLmStudio -and $modelAfter)) {')) $true 'final owner: a missing or replaced owner unloads and stops the server'
+
+# #468 revision 3.
+# Proxy bypass at the argument level: every local smoke HTTP call carries --noproxy '*' (host curl and the container leg).
+$hostCurl = @($cmds | Where-Object { $_.GetCommandName() -eq 'curl.exe' })
+Assert-Equal ($hostCurl.Count -eq 1 -and @($hostCurl[0].CommandElements | ForEach-Object { $_.Extent.Text }) -join ' ' -match "^curl\.exe -s --noproxy '\*' ") $true 'proxy: the host curl bypasses any proxy (--noproxy *)'
+$ctrCall = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -match "^Invoke-Bounded 'docker' @\('run'" }, $true) | Select-Object -First 1
+Assert-Equal ([bool]($ctrCall -and $ctrCall.Extent.Text -match '''--entrypoint'', ''curl'', \$Image,\s*''-s'', ''--noproxy'', ''\*''')) $true 'proxy: the container curl leg bypasses any proxy (--noproxy *)'
+Assert-Equal ([bool]($text -notmatch 'FileMode\]::Truncate')) $true 'reserve: completion never truncates the reservation in place'
+Assert-Equal ($text.Contains('[IO.File]::Replace($sibling, $Path, [NullString]::Value)')) $true 'reserve: completion atomically replaces the reservation with a flushed sibling'
+# Fresh loaded-model state after the request: required for PASS, wired into the late cleanup, recorded in the receipt.
+$postModelAt = ($cmds | Where-Object { $_.Extent.Text -match '^Test-LoadedModel \$postLoaded' } | Select-Object -First 1).Extent.StartOffset
+Assert-Equal ([bool]($postModelAt -and $postModelAt -gt $curl -and $postModelAt -lt $finalBind)) $true 'model after: loaded-model state is read again after the request'
+Assert-Equal ($text.Contains('-and $loopbackOnly -and $ownedByLmStudio -and $modelAfter')) $true 'model after: PASS requires the same model still loaded after the request'
+Assert-Equal ($text.Contains('model_after_request = [ordered]@{ expected_path = $known.path; still_loaded = $modelAfter')) $true 'model after: the receipt records the post-request model state'
 Assert-Equal ($text.Contains('owners = @($finalOwners | ForEach-Object')) $true 'final owner: the receipt binds the final owners'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
@@ -224,6 +238,17 @@ try {
     [IO.File]::WriteAllText($other, (@{ run = 'smoke-20261006-050000-abcdef'; status = 'reserved'; pid = $PID + 1 } | ConvertTo-Json))
     Assert-Equal (Refuses { Write-ServeReceipt $other ([ordered]@{ run = 'smoke-20261006-050000-abcdef'; status = 'complete' }) } 'not this run''s own reservation') $true 'reserve: another process''s reservation is never completed or overwritten'
     Assert-Equal ((Get-Content -LiteralPath $other -Raw | ConvertFrom-Json).status) 'reserved' 'reserve: a refused completion leaves the reservation intact'
+    Assert-Equal (@(Get-ChildItem -LiteralPath $work -Filter 'serve-*.tmp').Count) 0 'reserve: a completed receipt leaves no sibling temp file'
+    # A completion whose atomic replace fails keeps the reservation byte-for-byte and removes only its own sibling.
+    $locked = Join-Path $work 'serve-smoke-20261006-060000-abcdef.json'
+    Write-ServeReceipt $locked ([ordered]@{ run = 'smoke-20261006-060000-abcdef'; status = 'reserved'; pid = $PID }) -Reserve
+    $before = [IO.File]::ReadAllBytes($locked)
+    Set-ItemProperty -LiteralPath $locked -Name IsReadOnly -Value $true   # makes File.Replace fail on the destination
+    $msg = ''; try { Write-ServeReceipt $locked ([ordered]@{ run = 'smoke-20261006-060000-abcdef'; status = 'complete' }) } catch { $msg = $_.Exception.Message }
+    Set-ItemProperty -LiteralPath $locked -Name IsReadOnly -Value $false
+    Assert-Equal ([bool]$msg) $true 'reserve: a failed atomic replace raises'
+    Assert-Equal ([Convert]::ToHexString([IO.File]::ReadAllBytes($locked)) -eq [Convert]::ToHexString($before)) $true 'reserve: a failed completion leaves the reservation byte-for-byte intact'
+    Assert-Equal (@(Get-ChildItem -LiteralPath $work -Filter 'serve-smoke-20261006-060000-abcdef.json.*.tmp').Count) 0 'reserve: a failed completion removes only its own sibling'
 
     $a = Join-Path $work 'a.gguf'; $b = Join-Path $work 'b.gguf'; $c = Join-Path $work 'c.gguf'
     Set-Content $a 'same bytes' -NoNewline; Set-Content $b 'same bytes' -NoNewline; Set-Content $c 'other byte' -NoNewline

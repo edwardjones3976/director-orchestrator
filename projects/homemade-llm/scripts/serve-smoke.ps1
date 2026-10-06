@@ -68,18 +68,28 @@ function Assert-GgufMatchesReport([string[]]$Paths, [long]$Bytes, [string]$Sha25
     }
 }
 
-# Single-host receipt: -Reserve creates it exclusively (refusing ANY existing receipt: completed, failed or interrupted);
-# completion replaces only this process's own reservation. A reservation is never deleted, so nothing retries automatically.
+# Single-host receipt: -Reserve creates it exclusively (refusing ANY existing receipt: completed, failed or interrupted).
+# Completion writes and flushes the complete receipt to an exclusively created unique sibling, then atomically replaces only
+# this process's own reservation: until that replace succeeds the reservation stays exactly as written, and a failure removes
+# only the sibling. A reservation is never deleted, so nothing retries automatically.
 function Write-ServeReceipt([string]$Path, $Receipt, [switch]$Reserve) {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Receipt | ConvertTo-Json -Depth 6) + "`n")
     if ($Reserve) {
         $fs = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)   # refuses an existing receipt
-    } else {
-        $held = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($Path)) -NoEnumerate
-        if ($held.status -cne 'reserved' -or $held.run -cne $Receipt.run -or [int]$held.pid -ne $PID) { Write-Error "serve receipt $Path is not this run's own reservation; not overwritten" }
-        $fs = [IO.File]::Open($Path, [IO.FileMode]::Truncate, [IO.FileAccess]::Write)
+        try { $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+        return
     }
-    try { $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+    $held = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($Path)) -NoEnumerate
+    if ($held.status -cne 'reserved' -or $held.run -cne $Receipt.run -or [int]$held.pid -ne $PID) { Write-Error "serve receipt $Path is not this run's own reservation; not overwritten" }
+    $sibling = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $fs = [IO.File]::Open($sibling, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+        try { $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+        [IO.File]::Replace($sibling, $Path, [NullString]::Value)   # atomic on the same volume; the reservation is intact until it succeeds
+    } catch {
+        if (Test-Path -LiteralPath $sibling) { [IO.File]::Delete($sibling) }   # only the sibling this call created
+        throw
+    }
 }
 
 # True only when `lms ps` shows exactly one 'smoke' model, loaded from the expected catalog path with the
@@ -261,7 +271,8 @@ try {
     $startedUtc = (Get-Date).ToUniversalTime().ToString('o')
     try {
         [IO.File]::WriteAllText($reqFile, $request)   # inside try so a partial write is still cleaned up
-        $hostStatus = @(curl.exe -s -o $bodyFile -w '%{http_code}' --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile") -join ''
+        # --noproxy '*': an http_proxy in the environment must never answer instead of the verified local listener.
+        $hostStatus = @(curl.exe -s --noproxy '*' -o $bodyFile -w '%{http_code}' --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile") -join ''
         $hostExit = $LASTEXITCODE
         $raw = Read-RawBody $bodyFile
         $results = @(Test-Reply 'windows' @($raw.Text, $hostStatus) $hostExit)
@@ -279,7 +290,7 @@ try {
         $leaf = Split-Path $reqFile -Leaf
         $ctrName = 'hl-serve-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $r = @(Invoke-Bounded 'docker' @('run', '--rm', '--name', $ctrName, '-v', "${reports}:/r:ro", '--entrypoint', 'curl', $Image,
-            '-s', '-w', "`n%{http_code}", '--max-time', '120', 'http://host.docker.internal:1234/v1/chat/completions',
+            '-s', '--noproxy', '*', '-w', "`n%{http_code}", '--max-time', '120', 'http://host.docker.internal:1234/v1/chat/completions',
             '-H', 'Content-Type: application/json', '--data', "@/r/$leaf") 180)
         if ($r[-1] -eq '__EXIT__timeout') { Invoke-Bounded 'docker' @('kill', $ctrName) 20 | Out-Null }
         $ctrExit = if ($r[-1] -match '^__EXIT__(\d+)$') { [int]$Matches[1] } else { 124 }
@@ -290,6 +301,12 @@ try {
         if (Test-Path -LiteralPath $bodyFile) { [IO.File]::Delete($bodyFile) }   # model output is never kept
     }
 
+    # Fresh, bounded loaded-model state AFTER the request: 'smoke' must still be exactly this run's catalog path with the
+    # requested TTL. A pre/post check, not proof of continuous residency; a lost or replaced model fails the run.
+    $postLoaded = try { (Invoke-Lms @('ps', '--json')) -join "`n" | ConvertFrom-Json } catch { $null }
+    $modelAfter = ($lmsExit -eq 0) -and (Test-LoadedModel $postLoaded $known.path $TtlSeconds)
+    $smokeAfter = @($postLoaded | Where-Object { $_.identifier -eq 'smoke' } | ForEach-Object { [ordered]@{ path = $_.path; ttl_ms = $_.ttlMs } })
+
     # The API must not be reachable from the network: every listener on 1234 has to be loopback.
     # Checked again at the end in case the binding changed during the run.
     $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue)
@@ -297,14 +314,14 @@ try {
     # Owners are looked up afresh from the FINAL listeners: the pre-load owners may no longer be the ones answering.
     $finalOwners = Get-ListenerOwners $listeners
     $ownedByLmStudio = Test-FinalOwnership $listeners $finalOwners
-    if (-not ($loopbackOnly -and $ownedByLmStudio)) {
-        # Exposure or a changed owner appeared during the run: take the model and the server down now, not at TTL expiry.
+    if (-not ($loopbackOnly -and $ownedByLmStudio -and $modelAfter)) {
+        # Exposure, a changed owner or a lost/replaced model appeared during the run: take the model and the server down now.
         Invoke-Lms @('unload', 'smoke') | Out-Null
         Invoke-Lms @('server', 'stop') | Out-Null
     }
     $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
-    Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly; owned by LM Studio: $ownedByLmStudio)"
-    $pass = (@($results | Where-Object schema_valid).Count -eq $(if ($SingleHost) { 1 } else { 2 })) -and $loopbackOnly -and $ownedByLmStudio
+    Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly; owned by LM Studio: $ownedByLmStudio; model still loaded: $modelAfter)"
+    $pass = (@($results | Where-Object schema_valid).Count -eq $(if ($SingleHost) { 1 } else { 2 })) -and $loopbackOnly -and $ownedByLmStudio -and $modelAfter
     if ($SingleHost) {
         # Completes this run's own reservation: the one completion bound to its train report, GGUF, catalog entry and listener.
         $receipt = [ordered]@{
@@ -313,6 +330,7 @@ try {
             gguf = [ordered]@{ path = $Gguf; sha256 = $bound.GgufSha256; bytes = $bound.GgufBytes }
             catalog = [ordered]@{ alias = 'smoke'; path = $known.path; model_key = $known.modelKey }
             ttl_seconds = $TtlSeconds
+            model_after_request = [ordered]@{ expected_path = $known.path; still_loaded = $modelAfter; lms_ps_exit = $lmsExit; smoke_entries = $smokeAfter }
             listener = [ordered]@{ loopback_only = $loopbackOnly; owned_by_lm_studio = $ownedByLmStudio; addresses = @($listeners.LocalAddress | Sort-Object -Unique)
                 owners = @($finalOwners | ForEach-Object { [ordered]@{ name = $_.ProcessName; pid = $_.Id } }) }
             request_sha256 = $requestSha; response_sha256 = $responseSha; response_bytes = $raw.Bytes

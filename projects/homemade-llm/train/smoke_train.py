@@ -196,15 +196,39 @@ def check_steps(actual: int, requested: int) -> int:
     return actual
 
 
+def _write_exclusive(path: Path, data: bytes) -> None:
+    """Create `path` exclusively (FileExistsError if anything is there) and write all of `data`; on any failure remove only this file."""
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def write_report(path: Path, report: dict, *, create: bool = False) -> None:
-    """Write to a temp file and rename over the report, so an interrupted update never truncates the earlier valid report.
-    The first write (create=True) refuses an existing report: a run never adopts or overwrites someone else's evidence."""
+    """The first write (create=True) creates the report itself exclusively, with no check-then-write window: an existing report,
+    including one created concurrently, refuses and is never touched, so a run never adopts or overwrites another run's evidence.
+    An update writes a run-unique temp file and renames it over the report, so an interrupted update never truncates the earlier
+    valid report and two writers never share a temp name."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if create and path.exists():
-        raise SmokeFailure(f"report {path.name} already exists")
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    data = json.dumps(report, indent=2).encode("utf-8")
+    if create:
+        try:
+            _write_exclusive(path, data)
+        except FileExistsError:
+            raise SmokeFailure(f"report {path.name} already exists") from None
+        return
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    _write_exclusive(tmp, data)
+    try:
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def publish_gguf(src: Path, dest: Path) -> dict:
@@ -371,8 +395,7 @@ def main() -> None:
             for g in report["gguf"]:
                 Path(g["path"]).unlink(missing_ok=True)   # no GGUF without its final report
             raise
-        evidence["completed_stages"].append("publish")
-        print(json.dumps(report, indent=2))
+        evidence["completed_stages"].append("publish")   # committed: the complete report and its GGUF are durable
     except BaseException as exc:
         try:
             write_failure(stage, exc, evidence)
@@ -381,6 +404,12 @@ def main() -> None:
         if isinstance(exc, SystemExit) and exc.code not in (None, 0):
             raise
         raise SystemExit(1) from exc
+    # Output after the commit, outside the failure path: a closed or broken stdout cannot turn a committed success into a
+    # failure receipt (the report on disk is the evidence; this print is only a convenience copy).
+    try:
+        print(json.dumps(report, indent=2), flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 def export() -> None:

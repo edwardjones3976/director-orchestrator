@@ -7,6 +7,7 @@ Synthetic files only: no model, no GPU, no Docker, no network.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -296,6 +297,34 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())["status"], "trained-not-exported")
             smoke_train.write_report(path, {"status": "complete"})
             self.assertEqual(json.loads(path.read_text())["status"], "complete")
+            self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["r.json"])   # no temp file is left behind
+
+    def test_write_report_initial_create_is_exclusive_with_no_check_then_write_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "reports", "r.json")
+            real_open = os.open
+
+            def racing_open(p, flags, *a):   # another process creates the report after our call began
+                if Path(p) == path:
+                    path.write_text('{"run": "other"}')
+                return real_open(p, flags, *a)
+            with mock.patch.object(smoke_train.os, "open", side_effect=racing_open):
+                with self.assertRaisesRegex(smoke_train.SmokeFailure, "already exists"):
+                    smoke_train.write_report(path, {"status": "trained-not-exported"}, create=True)
+            self.assertEqual(path.read_text(), '{"run": "other"}')   # the other run's evidence is untouched
+            path.unlink()
+            with mock.patch.object(smoke_train.os, "fsync", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    smoke_train.write_report(path, {"status": "trained-not-exported"}, create=True)
+            self.assertFalse(path.exists())   # a failed first write removes only its own partial file
+            smoke_train.write_report(path, {"status": "trained-not-exported"}, create=True)
+            temps = []
+            real_replace = os.replace
+            with mock.patch.object(smoke_train.os, "replace", side_effect=lambda s, d: temps.append(Path(s).name) or real_replace(s, d)):
+                smoke_train.write_report(path, {"status": "complete"})
+                smoke_train.write_report(path, {"status": "complete"})
+            self.assertEqual(len(set(temps)), 2)   # each update uses its own run-unique temp name
+            self.assertTrue(all(t.startswith("r.json.") and t.endswith(".tmp") and t != "r.json.tmp" for t in temps))
 
 
 class FailureReceiptTests(unittest.TestCase):
@@ -401,7 +430,31 @@ class FailureReceiptTests(unittest.TestCase):
         # _gguf_output_directory). Drive main() end to end with a fake export that writes exactly there: publishing from
         # EXPORT_DIR would find nothing and fail with "no GGUF produced".
         self.assertEqual(smoke_train.GGUF_DIR, Path(f"{smoke_train.EXPORT_DIR}_gguf"))
+        with tempfile.TemporaryDirectory() as tmp:
+            report, models, failure = self._run_fake_main(tmp)
+            final = json.loads(report.read_text())
+            self.assertEqual(final["status"], "complete")
+            self.assertEqual([Path(g["path"]).name for g in final["gguf"]], [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
+            self.assertEqual(sorted(p.name for p in models.iterdir()), [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
+            self.assertFalse(failure.exists())
 
+    def test_main_post_commit_output_failure_writes_no_failure_receipt(self):
+        # After the complete report and GGUF are committed, a broken stdout (e.g. a cancelled log consumer) must not turn
+        # the success into a failure: no .failure.json, no exception, the committed evidence untouched.
+        printed = []
+
+        def broken_stdout(*args, **kwargs):
+            printed.append(args)
+            raise BrokenPipeError("consumer went away")
+        with tempfile.TemporaryDirectory() as tmp:
+            report, models, failure = self._run_fake_main(tmp, print_effect=broken_stdout)
+            self.assertEqual(len(printed), 1)   # the post-commit report print was reached, and raised
+            self.assertEqual(json.loads(report.read_text())["status"], "complete")
+            self.assertEqual(sorted(p.name for p in models.iterdir()), [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
+            self.assertFalse(failure.exists())
+
+    def _run_fake_main(self, tmp, print_effect=None):
+        """main() end to end with the ML stack faked and an export child that writes the pinned Unsloth layout."""
         class FakeModel:
             def save_pretrained(self, d):
                 Path(d).mkdir(parents=True, exist_ok=True)
@@ -433,34 +486,30 @@ class FailureReceiptTests(unittest.TestCase):
                 return types.SimpleNamespace(training_loss=1.0)
         cuda = types.SimpleNamespace(reset_peak_memory_stats=lambda: None, max_memory_allocated=lambda: 0, max_memory_reserved=lambda: 0,
                                      empty_cache=lambda: None, get_device_name=lambda i: "fake")
-        with tempfile.TemporaryDirectory() as tmp:
-            export_dir = Path(tmp, "run", "gguf")
+        export_dir = Path(tmp, "run", "gguf")
 
-            def fake_export(cmd, check, env):   # the child's effect, at the pinned Unsloth's output location
-                Path(f"{export_dir}_gguf").mkdir(parents=True)
-                Path(f"{export_dir}_gguf", "qwen3-0.6b.Q4_K_M.gguf").write_bytes(b"g" * 100)
-            models, report = Path(tmp, "models"), Path(tmp, "report.json")
-            with mock.patch.object(smoke_train, "FAILURE", Path(tmp, "failure.json")), mock.patch.object(smoke_train, "REPORT", report), \
-                    mock.patch.object(smoke_train, "RUN_DIR", Path(tmp, "run-dir")), mock.patch.object(smoke_train, "MODEL_DIR", models), \
-                    mock.patch.object(smoke_train, "EXPORT_DIR", export_dir), mock.patch.object(smoke_train, "GGUF_DIR", Path(f"{export_dir}_gguf")), \
-                    mock.patch.object(smoke_train, "load_digest_list", return_value={smoke_train.BASE + "@" + smoke_train.REVISION: {},
-                                                                                    smoke_train.MERGE_SOURCE + "@" + smoke_train.MERGE_REVISION: {}}), \
-                    mock.patch.object(smoke_train, "snapshot_dir", return_value=Path(tmp, "snap")), \
-                    mock.patch.object(smoke_train, "verify_snapshot", return_value={"files": 1}), \
-                    mock.patch.object(smoke_train, "verify_template"), \
-                    mock.patch.object(smoke_train, "adapter_manifest", return_value={"manifest_sha256": "m" * 64}), \
-                    mock.patch.object(smoke_train, "FastLanguageModel", FakeLoader), \
-                    mock.patch.object(smoke_train, "Dataset", types.SimpleNamespace(from_dict=lambda d: d)), \
-                    mock.patch.object(smoke_train, "SFTConfig", lambda **kw: kw), mock.patch.object(smoke_train, "SFTTrainer", FakeTrainer), \
-                    mock.patch.object(smoke_train, "torch", types.SimpleNamespace(cuda=cuda, __version__="fake")), \
-                    mock.patch.object(smoke_train.subprocess, "run", side_effect=fake_export), \
-                    mock.patch.object(smoke_train.signal, "signal"):
-                smoke_train.main()
-            final = json.loads(report.read_text())
-            self.assertEqual(final["status"], "complete")
-            self.assertEqual([Path(g["path"]).name for g in final["gguf"]], [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
-            self.assertEqual(sorted(p.name for p in models.iterdir()), [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
-            self.assertFalse(Path(tmp, "failure.json").exists())
+        def fake_export(cmd, check, env):   # the child's effect, at the pinned Unsloth's output location
+            Path(f"{export_dir}_gguf").mkdir(parents=True)
+            Path(f"{export_dir}_gguf", "qwen3-0.6b.Q4_K_M.gguf").write_bytes(b"g" * 100)
+        models, report, failure = Path(tmp, "models"), Path(tmp, "report.json"), Path(tmp, "failure.json")
+        stdout = mock.patch.object(smoke_train, "print", side_effect=print_effect, create=True) if print_effect else contextlib.nullcontext()
+        with mock.patch.object(smoke_train, "FAILURE", failure), mock.patch.object(smoke_train, "REPORT", report), \
+                mock.patch.object(smoke_train, "RUN_DIR", Path(tmp, "run-dir")), mock.patch.object(smoke_train, "MODEL_DIR", models), \
+                mock.patch.object(smoke_train, "EXPORT_DIR", export_dir), mock.patch.object(smoke_train, "GGUF_DIR", Path(f"{export_dir}_gguf")), \
+                mock.patch.object(smoke_train, "load_digest_list", return_value={smoke_train.BASE + "@" + smoke_train.REVISION: {},
+                                                                                smoke_train.MERGE_SOURCE + "@" + smoke_train.MERGE_REVISION: {}}), \
+                mock.patch.object(smoke_train, "snapshot_dir", return_value=Path(tmp, "snap")), \
+                mock.patch.object(smoke_train, "verify_snapshot", return_value={"files": 1}), \
+                mock.patch.object(smoke_train, "verify_template"), \
+                mock.patch.object(smoke_train, "adapter_manifest", return_value={"manifest_sha256": "m" * 64}), \
+                mock.patch.object(smoke_train, "FastLanguageModel", FakeLoader), \
+                mock.patch.object(smoke_train, "Dataset", types.SimpleNamespace(from_dict=lambda d: d)), \
+                mock.patch.object(smoke_train, "SFTConfig", lambda **kw: kw), mock.patch.object(smoke_train, "SFTTrainer", FakeTrainer), \
+                mock.patch.object(smoke_train, "torch", types.SimpleNamespace(cuda=cuda, __version__="fake")), \
+                mock.patch.object(smoke_train.subprocess, "run", side_effect=fake_export), \
+                mock.patch.object(smoke_train.signal, "signal"), stdout:
+            smoke_train.main()
+        return report, models, failure
 
     def test_unconstrained_sample_generation_removed(self):
         src = inspect.getsource(smoke_train)
