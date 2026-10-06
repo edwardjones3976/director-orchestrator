@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Any
 
 os.environ["HF_HOME"] = os.environ.get("HF_HOME", "/workspace/hf")
+# Captured before any HF import: importing unsloth repoints HF_HOME/HF_HUB_CACHE to a writable /tmp fallback when the mounted
+# cache is read-only, and Hub freezes its default cache then. Snapshots are always resolved from this root.
+HF_ROOT = Path(os.environ["HF_HOME"])
 
 import torch  # noqa: E402
 from unsloth import FastLanguageModel  # noqa: E402
@@ -384,7 +387,7 @@ def load_authenticated_digests(
 def local_snapshot_dir(base: str, revision: str) -> Path:
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=base, revision=revision, local_files_only=True))
+    return Path(snapshot_download(repo_id=base, revision=revision, cache_dir=HF_ROOT / "hub", local_files_only=True))
 
 
 def digest_verification_before_load(
@@ -392,7 +395,11 @@ def digest_verification_before_load(
     revision: str,
     expected_digests_path: Path | None,
     trusted_digest_root_path: Path | None = None,
+    resolved: list[Path] | None = None,
 ) -> dict | None:
+    """Admission first (unchanged order), then the one snapshot resolution, then digest verification of that snapshot.
+
+    The verified snapshot is appended to ``resolved`` so the caller loads exactly those bytes, never a second lookup."""
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
@@ -410,13 +417,20 @@ def digest_verification_before_load(
     else:
         expected_files = load_expected_digests(expected_digests_path, base, revision)
     snapshot_dir = local_snapshot_dir(base, revision)
+    if resolved is not None:
+        resolved.append(snapshot_dir)
     blob_roots = authenticated_cache_blob_roots(snapshot_dir, base, revision) if binding else ()
     return {**verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots), **binding}
 
 
-def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
-    """The commit the base was actually loaded from. A pinned 40-hex revision must match."""
-    commit = config_commit or Path(snapshot_download(repo, revision=revision, local_files_only=True)).name
+def resolve_commit(config_commit: str | None, repo: str, revision: str, snapshot: Path | None = None) -> str:
+    """The commit the base was actually loaded from. A pinned 40-hex revision must match.
+
+    A local-path load usually leaves ``config._commit_hash`` empty; the commit is then the name of the snapshot that was verified and
+    loaded (``snapshot``), never a second lookup."""
+    if snapshot is None and not config_commit:
+        snapshot = local_snapshot_dir(repo, revision)
+    commit = config_commit or snapshot.name
     if not commit:
         fail(f"could not resolve the commit for {repo}@{revision}")
     if len(revision) == 40 and commit != revision:
@@ -1986,8 +2000,11 @@ def train(
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
+        resolved: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved)
+        # The one resolution (the verified snapshot when digests were checked), before any CUDA or model effect.
+        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)
         callbacks = []
         if epochs is not None:
             if not isinstance(digest_verification, dict):
@@ -2004,13 +2021,10 @@ def train(
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
         memory_tracking_initialized = True
-        load_kwargs: dict[str, Any] = {}
-        if digest_verification is not None:
-            load_kwargs["local_files_only"] = True
         model, tokenizer = FastLanguageModel.from_pretrained(
-            base, revision=revision, max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
-            use_exact_model_name=True, **load_kwargs)
-        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+            str(snapshot), max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
+            use_exact_model_name=True, local_files_only=True)
+        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         if callback is not None and callback.identity["base_revision"] != resolved:
             raise ValueError("loaded model differs from frozen dev identity")
         model = FastLanguageModel.get_peft_model(
@@ -2164,13 +2178,15 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         report["template_sha256"] = hashlib.sha256(template_bytes).hexdigest()
         inputs, input_sha256 = _read_context_probe_inputs(inputs_path, template)
         report.update(inputs_sha256=input_sha256, input_count=len(inputs))
-        verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path)
+        resolved: list[Path] = []
+        verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path,
+                                                       resolved=resolved)
+        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
         set_seed(SEED)
-        model, tokenizer = FastLanguageModel.from_pretrained(base, revision=revision,
-            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True,
-            **({"local_files_only": True} if verification is not None else {}))
+        model, tokenizer = FastLanguageModel.from_pretrained(str(snapshot),
+            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True, local_files_only=True)
         loaded = True
-        report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+        report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         report["digest_verification"] = verification
         for key, value in (("tokenizer_model_max_length", getattr(tokenizer, "model_max_length", None)),
                            ("model_max_seq_length", getattr(model, "max_seq_length", None)),
@@ -2244,22 +2260,20 @@ def run_probe(
     trusted_digest_root_path: Path | None = None,
 ) -> dict[str, Any]:
     """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
+    resolved: list[Path] = []
     digest_verification = digest_verification_before_load(
-        base, revision, expected_digests_path, trusted_digest_root_path,
+        base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved,
     )
+    snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
     set_seed(SEED)
-    load_kwargs: dict[str, Any] = {}
-    if digest_verification is not None:
-        load_kwargs["local_files_only"] = True
     model, tokenizer = FastLanguageModel.from_pretrained(
-        base,
-        revision=revision,
+        str(snapshot),
         max_seq_length=probe_seq_len,
         load_in_4bit=True,
         use_exact_model_name=True,
-        **load_kwargs,
+        local_files_only=True,
     )
-    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,

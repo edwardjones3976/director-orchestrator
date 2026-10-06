@@ -1017,6 +1017,105 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         with self.assertRaises(SystemExit):
             train_adapter.resolve_commit("b" * 40, "org/model", pin)
 
+    def test_snapshot_resolution_stays_on_hf_root_after_cache_redirect(self):
+        # Importing unsloth moves HF_HOME/HF_HUB_CACHE to /tmp when the mounted cache is read-only; resolution must not follow it.
+        calls, pin = [], "a" * 40
+        hub = types.ModuleType("huggingface_hub")
+        hub.snapshot_download = lambda **kw: calls.append(kw) or str(Path(kw["cache_dir"], "models--org--m", "snapshots", pin))
+        with mock.patch.dict(sys.modules, {"huggingface_hub": hub}), \
+                mock.patch.object(train_adapter, "HF_ROOT", Path("/workspace/hf")), \
+                mock.patch.dict(os.environ, {"HF_HOME": "/tmp/huggingface_0", "HF_HUB_CACHE": "/tmp/huggingface_0/hub"}):
+            snapshot = train_adapter.local_snapshot_dir("org/m", pin)
+        self.assertEqual(calls, [{"repo_id": "org/m", "revision": pin, "cache_dir": Path("/workspace/hf") / "hub",
+                                  "local_files_only": True}])
+        self.assertEqual(snapshot.name, pin)
+
+    def test_missing_cached_snapshot_refuses_before_any_load(self):
+        hub = types.ModuleType("huggingface_hub")
+
+        def missing(**_kw):
+            raise FileNotFoundError("snapshot not in the local cache")
+        hub.snapshot_download = missing
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(sys.modules, {"huggingface_hub": hub}), \
+                mock.patch.object(train_adapter, "FastLanguageModel") as flm:
+            with self.assertRaises(FileNotFoundError):
+                train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, Path(tmp, "probe.json"),
+                                        probe_rows_total=None, probe_seq_len=train_adapter.SEQ)
+            flm.from_pretrained.assert_not_called()
+
+    def test_commit_falls_back_to_the_loaded_snapshot_and_pins_still_match(self):
+        pin = "a" * 40
+        self.assertEqual(train_adapter.resolve_commit(None, "org/m", pin, Path("hub", "snapshots", pin)), pin)
+        self.assertEqual(train_adapter.resolve_commit(None, "org/m", "main", Path("hub", "snapshots", "c" * 40)), "c" * 40)
+        with self.assertRaises(SystemExit):
+            train_adapter.resolve_commit(None, "org/m", pin, Path("hub", "snapshots", "b" * 40))
+        with self.assertRaises(SystemExit):
+            train_adapter.resolve_commit("b" * 40, "org/m", pin, Path("hub", "snapshots", pin))
+
+    def test_digest_verification_hands_back_the_snapshot_it_verified(self):
+        snapshot = Path("hub", "models--org--m", "snapshots", "a" * 40)
+        resolved = []
+        with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot) as resolver, \
+                mock.patch.object(train_adapter, "load_expected_digests", return_value=[]), \
+                mock.patch.object(train_adapter, "verify_expected_digests", return_value={"files": 0}) as verify:
+            train_adapter.digest_verification_before_load("org/m", "a" * 40, Path("digests.json"), resolved=resolved)
+        resolver.assert_called_once_with("org/m", "a" * 40)
+        self.assertIs(verify.call_args.args[0], snapshot)
+        self.assertEqual(resolved, [snapshot])
+
+    def test_every_mode_loads_the_verified_snapshot_by_path_without_revision(self):
+        snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
+
+        def verified(*_a, resolved=None, **_k):  # admission and verification pass, handing back the verified snapshot
+            resolved.append(snapshot)
+            return {"files": 1, "reads": 2, "bytes": 1, "weight_files": 1, "weight_map_checked": False}
+        for mode in ("train", "context", "probe"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                flm = mock.MagicMock()
+                flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
+                inputs = Path(tmp, "inputs.jsonl")
+                short, longest = dict(row()["input"]), dict(row()["input"], objective="longest real input")
+                inputs.write_text("\n".join(json.dumps(item) for item in (short, longest)) + "\n", encoding="utf-8")
+                with mock.patch.object(train_adapter, "local_snapshot_dir") as resolver, \
+                        mock.patch.object(train_adapter, "digest_verification_before_load", side_effect=verified), \
+                        mock.patch.object(train_adapter, "FastLanguageModel", flm), \
+                        mock.patch.object(train_adapter, "set_seed"), \
+                        mock.patch.object(train_adapter.torch, "cuda", mock.MagicMock(), create=True):
+                    try:
+                        if mode == "train":
+                            train_adapter.train([row()], [], train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, 20,
+                                                Path(tmp, "out.json"), winner=True, expected_digests_path=Path(tmp, "d.json"))
+                        elif mode == "context":
+                            with admitted_probe_template():
+                                train_adapter.run_context_probe(inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                                Path(tmp, "ctx.json"), context_limit=2052)
+                        else:
+                            train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION,
+                                                    Path(tmp, "probe.json"), probe_rows_total=None, probe_seq_len=train_adapter.SEQ)
+                    except BaseException:  # the stub stops right after the load call; reports may wrap it
+                        pass
+                resolver.assert_not_called()  # no second lookup after verification
+                self.assertTrue(flm.from_pretrained.called, f"{mode} did not reach the load")
+                args, kwargs = flm.from_pretrained.call_args
+                self.assertEqual(args, (str(snapshot),))
+                self.assertNotIn("revision", kwargs)
+                self.assertTrue(kwargs["local_files_only"])
+                self.assertTrue(kwargs["use_exact_model_name"])
+
+    def test_unverified_mode_resolves_once_and_loads_that_path(self):
+        snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
+        flm = mock.MagicMock()
+        flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot) as resolver, \
+                mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+                mock.patch.object(train_adapter, "FastLanguageModel", flm), mock.patch.object(train_adapter, "set_seed"):
+            with self.assertRaises(SystemExit):
+                train_adapter.run_probe([row()], train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, Path(tmp, "probe.json"),
+                                        probe_rows_total=None, probe_seq_len=train_adapter.SEQ)
+        resolver.assert_called_once_with(train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION)
+        self.assertEqual(flm.from_pretrained.call_args.args, (str(snapshot),))
+
     def test_winner_probe_stops_above_the_card_and_the_eleven_gib_ceiling(self):
         train_adapter.require_vram(10.9, winner=True)
         with self.assertRaises(SystemExit):
