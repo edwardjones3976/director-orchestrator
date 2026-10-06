@@ -210,7 +210,7 @@ Write-Output 'console-test-ok'
 # P7 trust: the smoke-only root reader, the pin equality, the mount vector and the trust-outside-writable rule, loaded
 # from train-smoke.ps1's syntax tree and run against a synthetic pin/root/digest list (never the production files).
 . (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')
-foreach ($name in 'Read-SmokeTrust', 'Assert-SmokePins', 'Assert-TrustOutsideWritable', 'New-SmokeMounts') {
+foreach ($name in 'Read-SmokeTrust', 'Assert-SmokePins', 'Assert-TrustOutsideWritable', 'New-SmokeMounts', 'New-SmokeDockerArgs') {
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
     if (-not $fn) { $fail += "train-smoke.ps1: function $name missing" } else { . ([scriptblock]::Create($fn.Extent.Text)) }
 }
@@ -279,6 +279,20 @@ try {
     Assert-TrustOutsideWritable -WritableDirs $m.Writable -TrustPaths @('C:\llm\runs\m2\rr\route_r_root_pin.py', 'C:\llm\reports\route-r\route-r-trust-root-v2r6.json', 'C:\llm\runs\m2\p7-smoke\smoke-expected-digests.draft.json')
     Expect-Refusal 'trust input under a writable mount' 'sits inside the writable container mount' { Assert-TrustOutsideWritable -WritableDirs @('C:\llm\reports') -TrustPaths @('C:\llm\reports\route-r\route-r-trust-root-v2r6.json') }
     Expect-Refusal 'malformed run id' 'unexpected run id' { New-SmokeMounts -HotRoot 'C:\llm' -RunId '..\x' -ListPath $listPath }
+    # The actual container argv: no network, exactly these mounts, code read-only, offline flags, the trust digests, the pinned image.
+    $trustArg = @{ ListSha256 = ('5' * 64); TemplateSha256 = ('6' * 64) }
+    $d = @(New-SmokeDockerArgs -Name 'hl-smoke-test0001' -Mounts $m.Mounts -Code 'C:\code\train' -RunId 'smoke-20261006-050000-abcdef' `
+        -Base 'org/base-4bit' -Revision ('a' * 40) -MergeSource 'org/base' -MergeRevision ('b' * 40) -Trust $trustArg -Image $img)
+    $iNet = [array]::IndexOf($d, '--network')
+    if ($iNet -lt 0 -or $d[$iNet + 1] -cne 'none') { $fail += 'docker argv: --network none missing' }
+    if (@($d | Where-Object { $_ -ceq '--network' }).Count -ne 1) { $fail += 'docker argv: more than one --network' }
+    $vols = @(for ($i = 0; $i -lt $d.Count - 1; $i++) { if ($d[$i] -ceq '-v') { $d[$i + 1] } })
+    if ((($vols | Select-Object -SkipLast 1) -join '|') -ne ((@($v)) -join '|') -or $vols[-1] -cne 'C:\code\train:/code:ro') { $fail += "docker argv: unexpected volumes $($vols -join '|')" }
+    $envs = @(for ($i = 0; $i -lt $d.Count - 1; $i++) { if ($d[$i] -ceq '-e') { $d[$i + 1] } })
+    foreach ($e in 'HF_HUB_OFFLINE=1', 'TRANSFORMERS_OFFLINE=1', ('SMOKE_DIGESTS_SHA256=' + ('5' * 64)), ('SMOKE_TEMPLATE_SHA256=' + ('6' * 64)), 'SMOKE_RUN=smoke-20261006-050000-abcdef') {
+        if ($envs -notcontains $e) { $fail += "docker argv: missing -e $e" }
+    }
+    if ($d[-2] -cne $img -or $d[-1] -cne '/code/smoke_train.py' -or $d[-4] -cne '--entrypoint') { $fail += 'docker argv: the pinned image and entrypoint must close the vector' }
 } finally { [IO.Directory]::Delete($trustDir, $true) }
 
 # Pre-preflight refusals (run the real script; all stop before preflight or Docker).
@@ -403,6 +417,7 @@ if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
 Write-Output 'ok  smoke trust: a valid synthetic root reads back exactly; missing/extra smoke_snapshots keys, a root without the section, root bytes off the pin, a changed digest list, a third snapshot and an unpinned image refuse'
 Write-Output 'ok  smoke pins: a training, merge-revision or image override refuses'
 Write-Output 'ok  smoke mounts: HF cache and digest list read-only; only runs\smoke\<run>, models\smoke and reports\smoke writable; a trust input under a writable mount refuses'
+Write-Output 'ok  smoke container argv: --network none, exactly the run mounts plus read-only code, offline flags, trust digests, pinned image and entrypoint'
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'

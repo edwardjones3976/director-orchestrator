@@ -102,6 +102,21 @@ function New-SmokeMounts {
     return @{ Mounts = $mounts; Writable = @($writable.Keys) }
 }
 
+# The container command: no network at all (every input is local and the GGUF export uses the image's own prebuilt
+# llama.cpp, see smoke_train.py), the run's mounts, the code read-only, and the trust digests the container re-checks.
+function New-SmokeDockerArgs {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string[]]$Mounts, [Parameter(Mandatory)][string]$Code,
+        [Parameter(Mandatory)][string]$RunId, [string]$Base, [string]$Revision, [string]$MergeSource, [string]$MergeRevision,
+        [Parameter(Mandatory)][hashtable]$Trust, [Parameter(Mandatory)][string]$Image)
+    return @('run', '--rm', '--name', $Name, '--gpus', 'all', '--shm-size', '4g', '--network', 'none') + $Mounts + @(
+        '-v', "${Code}:/code:ro", '-e', "SMOKE_RUN=$RunId", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
+        '-e', "SMOKE_MERGE_SOURCE=$MergeSource", '-e', "SMOKE_MERGE_REVISION=$MergeRevision",
+        '-e', "SMOKE_DIGESTS_SHA256=$($Trust.ListSha256)", '-e', "SMOKE_TEMPLATE_SHA256=$($Trust.TemplateSha256)",
+        '-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1',
+        '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
+        '--entrypoint', 'python', $Image, '/code/smoke_train.py')
+}
+
 # The merge source belongs to the base snapshot: overriding the base or its revision without the merge pin would record (or fail on) the default
 # Qwen pin. Revisions must be full commits, so every input the GGUF is built from is immutable.
 if (($PSBoundParameters.ContainsKey('Base') -or $PSBoundParameters.ContainsKey('Revision')) -and -not ($PSBoundParameters.ContainsKey('MergeSource') -and $PSBoundParameters.ContainsKey('MergeRevision'))) {
@@ -182,15 +197,10 @@ try {
     foreach ($dir in $smoke.Writable) { New-Item -ItemType Directory -Force $dir | Out-Null }
     $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
     # A named container in a background job, so a stalled load, CUDA call or export can be stopped:
-    # on timeout `docker stop` ends it and --rm removes it, releasing the GPU. Model loads are offline (HF_HUB_OFFLINE).
+    # on timeout `docker stop` ends it and --rm removes it, releasing the GPU.
     $name = 'hl-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $smoke.Mounts + @(
-        '-v', "${code}:/code:ro", '-e', "SMOKE_RUN=$run", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
-        '-e', "SMOKE_MERGE_SOURCE=$MergeSource", '-e', "SMOKE_MERGE_REVISION=$MergeRevision",
-        '-e', "SMOKE_DIGESTS_SHA256=$($trust.ListSha256)", '-e', "SMOKE_TEMPLATE_SHA256=$($trust.TemplateSha256)",
-        '-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1',
-        '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
-        '--entrypoint', 'python', $Image, '/code/smoke_train.py')
+    $dockerArgs = New-SmokeDockerArgs -Name $name -Mounts $smoke.Mounts -Code $code -RunId $run -Base $Base -Revision $Revision `
+        -MergeSource $MergeSource -MergeRevision $MergeRevision -Trust $trust -Image $Image
     Write-Output "smoke run $run (root $($trust.RootSha256.Substring(0, 12)), digest list $($trust.ListSha256.Substring(0, 12)))"
     # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them).
     # Stop-Smoke returns the container's final state.

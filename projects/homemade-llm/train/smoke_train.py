@@ -36,6 +36,14 @@ from pathlib import Path
 os.environ["HF_HOME"] = "/workspace/hf"
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
+# GGUF export uses ONLY the pinned image's own prebuilt llama.cpp (quantizer, converter and its co-versioned conversion/
+# package); Unsloth reads this path at import. Without it, the export looks in ~/.unsloth/llama.cpp, finds nothing and
+# downloads or clones an unpinned llama.cpp from GitHub. The offline and no-auto-install switches make any such fallback
+# fail instead of fetching.
+os.environ["UNSLOTH_LLAMA_CPP_PATH"] = "/opt/unsloth/llama.cpp"
+os.environ["UNSLOTH_LLAMA_CPP_OFFLINE"] = "1"
+os.environ["UNSLOTH_OFFLINE"] = "1"
+os.environ["UNSLOTH_AUTO_INSTALL"] = "0"
 
 import torch  # noqa: E402  (HF_HOME must be set before the HF stack is imported)
 from unsloth import FastLanguageModel  # noqa: E402
@@ -383,6 +391,10 @@ def export() -> None:
         raise SmokeFailure("saved adapter bytes differ from the manifest recorded after the save")
     merge_dir = snapshot_dir(MERGE_SOURCE, MERGE_REVISION)
     verify_snapshot(merge_dir, digests[merge], merge)   # immediately before the merge
+    llama = Path(os.environ["UNSLOTH_LLAMA_CPP_PATH"])
+    for rel in ("llama-quantize", "convert_hf_to_gguf.py", "conversion/__init__.py", "conversion/base.py"):
+        if not (llama / rel).is_file():
+            raise SmokeFailure(f"the image's prebuilt llama.cpp lacks {rel}; refusing to let the export install or fetch one")
     model, tok = FastLanguageModel.from_pretrained(str(adapter_dir), max_seq_length=SEQ, load_in_4bit=True, local_files_only=True)
     # Unsloth picks the merge source from config._name_or_path and merges a local directory's safetensors as-is.
     model.config._name_or_path = str(merge_dir)

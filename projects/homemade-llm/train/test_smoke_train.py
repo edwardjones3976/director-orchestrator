@@ -68,6 +68,13 @@ class TrustTests(unittest.TestCase):
         self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
         self.assertEqual(os.environ["TRANSFORMERS_OFFLINE"], "1")
 
+    def test_gguf_export_uses_only_the_images_prebuilt_llama_cpp(self):
+        # Set before unsloth is imported; any install/fetch fallback is switched off.
+        self.assertEqual(os.environ["UNSLOTH_LLAMA_CPP_PATH"], "/opt/unsloth/llama.cpp")
+        self.assertEqual((os.environ["UNSLOTH_LLAMA_CPP_OFFLINE"], os.environ["UNSLOTH_OFFLINE"], os.environ["UNSLOTH_AUTO_INSTALL"]), ("1", "1", "0"))
+        src = inspect.getsource(smoke_train)
+        self.assertLess(src.index('os.environ["UNSLOTH_LLAMA_CPP_PATH"]'), src.index("from unsloth import FastLanguageModel"))
+
     def test_sha256_file_streams_and_matches(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp, "f")
@@ -361,16 +368,28 @@ class FailureReceiptTests(unittest.TestCase):
                 order.append(("load", name, kwargs))
                 return FakeModel(), object()
         merge_key = smoke_train.MERGE_SOURCE + "@" + smoke_train.MERGE_REVISION
+        llama = tempfile.TemporaryDirectory()
+        self.addCleanup(llama.cleanup)
+        for rel in ("llama-quantize", "convert_hf_to_gguf.py", "conversion/__init__.py", "conversion/base.py"):
+            Path(llama.name, rel).parent.mkdir(parents=True, exist_ok=True)
+            Path(llama.name, rel).write_text("x")
         with mock.patch.object(smoke_train, "load_digest_list", return_value={merge_key: {"files": []}}), \
                 mock.patch.object(smoke_train, "adapter_manifest", return_value={"manifest_sha256": "m" * 64}), \
-                mock.patch.dict(os.environ, {"SMOKE_ADAPTER_MANIFEST_SHA256": "m" * 64}), \
+                mock.patch.dict(os.environ, {"SMOKE_ADAPTER_MANIFEST_SHA256": "m" * 64, "UNSLOTH_LLAMA_CPP_PATH": llama.name}), \
                 mock.patch.object(smoke_train, "snapshot_dir", return_value=Path("/merge-snap")), \
                 mock.patch.object(smoke_train, "verify_snapshot", side_effect=lambda *a: order.append(("verify-merge",))), \
                 mock.patch.object(smoke_train, "FastLanguageModel", FakeLoader):
             smoke_train.export()
-        self.assertEqual([o[0] for o in order], ["verify-merge", "load", "gguf"])   # re-verified immediately before the merge
-        self.assertEqual(order[1][2], {"max_seq_length": smoke_train.SEQ, "load_in_4bit": True, "local_files_only": True})
-        self.assertEqual(order[2][1:], (str(Path("/merge-snap")), "q4_k_m"))
+            # The valid path: re-verified immediately before the merge, then loaded locally, then exported.
+            self.assertEqual([o[0] for o in order], ["verify-merge", "load", "gguf"])
+            self.assertEqual(order[1][2], {"max_seq_length": smoke_train.SEQ, "load_in_4bit": True, "local_files_only": True})
+            self.assertEqual(order[2][1:], (str(Path("/merge-snap")), "q4_k_m"))
+            # An incomplete prebuilt refuses after the re-verification and before any load or GGUF export.
+            order.clear()
+            Path(llama.name, "conversion", "base.py").unlink()
+            with self.assertRaisesRegex(smoke_train.SmokeFailure, "lacks conversion/base.py"):
+                smoke_train.export()
+            self.assertEqual(order, [("verify-merge",)])
         with mock.patch.object(smoke_train, "load_digest_list", return_value={merge_key: {"files": []}}), \
                 mock.patch.object(smoke_train, "adapter_manifest", return_value={"manifest_sha256": "x" * 64}), \
                 mock.patch.dict(os.environ, {"SMOKE_ADAPTER_MANIFEST_SHA256": "m" * 64}):
