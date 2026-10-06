@@ -1196,7 +1196,7 @@ function Copy-BaseSnapshotFile([string]$Source, [string]$Destination) {
     Clear-Artifacts
     $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -BaseRevisionArg $rev.ToUpperInvariant())
     $text = Out-Text $r.Lines
-    Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: caller revision case change refused against exact root entry'
+    Assert ($r.Code -ne 0 -and $text -match 'parameter BaseRepo/BaseRevision: only the pinned 14B or 8B student export is supported' -and (Get-ShimLogLines).Count -eq 0) 'parameter: caller revision case change refused by exact student pin before trust or model effects'
     Clear-Artifacts
     $scenarioScript = Set-TrustFixtureList {
         $caseList = [ordered]@{}
