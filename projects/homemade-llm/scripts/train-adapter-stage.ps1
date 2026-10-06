@@ -29,6 +29,13 @@ $StageAllowedNames = @{
 $StageDirBindingName = @{ Train = 'train'; Eval = 'eval'; Input = 'rows' }
 
 # ---- Small shared primitives --------------------------------------------
+function Assert-ApprovedEpochImage([string]$Image) {
+    # The bootstrap is only trustworthy inside this existing approved image.
+    if ($Image -cne 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739') {
+        Write-Error 'epoch mode requires the exact approved training image'
+    }
+}
+
 function Get-SHA256Hex([byte[]]$Bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { [Convert]::ToHexString($sha.ComputeHash($Bytes)).ToLowerInvariant() } finally { $sha.Dispose() }
@@ -661,6 +668,7 @@ function New-TrainerDockerArgs {
         [string[]]$ExtraEnv = @(),
         [hashtable]$Locations = (Get-ProductionLocations)
     )
+    Assert-ApprovedEpochImage -Image $Image
     if ($Batch -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$' -or $RootFile -cnotmatch '^route-r-trust-root-v[0-9a-z]+\.json$') {
         Write-Error 'invalid authority batch or root file'
     }

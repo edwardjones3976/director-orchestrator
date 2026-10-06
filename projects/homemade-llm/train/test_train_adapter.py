@@ -540,7 +540,7 @@ $HotRoot = '{hot_root}'; $Rows = '{hot_root}/accepted.jsonl'; $Epochs = 4
 $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 {_wrapper_mount_construction(source)}
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
-$args_ = New-TrainerDockerArgs -Image 'dummy-image' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
+$args_ = New-TrainerDockerArgs -Image 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
     -AuthoritySource '# synthetic authenticated source' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
     -Locations @{{ PinFile = '{hot_root}/authority/pin.py'; CustodyRoot = '{hot_root}/authority' }} `
     -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
@@ -554,7 +554,7 @@ ConvertTo-Json -InputObject $args_ -Compress
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         args = json.loads(completed.stdout)
-        image = args.index("dummy-image")
+        image = args.index("unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739")
         self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
         self.assertEqual(args[image + 1:image + 4], ["-I", "-B", "-c"])
         self.assertTrue(args[image + 4].endswith('bootstrap()\n'))
@@ -726,6 +726,119 @@ Write-Output 'PASS'
             self.assertGreater(index, 0, f"{call} not found")
             self.assertLess(index, mutex_index, f"{call} must run before the GPU mutex is created")
 
+    def test_epoch_image_guards_refuse_aliases_before_setup(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell is required for actual wrapper argument guards')
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'train-adapter.ps1'
+        source = script.read_text(encoding='utf-8')
+        # Execute the real parameter defaults and guard prefix, stopping before
+        # row/custody reads. Only dot-sourcing the Windows process helper is
+        # omitted: no bounded process is invoked by these argument guards.
+        prefix = source[:source.index('$Rows = [IO.Path]::GetFullPath($Rows)')]
+        prefix = prefix.replace(". (Join-Path $PSScriptRoot 'invoke-bounded.ps1')", '')
+        prefix = prefix.replace(". (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')",
+                                ". '" + script.with_name('train-adapter-stage.ps1').as_posix() + "'")
+        approved = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739'
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix_file = Path(tmp) / 'wrapper-guards.ps1'
+            prefix_file.write_text(prefix + "\n'GUARDS-PASSED'\n", encoding='utf-8')
+            command = f"""
+$ErrorActionPreference = 'Stop'
+$approved = '{approved}'
+$args_ = @{{ Rows = '{Path(tmp).as_posix()}/absent/accepted.jsonl'; Epochs = 1; Batch = 'batch-0001';
+    Base = '{train_adapter.WINNER_BASE}'; Revision = '{train_adapter.WINNER_REVISION}'; TimeoutMinutes = 1 }}
+# Both the parameter default and the explicit identical digest pass.
+if ((& '{prefix_file.as_posix()}' @args_) -ne 'GUARDS-PASSED') {{ throw 'default refused' }}
+if ((& '{prefix_file.as_posix()}' @args_ -Image $approved) -ne 'GUARDS-PASSED') {{ throw 'exact digest refused' }}
+foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+        (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+    $denied = $false
+    try {{ & '{prefix_file.as_posix()}' @args_ -Image $bad | Out-Null }}
+    catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+    if (-not $denied) {{ throw "wrapper admitted alias: $bad" }}
+}}
+# Non-epoch and probe image selection keeps its previous behavior.
+foreach ($probe in $false, $true) {{
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' -Image 'custom/image:tag' -Probe:$probe) -ne 'GUARDS-PASSED') {{ throw 'legacy image changed' }}
+}}
+. '{script.with_name('train-adapter-stage.ps1').as_posix()}'
+foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+        (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+    $denied = $false
+    try {{ New-TrainerDockerArgs -Image $bad -Name 'unused' -CommonMounts @('-v','unused:/safe:ro') `
+        -Stage @{{}} -BindingPath 'unused' -Base 'unused' -Revision 'unused' -ReportContainerPath 'unused' `
+        -Epochs 1 -AuthoritySource 'unused' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+        -Locations @{{}} | Out-Null }}
+    catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+    if (-not $denied) {{ throw "direct helper reached authority or mounts with alias: $bad" }}
+}}
+'PASS default + exact + five wrapper aliases + five direct helper aliases + legacy/probe'
+"""
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASS default + exact', result.stdout)
+            self.assertFalse((Path(tmp) / 'absent').exists())
+
+    def test_epoch_preflight_precedes_first_directory_mutation(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell is required for wrapper ordering checks')
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'train-adapter.ps1'
+        source = script.read_text(encoding='utf-8')
+        first = source.index('# Epoch storage admission')
+        mutex = source.index('$gpuLock = [System.Threading.Mutex]::new(')
+        fragment = source[first:mutex]
+        self.assertLess(first, source.index('$mounts = New-TrainerCommonMounts'))
+        self.assertLess(first, source.index('$stage = New-StageTree'))
+        self.assertLess(first, source.index('(Write-StageFile'))
+        self.assertLess(mutex, source.index('$pf = @(Invoke-Bounded'))
+        self.assertNotIn('New-Item', source[:first])
+        self.assertNotIn('Set-Content', source[:first])
+        # Execute actual preflight and mount/staging statements. The first
+        # mutation is replaced with a sentinel and stops the success control;
+        # failure must never reach it or the later stage/binding/GPU statements.
+        with tempfile.TemporaryDirectory() as tmp:
+            sentinel = Path(tmp) / 'mutation'
+            command = f"""
+$ErrorActionPreference = 'Stop'
+$HotRoot = '{Path(tmp).as_posix()}'; $Rows = 'unused'; $ExpectedDigests = ''; $TrustedDigestRoot = ''; $Epochs = 1
+$script:seen = [Collections.Generic.List[string]]::new()
+function Invoke-Bounded($exe, $argv, $seconds) {{
+    if ($exe -cne 'pwsh' -or $seconds -ne 180 -or
+        ($argv -join '|') -cne "-NoProfile|-File|$(Join-Path $PSScriptRoot 'preflight.ps1')|-HotRoot|$HotRoot") {{ throw 'unexpected preflight command' }}
+    $script:seen.Add('read-only-preflight')
+    $script:reply
+}}
+function New-TrainerCommonMounts {{
+    $script:seen.Add('first-directory-mutation')
+    [IO.File]::WriteAllText('{sentinel.as_posix()}', 'synthetic')
+    throw 'SYNTHETIC-FIRST-MUTATION-STOP'
+}}
+foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
+    $script:seen.Clear()
+    $script:reply = switch ($case) {{ 'exit1' {{ '__EXIT__1' }} 'timeout' {{ '__EXIT__timeout' }} 'empty' {{ @() }} 'success' {{ '__EXIT__0' }} }}
+    $reason = ''
+    try {{
+{fragment}
+    }} catch {{ $reason = $_.Exception.Message }}
+    if ($case -ceq 'success') {{
+        if ($reason -cne 'SYNTHETIC-FIRST-MUTATION-STOP' -or ($script:seen -join ',') -cne 'read-only-preflight,first-directory-mutation') {{ throw 'success ordering incorrect' }}
+    }} else {{
+        if (-not $reason.Contains('pre-stage preflight did not pass') -or ($script:seen -join ',') -cne 'read-only-preflight' -or (Test-Path -LiteralPath '{sentinel.as_posix()}')) {{ throw "preflight failure reached a side effect: $case; reason=$reason; seen=$($script:seen -join ',')" }}
+    }}
+}}
+'PASS nonzero/timeout/empty refuse before writes; success preflight precedes first mutation'
+"""
+            test_script = Path(tmp) / 'preflight-order.ps1'
+            test_script.write_text(command, encoding='utf-8')
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(test_script)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASS nonzero/timeout/empty', result.stdout)
+            self.assertEqual(set(Path(tmp).iterdir()), {sentinel, test_script})
+
     def test_wrapper_guard_block_refuses_winner_without_probe_and_bad_epochs(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -736,6 +849,9 @@ Write-Output 'PASS'
         guard_start = source.index("if ($Winner -and $Fallback)", start)
         end = source.index("if ($Steps -lt 1)", guard_start)
         prerequisites, guards = source[start:guard_start], source[guard_start:end]
+        helper = script.with_name("train-adapter-stage.ps1")
+        prerequisites = ". '" + helper.as_posix().replace("'", "''") + "'\n" + prerequisites
+        prerequisites += "$Image = '" + 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' + "'\n"
         epoch_pin = {"Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
         cases = [
             ({}, None),

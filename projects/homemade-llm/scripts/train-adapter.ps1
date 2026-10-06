@@ -45,6 +45,7 @@ if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually ex
 if ($Winner -and -not $Probe) { Write-Error '-Winner is only valid together with -Probe' }
 if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
 if ($PSBoundParameters.ContainsKey('Epochs')) {
+    Assert-ApprovedEpochImage -Image $Image
     if ($Epochs -lt 1 -or $Epochs -gt 6) { Write-Error '-Epochs must be between 1 and 6' }
     if ($PSBoundParameters.ContainsKey('Steps')) { Write-Error '-Epochs and -Steps are mutually exclusive; pass exactly one' }
     if ($Probe) { Write-Error '-Epochs is a training mode and cannot be combined with -Probe' }
@@ -139,6 +140,14 @@ foreach ($sub in '', 'hf', 'runs', 'models', 'models\m2', 'reports') {
 }
 foreach ($t in 'token', 'stored_tokens') {
     if (Test-Path -LiteralPath (Join-Path $HotRoot "hf\$t")) { Write-Error "$HotRoot\hf\$t exists (a stored Hugging Face credential); move it out of the mounted cache before training" }
+}
+
+# Epoch storage admission must precede even common-mount directory creation.
+# Keep the final prelaunch check below: staging can change available storage.
+if ($Epochs) {
+    $preStage = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
+    $preStage | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
+    if ($preStage[-1] -ne '__EXIT__0') { Write-Error "pre-stage preflight did not pass ($($preStage[-1] -replace '^__EXIT__', 'exit ')); not staging training" }
 }
 
 # Steps 1-5 (resolve the batch, read its custody records, stage the admitted
