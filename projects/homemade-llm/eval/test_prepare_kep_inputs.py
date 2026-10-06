@@ -98,6 +98,85 @@ class Fixture:
         return values
 
 
+# -- Rule v3 (length-budgeted, two-alias) synthetic fixtures. Nothing above
+# this point is touched: v2's `source`/`Fixture`/`SENTINEL` stay exactly as
+# they were, so every existing v2 test keeps exercising the exact same
+# fixtures it always has. --
+TEMPLATE_LINES = [
+    "# KEP-NNNN: Template title", "",
+    "## Summary", "", "Describe the summary here.", "",
+    "## Motivation", "", "Describe the motivation here.", "",
+    "## Goals", "", "Describe the goal here.", "",
+    "## Non-Goals", "", "Describe the non-goal here.", "",
+    "## Notes/Constraints/Caveats (Optional)", "", "Describe constraints here.", "",
+    "## Graduation Criteria", "### Alpha", "", "Describe alpha criteria here.", "",
+    "## Test Plan", "", "Describe the test plan here.", "",
+]
+TEMPLATE_BODY = "\n".join(TEMPLATE_LINES)
+
+
+def v3_body(number=7000, newline="\n", **overrides):
+    """A synthetic v3 KEP body. Every required/optional section keeps the
+    pinned template's own boilerplate line as its first paragraph (an exact
+    line match, so v3 template-line removal deletes it) followed by the
+    author's real paragraph(s); pass a section's keyword (title, summary,
+    motivation, goals, non_goals, notes, alpha, test_plan) as None to leave
+    ONLY the boilerplate (nothing real added), or as a string to replace the
+    real paragraph(s) that follow the boilerplate line."""
+    def body(role_text, boiler):
+        if role_text is None:
+            return boiler
+        return boiler + "\n\n" + role_text
+    lines = [
+        overrides.get("title", f"# Synthetic v3 KEP {number}"), "",
+        "## Summary", "", body(overrides.get("summary", f"Short synthetic summary {number}."), "Describe the summary here."), "",
+        "## Motivation", "", body(overrides.get("motivation", f"Motivating need {number}."), "Describe the motivation here."), "",
+        "## Goals", "", body(overrides.get("goals", f"Bound synthetic scope {number}."), "Describe the goal here."), "",
+        "## Non-Goals", "", body(overrides.get("non_goals", "Do not expand unrelated work."), "Describe the non-goal here."), "",
+        "## Notes/Constraints/Caveats (Optional)", "", body(overrides.get("notes", "The synthetic platform might require support."), "Describe constraints here."), "",
+        "## Graduation Criteria", "### Alpha", "", body(overrides.get("alpha", "Validate before enabling the feature."), "Describe alpha criteria here."), "",
+        "## Test Plan", "", body(overrides.get("test_plan", f"Test synthetic endpoints. {SENTINEL}"), "Describe the test plan here."), "",
+    ]
+    return newline.join(lines)
+
+
+def v3_policy(template, frozen_at="2020-01-01T00:00:00Z"):
+    return {"protocol": "kep-input-selection/v3", "authority": tool.V3_AUTHORITY,
+            "repository": tool.REPOSITORY, "commit": tool.COMMIT,
+            "statuses": ["implemented", "implementable"], "creation_date_filter": None,
+            "order": tool.ORDER, "frozen_at": frozen_at,
+            "required_sections": list(tool.SUPPORT_SECTIONS), "section_aliases": tool.V3_SECTION_ALIASES,
+            "alias_precedence": tool.V3_ALIAS_PRECEDENCE, "template": template, "trim": tool.V3_TRIM,
+            "postconstruction_token_gate": tool.V3_TOKEN_GATE}
+
+
+class V3Fixture(Fixture):
+    """Same archive/tree/census/license machinery as Fixture, plus the pinned
+    template member every v3 policy requires, and a v3 (not v2) policy. The
+    template's real pinned sha256/git_blob never match the hardcoded
+    production V3_TEMPLATE constant (that constant pins the real upstream
+    kubernetes/enhancements template, unavailable here); every test using
+    this fixture must call fixture.prepare(...), which patches
+    tool.V3_TEMPLATE to this fixture's own synthetic pin for the duration
+    of the call, exactly as the base Fixture's _pins parameter substitutes
+    synthetic archive/tree/census/license pins."""
+    def __init__(self, root, items=None, template_text=None, frozen_at="2020-01-01T00:00:00Z"):
+        self.template_text = TEMPLATE_BODY if template_text is None else template_text
+        super().__init__(root, items)
+        raw_template = self.template_text.encode("utf-8")
+        self.template_pin = {"path": tool.TEMPLATE_PATH, "sha256": tool.digest(raw_template), "git_blob": self.blob(raw_template)}
+        self.policy = v3_policy(self.template_pin, frozen_at=frozen_at)
+        self.refresh()
+
+    def make_archive(self, extra=None, *, before=False):
+        self.files[tool.TEMPLATE_PATH] = self.template_text.encode("utf-8")
+        super().make_archive(extra, before=before)
+
+    def prepare(self, **prepare_overrides):
+        with patch.object(tool, "V3_TEMPLATE", self.template_pin):
+            return tool.prepare(**self.args(**prepare_overrides))
+
+
 @unittest.skipUnless(os.name == "nt", "Two-file publication qualified on Windows only; no POSIX birth implementation")
 class PrepareKepInputsTests(unittest.TestCase):
     def setUp(self):
@@ -1061,6 +1140,535 @@ class PrepareKepInputsTests(unittest.TestCase):
         self.assertNotIn(SENTINEL, stdout.getvalue() + stderr.getvalue())
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(json.loads(stderr.getvalue())["refused"], "ARTIFACT_PIN_MISMATCH")
+
+
+@unittest.skipUnless(os.name == "nt", "Two-file publication qualified on Windows only; no POSIX birth implementation")
+class KepInputSelectionV3Tests(unittest.TestCase):
+    """Rule v3 (length-budgeted, two-alias): a standalone class, not a subclass
+    of PrepareKepInputsTests, so none of the v2 tests above are re-run here;
+    those keep proving v2 unchanged on their own. Every fixture is synthetic."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="synthetic-kep-inputs-v3-")
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def load(self, out=None):
+        out = out or self.root / "out"
+        raw = (out / "inputs.jsonl").read_bytes()
+        return raw, [json.loads(line) for line in raw.splitlines()], json.loads((out / "manifest.json").read_bytes())
+
+    # -- 1. v2 policy unchanged. --
+    def test_v2_policy_unchanged_still_passes_and_yields_same_records(self):
+        """The same fixture and assertions as the existing v2 happy-path test
+        (PrepareKepInputsTests.test_target_free_shared_shape_unicode_spans_and_exact_hashes),
+        run again here through the unmodified source()/Fixture helpers and the
+        unmodified v2 branch of prepare(), to confirm the v3 additions above
+        changed nothing about v2's behavior or output."""
+        text = source(newline="\r\n")
+        fixture = Fixture(self.root, [dict(number=19, sig="sig-example", status="implementable", text=text)])
+        result = tool.prepare(**fixture.args())
+        raw, rows, manifest = self.load()
+        self.assertEqual(result["usable_inputs"], 1)
+        row = rows[0]
+        self.assertEqual(set(row), tool.RECORD_KEYS)
+        self.assertEqual(set(row["input"]), {"objective", "repository", "title", "context"})
+        self.assertEqual(tool.prompt_template.input_contract(row["input"]), "D-M2-10")
+        self.assertEqual(tool.prompt_template.context_shape_errors(row["input"]["context"]), [])
+        self.assertIn("café", row["input"]["title"])
+        tool.validate_record(row, text)
+        self.assertEqual(manifest["inputs_sha256"], tool.digest(raw))
+        self.assertEqual(manifest["records"][0]["sha256"], tool.digest(raw.splitlines(keepends=True)[0]))
+        self.assertEqual(manifest["qualified_selection_sha256"], tool.digest(tool.json_bytes(manifest["qualification"])))
+        self.assertEqual(row["qualified_selection_sha256"], manifest["qualified_selection_sha256"])
+        self.assertEqual(manifest["summary"]["status_candidates"], 1)
+        self.assertNotIn(b"\r\n", raw)
+        self.assertNotIn("stage_counts", manifest)
+        self.assertNotIn("stage_counts", result)
+
+    # -- 2. Protocol separation. --
+    def test_unknown_protocol_and_v3_keys_in_v2_policy_refuse(self):
+        fixture = V3Fixture(self.root)
+        unknown = dict(fixture.policy, protocol="kep-input-selection/v9")
+        fixture.policy = unknown
+        fixture.refresh()
+        with patch.object(tool, "V3_TEMPLATE", fixture.template_pin):
+            with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+                tool.prepare(**fixture.args())
+
+        root = self.root / "v2-with-v3-keys"
+        root.mkdir()
+        v2fixture = Fixture(root)
+        v2fixture.policy = dict(v2fixture.policy, section_aliases=tool.V3_SECTION_ALIASES)
+        v2fixture.refresh()
+        with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+            tool.prepare(**v2fixture.args())
+
+    def test_v3_constant_mutations_and_bad_frozen_at_and_duplicate_key_refuse(self):
+        root1 = self.root / "bad-alias"
+        root1.mkdir()
+        f1 = V3Fixture(root1)
+        f1.policy = dict(f1.policy, section_aliases={"Non-Goals": ["Other Heading"]})
+        f1.refresh()
+        with patch.object(tool, "V3_TEMPLATE", f1.template_pin):
+            with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+                tool.prepare(**f1.args())
+
+        old_caps = {"objective": 400, "Non-Goals": 300, "Notes/Constraints/Caveats": 450, "Alpha Graduation Criteria": 450, "Test Plan": 500,
+                    "Summary": 200, "Motivation": 200}
+
+        def trim_without_allocation():
+            t = dict(tool.V3_TRIM); del t["allocation"]; return t
+
+        def alloc(**over):
+            a = dict(tool.V3_ALLOCATION); a.update(over); return a
+
+        def alloc_without(key):
+            a = dict(tool.V3_ALLOCATION); del a[key]; return a
+        mutations = {
+            "old-fixed-caps": lambda p: dict(p, trim=dict(trim_without_allocation(), character_budgets=old_caps)),
+            "both-schemes": lambda p: dict(p, trim=dict(tool.V3_TRIM, character_budgets=old_caps)),
+            "old-authority-new-allocation": lambda p: dict(p, authority="issue299/comment6000111441"),
+            "missing-mode": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc_without("mode"))),
+            "missing-allocation": lambda p: dict(p, trim=trim_without_allocation()),
+            "changed-fill-order": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(support_fill_order=list(reversed(tool.SUPPORT_SECTIONS))))),
+            "changed-reservation-order": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(mandatory_reservation_order=["Non-Goals", "objective", *tool.SUPPORT_SECTIONS[1:]]))),
+            "changed-mandatory-budget": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(mandatory_character_budget=2101))),
+            "float-budget": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(mandatory_character_budget=2100.0))),
+            "bool-budget": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(total_character_budget=True))),
+            "int-for-bool-transfer": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(optional_budget_transfer=0))),
+            "changed-optional-budget": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(optional_character_budgets={"Summary": 201, "Motivation": 200}))),
+            "nested-unknown": lambda p: dict(p, trim=dict(tool.V3_TRIM, allocation=alloc(extra=1))),
+            "missing-usable-floor": lambda p: dict(p, postconstruction_token_gate={k: v for k, v in tool.V3_TOKEN_GATE.items() if k != "minimum_usable_inputs"}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(policy=label):
+                root2 = self.root / ("policy-" + label)
+                root2.mkdir()
+                f2 = V3Fixture(root2)
+                f2.policy = mutate(f2.policy)
+                f2.refresh()
+                with patch.object(tool, "V3_TEMPLATE", f2.template_pin):
+                    with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+                        tool.prepare(**f2.args())
+
+        root3 = self.root / "unknown-key"
+        root3.mkdir()
+        f3 = V3Fixture(root3)
+        f3.policy = dict(f3.policy, extra_field=True)
+        f3.refresh()
+        with patch.object(tool, "V3_TEMPLATE", f3.template_pin):
+            with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+                tool.prepare(**f3.args())
+
+        root4 = self.root / "bad-frozen"
+        root4.mkdir()
+        f4 = V3Fixture(root4, frozen_at="2020-01-01T00:00:00+01:00")
+        with patch.object(tool, "V3_TEMPLATE", f4.template_pin):
+            with self.assertRaisesRegex(tool.Refusal, "INVALID_TIMESTAMP"):
+                tool.prepare(**f4.args())
+
+        root5 = self.root / "dup-key"
+        root5.mkdir()
+        f5 = V3Fixture(root5)
+        raw = tool.json_bytes(f5.policy)
+        dup_raw = raw[:-1] + b',"protocol":"kep-input-selection/v3"}'
+        f5.paths["policy"].write_bytes(dup_raw)
+        f5.policy_sha = tool.digest(dup_raw)
+        with patch.object(tool, "V3_TEMPLATE", f5.template_pin):
+            with self.assertRaisesRegex(tool.Refusal, "DUPLICATE_JSON_MEMBER"):
+                tool.prepare(**f5.args())
+
+    # -- 3. Alias precedence. --
+    def test_alias_precedence_canonical_over_alias_and_heading_text_preserved(self):
+        base = v3_body(7300)
+        with_both = base.replace(
+            "## Test Plan",
+            "## Risks and Mitigations\n\nAlias-sourced content that must never surface.\n\n## Test Plan")
+        fixture = V3Fixture(self.root, [dict(number=7300, sig="sig-example", status="implemented", text=with_both)])
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        _, rows, _ = self.load()
+        contexts = [block["text"] for block in rows[0]["input"]["context"]]
+        self.assertTrue(any("The synthetic platform might require support." in text for text in contexts))
+        self.assertFalse(any("Alias-sourced content" in text for text in contexts))
+
+        root2 = self.root / "alias-only"
+        root2.mkdir()
+        alias_only = base.replace("## Notes/Constraints/Caveats (Optional)", "## Risks and Mitigations")
+        fixture2 = V3Fixture(root2, [dict(number=7301, sig="sig-example", status="implemented", text=alias_only)])
+        result2 = fixture2.prepare()
+        self.assertEqual(result2["usable_inputs"], 1)
+        _, rows2, _ = self.load(root2 / "out")
+        contexts2 = [block["text"] for block in rows2[0]["input"]["context"]]
+        self.assertTrue(any(text.startswith("## Risks and Mitigations") for text in contexts2))
+        self.assertFalse(any("Notes/Constraints/Caveats" in text for text in contexts2))
+
+    def test_alias_duplicate_canonical_duplicate_alias_and_substring_refuse(self):
+        base = v3_body(7302)
+        dup_canonical = base.replace(
+            "## Test Plan",
+            "## Notes/Constraints/Caveats (Optional)\n\nSecond canonical occurrence.\n\n## Test Plan")
+        root1 = self.root / "dup-canonical"
+        root1.mkdir()
+        f1 = V3Fixture(root1, [dict(number=7302, sig="sig-example", status="implemented", text=dup_canonical)])
+        with self.assertRaises(tool.Refusal) as raised1:
+            f1.prepare()
+        self.assertEqual(raised1.exception.summary["refused_by_reason"], {"AMBIGUOUS_SECTION": 1})
+
+        dup_alias_source = base.replace("## Notes/Constraints/Caveats (Optional)", "## Risks and Mitigations").replace(
+            "## Test Plan", "## Risks and Mitigations\n\nSecond alias occurrence.\n\n## Test Plan")
+        root2 = self.root / "dup-alias"
+        root2.mkdir()
+        f2 = V3Fixture(root2, [dict(number=7303, sig="sig-example", status="implemented", text=dup_alias_source)])
+        with self.assertRaises(tool.Refusal) as raised2:
+            f2.prepare()
+        self.assertEqual(raised2.exception.summary["refused_by_reason"], {"AMBIGUOUS_ALIAS": 1})
+
+        substring = base.replace("## Notes/Constraints/Caveats (Optional)", "## Notes/Constraints/Caveats Overview")
+        root3 = self.root / "substring"
+        root3.mkdir()
+        f3 = V3Fixture(root3, [dict(number=7304, sig="sig-example", status="implemented", text=substring)])
+        with self.assertRaises(tool.Refusal) as raised3:
+            f3.prepare()
+        self.assertEqual(raised3.exception.summary["refused_by_reason"], {"MISSING_OR_EMPTY_SUPPORT_SECTION": 1})
+
+    def test_alias_post_removal_empty_canonical_does_not_fall_back(self):
+        base = v3_body(7305, notes=None)
+        with_healthy_alias = base.replace(
+            "## Test Plan",
+            "## Risks and Mitigations\n\nHealthy alias content that must never be used.\n\n## Test Plan")
+        fixture = V3Fixture(self.root, [dict(number=7305, sig="sig-example", status="implemented", text=with_healthy_alias)])
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"EMPTY_AFTER_TEMPLATE_REMOVAL": 1})
+
+    # -- 4. Comments and fences. --
+    def test_fence_and_comment_headings_are_not_real_sections(self):
+        body = v3_body(7400)
+        hidden = "\n".join(["```", "## Non-Goals", "```", "<!--", "## Risks and Mitigations", "-->"])
+        text = body.replace("## Non-Goals", hidden + "\n\n## Non-Goals")
+        fixture = V3Fixture(self.root, [dict(number=7400, sig="sig-example", status="implemented", text=text)])
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        _, rows, _ = self.load()
+        tool.validate_record(rows[0], text)
+
+    def test_surviving_comment_text_does_not_satisfy_a_role(self):
+        text = v3_body(7401, non_goals="<!-- Do not expand unrelated work. -->")
+        fixture = V3Fixture(self.root, [dict(number=7401, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"EMPTY_AFTER_TEMPLATE_REMOVAL": 1})
+
+    # -- 5. Template removal. --
+    def test_template_only_body_refuses_empty_after_removal(self):
+        text = v3_body(7500, non_goals=None)
+        fixture = V3Fixture(self.root, [dict(number=7500, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"EMPTY_AFTER_TEMPLATE_REMOVAL": 1})
+
+    def test_near_match_template_line_survives_no_whitespace_folding(self):
+        variants = [
+            ("Describe the non-goal here!", "punctuation differs by one character"),
+            ("Describe the non-goal here. ", "trailing space differs"),
+        ]
+        for index, (near_match, label) in enumerate(variants):
+            with self.subTest(label=label):
+                root = self.root / f"near-match-{index}"
+                root.mkdir()
+                number = 7501 + index
+                text = v3_body(number, non_goals=near_match)
+                fixture = V3Fixture(root, [dict(number=number, sig="sig-example", status="implemented", text=text)])
+                result = fixture.prepare()
+                self.assertEqual(result["usable_inputs"], 1)
+                _, rows, _ = self.load(root / "out")
+                contexts = [block["text"] for block in rows[0]["input"]["context"]]
+                self.assertTrue(any(near_match in text for text in contexts))
+
+    # -- 6. Paragraph budgets. --
+    def _mandatory_total(self, row):
+        """Code points of the objective plus every context item (callers use bodies whose optional sections are boilerplate only)."""
+        return len(row["input"]["objective"]) + sum(len(block["text"]) for block in row["input"]["context"])
+
+    def _run_one(self, name, number, text):
+        root = self.root / name
+        root.mkdir()
+        fixture = V3Fixture(root, [dict(number=number, sig="sig-example", status="implemented", text=text)])
+        return fixture, root
+
+    def test_mandatory_minima_exactly_2100_fit_and_2101_refuse(self):
+        base = v3_body(7600, summary=None, motivation=None)
+        fixture, root = self._run_one("baseline", 7600, base)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        baseline = self._mandatory_total(rows[0])
+        default_first = "Do not expand unrelated work."
+        fill = len(default_first) + (tool.V3_MANDATORY_BUDGET - baseline)
+        exact = v3_body(7601, non_goals="N" * fill, summary=None, motivation=None)
+        fixture, root = self._run_one("exact", 7601, exact)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        self.assertEqual(self._mandatory_total(rows[0]), tool.V3_MANDATORY_BUDGET)
+        for span, block in zip(rows[0]["context_spans"], rows[0]["input"]["context"]):
+            self.assertEqual(block["text"], exact[span["start"]:span["end"]])
+        over = v3_body(7602, non_goals="N" * (fill + 1), summary=None, motivation=None)
+        fixture, _ = self._run_one("over", 7602, over)
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"MANDATORY_MINIMA_OVER_BUDGET": 1})
+
+    def test_reserve_before_fill_and_ordered_support_fill_without_skip(self):
+        base = v3_body(7603, summary=None, motivation=None)
+        fixture, root = self._run_one("fill-baseline", 7603, base)
+        fixture.prepare()
+        _, rows, _ = self.load(root / "out")
+        remaining = tool.V3_MANDATORY_BUDGET - self._mandatory_total(rows[0])
+        first = "Do not expand unrelated work."
+        # Non-Goals: a second paragraph exactly filling the remaining pool (its own newline included) is taken
+        exact_second = "E" * (remaining - 1)
+        text = v3_body(7604, non_goals=first + "\n\n" + exact_second, summary=None, motivation=None)
+        fixture, root = self._run_one("fill-exact", 7604, text)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        self.assertIn(exact_second + "\n", [b["text"] for b in rows[0]["input"]["context"]])
+        self.assertEqual(self._mandatory_total(rows[0]), tool.V3_MANDATORY_BUDGET)
+        # one character over stops Non-Goals; a shorter later Non-Goals paragraph is NOT taken; the next role still fills from what remains;
+        # Test Plan's reserved first paragraph is present although Non-Goals had more text than the pool
+        over_second = "O" * remaining
+        later_short = "Later short non-goal never selected."
+        notes_second = "Second notes paragraph fits."
+        text = v3_body(7605, non_goals=first + "\n\n" + over_second + "\n\n" + later_short,
+                       notes="The synthetic platform might require support.\n\n" + notes_second, summary=None, motivation=None)
+        fixture, root = self._run_one("fill-stop", 7605, text)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        contexts = [b["text"] for b in rows[0]["input"]["context"]]
+        self.assertFalse(any(over_second in c for c in contexts))
+        self.assertFalse(any(later_short in c for c in contexts))
+        self.assertIn(notes_second + "\n", contexts)
+        self.assertTrue(any(SENTINEL in c for c in contexts))
+        self.assertLessEqual(self._mandatory_total(rows[0]), tool.V3_MANDATORY_BUDGET)
+        # the objective never takes a later Goals paragraph
+        text = v3_body(7606, goals="Only the first goal.\n\nA later goal paragraph.", summary=None, motivation=None)
+        fixture, root = self._run_one("objective-first-only", 7606, text)
+        fixture.prepare()
+        _, rows, _ = self.load(root / "out")
+        self.assertEqual(rows[0]["input"]["objective"], "Only the first goal.")
+        self.assertFalse(any("A later goal paragraph." in b["text"] for b in rows[0]["input"]["context"]))
+
+    def test_optional_budgets_are_separate_200_and_never_transfer(self):
+        heading = "## Summary\n"
+        fit = "S" * (tool.V3_OPTIONAL_BUDGETS["Summary"] - len(heading) - len("\n"))
+        text = v3_body(7607, summary=fit, motivation=None)
+        fixture, root = self._run_one("summary-200", 7607, text)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        contexts = [b["text"] for b in rows[0]["input"]["context"]]
+        self.assertIn(heading, contexts)
+        self.assertIn(fit + "\n", contexts)
+        text = v3_body(7608, summary=fit + "S", motivation=None)
+        fixture, root = self._run_one("summary-201", 7608, text)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        contexts = [b["text"] for b in rows[0]["input"]["context"]]
+        self.assertNotIn(heading, contexts)
+        self.assertFalse(any(fit in c for c in contexts))
+        # an unused optional budget never rescues mandatory minima that exceed 2,100
+        base = v3_body(7609, summary=None, motivation=None)
+        fixture, root = self._run_one("no-transfer-baseline", 7609, base)
+        fixture.prepare()
+        _, rows, _ = self.load(root / "out")
+        fill = len("Do not expand unrelated work.") + (tool.V3_MANDATORY_BUDGET - self._mandatory_total(rows[0])) + 1
+        fixture, _ = self._run_one("no-transfer-over", 7610, v3_body(7610, non_goals="N" * fill, summary=None, motivation=None))
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"MANDATORY_MINIMA_OVER_BUDGET": 1})
+
+    def test_code_point_accounting_crlf_astral_quotes_and_order(self):
+        base = v3_body(7611, newline="\r\n", summary=None, motivation=None)
+        fixture, root = self._run_one("crlf-baseline", 7611, base)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        row = rows[0]
+        self.assertTrue(any("\r\n" in b["text"] for b in row["input"]["context"]))
+        starts = [s["start"] for s in row["context_spans"]]
+        self.assertEqual(starts, sorted(starts))
+        baseline = self._mandatory_total(row)
+        default_first = "Do not expand unrelated work."
+        unit = "\U0001F600\"\\"                                     # an astral character, a quote and a backslash: 3 code points
+        fill = len(default_first) + (tool.V3_MANDATORY_BUDGET - baseline)
+        lead = "Visible words "                                    # a run of symbols alone is not visible content under the existing rule
+        body = lead + unit * ((fill - len(lead)) // 3) + "x" * ((fill - len(lead)) % 3)
+        exact = v3_body(7612, newline="\r\n", non_goals=body, summary=None, motivation=None)
+        fixture, root = self._run_one("crlf-astral-exact", 7612, exact)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        self.assertEqual(self._mandatory_total(rows[0]), tool.V3_MANDATORY_BUDGET)
+        for span, block in zip(rows[0]["context_spans"], rows[0]["input"]["context"]):
+            self.assertEqual(block["text"], exact[span["start"]:span["end"]])
+        fixture, _ = self._run_one("crlf-astral-over", 7613, v3_body(7613, newline="\r\n", non_goals=body + "x", summary=None, motivation=None))
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"MANDATORY_MINIMA_OVER_BUDGET": 1})
+
+    def test_nested_alpha_prefix_over_450_kept_whole_and_charged_once(self):
+        intro = "Graduation overview. " * 30
+        text = v3_body(7614, summary=None, motivation=None).replace("## Graduation Criteria\n### Alpha", "## Graduation Criteria\n\n" + intro.strip() + "\n\n### Alpha", 1)
+        fixture, root = self._run_one("alpha-prefix", 7614, text)
+        self.assertEqual(fixture.prepare()["usable_inputs"], 1)
+        _, rows, _ = self.load(root / "out")
+        row = rows[0]
+        prefixes = [b["text"] for b in row["input"]["context"] if b["text"].startswith("## Graduation Criteria")]
+        self.assertEqual(len(prefixes), 1)
+        self.assertGreater(len(prefixes[0]), 450)
+        self.assertTrue(prefixes[0].rstrip().endswith("### Alpha"))
+        for span, block in zip(row["context_spans"], row["input"]["context"]):
+            self.assertEqual(block["text"], text[span["start"]:span["end"]])
+        self.assertLessEqual(self._mandatory_total(row), tool.V3_MANDATORY_BUDGET)
+
+    def test_summary_and_motivation_optional_when_only_boilerplate(self):
+        text = v3_body(7603, summary=None, motivation=None)
+        fixture = V3Fixture(self.root, [dict(number=7603, sig="sig-example", status="implemented", text=text)])
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        _, rows, _ = self.load()
+        contexts = [block["text"] for block in rows[0]["input"]["context"]]
+        self.assertFalse(any("Describe the summary here." in text for text in contexts))
+        self.assertFalse(any("Describe the motivation here." in text for text in contexts))
+        self.assertFalse(any(text.startswith("## Summary") for text in contexts))
+        self.assertFalse(any(text.startswith("## Motivation") for text in contexts))
+
+    # -- 7. Original spans. --
+    def test_context_text_equals_source_slice_and_goals_never_duplicated(self):
+        number = 7700
+        text = v3_body(number)
+        fixture = V3Fixture(self.root, [dict(number=number, sig="sig-example", status="implemented", text=text)])
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        _, rows, _ = self.load()
+        row = rows[0]
+        tool.validate_record(row, text)
+        self.assertEqual(tool.prompt_template.context_shape_errors(row["input"]["context"]), [])
+        self.assertEqual(tool.prompt_template.input_contract(row["input"]), "D-M2-10")
+        for span, block in zip(row["context_spans"], row["input"]["context"]):
+            self.assertEqual(block["text"], text[span["start"]:span["end"]])
+        goals_text = f"Bound synthetic scope {number}."
+        self.assertEqual(row["input"]["objective"], goals_text)
+        self.assertFalse(any(block["text"].strip() == goals_text for block in row["input"]["context"]))
+
+    def test_removed_template_line_gap_yields_separate_context_items(self):
+        number = 7701
+        sandwiched = "Real line A.\nDescribe the non-goal here.\nReal line B."
+        text = v3_body(number, non_goals=sandwiched)
+        fixture = V3Fixture(self.root, [dict(number=number, sig="sig-example", status="implemented", text=text)])
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        _, rows, _ = self.load()
+        row = rows[0]
+        contexts = [block["text"] for block in row["input"]["context"]]
+        # Each retained run is the exact original excerpt, newline included; the removed template line between them leaves two separate spans.
+        self.assertIn("Real line A.\n", contexts)
+        self.assertIn("Real line B.\n", contexts)
+        self.assertFalse(any("Real line A." in block and "Real line B." in block for block in contexts))
+        for span, block in zip(row["context_spans"], row["input"]["context"]):
+            self.assertEqual(block["text"], text[span["start"]:span["end"]])
+
+    def test_goals_internal_gap_refuses_objective_span_not_contiguous(self):
+        number = 7702
+        sandwiched_goals = "Real goal A.\nDescribe the goal here.\nReal goal B."
+        text = v3_body(number, goals=sandwiched_goals)
+        fixture = V3Fixture(self.root, [dict(number=number, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaises(tool.Refusal) as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"OBJECTIVE_SPAN_NOT_CONTIGUOUS": 1})
+
+    # -- 8. Pinned inputs. --
+    def test_changed_template_hash_or_blob_refuses(self):
+        for mutated_field, replacement in (("sha256", "0" * 64), ("git_blob", "0" * 40)):
+            with self.subTest(field=mutated_field):
+                root = self.root / mutated_field
+                root.mkdir()
+                local = V3Fixture(root)
+                wrong_pin = dict(local.template_pin)
+                wrong_pin[mutated_field] = replacement
+                local.policy = v3_policy(wrong_pin)
+                local.refresh()
+                with patch.object(tool, "V3_TEMPLATE", wrong_pin):
+                    with self.assertRaisesRegex(tool.Refusal, "TEMPLATE_PIN_MISMATCH"):
+                        tool.prepare(**local.args())
+
+    def test_changed_policy_hash_refuses(self):
+        fixture = V3Fixture(self.root)
+        fixture.policy_sha = "0" * 64
+        with self.assertRaisesRegex(tool.Refusal, "ARTIFACT_PIN_MISMATCH"):
+            tool.prepare(**fixture.args())
+
+    def test_changed_archive_tree_census_license_refuse_under_v3(self):
+        for name in ("archive", "tree", "census", "license"):
+            with self.subTest(name=name):
+                root = self.root / name
+                root.mkdir()
+                fixture = V3Fixture(root)
+                fixture.pins = dict(fixture.pins, **{name: "0" * 64})
+                with self.assertRaisesRegex(tool.Refusal, "ARTIFACT_PIN_MISMATCH"):
+                    tool.prepare(**fixture.args())
+
+    def test_existing_output_never_overwritten_under_v3(self):
+        out = self.root / "out"
+        out.mkdir()
+        (out / "manifest.json").write_bytes(b"old-v2-manifest")
+        fixture = V3Fixture(self.root)
+        with self.assertRaisesRegex(tool.Refusal, "OUTPUT_EXISTS"):
+            fixture.prepare()
+        self.assertEqual((out / "manifest.json").read_bytes(), b"old-v2-manifest")
+
+    # -- 9. Stage counts. --
+    def test_stage_counts_funnel_and_absent_for_v2(self):
+        text_a = v3_body(8001)
+        before, after = text_a.split("## Non-Goals", 1)
+        _, rest = after.split("## Notes/Constraints/Caveats (Optional)", 1)
+        text_a = before + "## Notes/Constraints/Caveats (Optional)" + rest
+        items = [
+            dict(number=8001, sig="sig-example", status="implemented", text=text_a),
+            dict(number=8002, sig="sig-example", status="implemented", text=v3_body(8002, non_goals=None)),
+            dict(number=8003, sig="sig-example", status="implemented", text=v3_body(8003, non_goals="Z" * tool.V3_MANDATORY_BUDGET)),
+            dict(number=8004, sig="sig-example", status="implemented", text=v3_body(8004)),
+        ]
+        fixture = V3Fixture(self.root, items)
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        expected = {"status_candidates": 4, "qualified_before_template_removal": 3,
+                    "qualified_after_template_removal": 2, "paragraph_qualified": 1, "usable_inputs": 1}
+        self.assertEqual(result["stage_counts"], expected)
+        _, _, manifest = self.load()
+        self.assertEqual(manifest["stage_counts"], expected)
+
+    # -- 10. Token-gate declaration. --
+    def test_token_gate_required_recorded_and_no_tokenizer_import(self):
+        fixture = V3Fixture(self.root)
+        result = fixture.prepare()
+        self.assertEqual(result["usable_inputs"], 1)
+        _, _, manifest = self.load()
+        self.assertEqual(manifest["policy"]["postconstruction_token_gate"], tool.V3_TOKEN_GATE)
+
+        root = self.root / "missing-gate"
+        root.mkdir()
+        local = V3Fixture(root)
+        missing = dict(local.policy)
+        del missing["postconstruction_token_gate"]
+        local.policy = missing
+        local.refresh()
+        with patch.object(tool, "V3_TEMPLATE", local.template_pin):
+            with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+                tool.prepare(**local.args())
+
+        source_text = Path(tool.__file__).read_text(encoding="utf-8")
+        for forbidden in ("tiktoken", "tokenizers", "sentencepiece", "transformers"):
+            self.assertNotIn(forbidden, source_text)
 
 
 class PublicationPlatformTests(unittest.TestCase):
