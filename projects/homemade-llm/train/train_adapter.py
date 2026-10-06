@@ -1505,17 +1505,23 @@ def _epoch_authority():
     """Load the exact verifier buffer pinned by this authenticated trainer."""
     if '_BOOTSTRAP_AUTHORITY' in globals():
         return globals()['_BOOTSTRAP_AUTHORITY']
-    import types
     path = Path(__file__).with_name('epoch_authority.py')
     try:
         data = path.read_bytes()
     except OSError as exc:
         fail(f'epoch authority source unavailable: {exc}')
-    if hashlib.sha256(data).hexdigest() != EPOCH_AUTHORITY_SHA256:
-        fail('epoch authority source differs from trainer pin')
-    module = types.ModuleType('epoch_authority')
+    return _verified_source_module(data, path, EPOCH_AUTHORITY_SHA256, 'epoch_authority',
+                                   'epoch authority source differs from trainer pin')
+
+
+def _verified_source_module(data: bytes, path: Path, expected_sha256: str, name: str, mismatch: str):
+    """Hash and execute the same source buffer; never import a later path read."""
+    import types
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        fail(mismatch)
+    module = types.ModuleType(name)
     module.__file__ = str(path)
-    exec(compile(data, str(path), 'exec'), module.__dict__)
+    exec(compile(data, str(path), "exec"), module.__dict__)
     return module
 
 # WO-R5 slice 4: authenticate the staged publication binding (rows, trainer,
@@ -1843,10 +1849,10 @@ def _single_token_ids(encoded: Any) -> list[int]:
     return encoded
 
 
-def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any]) -> list[int]:
+def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any], *, template=None) -> list[int]:
     # Match predict_dev's exact input-only renderer and generation call. Compare
     # its default tokenization with explicit untruncated tokens before generation.
-    messages = _prompt_template().render_messages(input_block)
+    messages = (template if template is not None else _prompt_template()).render_messages(input_block)
     kwargs = dict(tokenize=True, add_generation_prompt=True, enable_thinking=False, return_tensors="pt")
     actual = _single_token_ids(tokenizer.apply_chat_template(messages, **kwargs))
     untruncated = _single_token_ids(tokenizer.apply_chat_template(messages, truncation=False, **kwargs))
@@ -2069,7 +2075,7 @@ def train(
         raise
 
 
-def context_probe_input(record: dict[str, Any]) -> dict[str, Any]:
+def context_probe_input(record: dict[str, Any], *, template) -> dict[str, Any]:
     """Accept bare inputs or the constructor's exact input-only envelope shape.
 
     This checks shape for rendering, not source custody or constructor admission.
@@ -2087,34 +2093,77 @@ def context_probe_input(record: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("context probe constructor input shape is invalid")
     if not isinstance(record, dict):
         raise ValueError("context probe input must be an object")
-    _prompt_template().input_contract(record)  # Reject targets and all other extra fields.
+    template.input_contract(record)  # Reject targets and all other extra fields.
     if any(not isinstance(record[key], str) or not record[key].strip() for key in ("objective", "repository", "title")):
         raise ValueError("context probe input fields must be nonempty strings")
-    if "context" in record and _prompt_template().context_shape_errors(record["context"]):
+    if "context" in record and template.context_shape_errors(record["context"]):
         raise ValueError("context probe input context shape is invalid")
-    _prompt_template().render_messages(record)  # Validate rendering before any model load.
+    template.render_messages(record)  # Validate rendering before any model load.
     return record
+
+
+# Route-specific safety ceilings, not corpus qualification. The v3 constructor
+# budgets 2,500 content characters per input and requires at least 200 inputs;
+# these limits leave envelope/UTF-8/JSON escaping headroom without unbounded lists.
+CONTEXT_INPUT_MAX_BYTES = 16 * 1024 * 1024
+CONTEXT_INPUT_MAX_RECORDS = 1024
+CONTEXT_INPUT_MAX_LINE_BYTES = 64 * 1024
+
+
+def _read_context_probe_inputs(path: Path, template) -> tuple[list[dict[str, Any]], str]:
+    inputs = []
+    total = 0
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            # Each read is bounded before allocation, including a missing newline.
+            line = handle.readline(min(CONTEXT_INPUT_MAX_LINE_BYTES, CONTEXT_INPUT_MAX_BYTES - total) + 1)
+            if not line:
+                break
+            total += len(line)
+            if total > CONTEXT_INPUT_MAX_BYTES:
+                raise ValueError("context input byte limit exceeded")
+            if len(line) > CONTEXT_INPUT_MAX_LINE_BYTES:
+                raise ValueError("context input record byte limit exceeded")
+            digest.update(line)  # Original bytes, including whitespace and CRLF.
+            text = line.decode("utf-8")
+            if not text.strip():
+                continue  # Existing JSONL blank-line handling; bytes still hashed.
+            if len(inputs) >= CONTEXT_INPUT_MAX_RECORDS:
+                raise ValueError("context input record count limit exceeded")
+            item = _load_strict_json(text)
+            if not isinstance(item, dict):
+                raise ValueError("context probe needs JSONL input objects")
+            inputs.append(context_probe_input(item, template=template))
+    if not inputs:
+        raise ValueError("context probe needs nonempty JSONL input records")
+    return inputs, digest.hexdigest()
 
 
 def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: Path, *,
                       context_limit: int, expected_digests_path: Path | None = None,
                       trusted_digest_root_path: Path | None = None) -> dict[str, Any]:
     """One real input, one forced full generation; output is discarded, never graded."""
-    if type(context_limit) is not int or context_limit <= SEQ:
-        raise ValueError("context probe requires an explicit load context limit greater than max_new_tokens")
-    raw = inputs_path.read_bytes()
-    inputs = [_load_strict_json(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
-    if not inputs or any(not isinstance(item, dict) for item in inputs):
-        raise ValueError("context probe needs nonempty JSONL input records")
-    inputs = [context_probe_input(item) for item in inputs]
     report = {"format": "adapter-context-probe/v1", "base": base, "revision": revision,
-              "inputs_sha256": hashlib.sha256(raw).hexdigest(), "input_count": len(inputs),
+              "inputs_sha256": None, "input_count": None,
               "requested_context_limit": context_limit, "max_new_tokens": SEQ,
-              "template_sha256": ADMITTED_TEMPLATE_SHA256, "seed": SEED, "thinking": False,
+              "template_sha256": None, "seed": SEED, "thinking": False,
               "generation_executed": False, "context_pass": False, "qualified": False,
               "truncation": None, "total_positions": None, "peak_reserved_gib": None}
     loaded = False
     try:
+        if type(context_limit) is not int or context_limit <= SEQ:
+            raise ValueError("context probe requires an explicit load context limit greater than max_new_tokens")
+        template_path = Path(__file__).with_name("prompt_template.py")
+        # The admitted renderer is 8,462 bytes. Bound even a substituted source
+        # before hashing; execute only this verified buffer, never a cached module.
+        with template_path.open("rb") as handle:
+            template_bytes = handle.read(64 * 1024 + 1)
+        template = _verified_source_module(template_bytes, template_path, ADMITTED_TEMPLATE_SHA256,
+                                           "context_prompt_template", "context probe template digest mismatch")
+        report["template_sha256"] = hashlib.sha256(template_bytes).hexdigest()
+        inputs, input_sha256 = _read_context_probe_inputs(inputs_path, template)
+        report.update(inputs_sha256=input_sha256, input_count=len(inputs))
         verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path)
         set_seed(SEED)
         model, tokenizer = FastLanguageModel.from_pretrained(base, revision=revision,
@@ -2130,7 +2179,7 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         # Keep just the longest prompt; nothing generated becomes a target or an evaluation input.
         lengths, longest = [], []
         for position, item in enumerate(inputs, 1):
-            tokens = input_prompt_ids(tokenizer, item)
+            tokens = input_prompt_ids(tokenizer, item, template=template)
             lengths.append(len(tokens))
             if len(tokens) > len(longest):
                 longest = tokens
@@ -2167,13 +2216,19 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         write_report(report_path, report)
         return report
     except BaseException as exc:
+        report["context_pass"] = False
         report["error_type"] = type(exc).__name__
         if loaded:
             try:
                 report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
             except BaseException:
                 pass
-        write_report(report_path, report)
+        try:
+            write_report(report_path, report)
+        except BaseException as report_exc:
+            # Retain the original refusal even if the report destination itself
+            # is unwritable. No input text or exception message enters telemetry.
+            exc.add_note("context probe failure report could not be persisted: " + type(report_exc).__name__)
         raise
 
 

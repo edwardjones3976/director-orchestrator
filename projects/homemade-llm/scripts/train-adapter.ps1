@@ -176,7 +176,7 @@ $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $mounts = @()
 if ($Epochs) {
     $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
+        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:(-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -RunId $runId
 }
 $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
@@ -252,7 +252,7 @@ try {
     # and preflight admission. Epoch staging retains its separate early check.
     if (-not $Epochs) {
         $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
+            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:(-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -RunId $runId
         if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
             $mounts += @('-v', "${ProbeContextInputs}:/workspace/context-inputs.jsonl:ro")
         }
@@ -271,8 +271,8 @@ try {
         $epochDockerArgs
     } else {
         $d = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
-            '-v', "${code}:/code:ro",
-            '-v', "${evalCode}:/eval:ro",
+            '-v', "${code}:/code:ro"
+            if ([string]::IsNullOrWhiteSpace($ProbeContextInputs)) { '-v', "${evalCode}:/eval:ro" }
             '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision",
             '-e', "ADAPTER_STEPS=$Steps",
             '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
