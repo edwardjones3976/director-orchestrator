@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -176,9 +178,36 @@ def make_reparse_link(link: Path, target: Path) -> bool:
 def _wrapper_mount_construction(source: str) -> str:
     """Load the real helper and extract only the wrapper's mount call."""
     helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
-    start = source.index("$mounts = New-TrainerCommonMounts")
-    end = source.index("\n$code =", start)
-    return ". '" + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n"
+    # Both launch modes use these same real argument statements; the wrapper
+    # executes them at different admission points (covered separately below).
+    call = re.search(r"\$mounts = New-TrainerCommonMounts[^\n]+\n[^\n]+", source).group()
+    probe_start = source.index("if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {", source.index("# Smoke/probe output directories"))
+    probe_end = source.index("\n        }", probe_start) + len("\n        }")
+    bounded = helper.with_name("invoke-bounded.ps1")
+    return (". '" + bounded.as_posix().replace("'", "''") + "'\n. '"
+            + helper.as_posix().replace("'", "''") + "'\n" + call + "\n" + source[probe_start:probe_end] + "\n")
+
+
+def synthetic_kep_input(item):
+    # Mirrors prepare_kep_inputs.RECORD_KEYS without importing its custody tooling.
+    return {"protocol": "kep-input/v1", "disposition": "construction_only",
+        "source_group": "licensed/kubernetes/enhancements/kep-1", "kep_number": 1, "selection_rank": 0,
+        "source_ref": "keps/synthetic/README.md", "source_sha256": "a" * 64,
+        "source_git_blob": "b" * 40, "policy_sha256": "c" * 64, "qualified_selection_sha256": "d" * 64,
+        "source_captured_at": "2026-10-05T10:00:00Z", "generated_at": "2026-10-05T10:00:01Z",
+        "input": {key: value for key, value in item.items() if key != "id"},
+        "title_span": {"start": 0, "end": 2}, "objective_span": {"start": 3, "end": 5},
+        "context_spans": [{"start": 6, "end": 8}]}
+
+
+class ContextTokenizer:
+    def __init__(self, prompt=2, full=3, truncate=False):
+        self.prompt, self.full, self.truncate = prompt, full, truncate
+    def apply_chat_template(self, messages, **kwargs):
+        length = self.prompt if kwargs["add_generation_prompt"] else self.full
+        if self.truncate and "truncation" not in kwargs:
+            length -= 1
+        return list(range(length))
 
 
 class AuthorityFixtureCase(unittest.TestCase):
@@ -193,6 +222,448 @@ class AuthorityFixtureCase(unittest.TestCase):
 
 
 class TrainAdapterTests(AuthorityFixtureCase):
+    def test_smoke_probe_admission_precedes_mount_directory_creation(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell required for wrapper admission statements')
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        source = (scripts / 'train-adapter.ps1').read_text(encoding='utf-8')
+        fragment = source[source.index("$runId = 'm2-'"):source.index('    if (Get-Command lms')]
+        # Exercise the actual control flow; substitute only the machine-wide
+        # mutex, external preflight and recursive mount scan. All writes are real
+        # writes under a fresh temporary directory, never the production marker.
+        fragment = fragment.replace("[System.Threading.Mutex]::new($false, 'Global\\homemade-llm-gpu')", '$fakeLock')
+        cleanup = source[source.rindex('} finally {'):source.index('\n# [[Cursor', source.rindex('} finally {'))]
+        with tempfile.TemporaryDirectory() as tmp:
+            command = f". '{(scripts / 'train-adapter-stage.ps1').as_posix()}'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$PSScriptRoot = '__SCRIPTS__'
+$fakeLock = [pscustomobject]@{}
+$fakeLock | Add-Member ScriptMethod WaitOne { param($wait) $script:seen.Add('mutex'); return $script:case -cne 'busy' }
+$fakeLock | Add-Member ScriptMethod ReleaseMutex { $script:seen.Add('release') }
+$fakeLock | Add-Member ScriptMethod Dispose { }
+function Invoke-Bounded($Exe, $A, $Seconds) {
+    if ($Exe -cne 'pwsh' -or $Seconds -ne 180 -or ($A -join '|') -cne "-NoProfile|-File|$(Join-Path '__SCRIPTS__' 'preflight.ps1')|-HotRoot|$HotRoot") { throw 'unexpected external call' }
+    $script:seen.Add('preflight')
+    switch ($script:case) { 'preflight' { '__EXIT__1' }; 'timeout' { '__EXIT__timeout' }; default { '__EXIT__0' } }
+}
+function Get-ProductionLocations { @{ PinFile = '__ROOT__/pin'; CustodyRoot = '__ROOT__/custody' } }
+function Assert-TrainerMountIsolation { $script:seen.Add('mounts-created') }
+foreach ($Probe in $false, $true) {
+    foreach ($script:case in 'busy', 'poison', 'preflight', 'timeout', 'success') {
+        $HotRoot = '__ROOT__/' + $Probe + '-' + $script:case
+        $Rows = "$HotRoot/accepted.jsonl"; $GpuMarker = "$HotRoot/guard/marker"
+        $Epochs = 0; $ExpectedDigests = ''; $TrustedDigestRoot = ''; $ProbeContextInputs = ''
+        $markerWritten = $false; $containerGone = $null; $BoundedUnconfirmed = $false; $keepLock = $false
+        $script:seen = [Collections.Generic.List[string]]::new()
+        if ($script:case -ceq 'poison') {
+            New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+            Set-Content -LiteralPath $GpuMarker -Value 'synthetic poison'
+        }
+        $reason = ''
+        try {
+__FRAGMENT__
+            throw 'SUCCESS-STOP-BEFORE-LMS-OR-DOCKER'
+__CLEANUP__
+        } catch { $reason = $_.Exception.Message }
+        $made = Test-Path -LiteralPath "$HotRoot/hf"
+        if ($script:case -ceq 'success') {
+            if (-not $made -or $reason -cne 'SUCCESS-STOP-BEFORE-LMS-OR-DOCKER' -or ($script:seen -join ',') -cne 'mutex,preflight,mounts-created,release') { throw "success order: $reason; $script:seen" }
+            if (-not (Test-Path -LiteralPath "$HotRoot/models/m2/$runId") -or -not (Test-Path -LiteralPath "$HotRoot/reports/adapter-output/$runId")) { throw 'valid mounts absent' }
+        } else {
+            if ($made -or (Test-Path -LiteralPath "$HotRoot/models") -or (Test-Path -LiteralPath "$HotRoot/reports")) { throw "refusal created mount directories: $script:case" }
+            $expected = switch ($script:case) { 'busy' { 'another GPU job' }; 'poison' { 'GPU is poisoned' }; default { 'preflight did not pass' } }
+            if (-not $reason.Contains($expected)) { throw "wrong refusal: $reason" }
+        }
+        if ($script:case -ceq 'poison') {
+            if ((Get-Content -LiteralPath $GpuMarker -Raw).Trim() -cne 'synthetic poison') { throw 'poison overwritten' }
+        } elseif (Test-Path -LiteralPath $GpuMarker) { throw 'synthetic marker survived cleanup' }
+    }
+}
+'PASS smoke/probe busy, poison, failed/timed-out preflight, valid mount order'
+'''
+            command = command.replace('__ROOT__', Path(tmp).as_posix()).replace('__SCRIPTS__', scripts.as_posix())
+            command = command.replace('__FRAGMENT__', fragment).replace('__CLEANUP__', cleanup)
+            path = Path(tmp) / 'admission.ps1'
+            path.write_text(command, encoding='utf-8')
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(path)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('PASS smoke/probe', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows bounded job required')
+    def test_caller_hash_byte_edges_and_authenticated_custody_buffers(self):
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = _build_publication_fixture(root)
+            custody = root / 'custody'
+            (custody / 'accepted').mkdir(parents=True)
+            (custody / 'publication').mkdir()
+            for leaf, target in [('accepted.jsonl', 'accepted/batch-0001.accepted.jsonl'),
+                                 ('report.json', 'accepted/batch-0001.validation-report.json'),
+                                 ('profile.json', 'publication/batch-0001.profile.json')]:
+                shutil.copyfile(fixture['rows_dir'] / leaf, custody / target)
+            for size in (0, 1, 65536, 65537):
+                (root / f'bytes-{size}').write_bytes(bytes((i % 256 for i in range(size))))
+            command = f". '{(scripts / 'invoke-bounded.ps1').as_posix()}'\n. '{(scripts / 'train-adapter-stage.ps1').as_posix()}'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$GpuMarker = '__ROOT__/synthetic-marker'
+foreach ($size in 0, 1, 65536, 65537) {
+    $path = "__ROOT__/bytes-$size"
+    $wanted = Get-SHA256HexOfFile $path
+    foreach ($limit in $size, ($size + 1)) {
+        if ((Get-BoundedCallerFileSHA256 -Path $path -MaxBytes $limit) -cne $wanted) { throw 'valid byte edge digest changed' }
+    }
+    if ($size -gt 0) {
+        $refused = $false
+        try { Get-BoundedCallerFileSHA256 -Path $path -MaxBytes ($size - 1) | Out-Null }
+        catch { $refused = $_.Exception.Message.Contains('byte limit') }
+        if (-not $refused) { throw 'over-limit byte edge accepted' }
+    }
+}
+$binding = ConvertFrom-StrictJson ([IO.File]::ReadAllText('__BINDING__'))
+$args_ = @{ CustodyRoot = '__ROOT__/custody'; Batch = 'batch-0001'; Resolution = $binding['resolution']; Rows = '__ROWS__/accepted.jsonl' }
+$records = Read-PublicationRecords @args_
+foreach ($pair in @(@('accepted.jsonl','accepted_jsonl_sha256'), @('report.json','validation_report_sha256'))) {
+    $path = '__ROWS__/' + $pair[0]
+    $original = [IO.File]::ReadAllBytes($path)
+    [IO.File]::WriteAllBytes($path, [byte[]]::new(0))
+    $refused = $false
+    try { Read-PublicationRecords @args_ | Out-Null } catch { $refused = $_.Exception.Message.Contains('does not match the verified custody') }
+    if (-not $refused) { throw 'short caller file accepted' }
+    [IO.File]::WriteAllBytes($path, $original)
+    # Sparse-sized small fixture, not a multi-GB input: rejection must happen
+    # at the authenticated byte ceiling, regardless of caller-reported length.
+    $file = [IO.File]::OpenWrite($path); try { $file.SetLength(16777216) } finally { $file.Dispose() }
+    $refused = $false
+    try { Read-PublicationRecords @args_ | Out-Null } catch { $refused = $_.Exception.Message.Contains('byte limit') }
+    if (-not $refused) { throw 'oversized caller file accepted' }
+    [IO.File]::WriteAllBytes($path, $original)
+    $original[0] = $original[0] -bxor 1
+    [IO.File]::WriteAllBytes($path, $original)
+    $refused = $false
+    try { Read-PublicationRecords @args_ | Out-Null } catch { $refused = $_.Exception.Message.Contains('does not match the verified custody') }
+    if (-not $refused) { throw 'equal-length digest substitution accepted' }
+    $original[0] = $original[0] -bxor 1
+    [IO.File]::WriteAllBytes($path, $original)
+}
+# Returned payloads remain the authenticated custody buffers, regardless of
+# a subsequent caller rewrite; staging never reopens those caller paths.
+[IO.File]::WriteAllText('__ROWS__/accepted.jsonl', 'caller changed after return')
+[IO.File]::WriteAllText('__ROWS__/report.json', 'caller changed after return')
+if ((Get-SHA256Hex $records.AcceptedBytes) -cne $binding['resolution']['accepted_jsonl_sha256'] -or
+    (Get-SHA256Hex $records.ReportBytes) -cne $binding['resolution']['validation_report_sha256']) { throw 'custody buffer changed' }
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) { throw 'uncertain cleanup' }
+'PASS byte edges, oversized accepted/report, equal-length mutations, retained custody buffers'
+'''
+            command = command.replace('__ROOT__', root.as_posix()).replace('__ROWS__', fixture['rows_dir'].as_posix()).replace('__BINDING__', fixture['binding_path'].as_posix())
+            result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, text=True, timeout=90,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('PASS byte edges', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows bounded job required')
+    def test_caller_hash_timeout_cancellation_reparse_and_incomplete_receipts(self):
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'payload').write_bytes(b'fixed synthetic payload\x00\xff\r\n')
+            linked = make_reparse_link(root / 'alias', root)
+            setup = f". '{(scripts / 'invoke-bounded.ps1').as_posix()}'\n. '{(scripts / 'train-adapter-stage.ps1').as_posix()}'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$GpuMarker = '__ROOT__/synthetic-marker'
+$realBounded = ${function:Invoke-Bounded}
+'''
+            setup = setup.replace('__ROOT__', root.as_posix())
+            fault = r'''
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    $reader = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($A[-1]))
+    if (-not $reader.Contains('$buffer = [byte[]]::new(65536)') -or $reader.Contains('ReadAllBytes')) { throw 'caller-sized allocation returned' }
+    # Delay the actual read site inside the owned child (not a clock check
+    # around a blocking filesystem operation in the wrapper process).
+    $site = '$count = $stream.Read($buffer, 0, $wanted)'
+    $reader = $reader.Replace($site, 'Set-Content -LiteralPath "__PID__" -Value $PID; Start-Sleep -Seconds 30; ' + $site)
+    $A[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($reader))
+    & $realBounded $Exe $A $Seconds
+}
+'''
+            cancel = setup + fault.replace('__PID__', (root / 'cancel-pid').as_posix())
+            cancel += f"\nGet-BoundedCallerFileSHA256 -Path '{root.as_posix()}/payload' -MaxBytes 100 -TimeoutSeconds 60\n"
+            (root / 'cancel.ps1').write_text(cancel, encoding='utf-8')
+            command = setup + fault.replace('__PID__', (root / 'timeout-pid').as_posix()) + r'''
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/payload' -MaxBytes 100 -TimeoutSeconds 2 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('__EXIT__timeout') }
+if (-not $refused -or $clock.Elapsed.TotalSeconds -gt 15) { throw 'read deadline failed' }
+$childPid = [int](Get-Content -LiteralPath '__ROOT__/timeout-pid')
+if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) { throw 'timed-out reader survived' }
+Set-Item Function:Invoke-Bounded $realBounded
+foreach ($fake in 'empty', 'nonzero', 'extra') {
+    $script:receipt = $fake
+    function Invoke-Bounded {
+        switch ($script:receipt) {
+            'empty' { @() }; 'nonzero' { ('a' * 64); '__EXIT__9' }; 'extra' { ('a' * 64); 'extra'; '__EXIT__0' }
+        }
+    }
+    $refused = $false
+    try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/payload' -MaxBytes 100 | Out-Null }
+    catch { $refused = $_.Exception.Message.Contains('bounded caller file hash failed') }
+    if (-not $refused) { throw 'incomplete receipt accepted' }
+}
+function Invoke-Bounded { throw 'synthetic cleanup unconfirmed' }
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/payload' -MaxBytes 100 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('synthetic cleanup unconfirmed') }
+if (-not $refused) { throw 'cleanup uncertainty swallowed' }
+Set-Item Function:Invoke-Bounded $realBounded
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/absent' -MaxBytes 100 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('__EXIT__1') }
+if (-not $refused) { throw 'native error accepted' }
+__REPARSE__
+# PowerShell.Stop exercises the bounded helper's cancellation/finally cleanup.
+# Stop only this synthetic reader runspace, never another provider or GPU job.
+$ps = [PowerShell]::Create()
+try {
+    $null = $ps.AddScript([IO.File]::ReadAllText('__ROOT__/cancel.ps1'))
+    $async = $ps.BeginInvoke()
+    $until = [DateTime]::UtcNow.AddSeconds(15)
+    while (-not (Test-Path -LiteralPath '__ROOT__/cancel-pid') -and [DateTime]::UtcNow -lt $until -and -not $async.IsCompleted) { Start-Sleep -Milliseconds 50 }
+    if (-not (Test-Path -LiteralPath '__ROOT__/cancel-pid')) { throw 'cancellation reader did not enter read' }
+    $clock.Restart()
+    $ps.Stop()
+    try { $null = $ps.EndInvoke($async) } catch [Management.Automation.PipelineStoppedException] { }
+    if ($clock.Elapsed.TotalSeconds -gt 15) { throw 'cancellation cleanup exceeded bound' }
+    $childPid = [int](Get-Content -LiteralPath '__ROOT__/cancel-pid')
+    if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) { throw 'cancelled reader survived' }
+} finally { $ps.Dispose() }
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) { throw 'unconfirmed cleanup; stop' }
+'PASS deadline + cancellation killed readers; receipts/native errors/uncertain cleanup refused'
+'''
+            reparse = r'''
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/alias/payload' -MaxBytes 100 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('junction or symbolic link') }
+if (-not $refused) { throw 'reparse ancestry accepted' }
+'''
+            command = command.replace('__REPARSE__', reparse if linked else '').replace('__ROOT__', root.as_posix())
+            path = root / 'bounds.ps1'
+            path.write_text(command, encoding='utf-8')
+            try:
+                result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-File', str(path)], capture_output=True, text=True, timeout=60,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('PASS deadline + cancellation', result.stdout)
+            finally:
+                if linked:
+                    (root / 'alias').rmdir() if os.name == 'nt' else (root / 'alias').unlink()
+
+    def test_epoch_dev_preflight_exact_boundaries_and_no_truncation(self):
+        rows = [row("dev")]
+        train_adapter.preflight_epoch_dev(rows, ContextTokenizer(prompt=2, full=2048), 2050)
+        for tokenizer, limit, message in [
+            (ContextTokenizer(prompt=3), 2050, "max_new_tokens"),
+            (ContextTokenizer(full=2049), 4096, "reference"),
+            (ContextTokenizer(truncate=True), 4096, "truncates"),
+            (ContextTokenizer(), None, "explicit context"),
+            (ContextTokenizer(), True, "explicit context"),
+        ]:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                train_adapter.preflight_epoch_dev(rows, tokenizer, limit)
+
+    def test_epoch_row_id_recomputed_for_input_and_target_on_both_splits(self):
+        for split in ("train", "dev"):
+            for field in ("input", "target"):
+                with self.subTest(split=split, field=field), tempfile.TemporaryDirectory() as tmp:
+                    rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+                    target = next(item for item in rows if item["split"] == split)
+                    if field == "input":
+                        target["input"]["id"] += "-substituted"
+                    else:
+                        target["target"]["constraints"][0] = "substituted"
+                    fx = _build_publication_fixture(Path(tmp), rows=rows)
+                    with self.assertRaisesRegex(ValueError, "noncanonical row_id"):
+                        train_adapter.load_epoch_rows(fx["binding_path"], fx["rows_dir"], fx["code_dir"], fx["eval_dir"])
+        # Pure algorithm parity, including Unicode and key order.
+        value = {"input": {"z": "\u00e9", "a": 1}, "target": {"b": "x"}}
+        expected = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()[:16]
+        self.assertEqual(train_adapter.canonical_row_id(value["input"], value["target"]), expected)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows JobTree fixture")
+    def test_bounded_raw_bytes_exit_and_pipe_holder_cleanup(self):
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "invoke-bounded.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "raw_child.py"
+            child.write_text("import sys,os,time,subprocess\n"
+                "if sys.argv[1]=='bytes': os.write(1,bytes([0,255,128,13,10,65])); sys.exit(7)\n"
+                "if sys.argv[1]=='empty': sys.exit(0)\n"
+                "if sys.argv[1]=='hold':\n"
+                " p=subprocess.Popen([sys.executable,__file__,'sleep',sys.argv[2]],close_fds=False)\n"
+                " open(sys.argv[2],'w').write(str(p.pid))\n"
+                "if sys.argv[1]=='sleep': time.sleep(20)\n", encoding="utf-8")
+            repo = root / "repo"
+            repo.mkdir()
+            payload = bytes([0, 255, 128, 13, 10, 65])
+            (repo / "payload.bin").write_bytes(payload)
+            (repo / "empty.bin").write_bytes(b"")
+            for git_args in (["init", "-q"], ["add", "."], ["-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "binary fixture"]):
+                subprocess.run(["git", *git_args], cwd=repo, check=True, capture_output=True, timeout=10)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, timeout=10).decode().strip()
+            stage_helper = helper.with_name("train-adapter-stage.ps1")
+            command = f"""
+$ErrorActionPreference='Stop'
+. '{helper.as_posix()}'
+$GpuMarker='{root.as_posix()}/marker'
+. '{stage_helper.as_posix()}'
+$b=Get-GitBlobBytes -RepoRoot '{repo.as_posix()}' -Commit '{commit}' -Path payload.bin -ExpectedSha256 '{hashlib.sha256(bytes([0,255,128,13,10,65])).hexdigest()}'
+if ($b -isnot [byte[]] -or [Convert]::ToHexString($b) -cne '00FF800D0A41') {{ throw 'real Git binary payload changed' }}
+$b=Get-GitBlobBytes -RepoRoot '{repo.as_posix()}' -Commit '{commit}' -Path empty.bin -ExpectedSha256 '{hashlib.sha256(b'').hexdigest()}'
+if ($b -isnot [byte[]] -or $b.Length -ne 0) {{ throw 'real Git empty payload changed' }}
+$r=Invoke-Bounded '{sys.executable}' @('{child.as_posix()}', 'bytes') 10 -RawBytes
+if ($r.ExitCode -ne 7 -or [Convert]::ToHexString($r.Bytes) -cne '00FF800D0A41') {{ throw 'raw byte/nonzero result mismatch' }}
+$r=Invoke-Bounded '{sys.executable}' @('{child.as_posix()}', 'empty') 10 -RawBytes
+if ($r.ExitCode -ne 0 -or $r.Bytes.Length -ne 0) {{ throw 'empty raw stdout mismatch' }}
+$r=@(Invoke-Bounded 'cmd' @('/c','echo text-default') 10)
+if (($r -join '|') -cne 'text-default|__EXIT__0') {{ throw 'text default changed' }}
+$r=@(Invoke-Bounded '{sys.executable}' @('{child.as_posix()}', 'hold', '{root.as_posix()}/pid') 2 -RawBytes)
+if (($r -join '|') -cne '__EXIT__timeout') {{ throw 'pipe holder did not time out' }}
+$childPid=[int](Get-Content -LiteralPath '{root.as_posix()}/pid')
+if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) {{ throw 'pipe holder survived cleanup' }}
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) {{ throw 'unconfirmed cleanup; stop' }}
+Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
+"""
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", command],
+                capture_output=True, text=True, timeout=40, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("cleanup: PASS", result.stdout)
+
+    def test_context_probe_longest_real_input_full_generation_and_refusals(self):
+        from contextlib import nullcontext
+        class Tokenizer(ContextTokenizer):
+            model_max_length = 8192
+            def apply_chat_template(self, messages, **kwargs):
+                self.prompt = 4 if "longest" in messages[1]["content"] else 2
+                return super().apply_chat_template(messages, **kwargs)
+        for kind in ("pass", "constructor_cli", "short", "changed_prefix", "memory", "over_limit", "generate_error"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                short, longest = dict(row()["input"]), dict(row()["input"], objective="longest real input")
+                records = [short, longest] if kind != "constructor_cli" else [synthetic_kep_input(short), synthetic_kep_input(longest)]
+                raw = ("\n".join(json.dumps(item) for item in records) + "\n").encode()
+                inputs, report_path = root / "inputs.jsonl", root / "report.json"
+                inputs.write_bytes(raw)
+                tokenizer = Tokenizer()
+                model = mock.Mock(device="cpu", max_seq_length=2052,
+                    config=types.SimpleNamespace(_commit_hash=train_adapter.SMOKE_REVISION, max_position_embeddings=8192))
+                output = list(range(4)) + [9] * (2047 if kind == "short" else 2048)
+                if kind == "changed_prefix": output[0] = 999
+                model.generate.return_value = [output]
+                if kind == "generate_error": model.generate.side_effect = RuntimeError("synthetic")
+                cuda = mock.Mock(max_memory_reserved=mock.Mock(return_value=(11 if kind == "memory" else 2) * 2**30))
+                with mock.patch.object(train_adapter, "digest_verification_before_load", return_value=None), \
+                     mock.patch.object(train_adapter, "FastLanguageModel") as flm, \
+                     mock.patch.object(train_adapter, "set_seed"), \
+                     mock.patch.object(train_adapter.torch, "cuda", cuda, create=True), \
+                     mock.patch.object(train_adapter.torch, "tensor", side_effect=lambda ids, **kw: ids, create=True), \
+                     mock.patch.object(train_adapter.torch, "ones_like", return_value=[[1] * 4], create=True), \
+                     mock.patch.object(train_adapter.torch, "long", 0, create=True), \
+                     mock.patch.object(train_adapter.torch, "inference_mode", side_effect=nullcontext, create=True):
+                    flm.from_pretrained.return_value = model, tokenizer
+                    args = (inputs, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION, report_path)
+                    if kind in ("pass", "constructor_cli"):
+                        if kind == "constructor_cli":
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", str(report_path),
+                                    "--probe", "--probe-context-inputs", str(inputs), "--probe-context-limit", "2052"])
+                            result = json.loads(report_path.read_text())
+                        else:
+                            result = train_adapter.run_context_probe(*args, context_limit=2052)
+                        self.assertTrue(result["context_pass"])
+                        self.assertFalse(result["qualified"])
+                        self.assertEqual(result["inputs_sha256"], hashlib.sha256(raw).hexdigest())
+                        self.assertEqual(result["record_position"], 2)
+                        self.assertEqual(result["prompt_max"], 4)
+                        self.assertEqual(result["total_positions"], 2052)
+                        self.assertEqual(result["new_tokens"], 2048)
+                        self.assertEqual(result["tokenizer_model_max_length"], 8192)
+                        self.assertEqual(model.generate.call_args.kwargs["input_ids"], [list(range(4))])
+                        self.assertEqual(model.generate.call_args.kwargs["min_new_tokens"], 2048)
+                        self.assertEqual(model.generate.call_args.kwargs["max_new_tokens"], 2048)
+                        self.assertNotIn("9, 9, 9", report_path.read_text())
+                    else:
+                        with self.assertRaises((ValueError, RuntimeError)):
+                            train_adapter.run_context_probe(*args, context_limit=2051 if kind == "over_limit" else 2052)
+                        result = json.loads(report_path.read_text())
+                        self.assertFalse(result["context_pass"])
+                    if kind == "over_limit":
+                        model.generate.assert_not_called()
+                    else:
+                        model.generate.assert_called_once()
+                        flm.for_training.assert_called_once_with(model, use_gradient_checkpointing="unsloth")
+
+    def test_context_probe_rejects_malformed_envelopes_before_model_load(self):
+        import copy
+        good = synthetic_kep_input(row()["input"])
+        cases = []
+        for field, value in (("protocol", "kep-extraction/v1"), ("disposition", "accepted"), ("input", [])):
+            bad = copy.deepcopy(good)
+            bad[field] = value
+            cases.append(bad)
+        for where in ("envelope", "input", "bare"):
+            bad = copy.deepcopy(row()["input"] if where == "bare" else good)
+            (bad["input"] if where == "input" else bad)["target"] = row()["target"]
+            cases.append(bad)
+        bad = copy.deepcopy(good)
+        del bad["source_git_blob"]
+        cases.append(bad)
+        bad = copy.deepcopy(good)
+        bad["input"]["context"][0]["source_sha256"] = "invalid"
+        cases.append(bad)
+        bad = copy.deepcopy(good)
+        bad["input"]["objective"] = 17
+        cases.append(bad)
+        for index, bad in enumerate(cases):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as tmp, \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as flm, \
+                 mock.patch.object(train_adapter, "digest_verification_before_load") as digests, \
+                 mock.patch.object(train_adapter, "set_seed") as seed:
+                inputs = Path(tmp) / "inputs.jsonl"
+                # A valid earlier record must not cause a load before later validation.
+                inputs.write_text(json.dumps(good) + "\n" + json.dumps(bad) + "\n")
+                with self.assertRaises(ValueError):
+                    train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", str(Path(tmp) / "report.json"),
+                        "--probe", "--probe-context-inputs", str(inputs), "--probe-context-limit", "4096"])
+                flm.from_pretrained.assert_not_called()
+                digests.assert_not_called()
+                seed.assert_not_called()
+
+    def test_epoch_bad_dev_context_refuses_before_first_trainer_step(self):
+        for tokenizer in (ContextTokenizer(prompt=2049), ContextTokenizer(full=2049), ContextTokenizer(truncate=True)):
+            with self.subTest(tokenizer=tokenizer), tempfile.TemporaryDirectory() as tmp:
+                trainer_type = mock.Mock()
+                with self.assertRaisesRegex(ValueError, "max_new_tokens|reference|truncates"):
+                    self._maintenance_epoch_run(Path(tmp), trainer_type, epochs=1, context_tokenizer=tokenizer)
+                trainer_type.assert_not_called()
+                report = json.loads((Path(tmp) / "reports" / "maintenance.json").read_text())
+                self.assertEqual(report["state"], "failed")
+
+    def test_context_probe_cli_dispatches_without_loading_training_rows(self):
+        with mock.patch.object(train_adapter, "run_context_probe", return_value={"context_pass": True}) as probe, \
+             mock.patch.object(train_adapter, "load_training_rows") as rows, \
+             contextlib.redirect_stdout(io.StringIO()):
+            train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", "out.json", "--probe",
+                "--probe-context-inputs", "inputs.jsonl", "--probe-context-limit", "15009"])
+            rows.assert_not_called()
+            probe.assert_called_once()
+            self.assertEqual(probe.call_args.kwargs["context_limit"], 15009)
+        for extra in (["--probe-context-inputs", "inputs.jsonl"], ["--probe-context-limit", "15009"]):
+            with self.subTest(extra=extra), mock.patch.object(train_adapter, "run_context_probe") as probe:
+                with self.assertRaises(SystemExit):
+                    train_adapter.main(["--rows", "unused/accepted.jsonl", "--report", "out.json", "--probe", *extra])
+                probe.assert_not_called()
+
     def test_response_mask_ignores_the_prompt_and_covers_the_answer(self):
         labels = train_adapter.labels_for_token_ids([4, 5, 6, 7], [4, 5, 6, 7, 8, 9, 10])
         self.assertEqual(labels, [-100, -100, -100, -100, 8, 9, 10])
@@ -446,7 +917,7 @@ class TrainAdapterTests(AuthorityFixtureCase):
             train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(Path(tmp) / "out.json"),
                                 "--epochs", "1", "--base", train_adapter.WINNER_BASE,
                                 "--revision", train_adapter.WINNER_REVISION,
-                                "--publication-binding", str(fx["binding_path"])])
+                                "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
             self.assertEqual(training.call_args.args[2:4], (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
             self.assertEqual(training.call_args.kwargs["epochs"], 1)
             self.assertEqual(training.call_args.kwargs["publication_binding_path"], fx["binding_path"])
@@ -475,17 +946,17 @@ class TrainAdapterTests(AuthorityFixtureCase):
         start = source.index("    $dockerArgs = ")
         end = source.index("    function Get-AdapterState", start)
         construction = source[start:end]
-        for digests in ("", "dummy-digests.json"):
+        for digests, context_file in (("", False), ("dummy-digests.json", True)):
             with self.subTest(expected_digests=bool(digests)), tempfile.TemporaryDirectory() as tmp:
                 hot_root = Path(tmp).as_posix().replace("'", "''")
                 command = """
 $ErrorActionPreference = 'Stop'
 $name = 'dummy-container'; $code = 'dummy-code'; $evalCode = 'dummy-eval'; $Image = 'dummy-image'
 $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
-$Epochs = 0; $runId = 'dummy-run'
+$Epochs = 0; $runId = 'm2-01234567'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
-""" + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+""" + ("$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n" if context_file else "") + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
                 completed = subprocess.run(
                     [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True, text=True, timeout=30,
@@ -506,6 +977,10 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                         self.assertEqual(options[options.index(flag) - 1], "-e")
                     else:
                         self.assertNotIn(flag, args)
+                if context_file:
+                    self.assertIn("C:/synthetic/inputs.jsonl:/workspace/context-inputs.jsonl:ro", options)
+                    self.assertEqual(trainer[trainer.index("--probe-context-limit") + 1], "15009")
+                    self.assertEqual(trainer[trainer.index("--probe-context-inputs") + 1], "/workspace/context-inputs.jsonl")
                 if digests:
                     index = trainer.index("--expected-digests")
                     self.assertEqual(trainer[index + 1], "/workspace/expected-digests.json")
@@ -517,8 +992,11 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                     self.assertNotIn("--expected-digests", args)
                     self.assertNotIn("--trusted-digest-root", args)
                 self.assertIn("--winner", trainer)
-                self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
+                self.assertEqual(trainer[-2:], ["--probe-rows-total", "96"])
+                self.assertEqual(trainer[trainer.index("--probe-seq-len") + 1], "2048")
 
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
     def test_wrapper_epoch_mode_docker_args_use_the_staged_tree_not_code(self):
         # Epoch mode's docker-argument contract moved from an inline snippet to
         # New-TrainerDockerArgs (scripts/train-adapter-stage.ps1): call the real
@@ -539,18 +1017,20 @@ $ErrorActionPreference = 'Stop'
 $HotRoot = '{hot_root}'; $Rows = '{hot_root}/accepted.jsonl'; $Epochs = 4
 $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 {_wrapper_mount_construction(source)}
+$GpuMarker = '{hot_root}/synthetic-marker'
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
 $args_ = New-TrainerDockerArgs -Image 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
     -AuthoritySource '# synthetic authenticated source' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
     -Locations @{{ PinFile = '{hot_root}/authority/pin.py'; CustodyRoot = '{hot_root}/authority' }} `
     -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
-    -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -ModelsHostDir 'C:/synthetic/models/m2' `
+    -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -EpochContextLimit 4096 -ModelsHostDir 'C:/synthetic/models/m2' `
     -ExtraEnv @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
 ConvertTo-Json -InputObject $args_ -Compress
 """
             completed = subprocess.run(
                 [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                 capture_output=True, text=True, timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         args = json.loads(completed.stdout)
@@ -577,6 +1057,7 @@ ConvertTo-Json -InputObject $args_ -Compress
         self.assertEqual(trainer[:2], ["--rows", "/workspace/rows/accepted.jsonl"])
         self.assertIn("--epochs", trainer)
         self.assertEqual(trainer[trainer.index("--epochs") + 1], "4")
+        self.assertEqual(trainer[trainer.index("--epoch-context-limit") + 1], "4096")
         self.assertIn("--publication-binding", trainer)
         self.assertEqual(trainer[trainer.index("--publication-binding") + 1], "/workspace/publication-binding.json")
         self.assertNotIn("--steps", args)
@@ -589,13 +1070,13 @@ ConvertTo-Json -InputObject $args_ -Compress
     def _assert_common_mounts(self, options, root, *, epoch_mode, digests):
         mounts = [options[index + 1].replace("\\", "/")
                   for index, value in enumerate(options) if value == "-v"]
-        for directory in (("hf", "models/m2") if epoch_mode else ("hf", "runs", "models/m2", "reports")):
-            self.assertIn(f"{root.as_posix()}/{directory}:/workspace/{directory}"
-                          + (":ro" if epoch_mode and directory == "hf" else ""), mounts)
-        if epoch_mode:
-            self.assertIn(f"{root.as_posix()}/reports/adapter-output:/workspace/reports", mounts)
-            self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
-            self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
+        self.assertIn(f"{root.as_posix()}/hf:/workspace/hf:ro", mounts)
+        model_subdir = "models/m2" if epoch_mode else "models/m2/m2-01234567"
+        report_subdir = "reports/adapter-output" if epoch_mode else "reports/adapter-output/m2-01234567"
+        self.assertIn(f"{root.as_posix()}/{model_subdir}:/workspace/models/m2", mounts)
+        self.assertIn(f"{root.as_posix()}/{report_subdir}:/workspace/reports", mounts)
+        self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
+        self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
         rows_mounts = [mount for mount in mounts if ":/workspace/rows" in mount]
         self.assertEqual(rows_mounts, ["C:/synthetic/Input:/workspace/rows:ro"] if epoch_mode
                          else [f"{root.as_posix()}:/workspace/rows:ro"])
@@ -603,6 +1084,7 @@ ConvertTo-Json -InputObject $args_ -Compress
             actual = [mount for mount in mounts if f":/workspace/{filename}.json" in mount]
             self.assertEqual(actual, [f"{host}.json:/workspace/{filename}.json:ro"] if digests else [])
 
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
     def test_epoch_mounts_refuse_writable_protected_aliases(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -615,7 +1097,8 @@ ConvertTo-Json -InputObject $args_ -Compress
             link = root / "output" / "custody-link"
             link.parent.mkdir()
             linked = make_reparse_link(link, protected)
-            command = f". '{helper.as_posix()}'\n" + r"""
+            command = (f". '{helper.with_name('invoke-bounded.ps1').as_posix()}'\n"
+                       f". '{helper.as_posix()}'\n$GpuMarker = '{root.as_posix()}/synthetic-marker'\n") + r"""
 $ErrorActionPreference = 'Stop'
 function Refuses($Mount, $Protected, $Message) {
     try { Assert-TrainerMountIsolation @('-v', $Mount) @($Protected) }
@@ -633,8 +1116,76 @@ Assert-TrainerMountIsolation @('-v', "$root/runs-other:/workspace/output") @($pr
             if linked:
                 command += f"Refuses '{link.parent.as_posix()}:/workspace/output' $protected 'junction or symbolic link'\n"
             completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
-                                       capture_output=True, text=True, timeout=30)
+                                       capture_output=True, text=True, timeout=30,
+                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
+    def test_writable_mount_scan_is_bounded_and_refuses_incomplete_receipts(self):
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "output-'quoted-\u00e9"
+            (output / "deep" / "leaf").mkdir(parents=True)
+            (output / "deep" / "leaf" / "payload.bin").write_bytes(b"synthetic\x00\xff")
+            command = (f". '{helper.with_name('invoke-bounded.ps1').as_posix()}'\n"
+                       f". '{helper.as_posix()}'\n") + r"""
+$ErrorActionPreference = 'Stop'
+$GpuMarker = '__ROOT__/synthetic-marker'
+$mount = '__OUTPUT__:/workspace/output'
+$protected = '__ROOT__/protected'
+$realBounded = ${function:Invoke-Bounded}
+function Require-Refusal($Message) {
+    try { Assert-TrainerMountIsolation @('-v', $mount) @($protected) }
+    catch { if ($_.Exception.Message.Contains($Message)) { return }; throw }
+    throw 'incomplete scan accepted'
+}
+# Real traversal of nested directories and an opaque payload; no model read.
+Assert-TrainerMountIsolation @('-v', $mount) @($protected)
+foreach ($fake in @('empty', 'nonzero', 'extra')) {
+    $script:receipt = $fake
+    function Invoke-Bounded {
+        switch ($script:receipt) {
+            'empty' { return @() }
+            'nonzero' { return @('TRAINER_MOUNT_SCAN_OK', '__EXIT__1') }
+            'extra' { return @('TRAINER_MOUNT_SCAN_OK', 'unexpected', '__EXIT__0') }
+        }
+    }
+    Require-Refusal 'mount scan failed'
+}
+# Inject a blocking filesystem call INSIDE the real encoded scanner/job.
+# The parent's timeout is not a deadline check around the blocking call.
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    if ($Seconds -ne 60) { throw 'production scan deadline changed' }
+    $scan = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($A[-1]))
+    $fault = "function Get-ChildItem { Set-Content -LiteralPath '__ROOT__/scan-pid' -Value `$PID; Start-Sleep -Seconds 30 }`n"
+    $A[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fault + $scan))
+    & $realBounded $Exe $A 2
+}
+$clock = [Diagnostics.Stopwatch]::StartNew()
+Require-Refusal '__EXIT__timeout'
+if ($clock.Elapsed.TotalSeconds -gt 12) { throw 'scanner was not bounded' }
+$scanPid = [int](Get-Content -LiteralPath '__ROOT__/scan-pid')
+if (Get-Process -Id $scanPid -ErrorAction SilentlyContinue) { throw 'blocked scanner survived cleanup' }
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) { throw 'unconfirmed cleanup; stop' }
+# Errors and cleanup uncertainty must never be converted to successful scans.
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    $scan = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($A[-1]))
+    $A[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("function Get-ChildItem { throw 'synthetic unreadable directory' }`n" + $scan))
+    & $realBounded $Exe $A $Seconds
+}
+Require-Refusal 'synthetic unreadable directory'
+function Invoke-Bounded { throw 'synthetic cleanup unconfirmed' }
+Require-Refusal 'synthetic cleanup unconfirmed'
+Write-Output 'nested, receipt, blocked scan cleanup, unreadable, cleanup propagation: PASS'
+"""
+            command = command.replace("__ROOT__", root.as_posix().replace("'", "''"))
+            command = command.replace("__OUTPUT__", output.as_posix().replace("'", "''"))
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", command],
+                capture_output=True, text=True, timeout=35, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("propagation: PASS", result.stdout)
+            self.assertEqual((output / "deep" / "leaf" / "payload.bin").read_bytes(), b"synthetic\x00\xff")
 
     def test_epoch_readonly_cache_keeps_linked_layout_without_recursive_scan(self):
         pwsh = shutil.which("pwsh")
@@ -747,7 +1298,7 @@ Write-Output 'PASS'
 $ErrorActionPreference = 'Stop'
 $approved = '{approved}'
 $args_ = @{{ Rows = '{Path(tmp).as_posix()}/absent/accepted.jsonl'; Epochs = 1; Batch = 'batch-0001';
-    Base = '{train_adapter.WINNER_BASE}'; Revision = '{train_adapter.WINNER_REVISION}'; TimeoutMinutes = 1 }}
+    Base = '{train_adapter.WINNER_BASE}'; Revision = '{train_adapter.WINNER_REVISION}'; TimeoutMinutes = 1; EpochContextLimit = 4096 }}
 # Both the parameter default and the explicit identical digest pass.
 if ((& '{prefix_file.as_posix()}' @args_) -ne 'GUARDS-PASSED') {{ throw 'default refused' }}
 if ((& '{prefix_file.as_posix()}' @args_ -Image $approved) -ne 'GUARDS-PASSED') {{ throw 'exact digest refused' }}
@@ -768,7 +1319,7 @@ foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 6
     $denied = $false
     try {{ New-TrainerDockerArgs -Image $bad -Name 'unused' -CommonMounts @('-v','unused:/safe:ro') `
         -Stage @{{}} -BindingPath 'unused' -Base 'unused' -Revision 'unused' -ReportContainerPath 'unused' `
-        -Epochs 1 -AuthoritySource 'unused' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+        -Epochs 1 -EpochContextLimit 4096 -AuthoritySource 'unused' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
         -Locations @{{}} | Out-Null }}
     catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
     if (-not $denied) {{ throw "direct helper reached authority or mounts with alias: $bad" }}
@@ -852,7 +1403,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         helper = script.with_name("train-adapter-stage.ps1")
         prerequisites = ". '" + helper.as_posix().replace("'", "''") + "'\n" + prerequisites
         prerequisites += "$Image = '" + 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' + "'\n"
-        epoch_pin = {"Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
+        epoch_pin = {"EpochContextLimit": "4096", "Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
         cases = [
             ({}, None),
             ({"Winner": "$true", "Probe": "$false"}, "-Winner is only valid together with -Probe"),
@@ -864,6 +1415,8 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             ({"Epochs": "4", "TimeoutMinutes": "1"}, "requires explicit -Base"),
             ({**epoch_pin, "Batch": "'batch-0001'"}, None),
             (epoch_pin, "-Epochs requires -Batch"),
+            ({**{k: v for k, v in epoch_pin.items() if k != "EpochContextLimit"}, "Batch": "'batch-0001'"}, "requires explicit -EpochContextLimit"),
+            ({**epoch_pin, "Batch": "'batch-0001'", "EpochContextLimit": "2048"}, "requires explicit -EpochContextLimit"),
             *[({**epoch_pin, "Batch": value}, "-Batch is not a valid batch id")
               for value in ("''", "'../escape'", "'UPPER'")],
             ({"Batch": "'batch-0001'"}, "-Batch is only valid with -Epochs"),
@@ -876,7 +1429,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             with self.subTest(overrides=overrides, message=message):
                 bound = "@{ " + "; ".join(
                     f"{name} = {value}" for name, value in overrides.items()
-                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch")
+                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch", "EpochContextLimit")
                 ) + " }"
                 setup = "\n".join(
                     f"${name} = {value}" for name, value in overrides.items()
@@ -2072,7 +2625,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
 
     def _maintenance_epoch_run(
         self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False, scores=None,
-        row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None,
+        row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None, context_tokenizer=None,
     ):
         import predict_dev
         rows, dev_rows = slice3_train_rows(row_count), slice3_dev_rows()
@@ -2084,7 +2637,9 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
             Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
         model.save_pretrained.side_effect = save
-        tokenizer = mock.Mock()
+        tokenizer = context_tokenizer if context_tokenizer is not None else mock.Mock()
+        if context_tokenizer is None:
+            tokenizer.apply_chat_template.return_value = [1, 2]
         encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}
                    for _ in rows]
         if cuda is None:
@@ -2156,11 +2711,12 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                 model.is_gradient_checkpointing = bool(mode)
                 def inference(model):
                     model.is_gradient_checkpointing = False
-                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, mock.Mock())),
+                tokenizer = ContextTokenizer()
+                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, tokenizer)),
                                 get_peft_model=mock.Mock(return_value=model),
                                 for_inference=mock.Mock(side_effect=inference))
                 report = self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=1,
-                    use_gradient_checkpointing=mode, flm=flm)
+                    use_gradient_checkpointing=mode, flm=flm, context_tokenizer=tokenizer)
                 self.assertEqual(flm.get_peft_model.call_args.kwargs["use_gradient_checkpointing"], mode)
                 self.assertEqual(flm.for_inference.call_args_list, [mock.call(model)] * 2)
                 self.assertEqual(flm.for_training.call_args_list,
@@ -2932,6 +3488,7 @@ def slice3_train_rows(count=64):
         item = row()
         item.update(row_id=f"train-synthetic-{index:02d}", source_group="train-group")
         item["input"] = dict(item["input"], id=item["row_id"])
+        item["row_id"] = hashlib.sha256(json.dumps({"input": item["input"], "target": item["target"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
         items.append(item)
     return items
 
@@ -2942,6 +3499,7 @@ def slice3_dev_rows():
         item = row("dev")
         item.update(row_id=f"dev-{index:02d}", source_group=f"dev-group-{index:02d}")
         item["input"] = dict(item["input"], id=item["row_id"])
+        item["row_id"] = hashlib.sha256(json.dumps({"input": item["input"], "target": item["target"]}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
         items.append(item)
     return items
 
@@ -3307,7 +3865,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                     elif fault == "roster":
                         result["binding"]["roster"] = []
                     elif fault == "input_digest":
-                        result["binding"]["input_sha256"]["dev-00"] = "0" * 64
+                        result["binding"]["input_sha256"][next(iter(result["binding"]["input_sha256"]))] = "0" * 64
                     elif fault == "expected_packets":
                         result["binding"]["expected_packets_sha256"] = "0" * 64
                     elif fault == "row_ids":
@@ -3350,7 +3908,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                 elif fault == "packets_mismatch":
                     context["expected_packets"]["dev-group-00"] = ["other"]
                 elif fault == "row_overlap":
-                    context["train_rows"][0]["row_id"] = "dev-00"
+                    context["train_rows"][0]["row_id"] = context["dev_rows"][0]["row_id"]
                     context["train_ids"] = {item["row_id"] for item in context["train_rows"]}
                 elif fault == "group_overlap":
                     context["train_rows"][0]["source_group"] = "dev-group-00"
@@ -3435,7 +3993,7 @@ _PUBLICATION_DEFAULT_ROWS = [
 
 
 def _publication_row_digest(row: dict) -> str:
-    return hashlib.sha256(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _publication_write_file(path: Path, data: bytes) -> dict:
@@ -3632,7 +4190,7 @@ def _build_publication_fixture(
         "binding_path": binding_path, "rows_dir": rows_dir, "code_dir": code_dir, "eval_dir": eval_dir,
         "binding": binding, "profile": profile, "report": report, "rows": rows, "row_digests": row_digests,
         "authority_paths": _TEST_AUTHORITY_PATHS,
-        "train_kwargs": {"publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
+        "train_kwargs": {"epoch_context_limit": 4096, "publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
                          "publication_code_dir": code_dir, "publication_eval_dir": eval_dir},
     }
 
@@ -3647,6 +4205,74 @@ class PublicationBindingTests(AuthorityFixtureCase):
     def _load_epoch(self, fx):
         return train_adapter.load_epoch_rows(
             fx["binding_path"], fx["rows_dir"], fx["code_dir"], fx["eval_dir"])
+
+    def test_candidate_digests_bind_whole_rows_in_producer_order(self):
+        rows = copy.deepcopy(_PUBLICATION_DEFAULT_ROWS)
+        rows[0]["input"] = {"text": "caf\u00e9"}
+        # Independent literal vector: UTF-8, compact keys, no final newline.
+        canonical = b'{"input":{"text":"caf\xc3\xa9"},"row_id":"r1","source_group":"group-a","split":"train"}'
+        expected = hashlib.sha256(canonical).hexdigest()
+        self.assertEqual(_publication_row_digest(rows[0]), expected)
+        original = [_publication_row_digest(r) for r in rows]
+        for case in ("valid", "reordered", "invented", "whole_row_changed", "newline_digest"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                supplied, actual = list(original), copy.deepcopy(rows)
+                if case == "reordered": supplied.reverse()
+                if case == "invented": supplied[0] = "0" * 64
+                if case == "whole_row_changed": actual[0]["receipt_ref"] = "different original receipt"
+                if case == "newline_digest": supplied[0] = hashlib.sha256(canonical + b"\n").hexdigest()
+                fx = _build_publication_fixture(Path(tmp), rows=actual,
+                    profile_overrides={"candidate_row_sha256": supplied})
+                if case == "valid":
+                    self.assertEqual(self._verify(fx)["batch"], fx["binding"]["batch"])
+                else:
+                    with self.assertRaisesRegex(SystemExit, "ordered candidate_row_sha256"):
+                        self._verify(fx)
+
+    def test_rows_in_covers_all_admitted_and_schema_valid_rows(self):
+        for rows_in in (0, 2, 3, 7):
+            with self.subTest(rows_in=rows_in), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), report_overrides={"rows_in": rows_in})
+                if rows_in < len(_PUBLICATION_DEFAULT_ROWS):
+                    with self.assertRaisesRegex(SystemExit, "rows_in is less"):
+                        self._verify(fx)
+                else:
+                    self._verify(fx)
+
+    def test_epoch_check_only_validation_never_writes_run_or_report(self):
+        for case in ("valid", "count", "digest", "row_id", "missing_binding"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+                if case == "row_id": rows[-1]["row_id"] = "0" * 16
+                fx = _build_publication_fixture(root, rows=rows,
+                    report_overrides={"rows_in": 0} if case == "count" else None,
+                    profile_overrides={"candidate_row_sha256": ["0" * 64, "1" * 64, "2" * 64]} if case == "digest" else None)
+                if case == "missing_binding": fx["binding_path"].unlink()
+                report = root / "reports" / "m2-check.json"
+                models = root / "models"
+                def snapshot():
+                    return {p.relative_to(root).as_posix(): p.read_bytes() if p.is_file() else None
+                            for p in root.rglob("*")}
+                before = snapshot()
+                argv = ["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(report),
+                    "--epochs", "1", "--check-only", "--base", train_adapter.WINNER_BASE,
+                    "--revision", train_adapter.WINNER_REVISION, "--epoch-context-limit", "4096",
+                    "--publication-binding", str(fx["binding_path"])]
+                with mock.patch.object(train_adapter, "__file__", str(fx["code_dir"] / "train_adapter.py")), \
+                     mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(models)}), \
+                     mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                     mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    if case == "valid": train_adapter.main(argv)
+                    else:
+                        with self.assertRaises(ValueError if case == "row_id" else SystemExit):
+                            train_adapter.main(argv)
+                self.assertEqual(snapshot(), before)
+                self.assertFalse(models.exists())
+                self.assertFalse(report.parent.exists())
+                self.assertEqual(model.mock_calls, [])
+                self.assertEqual(cuda.mock_calls, [])
 
     def test_admitted_producer_rows_reach_epoch_check_only_without_legacy_schema(self):
         # Regression for the retained authenticated-chain RED: two training
@@ -3672,7 +4298,7 @@ class PublicationBindingTests(AuthorityFixtureCase):
                 train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"),
                     "--report", str(root / "out.json"), "--epochs", "1", "--check-only",
                     "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
-                    "--publication-binding", str(fx["binding_path"])])
+                    "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
             self.assertEqual(json.loads(output.getvalue()), {"train_rows": 2, "check_only": True})
             training_run.assert_not_called()
             self.assertEqual(model.mock_calls, [])
@@ -3809,7 +4435,7 @@ class PublicationBindingTests(AuthorityFixtureCase):
                     train_adapter.main(["--rows", str(accepted), "--report", str(root / "out.json"),
                         "--epochs", "1", "--base", train_adapter.WINNER_BASE,
                         "--revision", train_adapter.WINNER_REVISION,
-                        "--publication-binding", str(fx["binding_path"])])
+                        "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
             self.assertIs(caught.exception, stop)
             self.assertEqual(len(reads), 2)
             seed.assert_not_called()
@@ -3843,7 +4469,7 @@ class PublicationBindingTests(AuthorityFixtureCase):
                     "--rows", str(Path(tmp, "missing-accepted.jsonl")),
                     "--report", str(Path(tmp, "out.json")),
                     "--steps", "20",
-                    "--publication-binding", str(Path(tmp, "missing-binding.json")),
+                    "--epoch-context-limit", "4096", "--publication-binding", str(Path(tmp, "missing-binding.json")),
                 ])
 
     def test_binding_duplicate_key_refused(self):

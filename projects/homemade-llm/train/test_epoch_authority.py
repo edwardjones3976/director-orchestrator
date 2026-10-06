@@ -172,7 +172,7 @@ class EpochAuthorityTests(fixtures.AuthorityFixtureCase):
                         mock.patch.object(trainer, 'FastLanguageModel') as loader:
                     with self.assertRaises(SystemExit):
                         trainer.main(['--rows', str(fx['rows_dir'] / 'accepted.jsonl'), '--report', str(report),
-                            '--epochs', '1', '--base', trainer.WINNER_BASE, '--revision', trainer.WINNER_REVISION,
+                            '--epochs', '1', '--epoch-context-limit', '4096', '--base', trainer.WINNER_BASE, '--revision', trainer.WINNER_REVISION,
                             '--publication-binding', str(fx['binding_path']), *(['--check-only'] if check_only else [])])
                     self.assertEqual(loader.mock_calls, [])
                     renderer.assert_not_called()
@@ -284,7 +284,7 @@ $stage = @{{ Train = '{fx['code_dir'].as_posix()}'; Eval = '{fx['eval_dir'].as_p
 function Make-Args([string[]]$mounts) {{
     New-TrainerDockerArgs -Image 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' -Name 'test' -CommonMounts $mounts -Stage $stage `
         -BindingPath '{fx['binding_path'].as_posix()}' -Base 'synthetic' -Revision 'synthetic' `
-        -ReportContainerPath '/workspace/reports/test.json' -Epochs 1 -AuthoritySource '# verified synthetic code' `
+        -ReportContainerPath '/workspace/reports/test.json' -Epochs 1 -EpochContextLimit 4096 -AuthoritySource '# verified synthetic code' `
         -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' -Locations $locations
 }}
 $good = @(Make-Args @('-v', '{root.as_posix()}:/safe:ro'))
