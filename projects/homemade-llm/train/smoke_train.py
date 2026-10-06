@@ -1,32 +1,52 @@
 # [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
-"""M0.3 smoke fine-tune: prove the Unsloth container trains on the RTX 5070 and exports a GGUF.
+"""P7 smoke fine-tune: prove the pinned Unsloth container trains, saves, merges and exports a GGUF on the RTX 5070.
 
-Runs inside unsloth/unsloth (see scripts/train-smoke.ps1). Only these C:\\llm folders are mounted:
-/workspace/hf (Hugging Face cache), /workspace/runs, /workspace/models/smoke, /workspace/reports.
-20 QLoRA steps on 50 synthetic rows; this measures the pipeline, not model quality.
-Writes: runs/<run>/adapter, models/smoke/*.gguf, reports/<run>.json, the HF cache, and scratch under /tmp.
+Runs inside unsloth/unsloth (see scripts/train-smoke.ps1), which mounts only:
+  /workspace/hf                    the Hugging Face cache, READ-ONLY (snapshots are loaded by explicit local path)
+  /workspace/smoke-digests.json    the root-pinned smoke digest list, READ-ONLY (its SHA-256 arrives in SMOKE_DIGESTS_SHA256)
+  /workspace/runs/<run>            this run's own directory (adapter, trainer scratch)
+  /workspace/models/smoke          GGUF publication (exclusive, no clobber)
+  /workspace/reports               this run's report and failure receipt
+20 QLoRA steps on 50 synthetic rows (seed 7, sequence length 1024); this measures the pipeline, not model quality.
 
-The base is Unsloth's pre-quantized mirror of Qwen/Qwen3-0.6B (Unsloth loads it even when asked for the
-Qwen repo), pinned by revision; the report records the commit transformers actually resolved.
+Both complete snapshots (the pre-quantized training source and the full-precision merge source) are authenticated against
+the digest list (exact file set, size, and SHA-256 read twice) before anything is loaded, everything runs offline, and the
+merge source is re-verified immediately before the merge. Any failure writes reports/<run>.failure.json instead of a
+report claiming a stage it did not reach.
 """
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
-# The image sets HF_HOME=/workspace/.cache/huggingface; override it so the cache lands in the mounted C:\llm\hf.
+# The image sets HF_HOME=/workspace/.cache/huggingface; override it to the mounted (read-only) cache, and never go online.
+# Snapshots are resolved from HF_ROOT, never from os.environ after import: importing unsloth sees the read-only hub and
+# repoints HF_HOME/HF_HUB_CACHE to a writable /tmp fallback (unsloth_zoo hf_cache.redirect_hf_cache_if_readonly).
 os.environ["HF_HOME"] = "/workspace/hf"
+HF_ROOT = Path(os.environ["HF_HOME"])
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+# GGUF export uses ONLY the pinned image's own prebuilt llama.cpp (quantizer, converter and its co-versioned conversion/
+# package); Unsloth reads this path at import. Without it, the export looks in ~/.unsloth/llama.cpp, finds nothing and
+# downloads or clones an unpinned llama.cpp from GitHub. The offline and no-auto-install switches make any such fallback
+# fail instead of fetching.
+os.environ["UNSLOTH_LLAMA_CPP_PATH"] = "/opt/unsloth/llama.cpp"
+os.environ["UNSLOTH_LLAMA_CPP_OFFLINE"] = "1"
+os.environ["UNSLOTH_OFFLINE"] = "1"
+os.environ["UNSLOTH_AUTO_INSTALL"] = "0"
 
 import torch  # noqa: E402  (HF_HOME must be set before the HF stack is imported)
 from unsloth import FastLanguageModel  # noqa: E402
@@ -36,21 +56,36 @@ from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 BASE = os.environ.get("SMOKE_BASE", "unsloth/qwen3-0.6b-unsloth-bnb-4bit")
 REVISION = os.environ.get("SMOKE_REVISION", "e86f5289a2ca40ab7114071959dc2079cf97cb3c")
-# The GGUF merge merges the adapter onto this full-precision repo, which Unsloth would otherwise fetch at "main"
-# (it takes no revision). It is bound instead: the pinned commit is downloaded, and the export runs in a child
-# process with HF_HUB_OFFLINE=1 that points the merge at that snapshot's local directory. Offline, nothing
-# else can be fetched, so the GGUF can only be built from the pinned base and pinned merge source.
 MERGE_SOURCE = os.environ.get("SMOKE_MERGE_SOURCE", "unsloth/qwen3-0.6b")
 MERGE_REVISION = os.environ.get("SMOKE_MERGE_REVISION", "db4e90b8359f816f09bf5c944797ce116f26da3c")
+DIGESTS = Path(os.environ.get("SMOKE_DIGESTS", "/workspace/smoke-digests.json"))
+DIGESTS_SHA256 = os.environ.get("SMOKE_DIGESTS_SHA256", "")
+TEMPLATE_SHA256 = os.environ.get("SMOKE_TEMPLATE_SHA256", "")
 SEED, STEPS, ROWS, SEQ = 7, 20, 50, 1024
-# Timestamp for humans plus a random suffix, so two runs in the same second never share paths.
+# Timestamp for humans plus a random suffix, so two runs in the same second never share paths. The host passes its own.
 RUN = os.environ.get("SMOKE_RUN") or "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:6]
 WS = Path("/workspace")
-RUN_DIR, MODEL_DIR, REPORT = WS / "runs" / RUN, WS / "models" / "smoke", WS / "reports" / f"{RUN}.json"
+RUN_DIR, MODEL_DIR = WS / "runs" / RUN, WS / "models" / "smoke"
+REPORT, FAILURE = WS / "reports" / f"{RUN}.json", WS / "reports" / f"{RUN}.failure.json"
+EXPORT_DIR = Path("/tmp") / RUN / "gguf"
+# The pinned Unsloth writes the GGUF to the SIBLING "<save_directory>_gguf", not beneath save_directory
+# (unsloth/save.py _gguf_output_directory in the pinned image), so publication reads exactly that directory.
+GGUF_DIR = Path(f"{EXPORT_DIR}_gguf")
+LIST_ENTRY_KEYS = {"files", "smoke_only", "source"}
+FILE_KEYS = {"path", "sha256", "size"}
+HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+class SmokeFailure(Exception):
+    """A refusal with a stage-specific reason; main() turns it (and any other exception) into a failure receipt."""
+
+
+def utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def rows() -> list[dict]:
-    """Tiny packet-shaped task: turn a one-line request into a two-field JSON object."""
+    """Tiny packet-shaped task: turn a one-line request into a two-field JSON object (source-defined, no data file)."""
     verbs = ["Add", "Fix", "Document", "Test", "Remove"]
     things = ["the mirror log", "the preflight floor", "a spend report", "the LM Studio probe", "a dataset scrub"]
     out = []
@@ -65,193 +100,340 @@ def rows() -> list[dict]:
     return out
 
 
-def hf_cache_refs() -> dict[str, str]:
-    """Cache contents (repo -> refs/main) at report time. Context only, not provenance: the shared cache
-    also holds earlier runs' downloads. The base's provenance is base_resolved_commit."""
-    hub = Path(os.environ["HF_HOME"]) / "hub"
-    return {d.name.removeprefix("models--").replace("--", "/"): (d / "refs" / "main").read_text().strip()
-            for d in sorted(hub.glob("models--*")) if (d / "refs" / "main").exists()}
+def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
+    """Streaming SHA-256 with a fixed buffer: a 0.6B safetensors file is never held in memory."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while block := f.read(chunk):
+            h.update(block)
+    return h.hexdigest()
 
 
-def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
-    """The commit the base was actually loaded from. Prefer the hash transformers stamps on the config;
-    fall back to the local snapshot the pinned revision resolves to. A pinned 40-hex revision must match.
-    Raises instead of returning None, so a report can never claim provenance it does not have."""
-    commit = config_commit
-    if not commit:
-        from huggingface_hub import snapshot_download
-        commit = Path(snapshot_download(repo, revision=revision, local_files_only=True)).name
-    if not commit:
-        raise SystemExit(f"could not resolve the commit for {repo}@{revision}")
-    if len(revision) == 40 and commit != revision:
-        raise SystemExit(f"{repo}: loaded commit {commit} does not match the pinned revision {revision}")
-    return commit
-
-
-@contextmanager
-def pinned_ref(repo: str, revision: str):
-    """While active, the cache's refs/main for repo points at revision, which must already be a cached snapshot;
-    offline (HF_HUB_OFFLINE=1), a lookup of repo with no revision then resolves to exactly that snapshot. The
-    shared cache's previous ref is restored on exit (or removed if there was none), even on failure, but only if
-    the ref still holds our pin: a newer value written meanwhile by another cache user is left alone."""
-    d = Path(os.environ["HF_HOME"]) / "hub" / ("models--" + repo.replace("/", "--"))
-    if not (d / "snapshots" / revision).is_dir():
-        raise SystemExit(f"{repo}@{revision} is not in the cache; cannot pin it for the offline export")
-    ref = d / "refs" / "main"
-    previous = ref.read_text() if ref.exists() else None
-    ref.parent.mkdir(parents=True, exist_ok=True)
-    ref.write_text(revision)
+def strict_json(raw: bytes):
+    """UTF-8 JSON that refuses duplicate member names (a later duplicate must never silently win)."""
+    def pairs(items):
+        keys = [k for k, _ in items]
+        if len(keys) != len(set(keys)):
+            raise SmokeFailure("duplicate JSON member name")
+        return dict(items)
     try:
-        yield
-    finally:
-        if ref.exists() and ref.read_text() == revision:
-            if previous is None:
-                ref.unlink()
-            else:
-                ref.write_text(previous)
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=pairs)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SmokeFailure(f"invalid JSON: {type(exc).__name__}") from None
 
 
-def write_report(path: Path, report: dict) -> None:
-    """Write to a temp file and rename over the report, so an interrupted update never truncates the
-    earlier valid report (the pre-export training evidence)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+def load_digest_list(path: Path, expected_sha256: str, training: str, merge: str) -> dict:
+    """The root-pinned list: its bytes must equal the expected digest, and it must name exactly the two pinned snapshots."""
+    if not HEX64.fullmatch(expected_sha256 or ""):
+        raise SmokeFailure("SMOKE_DIGESTS_SHA256 is missing or not 64 lowercase hex")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise SmokeFailure("digest list does not match its pinned SHA-256")
+    data = strict_json(raw)
+    if not isinstance(data, dict) or set(data) != {training, merge}:
+        raise SmokeFailure("digest list must name exactly the pinned training and merge snapshots")
+    for key, entry in data.items():
+        if not isinstance(entry, dict) or set(entry) != LIST_ENTRY_KEYS or not isinstance(entry["files"], list) or not entry["files"]:
+            raise SmokeFailure(f"digest list entry {key} has an unexpected shape")
+        for f in entry["files"]:
+            if (not isinstance(f, dict) or set(f) != FILE_KEYS or not isinstance(f["path"], str) or not f["path"]
+                    or not isinstance(f["size"], int) or isinstance(f["size"], bool) or not HEX64.fullmatch(str(f["sha256"]))):
+                raise SmokeFailure(f"digest list entry {key} has a malformed file record")
+    return data
 
 
-def publish(src: Path, dest: Path) -> None:
-    """Copy under a .part name and rename only after the size matches, so no truncated .gguf is ever visible."""
-    part = dest.with_name(dest.name + ".part")
+def snapshot_dir(repo: str, revision: str) -> Path:
+    """The cached snapshot directory for an exact 40-hex revision; never a ref, never a download."""
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise SmokeFailure(f"{repo}: revision {revision!r} is not a full 40-hex commit")
+    d = HF_ROOT / "hub" / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
+    if not d.is_dir():
+        raise SmokeFailure(f"{repo}@{revision} is not a complete local snapshot")
+    return d
+
+
+def snapshot_files(d: Path) -> set[str]:
+    return {p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()}
+
+
+def verify_snapshot(d: Path, entry: dict, label: str) -> dict:
+    """Exact file set, size, and two independent SHA-256 reads of every file, all equal to the list."""
+    expected = {f["path"]: f for f in entry["files"]}
+    actual = snapshot_files(d)
+    if actual != set(expected):
+        missing, extra = sorted(set(expected) - actual), sorted(actual - set(expected))
+        raise SmokeFailure(f"{label}: snapshot file set differs from the digest list (missing {missing[:3]}, extra {extra[:3]})")
+    reads = {}
+    for n in (1, 2):
+        at = utc()
+        for rel, f in sorted(expected.items()):
+            p = d / rel
+            if p.stat().st_size != f["size"]:
+                raise SmokeFailure(f"{label}: {rel} size differs from the digest list")
+            if sha256_file(p) != f["sha256"]:
+                raise SmokeFailure(f"{label}: {rel} SHA-256 read {n} differs from the digest list")
+        reads[f"read{n}_utc"] = at
+    return {"files": len(expected), **reads}
+
+
+def verify_template(d: Path, expected_sha256: str) -> None:
+    if not HEX64.fullmatch(expected_sha256 or ""):
+        raise SmokeFailure("SMOKE_TEMPLATE_SHA256 is missing or not 64 lowercase hex")
+    if sha256_file(d / "chat_template.jinja") != expected_sha256:
+        raise SmokeFailure("training snapshot chat_template.jinja does not match the root-pinned template digest")
+
+
+def adapter_manifest(d: Path) -> dict:
+    """Every file in the saved adapter directory, sorted by relative path, with size and SHA-256, plus the manifest's own digest."""
+    files = [{"path": p.relative_to(d).as_posix(), "size": p.stat().st_size, "sha256": sha256_file(p)}
+             for p in sorted(d.rglob("*"), key=lambda q: q.relative_to(d).as_posix()) if p.is_file()]
+    if not files:
+        raise SmokeFailure("saved adapter directory is empty")
+    canonical = json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"files": files, "manifest_sha256": hashlib.sha256(canonical).hexdigest()}
+
+
+def check_steps(actual: int, requested: int) -> int:
+    if actual != requested:
+        raise SmokeFailure(f"completed optimizer steps {actual} != requested {requested}")
+    return actual
+
+
+def _write_exclusive(path: Path, data: bytes) -> None:
+    """Create `path` exclusively (FileExistsError if anything is there) and write all of `data`; on any failure remove only this file."""
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     try:
-        shutil.copy2(src, part)
-        if part.stat().st_size != src.stat().st_size:
-            raise SystemExit(f"short copy of {src.name}")
-        os.replace(part, dest)
-    except BaseException:  # includes a full volume, an I/O error and cancellation: never leave a large .part behind
-        part.unlink(missing_ok=True)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
         raise
 
 
-def publish_all(src_dir: Path, model_dir: Path, report: dict, report_path: Path) -> None:
-    """Publish every exported GGUF, then write the final report. If anything fails before the report is written,
-    remove the GGUFs published so far: a GGUF without its final report (provenance, merge source) must not be
-    left for serve-smoke, which picks the newest *.gguf, to validate."""
+def write_report(path: Path, report: dict, *, create: bool = False) -> None:
+    """The first write (create=True) creates the report itself exclusively, with no check-then-write window: an existing report,
+    including one created concurrently, refuses and is never touched, so a run never adopts or overwrites another run's evidence.
+    An update writes a run-unique temp file and renames it over the report, so an interrupted update never truncates the earlier
+    valid report and two writers never share a temp name."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(report, indent=2).encode("utf-8")
+    if create:
+        try:
+            _write_exclusive(path, data)
+        except FileExistsError:
+            raise SmokeFailure(f"report {path.name} already exists") from None
+        return
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    _write_exclusive(tmp, data)
+    try:
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def publish_gguf(src: Path, dest: Path) -> dict:
+    """Exclusive, verified publication. The GGUF is hashed twice before the copy; the destination name is reserved with an
+    exclusive create (an existing file, including one created concurrently, refuses and is never touched); the copy goes
+    to a run-owned .part, is hashed again, and only then replaces the run's own placeholder. On any failure only files
+    this call created are removed."""
+    h1, h2 = sha256_file(src), sha256_file(src)
+    if h1 != h2:
+        raise SmokeFailure(f"{src.name}: the two pre-publication SHA-256 reads differ")
+    part = dest.with_name(dest.name + ".part")
+    created = []
+    try:
+        fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY)   # reserve the name; FileExistsError if anything is there
+        os.close(fd)
+        created.append(dest)
+        fd = os.open(part, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        created.append(part)
+        shutil.copyfile(src, part)
+        if part.stat().st_size != src.stat().st_size or sha256_file(part) != h1:
+            raise SmokeFailure(f"{src.name}: published copy does not match the exported bytes")
+        os.replace(part, dest)   # replaces only the placeholder this call created
+        created.remove(part)
+        if sha256_file(dest) != h1:
+            raise SmokeFailure(f"{dest.name}: post-publication SHA-256 differs")
+        return {"path": str(dest), "bytes": dest.stat().st_size, "sha256": h1}
+    except BaseException:
+        for p in created:
+            p.unlink(missing_ok=True)
+        raise
+
+
+def publish_all(src_dir: Path, model_dir: Path) -> list[dict]:
+    """Publish every exported GGUF; if any one fails, remove the ones this run already published."""
     model_dir.mkdir(parents=True, exist_ok=True)
-    report["gguf"] = []
     published = []
     try:
         for f in sorted(src_dir.rglob("*.gguf")):
-            dest = model_dir / f"{RUN}-{f.name}"
-            publish(f, dest)
-            published.append(dest)
-            report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
-        write_report(report_path, report)
+            published.append(publish_gguf(f, model_dir / f"{RUN}-{f.name}"))
+        if not published:
+            raise SmokeFailure("no GGUF produced")
+        return published
     except BaseException:
-        for dest in published:
-            dest.unlink(missing_ok=True)
+        for g in published:
+            Path(g["path"]).unlink(missing_ok=True)
         raise
+
+
+_ALLOWED_PATH_PREFIXES = (f"/workspace/runs/{RUN}", "/workspace/reports", "/workspace/models/smoke", f"/tmp/{RUN}")
+
+
+def bounded_message(exc: BaseException, limit: int = 400) -> str:
+    """A short message for the failure receipt: absolute paths outside this run's own outputs are masked, and it is
+    truncated, so no cache layout, credential location or host path leaks into a published receipt."""
+    text = str(exc).replace("\n", " ")
+    text = re.sub(r"/[^\s'\":,]+", lambda m: m.group(0) if m.group(0).startswith(_ALLOWED_PATH_PREFIXES) else "<path>", text)
+    return text[:limit]
+
+
+def write_failure(stage: str, exc: BaseException, evidence: dict) -> None:
+    """Exclusive create: a receipt is never overwritten, and a crash while writing never leaves a success-looking file."""
+    receipt = {"run": RUN, "status": "failed", "stage": stage, "exception": type(exc).__name__, "message": bounded_message(exc),
+               "utc": utc(), "evidence": evidence}
+    FAILURE.parent.mkdir(parents=True, exist_ok=True)
+    with open(FAILURE, "x", encoding="utf-8") as f:
+        json.dump(receipt, f, indent=2)
 
 
 def main() -> None:
     t0 = time.time()
     # docker stop sends SIGTERM to this process (PID 1, which ignores it without a handler): exit via SystemExit
-    # so finally blocks, such as the cache-ref restore, still run.
+    # so finally/except blocks, such as the failure receipt, still run.
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
-    set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
-    torch.cuda.reset_peak_memory_stats()
-    model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
-    # This run's real provenance; fails the run (before any training) if it cannot be established.
-    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), BASE, REVISION)
-    model = FastLanguageModel.get_peft_model(
-        model, r=16, lora_alpha=16, lora_dropout=0, bias="none", use_gradient_checkpointing="unsloth",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        random_state=SEED,
-    )
-    load_alloc_gb = torch.cuda.max_memory_allocated() / 2**30
-    load_reserved_gb = torch.cuda.max_memory_reserved() / 2**30
-    # Qwen3 emits a <think> block unless the template disables it; strict JSON needs it off (M0.11 note).
-    texts = [tok.apply_chat_template(r["messages"], tokenize=False, enable_thinking=False) for r in rows()]
-    ds = Dataset.from_dict({"text": texts})
-    tokens_per_row = sum(len(tok(t)["input_ids"]) for t in texts) / len(texts)
-
-    trainer = SFTTrainer(
-        model=model, processing_class=tok, train_dataset=ds,
-        args=SFTConfig(output_dir=str(RUN_DIR / "trainer"), dataset_text_field="text", max_length=SEQ,
-                       per_device_train_batch_size=2, gradient_accumulation_steps=1, max_steps=STEPS,
-                       learning_rate=2e-4, logging_steps=5, save_strategy="no", report_to="none", seed=SEED),
-    )
-    torch.cuda.reset_peak_memory_stats()
-    t_train = time.time()
-    result = trainer.train()
-    train_s = time.time() - t_train
-    # PyTorch's own peaks: "allocated" is tensor memory, "reserved" includes the caching allocator's pool.
-    # Neither counts the CUDA context or other processes, so they understate device-wide VRAM use.
-    peak_alloc_gb = torch.cuda.max_memory_allocated() / 2**30
-    peak_reserved_gb = torch.cuda.max_memory_reserved() / 2**30
-    step_losses = [e["loss"] for e in trainer.state.log_history if "loss" in e]
-
-    FastLanguageModel.for_inference(model)
-    prompt = tok.apply_chat_template(rows()[0]["messages"][:2], tokenize=False, add_generation_prompt=True,
-                                     enable_thinking=False)
-    ids = tok(prompt, return_tensors="pt").to("cuda")
-    sample = tok.decode(model.generate(**ids, max_new_tokens=48, do_sample=False)[0][ids["input_ids"].shape[1]:],
-                        skip_special_tokens=True)
-
-    model.save_pretrained(str(RUN_DIR / "adapter"))
-    tok.save_pretrained(str(RUN_DIR / "adapter"))
-
-    report = {
-        "run": RUN, "base": BASE, "base_revision": REVISION, "base_resolved_commit": resolved,
-        "seed": SEED, "steps": STEPS, "rows": ROWS, "batch": 2,
-        "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,
-        "load_peak_torch_allocated_gb": round(load_alloc_gb, 2), "load_peak_torch_reserved_gb": round(load_reserved_gb, 2),
-        "peak_torch_allocated_gb": round(peak_alloc_gb, 2), "peak_torch_reserved_gb": round(peak_reserved_gb, 2),
-        "train_seconds": round(train_s, 1),
-        "tokens_per_second_approx": round(STEPS * 2 * tokens_per_row / train_s, 1),  # steps x batch x mean row tokens
-        "mean_train_loss": round(result.training_loss, 4),
-        "last_logged_loss": round(step_losses[-1], 4) if step_losses else None,
-        "sample_output": sample,
-    }
+    training, merge = f"{BASE}@{REVISION}", f"{MERGE_SOURCE}@{MERGE_REVISION}"
+    stage, evidence = "verify", {"completed_stages": []}
     try:
-        json.loads(sample)
-        report["sample_is_json"] = True
-    except ValueError:
-        report["sample_is_json"] = False
-    write_report(REPORT, report)  # training evidence survives a failed export
+        digests = load_digest_list(DIGESTS, DIGESTS_SHA256, training, merge)
+        train_snap, merge_snap = snapshot_dir(BASE, REVISION), snapshot_dir(MERGE_SOURCE, MERGE_REVISION)
+        auth = {"training": verify_snapshot(train_snap, digests[training], training),
+                "merge": verify_snapshot(merge_snap, digests[merge], merge)}
+        verify_template(train_snap, TEMPLATE_SHA256)
+        evidence.update(digest_list_sha256=DIGESTS_SHA256, snapshot_authentication=auth)
+        evidence["completed_stages"].append("verify")
 
-    # Stage the export's inputs, then free this process's GPU memory: fetch the merge source at its pinned commit;
-    # the base's refs/main is pinned only for the export, because the offline child reloads the base by name.
-    from huggingface_hub import snapshot_download
-    snapshot_download(MERGE_SOURCE, revision=MERGE_REVISION)
-    del trainer, model
-    gc.collect()
-    torch.cuda.empty_cache()
-    t_gguf = time.time()
-    with pinned_ref(BASE, resolved):
+        stage = "load"
+        set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
+        torch.cuda.reset_peak_memory_stats()
+        model, tok = FastLanguageModel.from_pretrained(str(train_snap), max_seq_length=SEQ, load_in_4bit=True, local_files_only=True)
+        model = FastLanguageModel.get_peft_model(
+            model, r=16, lora_alpha=16, lora_dropout=0, bias="none", use_gradient_checkpointing="unsloth",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            random_state=SEED,
+        )
+        load_alloc_gb = torch.cuda.max_memory_allocated() / 2**30
+        load_reserved_gb = torch.cuda.max_memory_reserved() / 2**30
+        # Qwen3 emits a <think> block unless the template disables it; strict JSON needs it off (M0.11 note).
+        texts = [tok.apply_chat_template(r["messages"], tokenize=False, enable_thinking=False) for r in rows()]
+        ds = Dataset.from_dict({"text": texts})
+        tokens_per_row = sum(len(tok(t)["input_ids"]) for t in texts) / len(texts)
+        evidence["completed_stages"].append("load")
+
+        stage = "train"
+        trainer = SFTTrainer(
+            model=model, processing_class=tok, train_dataset=ds,
+            args=SFTConfig(output_dir=str(RUN_DIR / "trainer"), dataset_text_field="text", max_length=SEQ,
+                           per_device_train_batch_size=2, gradient_accumulation_steps=1, max_steps=STEPS,
+                           learning_rate=2e-4, logging_steps=5, save_strategy="no", report_to="none", seed=SEED),
+        )
+        torch.cuda.reset_peak_memory_stats()
+        t_train = time.time()
+        result = trainer.train()
+        train_s = time.time() - t_train
+        steps = check_steps(int(trainer.state.global_step), STEPS)
+        evidence["optimizer_steps"] = steps
+        # PyTorch's own peaks: "allocated" is tensor memory, "reserved" includes the caching allocator's pool.
+        # Neither counts the CUDA context or other processes, so they understate device-wide VRAM use.
+        peak_alloc_gb = torch.cuda.max_memory_allocated() / 2**30
+        peak_reserved_gb = torch.cuda.max_memory_reserved() / 2**30
+        step_losses = [e["loss"] for e in trainer.state.log_history if "loss" in e]
+        evidence["completed_stages"].append("train")
+
+        stage = "save"
+        adapter_dir = RUN_DIR / "adapter"
+        model.save_pretrained(str(adapter_dir))
+        tok.save_pretrained(str(adapter_dir))
+        manifest = adapter_manifest(adapter_dir)
+        evidence["adapter_manifest_sha256"] = manifest["manifest_sha256"]
+        report = {
+            "run": RUN, "status": "trained-not-exported", "base": BASE, "base_revision": REVISION, "base_resolved_commit": REVISION,
+            "merge_source": MERGE_SOURCE, "merge_revision": MERGE_REVISION,
+            "digest_list_sha256": DIGESTS_SHA256, "chat_template_sha256": TEMPLATE_SHA256, "snapshot_authentication": auth,
+            "row_generator": {"function": "smoke_train.rows", "rows": ROWS, "seed": SEED, "sequence_length": SEQ},
+            "seed": SEED, "steps_requested": STEPS, "optimizer_steps": steps, "rows": ROWS, "batch": 2,
+            "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,
+            "load_peak_torch_allocated_gb": round(load_alloc_gb, 2), "load_peak_torch_reserved_gb": round(load_reserved_gb, 2),
+            "peak_torch_allocated_gb": round(peak_alloc_gb, 2), "peak_torch_reserved_gb": round(peak_reserved_gb, 2),
+            "train_seconds": round(train_s, 1),
+            "tokens_per_second_approx": round(STEPS * 2 * tokens_per_row / train_s, 1),  # steps x batch x mean row tokens
+            "mean_train_loss": round(result.training_loss, 4),
+            "last_logged_loss": round(step_losses[-1], 4) if step_losses else None,
+            "adapter_manifest": manifest,
+        }
+        write_report(REPORT, report, create=True)  # training evidence survives a failed export
+        evidence["completed_stages"].append("save")
+
+        stage = "export"
+        del trainer, model
+        gc.collect()
+        torch.cuda.empty_cache()
+        t_gguf = time.time()
         subprocess.run([sys.executable, __file__, "export"], check=True,
-                       env={**os.environ, "SMOKE_RUN": RUN, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
-    report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
-    report["merge_source"], report["merge_revision"] = MERGE_SOURCE, MERGE_REVISION  # bound: offline, local snapshot
-    export_dir = Path("/tmp") / RUN / "gguf"
-    report["hf_cache_refs"] = hf_cache_refs()  # context only; provenance is base_resolved_commit + merge_revision
-    report["wall_seconds"] = round(time.time() - t0, 1)
-    publish_all(export_dir.parent, MODEL_DIR, report, REPORT)
-    print(json.dumps(report, indent=2))
-    if not report["gguf"]:
-        raise SystemExit("no GGUF produced")
+                       env={**os.environ, "SMOKE_RUN": RUN, "SMOKE_ADAPTER_MANIFEST_SHA256": manifest["manifest_sha256"]})
+        report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
+        evidence["completed_stages"].append("export")
+
+        stage = "publish"
+        report["gguf"] = publish_all(GGUF_DIR, MODEL_DIR)
+        report["status"] = "complete"
+        report["wall_seconds"] = round(time.time() - t0, 1)
+        try:
+            write_report(REPORT, report)
+        except BaseException:
+            for g in report["gguf"]:
+                Path(g["path"]).unlink(missing_ok=True)   # no GGUF without its final report
+            raise
+        evidence["completed_stages"].append("publish")   # committed: the complete report and its GGUF are durable
+    except BaseException as exc:
+        try:
+            write_failure(stage, exc, evidence)
+        except BaseException as receipt_exc:   # never let a receipt problem hide the original failure
+            print(f"failure receipt not written: {type(receipt_exc).__name__}", file=sys.stderr)
+        if isinstance(exc, SystemExit) and exc.code not in (None, 0):
+            raise
+        raise SystemExit(1) from exc
+    # Output after the commit, outside the failure path: a closed or broken stdout cannot turn a committed success into a
+    # failure receipt (the report on disk is the evidence; this print is only a convenience copy).
+    try:
+        print(json.dumps(report, indent=2), flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 def export() -> None:
-    """Child process, started offline by main(): reload the adapter on its pinned base and write the GGUF.
-    Merge + GGUF export rewrite model.safetensors in place, which the Windows bind mount refuses (Errno 13),
-    so the export goes to the container filesystem and main() copies only the finished GGUF out."""
-    from huggingface_hub import snapshot_download
-    merge_dir = snapshot_download(MERGE_SOURCE, revision=MERGE_REVISION, local_files_only=True)
-    model, tok = FastLanguageModel.from_pretrained(str(RUN_DIR / "adapter"), max_seq_length=SEQ, load_in_4bit=True)
+    """Child process, started offline by main(): re-verify the merge snapshot and the saved adapter, reload the adapter on
+    its verified local base, merge onto the verified local merge snapshot, and write the GGUF to the container filesystem
+    (merge + export rewrite model.safetensors in place, which the Windows bind mount refuses with Errno 13)."""
+    training, merge = f"{BASE}@{REVISION}", f"{MERGE_SOURCE}@{MERGE_REVISION}"
+    digests = load_digest_list(DIGESTS, DIGESTS_SHA256, training, merge)
+    adapter_dir = RUN_DIR / "adapter"
+    if adapter_manifest(adapter_dir)["manifest_sha256"] != os.environ.get("SMOKE_ADAPTER_MANIFEST_SHA256"):
+        raise SmokeFailure("saved adapter bytes differ from the manifest recorded after the save")
+    merge_dir = snapshot_dir(MERGE_SOURCE, MERGE_REVISION)
+    verify_snapshot(merge_dir, digests[merge], merge)   # immediately before the merge
+    llama = Path(os.environ["UNSLOTH_LLAMA_CPP_PATH"])
+    for rel in ("llama-quantize", "convert_hf_to_gguf.py", "conversion/__init__.py", "conversion/base.py"):
+        if not (llama / rel).is_file():
+            raise SmokeFailure(f"the image's prebuilt llama.cpp lacks {rel}; refusing to let the export install or fetch one")
+    model, tok = FastLanguageModel.from_pretrained(str(adapter_dir), max_seq_length=SEQ, load_in_4bit=True, local_files_only=True)
     # Unsloth picks the merge source from config._name_or_path and merges a local directory's safetensors as-is.
-    model.config._name_or_path = merge_dir
-    model.save_pretrained_gguf(str(Path("/tmp") / RUN / "gguf"), tok, quantization_method="q4_k_m")
+    model.config._name_or_path = str(merge_dir)
+    model.save_pretrained_gguf(str(EXPORT_DIR), tok, quantization_method="q4_k_m")
 
 
 if __name__ == "__main__":
