@@ -207,16 +207,101 @@ Write-Output 'console-test-ok'
     Get-ShimPing | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }   # only if a check failed
     [IO.Directory]::Delete($shim, $true)
 }
-# Pre-preflight refusals (run the real script; both stop before preflight or Docker).
+# P7 trust: the smoke-only root reader, the pin equality, the mount vector and the trust-outside-writable rule, loaded
+# from train-smoke.ps1's syntax tree and run against a synthetic pin/root/digest list (never the production files).
+. (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')
+foreach ($name in 'Read-SmokeTrust', 'Assert-SmokePins', 'Assert-TrustOutsideWritable', 'New-SmokeMounts') {
+    $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
+    if (-not $fn) { $fail += "train-smoke.ps1: function $name missing" } else { . ([scriptblock]::Create($fn.Extent.Text)) }
+}
+$keysAst = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$SmokeSectionKeys' }, $true) | Select-Object -First 1
+. ([scriptblock]::Create($keysAst.Extent.Text))
+$trustDir = Join-Path ([IO.Path]::GetTempPath()) ("train-smoke-trust-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory (Join-Path $trustDir 'custody'), (Join-Path $trustDir 'list'), (Join-Path $trustDir 'pin') | Out-Null
+try {
+    $tsrc = 'org/base-4bit@' + ('a' * 40); $msrc = 'org/base@' + ('b' * 40); $img = 'unsloth/unsloth@sha256:' + ('c' * 64)
+    $listPath = Join-Path $trustDir 'list\digests.json'
+    function Set-World([scriptblock]$EditSection = $null, [scriptblock]$EditList = $null) {
+        $list = [ordered]@{ $tsrc = @{ files = @(); smoke_only = $true; source = 't' }; $msrc = @{ files = @(); smoke_only = $true; source = 't' } }
+        if ($EditList) { & $EditList $list }
+        [IO.File]::WriteAllText($listPath, ($list | ConvertTo-Json -Depth 5 -Compress))
+        $listSha = (Get-FileHash -LiteralPath $listPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $s = [ordered]@{ chat_template_sha256 = ('d' * 64); expected_digest_list = [ordered]@{ path = $listPath; sha256 = $listSha }; image = $img
+            list_builder = @{ path = 'x'; sha256 = ('e' * 64) }; merge_source = $msrc; ruling = 'r'; scope = 'smoke'; training_source = $tsrc
+            two_read_inventory = @{ path = 'y'; sha256 = ('f' * 64) }; work_order = @{ path = 'z'; sha256 = ('1' * 64) } }
+        if ($EditSection) { & $EditSection $s }
+        $rootText = ([ordered]@{ format = 'route-r-trust-root/vtest'; smoke_snapshots = $s } | ConvertTo-Json -Depth 6 -Compress)
+        if ($null -eq $s) { $rootText = '{"format":"route-r-trust-root/vtest"}' }
+        [IO.File]::WriteAllText((Join-Path $trustDir 'custody\route-r-trust-root-vtest.json'), $rootText)
+        $rootSha = (Get-FileHash -LiteralPath (Join-Path $trustDir 'custody\route-r-trust-root-vtest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $trustDir 'pin\route_r_root_pin.py'), "ROOT_FILE = `"route-r-trust-root-vtest.json`"`nROOT_FORMAT = `"route-r-trust-root/vtest`"`nAPPROVED_TRUST_ROOT_SHA256 = `"$rootSha`"`n")
+    }
+    $loc = @{ PinFile = (Join-Path $trustDir 'pin\route_r_root_pin.py'); CustodyRoot = (Join-Path $trustDir 'custody') }
+    function Expect-Refusal([string]$Case, [string]$Pattern, [scriptblock]$Call) {
+        $msg = $null; try { & $Call | Out-Null } catch { $msg = $_.Exception.Message }
+        if (-not $msg) { $script:fail += "trust: $Case was not refused" } elseif ($msg -notmatch $Pattern) { $script:fail += "trust: $Case refused for the wrong reason: $msg" }
+    }
+    Set-World
+    $tr = Read-SmokeTrust $loc
+    if ($tr.Training -cne $tsrc -or $tr.Merge -cne $msrc -or $tr.Image -cne $img -or $tr.ListPath -ne [IO.Path]::GetFullPath($listPath)) { $fail += 'trust: a valid synthetic root was not read back exactly' }
+    $base, $rev = $tsrc -split '@'; $ms, $mr = $msrc -split '@'
+    Assert-SmokePins -Trust $tr -Base $base -Revision $rev -MergeSource $ms -MergeRevision $mr -Image $img
+    Expect-Refusal 'training override' 'does not equal the root-pinned' { Assert-SmokePins -Trust $tr -Base 'org/other-4bit' -Revision $rev -MergeSource $ms -MergeRevision $mr -Image $img }
+    Expect-Refusal 'merge-revision override' 'does not equal the root-pinned' { Assert-SmokePins -Trust $tr -Base $base -Revision $rev -MergeSource $ms -MergeRevision ('9' * 40) -Image $img }
+    Expect-Refusal 'wrong image' 'image .* does not equal the root-pinned' { Assert-SmokePins -Trust $tr -Base $base -Revision $rev -MergeSource $ms -MergeRevision $mr -Image 'unsloth/unsloth:latest' }
+    Set-World -EditSection { param($s) $null = $s }   # control: unchanged section still reads
+    Set-World -EditSection { param($s) $s.Remove('ruling') }
+    Expect-Refusal 'missing smoke_snapshots key' 'smoke_snapshots section missing or not the exact installed shape' { Read-SmokeTrust $loc }
+    Set-World -EditSection { param($s) $s['extra'] = 1 }
+    Expect-Refusal 'extra smoke_snapshots key' 'smoke_snapshots section missing or not the exact installed shape' { Read-SmokeTrust $loc }
+    Set-World
+    [IO.File]::WriteAllText((Join-Path $trustDir 'custody\route-r-trust-root-vtest.json'), '{"format":"route-r-trust-root/vtest"}')
+    $rs = (Get-FileHash -LiteralPath (Join-Path $trustDir 'custody\route-r-trust-root-vtest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText($loc.PinFile, "ROOT_FILE = `"route-r-trust-root-vtest.json`"`nROOT_FORMAT = `"route-r-trust-root/vtest`"`nAPPROVED_TRUST_ROOT_SHA256 = `"$rs`"`n")
+    Expect-Refusal 'root without smoke_snapshots' 'smoke_snapshots section missing' { Read-SmokeTrust $loc }
+    Set-World
+    [IO.File]::AppendAllText($listPath, ' ')   # one changed byte in the digest list
+    Expect-Refusal 'digest list bytes changed' 'does not match its root-pinned SHA-256' { Read-SmokeTrust $loc }
+    Set-World -EditList { param($l) $l['x/y@' + ('2' * 40)] = @{ files = @() } }
+    Expect-Refusal 'digest list names a third snapshot' 'exactly the two root-pinned snapshots' { Read-SmokeTrust $loc }
+    Set-World
+    [IO.File]::AppendAllText((Join-Path $trustDir 'custody\route-r-trust-root-vtest.json'), ' ')
+    Expect-Refusal 'root bytes differ from the pin' 'does not match the pinned SHA-256' { Read-SmokeTrust $loc }
+    Set-World -EditSection { param($s) $s['image'] = 'unsloth/unsloth:latest' }
+    Expect-Refusal 'unpinned image in the root' 'digest-pinned image' { Read-SmokeTrust $loc }
+    # Mount vector: read-only cache and digest list; only run-specific writable directories; trust inputs outside them.
+    $m = New-SmokeMounts -HotRoot 'C:\llm' -RunId 'smoke-20261006-050000-abcdef' -ListPath 'C:\llm\runs\m2\p7-smoke\smoke-expected-digests.draft.json'
+    $v = @(for ($i = 1; $i -lt $m.Mounts.Count; $i += 2) { $m.Mounts[$i] })
+    if (-not ($v -contains 'C:\llm\hf:/workspace/hf:ro')) { $fail += 'mounts: the HF cache must be read-only' }
+    if (-not ($v -contains 'C:\llm\runs\m2\p7-smoke\smoke-expected-digests.draft.json:/workspace/smoke-digests.json:ro')) { $fail += 'mounts: the digest list must be read-only' }
+    if (@($v | Where-Object { $_ -match '^C:\\llm\\(runs|reports):' }).Count) { $fail += 'mounts: the runs or reports parent is mounted (writable)' }
+    if ((@($m.Writable) -join '|') -ne 'C:\llm\runs\smoke\smoke-20261006-050000-abcdef|C:\llm\models\smoke|C:\llm\reports\smoke') { $fail += "mounts: unexpected writable set $(@($m.Writable) -join '|')" }
+    Assert-TrustOutsideWritable -WritableDirs $m.Writable -TrustPaths @('C:\llm\runs\m2\rr\route_r_root_pin.py', 'C:\llm\reports\route-r\route-r-trust-root-v2r6.json', 'C:\llm\runs\m2\p7-smoke\smoke-expected-digests.draft.json')
+    Expect-Refusal 'trust input under a writable mount' 'sits inside the writable container mount' { Assert-TrustOutsideWritable -WritableDirs @('C:\llm\reports') -TrustPaths @('C:\llm\reports\route-r\route-r-trust-root-v2r6.json') }
+    Expect-Refusal 'malformed run id' 'unexpected run id' { New-SmokeMounts -HotRoot 'C:\llm' -RunId '..\x' -ListPath $listPath }
+} finally { [IO.Directory]::Delete($trustDir, $true) }
+
+# Pre-preflight refusals (run the real script; all stop before preflight or Docker).
 $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("train-smoke-root-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory (Join-Path $tmpRoot 'hf') | Out-Null
 $links = @()
+$failShim = Join-Path $tmpRoot 'shim'
+New-Item -ItemType Directory $failShim | Out-Null
+Set-Content (Join-Path $failShim 'docker.cmd') '@exit /b 97'
+Set-Content (Join-Path $failShim 'lms.cmd') '@exit /b 97'
 try {
     Set-Content (Join-Path $tmpRoot 'hf\token') 'hf_dummy'
     # Error text arrives colored and wrapped to the console width: strip ANSI codes and collapse whitespace.
-    # Fail-safe if a guard regresses: an invalid image reference (docker rejects it locally, no pull) and a
-    # 3-second timeout keep the run from ever starting real training.
-    function Run([string]$Root, [string[]]$Extra = @()) { ((& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'train-smoke.ps1') -HotRoot $Root -Image 'INVALID_REFERENCE' -TimeoutMinutes 0.05 @Extra 2>&1 | Out-String) -replace '\x1b\[[0-9;]*m', '' -replace '[\s|]+', ' ') }
+    # The script now refuses any image other than the root-pinned one before the GPU mutex, so these runs pass the
+    # pinned image and the fail-safe is a PATH whose docker and lms always fail (no container, no LM Studio unload),
+    # plus a 3-second timeout. The trust checks read this host's installed root (a run on a host without it refuses
+    # earlier, at the trust step).
+    $pinnedImage = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739'
+    function Run([string]$Root, [string[]]$Extra = @()) {
+        $old = $env:PATH; $env:PATH = "$failShim;$old"
+        try { ((& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'train-smoke.ps1') -HotRoot $Root -Image $pinnedImage -TimeoutMinutes 0.05 @Extra 2>&1 | Out-String) -replace '\x1b\[[0-9;]*m', '' -replace '[\s|]+', ' ') }
+        finally { $env:PATH = $old }
+    }
     $o = Run $tmpRoot
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'stored Hugging Face credential') { $fail += "stored token: not refused (exit $LASTEXITCODE)" }
     $o = Run 'D:\llm'
@@ -315,6 +400,9 @@ if (-not ($iFlag -ge 0 -and $iJob -gt $iFlag)) { $fail += 'train-smoke: containe
 if (-not $ts.Contains('$containerGone = $state -eq ''stopped and removed''')) { $fail += 'train-smoke: containerGone must come from the Stop-Smoke result' }
 
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
+Write-Output 'ok  smoke trust: a valid synthetic root reads back exactly; missing/extra smoke_snapshots keys, a root without the section, root bytes off the pin, a changed digest list, a third snapshot and an unpinned image refuse'
+Write-Output 'ok  smoke pins: a training, merge-revision or image override refuses'
+Write-Output 'ok  smoke mounts: HF cache and digest list read-only; only runs\smoke\<run>, models\smoke and reports\smoke writable; a trust input under a writable mount refuses'
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'

@@ -2,12 +2,14 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
-# M0.3: run train/smoke_train.py inside the pinned Unsloth image.
-#   .\train-smoke.ps1                                   default pinned base
-#   .\train-smoke.ps1 -Base <hf repo> -Revision <sha> -MergeSource <16-bit hf repo> -MergeRevision <sha>
-#                                                       override: a base comes with its own merge-source pin
-# Refuses to start when preflight reports a FAIL (C: floor, hot-tier cap, GPU, Docker) or when LM Studio
-# cannot release the GPU. Mounts only the four C:\llm folders the job needs: never secrets, seeds or datasets.
+# P7 smoke: run train/smoke_train.py inside the pinned Unsloth image.
+#   .\train-smoke.ps1                                   the pins named by the installed Route R root's smoke_snapshots
+# The image, both snapshots (training source and merge source) and the digest list are read from the approved root
+# through the production pin (Read-RootPin -> pinned root digest -> strict parse -> smoke_snapshots) before the GPU
+# mutex; any -Base/-Revision/-MergeSource/-MergeRevision/-Image that differs from the root refuses. Refuses to start
+# when preflight reports a FAIL (C: floor, hot-tier cap, GPU, Docker) or when LM Studio cannot release the GPU.
+# Mounts: the HF cache and the digest list READ-ONLY; this run's own runs\smoke\<run>, models\smoke and reports\smoke
+# writable. No trust input (pin, root, digest list) may sit inside a writable mount; never secrets, seeds or datasets.
 [CmdletBinding()]
 param(
     [string]$Image = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739',
@@ -20,6 +22,85 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill
+# The trainer stage helper's established trust primitives (Read-RootPin, ConvertFrom-StrictJson, Get-SHA256Hex,
+# Test-ExactKeySet, Test-PathShaEntry, Assert-NoReparsePointInAncestry, Get-ProductionLocations). Its Read-ApprovedRoot
+# requires adapter_consumption and is NOT the smoke reader; no adapter publication or mount function is called here.
+. (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')
+
+$SmokeSectionKeys = @('chat_template_sha256', 'expected_digest_list', 'image', 'list_builder', 'merge_source', 'ruling', 'scope',
+    'training_source', 'two_read_inventory', 'work_order')
+
+# Smoke-only reader of the approved root: pin text -> approved digest -> root bytes -> strict parse -> smoke_snapshots.
+# Returns the consumed pins and the verified digest-list location and digest. Every refusal happens before the GPU mutex.
+function Read-SmokeTrust {
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Locations)
+    $pin = Read-RootPin -PinFile $Locations.PinFile
+    $rootPath = Join-Path $Locations.CustodyRoot $pin.ROOT_FILE
+    if (-not (Test-Path -LiteralPath $rootPath -PathType Leaf)) { Write-Error "approved root file not found: $rootPath" }
+    Assert-NoReparsePointInAncestry $rootPath
+    $bytes = [IO.File]::ReadAllBytes($rootPath)
+    if ((Get-SHA256Hex $bytes) -cne $pin.APPROVED_TRUST_ROOT_SHA256) { Write-Error 'approved root does not match the pinned SHA-256' }
+    $root = ConvertFrom-StrictJson ([Text.Encoding]::UTF8.GetString($bytes))
+    if (-not ($root -is [System.Collections.IDictionary])) { Write-Error 'approved root must be a JSON object' }
+    if ($root['format'] -cne $pin.ROOT_FORMAT) { Write-Error "approved root format must be $($pin.ROOT_FORMAT)" }
+    $s = $root['smoke_snapshots']
+    if (-not (Test-ExactKeySet $s $SmokeSectionKeys)) { Write-Error 'approved root smoke_snapshots section missing or not the exact installed shape' }
+    $list = $s['expected_digest_list']
+    if (-not (Test-PathShaEntry $list)) { Write-Error 'smoke_snapshots.expected_digest_list must be {path, sha256}' }
+    foreach ($k in 'training_source', 'merge_source') {
+        if ($s[$k] -isnot [string] -or $s[$k] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*@[0-9a-f]{40}$') { Write-Error "smoke_snapshots.$k must be <org>/<repo>@<40-hex>" }
+    }
+    if ($s['image'] -isnot [string] -or $s['image'] -cnotmatch '^[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$') { Write-Error 'smoke_snapshots.image must be a digest-pinned image' }
+    if ($s['chat_template_sha256'] -isnot [string] -or $s['chat_template_sha256'] -cnotmatch '^[0-9a-f]{64}$') { Write-Error 'smoke_snapshots.chat_template_sha256 must be 64 lowercase hex' }
+    $listPath = [IO.Path]::GetFullPath($list['path'])
+    if (-not (Test-Path -LiteralPath $listPath -PathType Leaf)) { Write-Error "smoke digest list not found: $listPath" }
+    Assert-NoReparsePointInAncestry $listPath
+    $listBytes = [IO.File]::ReadAllBytes($listPath)
+    if ((Get-SHA256Hex $listBytes) -cne $list['sha256']) { Write-Error 'smoke digest list does not match its root-pinned SHA-256' }
+    $parsed = ConvertFrom-StrictJson ([Text.Encoding]::UTF8.GetString($listBytes))
+    if (-not (Test-ExactKeySet $parsed @($s['training_source'], $s['merge_source']))) { Write-Error 'smoke digest list must name exactly the two root-pinned snapshots' }
+    return @{
+        PinFile = [IO.Path]::GetFullPath($Locations.PinFile); RootFile = [IO.Path]::GetFullPath($rootPath); RootSha256 = $pin.APPROVED_TRUST_ROOT_SHA256
+        ListPath = $listPath; ListSha256 = $list['sha256']; Training = $s['training_source']; Merge = $s['merge_source']
+        Image = $s['image']; TemplateSha256 = $s['chat_template_sha256']
+    }
+}
+
+# The effective run pins must equal the root exactly: a caller cannot select a different snapshot, merge source or image.
+function Assert-SmokePins {
+    param([Parameter(Mandatory)][hashtable]$Trust, [string]$Base, [string]$Revision, [string]$MergeSource, [string]$MergeRevision, [string]$Image)
+    if ("$Base@$Revision" -cne $Trust.Training) { Write-Error "training source $Base@$Revision does not equal the root-pinned $($Trust.Training)" }
+    if ("$MergeSource@$MergeRevision" -cne $Trust.Merge) { Write-Error "merge source $MergeSource@$MergeRevision does not equal the root-pinned $($Trust.Merge)" }
+    if ($Image -cne $Trust.Image) { Write-Error "image $Image does not equal the root-pinned smoke image" }
+}
+
+# No trust input (pin file, root file, digest list) may sit at or under any directory the container can write.
+function Assert-TrustOutsideWritable {
+    param([Parameter(Mandatory)][string[]]$WritableDirs, [Parameter(Mandatory)][string[]]$TrustPaths)
+    foreach ($w in $WritableDirs) {
+        $wf = [IO.Path]::GetFullPath($w).TrimEnd('\')
+        foreach ($t in $TrustPaths) {
+            $tf = [IO.Path]::GetFullPath($t)
+            if ($tf.Equals($wf, [StringComparison]::OrdinalIgnoreCase) -or $tf.StartsWith($wf + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                Write-Error "trust input $tf sits inside the writable container mount $wf"
+            }
+        }
+    }
+}
+
+# Mount vector for one run: the HF cache and the digest list read-only, and only this run's own writable directories.
+function New-SmokeMounts {
+    param([Parameter(Mandatory)][string]$HotRoot, [Parameter(Mandatory)][string]$RunId, [Parameter(Mandatory)][string]$ListPath)
+    if ($RunId -cnotmatch '^smoke-\d{8}-\d{6}-[0-9a-f]{6}$') { Write-Error "unexpected run id: $RunId" }
+    $writable = [ordered]@{
+        (Join-Path $HotRoot "runs\smoke\$RunId") = "/workspace/runs/$RunId"
+        (Join-Path $HotRoot 'models\smoke')       = '/workspace/models/smoke'
+        (Join-Path $HotRoot 'reports\smoke')      = '/workspace/reports'
+    }
+    $mounts = @('-v', "$(Join-Path $HotRoot 'hf'):/workspace/hf:ro", '-v', "${ListPath}:/workspace/smoke-digests.json:ro")
+    foreach ($k in $writable.Keys) { $mounts += @('-v', "${k}:$($writable[$k])") }
+    return @{ Mounts = $mounts; Writable = @($writable.Keys) }
+}
 
 # The merge source belongs to the base snapshot: overriding the base or its revision without the merge pin would record (or fail on) the default
 # Qwen pin. Revisions must be full commits, so every input the GGUF is built from is immutable.
@@ -33,7 +114,7 @@ $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
 # The path string says C:, but a junction or symlink on it, on a mounted folder or anywhere inside one could
 # land on another drive that preflight never gates; refuse rather than trying to resolve them.
-foreach ($sub in '', 'hf', 'runs', 'models', 'models\smoke', 'reports') {
+foreach ($sub in '', 'hf', 'runs', 'runs\smoke', 'models', 'models\smoke', 'reports', 'reports\smoke') {
     for ($p = Join-Path $HotRoot $sub; $p; $p = Split-Path $p -Parent) {
         if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             Write-Error "$p is a junction or symbolic link; HotRoot and its mounted folders must be real folders on C:"
@@ -53,6 +134,15 @@ foreach ($sub in '', 'hf', 'runs', 'models', 'models\smoke', 'reports') {
 foreach ($t in 'token', 'stored_tokens') {
     if (Test-Path -LiteralPath (Join-Path $HotRoot "hf\$t")) { Write-Error "$HotRoot\hf\$t exists (a stored Hugging Face credential); move it out of the mounted cache before training" }
 }
+
+# Trust, before the GPU mutex and before any Docker call: the installed root's smoke_snapshots pins, the digest list
+# verified against its pinned digest, the effective pins equal to the root, and no trust input inside a writable mount.
+$trust = Read-SmokeTrust (Get-ProductionLocations)
+Assert-SmokePins -Trust $trust -Base $Base -Revision $Revision -MergeSource $MergeSource -MergeRevision $MergeRevision -Image $Image
+$run = 'smoke-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
+$smoke = New-SmokeMounts -HotRoot $HotRoot -RunId $run -ListPath $trust.ListPath
+Assert-TrustOutsideWritable -WritableDirs $smoke.Writable -TrustPaths @($trust.PinFile, $trust.RootFile, $trust.ListPath)
+if (Test-Path -LiteralPath (Join-Path $HotRoot "runs\smoke\$run")) { Write-Error "run directory for $run already exists" }
 
 # One GPU job at a time, shared with serve-smoke.ps1, held from before the LM Studio unload until this process
 # exits (after container teardown), so no serve probe or second training run can start on the same GPU.
@@ -88,21 +178,20 @@ try {
         if ($r[-1] -ne '__EXIT__0') { Write-Error "lms unload --all failed ($($r[-1] -replace '^__EXIT__', 'exit ')); not starting training" }
     }
 
-    $mounts = @()
-    foreach ($pair in @(@('hf', 'hf'), @('runs', 'runs'), @('models\smoke', 'models/smoke'), @('reports', 'reports'))) {
-        $hostDir = Join-Path $HotRoot $pair[0]
-        New-Item -ItemType Directory -Force $hostDir | Out-Null
-        $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])")
-    }
+    New-Item -ItemType Directory -Force (Join-Path $HotRoot 'hf') | Out-Null
+    foreach ($dir in $smoke.Writable) { New-Item -ItemType Directory -Force $dir | Out-Null }
     $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
-    # A named container in a background job, so a stalled download, CUDA call or export can be stopped:
-    # on timeout `docker stop` ends it and --rm removes it, releasing the GPU.
+    # A named container in a background job, so a stalled load, CUDA call or export can be stopped:
+    # on timeout `docker stop` ends it and --rm removes it, releasing the GPU. Model loads are offline (HF_HUB_OFFLINE).
     $name = 'hl-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
-        '-v', "${code}:/code:ro", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
+    $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $smoke.Mounts + @(
+        '-v', "${code}:/code:ro", '-e', "SMOKE_RUN=$run", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
         '-e', "SMOKE_MERGE_SOURCE=$MergeSource", '-e', "SMOKE_MERGE_REVISION=$MergeRevision",
+        '-e', "SMOKE_DIGESTS_SHA256=$($trust.ListSha256)", '-e', "SMOKE_TEMPLATE_SHA256=$($trust.TemplateSha256)",
+        '-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1',
         '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
         '--entrypoint', 'python', $Image, '/code/smoke_train.py')
+    Write-Output "smoke run $run (root $($trust.RootSha256.Substring(0, 12)), digest list $($trust.ListSha256.Substring(0, 12)))"
     # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them).
     # Stop-Smoke returns the container's final state.
     # The container's actual state, from the daemon (bounded). Only 'stopped and removed' counts as gone; a docker

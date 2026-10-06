@@ -5,11 +5,17 @@
 # M0.4: serve the M0.3 smoke GGUF through LM Studio and prove /v1 works from Windows and from a container.
 #   .\serve-smoke.ps1                      newest <HotRoot>\models\smoke\*.gguf
 #   .\serve-smoke.ps1 -Gguf <path> [-HotRoot <root>]
+#   .\serve-smoke.ps1 -SingleHost -TrainReport <HotRoot>\reports\smoke\<run>.json
+#                                          P7: exactly ONE constrained completion from Windows, bound to the train report
 # The model is imported as a hard link (no second copy) and loaded with a TTL so it frees the GPU itself.
-# Exit 0 = both calls returned HTTP 200 with schema-valid JSON and LM Studio is loopback-only; 1 otherwise.
+# Default (two-leg) mode: exit 0 = both calls returned HTTP 200 with schema-valid JSON and LM Studio is loopback-only.
+# Single-host mode: the GGUF must be the one the train report names, with its SHA-256 (read twice) equal to the
+# report's; exit 0 = the one call is schema-valid and loopback-only, recorded in a no-clobber serve-<run>.json receipt.
 [CmdletBinding()]
 param(
     [string]$Gguf,
+    [switch]$SingleHost,
+    [string]$TrainReport,
     [string]$HotRoot = 'C:\llm',   # same default and meaning as train-smoke.ps1 -HotRoot
     [string]$Image = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739',
     [ValidateRange(1, 86400)][int]$TtlSeconds = 900,   # must be positive: 0 would mean no GPU-release deadline
@@ -46,6 +52,35 @@ function Test-SameContent([string]$A, [string]$B) {
     ((Get-Item -LiteralPath $A).Length -eq (Get-Item -LiteralPath $B).Length) -and
     ((Get-FileHash -LiteralPath $A).Hash -eq (Get-FileHash -LiteralPath $B).Hash)
 }
+# Single-host mode: the GGUF is the one the completed train report names, never the newest file; its size and SHA-256
+# (two reads) must equal the report's. A -Gguf naming any other file refuses.
+function Resolve-SmokeTrainReport([string]$ReportPath, [string]$Root, [string]$Requested) {
+    if (-not $ReportPath -or -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) { Write-Error "train report not found: $ReportPath" }
+    $reportBytes = [IO.File]::ReadAllBytes($ReportPath)
+    $r = ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString($reportBytes)) -NoEnumerate
+    if ($r.status -cne 'complete') { Write-Error "train report status is '$($r.status)', not 'complete'" }
+    $g = @($r.gguf)
+    if ($g.Count -ne 1) { Write-Error "train report must name exactly one GGUF (names $($g.Count))" }
+    $g = $g[0]
+    if ($g.path -isnot [string] -or $g.path -cnotmatch '^/workspace/models/smoke/[^/\\]+\.gguf$') { Write-Error "train report GGUF path is not a published smoke GGUF: $($g.path)" }
+    if ($g.sha256 -isnot [string] -or $g.sha256 -cnotmatch '^[0-9a-f]{64}$') { Write-Error 'train report GGUF sha256 is not 64 lowercase hex' }
+    $hostPath = [IO.Path]::GetFullPath((Join-Path $Root ('models\smoke\' + ($g.path -split '/')[-1])))
+    if ($Requested -and -not [IO.Path]::GetFullPath($Requested).Equals($hostPath, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Error "-Gguf $Requested is not the GGUF the train report names ($hostPath)"
+    }
+    if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { Write-Error "the GGUF the train report names is missing: $hostPath" }
+    if ((Get-Item -LiteralPath $hostPath).Length -ne [long]$g.bytes) { Write-Error 'GGUF size differs from the train report' }
+    foreach ($n in 1, 2) {
+        if ((Get-FileHash -LiteralPath $hostPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $g.sha256) { Write-Error "GGUF SHA-256 read $n differs from the train report" }
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $reportSha = [Convert]::ToHexString($sha.ComputeHash($reportBytes)).ToLowerInvariant() } finally { $sha.Dispose() }
+    @{ Gguf = $hostPath; GgufSha256 = $g.sha256; Run = [string]$r.run; ReportSha256 = $reportSha; ReportPath = [IO.Path]::GetFullPath($ReportPath) }
+}
+
+if ($SingleHost -xor [bool]$TrainReport) { Write-Error '-SingleHost and -TrainReport go together: the single-host completion is always bound to a train report' }
+$bound = $null
+if ($SingleHost) { $bound = Resolve-SmokeTrainReport $TrainReport $HotRoot $Gguf; $Gguf = $bound.Gguf }
 if (-not $Gguf) { $Gguf = (Get-ChildItem (Join-Path $HotRoot 'models\smoke\*.gguf') | Sort-Object LastWriteTime | Select-Object -Last 1).FullName }
 if (-not $Gguf -or -not (Test-Path -LiteralPath $Gguf -PathType Leaf)) { Write-Error 'no smoke GGUF found; run train-smoke.ps1 first' }
 if (-not (Test-Path -LiteralPath $reports -PathType Container)) { Write-Error "$reports does not exist (run preflight.ps1 -Init)" }
@@ -158,13 +193,26 @@ try {
         [pscustomobject]@{ caller = $Label; curl = $CurlExit; http = $status; schema_valid = $ok; content = $shown }
     }
 
+    $startedUtc = (Get-Date).ToUniversalTime().ToString('o')
     try {
         [IO.File]::WriteAllText($reqFile, $request)   # inside try so a partial write is still cleaned up
         $hostLines = @(curl.exe -s -w "`n%{http_code}" --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile")
-        $results = @(Test-Reply 'windows' $hostLines $LASTEXITCODE)
+        $hostExit = $LASTEXITCODE
+        $results = @(Test-Reply 'windows' $hostLines $hostExit)
+        if ($SingleHost) {
+            # Exactly one constrained completion: no container leg. Hashes are of the exact request bytes sent and the
+            # exact response body received; the content itself is not stored.
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+                $requestSha = [Convert]::ToHexString($sha.ComputeHash([IO.File]::ReadAllBytes($reqFile))).ToLowerInvariant()
+                $bodyText = if ($hostLines.Count -gt 1) { $hostLines[0..($hostLines.Count - 2)] -join "`n" } else { '' }
+                $responseSha = [Convert]::ToHexString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($bodyText))).ToLowerInvariant()
+            } finally { $sha.Dispose() }
+        }
 
         # From a container: Docker Desktop forwards host.docker.internal to the host loopback, so LM Studio
         # can stay bound to 127.0.0.1 (no "serve on local network").
+        if (-not $SingleHost) {
         $leaf = Split-Path $reqFile -Leaf
         $ctrName = 'hl-serve-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $r = @(Invoke-Bounded 'docker' @('run', '--rm', '--name', $ctrName, '-v', "${reports}:/r:ro", '--entrypoint', 'curl', $Image,
@@ -173,6 +221,7 @@ try {
         if ($r[-1] -eq '__EXIT__timeout') { Invoke-Bounded 'docker' @('kill', $ctrName) 20 | Out-Null }
         $ctrExit = if ($r[-1] -match '^__EXIT__(\d+)$') { [int]$Matches[1] } else { 124 }
         $results += Test-Reply 'container' @($r | Select-Object -SkipLast 1) $ctrExit
+        }
     } finally {
         if (Test-Path -LiteralPath $reqFile) { [IO.File]::Delete($reqFile) }
     }
@@ -188,7 +237,25 @@ try {
     }
     $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
     Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly)"
-    $pass = (@($results | Where-Object schema_valid).Count -eq 2) -and $loopbackOnly
+    $pass = (@($results | Where-Object schema_valid).Count -eq $(if ($SingleHost) { 1 } else { 2 })) -and $loopbackOnly
+    if ($SingleHost) {
+        # Durable, no-clobber binding of the one completion to its train report, GGUF, catalog entry and listener.
+        $receiptPath = Join-Path (Split-Path $bound.ReportPath -Parent) ("serve-{0}.json" -f $bound.Run)
+        $receipt = [ordered]@{
+            format = 'p7-serve-receipt/v1'; run = $bound.Run; mode = 'single-host'
+            train_report = [ordered]@{ path = $bound.ReportPath; sha256 = $bound.ReportSha256 }
+            gguf = [ordered]@{ path = $Gguf; sha256 = $bound.GgufSha256 }
+            catalog = [ordered]@{ alias = 'smoke'; path = $known.path; model_key = $known.modelKey }
+            ttl_seconds = $TtlSeconds
+            listener = [ordered]@{ loopback_only = $loopbackOnly; addresses = @($listeners.LocalAddress | Sort-Object -Unique); owners = @($owners | ForEach-Object { [ordered]@{ name = $_.ProcessName; pid = $_.Id } }) }
+            request_sha256 = $requestSha; response_sha256 = $responseSha
+            curl_exit = $hostExit; http = $results[0].http; schema_valid = [bool]$results[0].schema_valid
+            started_utc = $startedUtc; finished_utc = (Get-Date).ToUniversalTime().ToString('o'); pass = [bool]$pass
+        }
+        $fs = [IO.File]::Open($receiptPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)   # refuses an existing receipt
+        try { $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($receipt | ConvertTo-Json -Depth 6) + "`n"); $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
+        Write-Output "serve receipt: $receiptPath"
+    }
     Write-Output "serve-smoke: $(if ($pass) { 'PASS' } else { 'FAIL' }) (model $($known.modelKey), ttl ${TtlSeconds}s)"
     exit ([int](-not $pass))
 } finally {

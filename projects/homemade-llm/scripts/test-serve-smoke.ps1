@@ -13,7 +13,7 @@ function Assert-Equal($Actual, $Expected, [string]$Case) {
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
 Assert-Equal $errors.Count 0 'parser: no errors'
-foreach ($name in 'Test-Reply', 'Test-SameContent', 'Test-LoadedModel', 'Test-LoopbackOnly', 'Test-LmStudioOwner') {
+foreach ($name in 'Test-Reply', 'Test-SameContent', 'Test-LoadedModel', 'Test-LoopbackOnly', 'Test-LmStudioOwner', 'Resolve-SmokeTrainReport') {
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
     . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -101,9 +101,48 @@ Assert-Equal ([bool]($ownerIf -and $ownerIf.Clauses[0].Item2.Extent.Text -match 
 $bare = @($cmds | Where-Object { $_.GetCommandName() -in 'docker', 'lms' })
 Assert-Equal $bare.Count 0 'bounded: no top-level docker or lms call bypasses Invoke-Bounded'
 
+# P7 single-host mode: exactly one call (no container leg), bound to the train report, with a no-clobber receipt.
+$text = $ast.Extent.Text
+$containerIf = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '-not $SingleHost' }, $true) |
+    Where-Object { $_.Clauses[0].Item2.Extent.Text -match "Invoke-Bounded 'docker'" } | Select-Object -First 1
+Assert-Equal ([bool]$containerIf) $true 'single-host: the container leg runs only in the default two-leg mode'
+Assert-Equal ($text.Contains('-eq $(if ($SingleHost) { 1 } else { 2 })')) $true 'single-host: PASS needs one schema-valid call there and two in the default mode'
+Assert-Equal ($text -match '\[IO\.FileMode\]::CreateNew') $true 'single-host: the serve receipt is created exclusively (no clobber)'
+Assert-Equal ($text.Contains('if ($SingleHost -xor [bool]$TrainReport)')) $true 'single-host: -SingleHost and -TrainReport are required together'
+$bindAt = $text.IndexOf('$bound = Resolve-SmokeTrainReport'); $newestAt = $text.IndexOf("Get-ChildItem (Join-Path `$HotRoot 'models\smoke\*.gguf')")
+Assert-Equal ([bool]($bindAt -ge 0 -and $newestAt -gt $bindAt)) $true 'single-host: the report binding is resolved before (and replaces) the newest-file default'
+
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null
 try {
+    # Train report binding: a synthetic HotRoot with one published GGUF and its report.
+    $hr = Join-Path $work 'root'; New-Item -ItemType Directory (Join-Path $hr 'models\smoke'), (Join-Path $hr 'reports\smoke') | Out-Null
+    $gg = Join-Path $hr 'models\smoke\smoke-20261006-050000-abcdef-model.Q4_K_M.gguf'
+    [IO.File]::WriteAllBytes($gg, [byte[]](1..200))
+    $ggSha = (Get-FileHash -LiteralPath $gg -Algorithm SHA256).Hash.ToLowerInvariant()
+    $rp = Join-Path $hr 'reports\smoke\smoke-20261006-050000-abcdef.json'
+    function Set-Report([hashtable]$Over = @{}) {
+        $g = @{ path = '/workspace/models/smoke/smoke-20261006-050000-abcdef-model.Q4_K_M.gguf'; bytes = 200; sha256 = $ggSha }
+        $r = @{ run = 'smoke-20261006-050000-abcdef'; status = 'complete'; gguf = @($g) }
+        foreach ($k in $Over.Keys) { if ($k -like 'g.*') { $g[$k.Substring(2)] = $Over[$k] } else { $r[$k] = $Over[$k] } }
+        [IO.File]::WriteAllText($rp, ($r | ConvertTo-Json -Depth 5))
+    }
+    function Refuses([scriptblock]$Call, [string]$Pattern) { try { & $Call | Out-Null; $false } catch { $_.Exception.Message -match $Pattern } }
+    Set-Report
+    $b = Resolve-SmokeTrainReport $rp $hr ''
+    Assert-Equal ($b.Gguf -eq [IO.Path]::GetFullPath($gg) -and $b.GgufSha256 -eq $ggSha -and $b.Run -eq 'smoke-20261006-050000-abcdef') $true 'report: the named GGUF is resolved with its digest'
+    Assert-Equal (Refuses { Resolve-SmokeTrainReport $rp $hr (Join-Path $hr 'models\smoke\other.gguf') } 'is not the GGUF the train report names') $true 'report: a -Gguf naming another file refuses'
+    Set-Report @{ status = 'trained-not-exported' }
+    Assert-Equal (Refuses { Resolve-SmokeTrainReport $rp $hr '' } "not 'complete'") $true 'report: an incomplete train report refuses'
+    Set-Report @{ 'g.sha256' = ('0' * 64) }
+    Assert-Equal (Refuses { Resolve-SmokeTrainReport $rp $hr '' } 'SHA-256 read 1 differs') $true 'report: a GGUF whose bytes differ from the report refuses'
+    Set-Report @{ 'g.bytes' = 199 }
+    Assert-Equal (Refuses { Resolve-SmokeTrainReport $rp $hr '' } 'size differs') $true 'report: a size mismatch refuses'
+    Set-Report @{ 'g.path' = '/workspace/elsewhere/x.gguf' }
+    Assert-Equal (Refuses { Resolve-SmokeTrainReport $rp $hr '' } 'not a published smoke GGUF') $true 'report: a GGUF path outside models/smoke refuses'
+    Set-Report @{ gguf = @(@{ path = '/workspace/models/smoke/a.gguf'; bytes = 1; sha256 = ('1' * 64) }, @{ path = '/workspace/models/smoke/b.gguf'; bytes = 1; sha256 = ('2' * 64) }) }
+    Assert-Equal (Refuses { Resolve-SmokeTrainReport $rp $hr '' } 'exactly one GGUF') $true 'report: more than one GGUF refuses'
+
     $a = Join-Path $work 'a.gguf'; $b = Join-Path $work 'b.gguf'; $c = Join-Path $work 'c.gguf'
     Set-Content $a 'same bytes' -NoNewline; Set-Content $b 'same bytes' -NoNewline; Set-Content $c 'other byte' -NoNewline
     Assert-Equal (Test-SameContent $a $b) $true 'import: identical content matches'
