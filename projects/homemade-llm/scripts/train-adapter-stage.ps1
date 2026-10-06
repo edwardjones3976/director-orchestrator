@@ -42,6 +42,55 @@ function Get-SHA256Hex([byte[]]$Bytes) {
 }
 function Get-SHA256HexOfFile([string]$Path) { Get-SHA256Hex([IO.File]::ReadAllBytes($Path)) }
 
+function Get-BoundedCallerFileSHA256 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][ValidateRange(0, [long]::MaxValue)][long]$MaxBytes,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 60
+    )
+    # The already authenticated custody buffer supplies the exact byte ceiling.
+    # Open, ancestry checks and every read run inside the existing bounded job:
+    # even a blocked filesystem read is killed on deadline/pipeline cancellation.
+    # One fixed buffer plus a one-byte over-limit probe avoids caller-sized allocation.
+    $path64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Path))
+    $reader = "function Assert-NoReparsePointInAncestry {" + ${function:Assert-NoReparsePointInAncestry}.ToString() + "}`n" + @'
+$ErrorActionPreference = 'Stop'
+$stream = $null; $sha = $null
+try {
+    $path = [IO.Path]::GetFullPath([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PATH64__')))
+    Assert-NoReparsePointInAncestry $path
+    $stream = [IO.File]::OpenRead($path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $buffer = [byte[]]::new(65536)
+    [long]$remaining = __MAX_BYTES__
+    while ($true) {
+        $wanted = if ($remaining -ge $buffer.Length) { $buffer.Length } else { [int]$remaining + 1 }
+        $count = $stream.Read($buffer, 0, $wanted)
+        if ($count -eq 0) { break }
+        if ($count -gt $remaining) { throw 'caller file exceeds authenticated custody byte limit' }
+        $null = $sha.TransformBlock($buffer, 0, $count, $buffer, 0)
+        $remaining -= $count
+    }
+    $null = $sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
+    [Convert]::ToHexString($sha.Hash).ToLowerInvariant()
+} catch {
+    Write-Output ("CALLER_HASH_REFUSED: " + $_.Exception.Message)
+    exit 1
+} finally {
+    if ($null -ne $sha) { $sha.Dispose() }
+    if ($null -ne $stream) { $stream.Dispose() }
+}
+'@
+    $reader = $reader.Replace('__PATH64__', $path64).Replace('__MAX_BYTES__', $MaxBytes.ToString([Globalization.CultureInfo]::InvariantCulture))
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($reader))
+    $result = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) $TimeoutSeconds)
+    if ($result.Count -ne 2 -or $result[0] -cnotmatch '^[0-9a-f]{64}$' -or $result[1] -cne '__EXIT__0') {
+        Write-Error "bounded caller file hash failed: $($result -join '; ')"
+    }
+    return $result[0]
+}
+
 function Assert-NoReparsePointInAncestry([string]$Path) {
     for ($p = $Path; $p; $p = Split-Path $p -Parent) {
         if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -386,10 +435,10 @@ function Read-PublicationRecords {
 
     $rowsFull = [IO.Path]::GetFullPath($Rows)
     if (-not (Test-Path -LiteralPath $rowsFull -PathType Leaf)) { Write-Error "caller rows file not found: $rowsFull" }
-    if ((Get-SHA256HexOfFile $rowsFull) -cne $Resolution['accepted_jsonl_sha256']) { Write-Error "caller rows file does not match the verified custody accepted.jsonl: $rowsFull" }
+    if ((Get-BoundedCallerFileSHA256 -Path $rowsFull -MaxBytes $acceptedBytes.LongLength) -cne $Resolution['accepted_jsonl_sha256']) { Write-Error "caller rows file does not match the verified custody accepted.jsonl: $rowsFull" }
     $callerReport = Join-Path (Split-Path $rowsFull -Parent) 'report.json'
     if (-not (Test-Path -LiteralPath $callerReport -PathType Leaf)) { Write-Error "caller report.json not found beside rows: $callerReport" }
-    if ((Get-SHA256HexOfFile $callerReport) -cne $Resolution['validation_report_sha256']) { Write-Error "caller report.json does not match the verified custody validation report: $callerReport" }
+    if ((Get-BoundedCallerFileSHA256 -Path $callerReport -MaxBytes $reportBytes.LongLength) -cne $Resolution['validation_report_sha256']) { Write-Error "caller report.json does not match the verified custody validation report: $callerReport" }
 
     # The staged copy is made from these verified custody bytes, never from a
     # second read of the caller's path.
@@ -433,19 +482,13 @@ function Get-GitBlobBytes {
 
     # Raw stdout stream, never the PowerShell text pipeline: the bytes must
     # round-trip exactly, including CRLF-vs-LF, which a text decode would mangle.
-    $psi = [Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $gitExe
-    foreach ($a in @('-C', $RepoRoot, 'cat-file', 'blob', "$($Commit):$($Path)")) { $psi.ArgumentList.Add($a) }
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    $proc = [Diagnostics.Process]::Start($psi)
-    $ms = [IO.MemoryStream]::new()
-    $proc.StandardOutput.BaseStream.CopyTo($ms)
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) { Write-Error "git cat-file blob failed for ${Commit}:${Path}" }
-    $bytes = $ms.ToArray()
+    $raw = Invoke-Bounded $gitExe @('-C', $RepoRoot, 'cat-file', 'blob', "$($Commit):$($Path)") 60 -RawBytes
+    if ($raw -isnot [pscustomobject] -or $raw.ExitCode -ne 0 -or $raw.Bytes -isnot [byte[]]) {
+        Write-Error "git cat-file blob failed or timed out for ${Commit}:${Path}"
+    }
+    $bytes = $raw.Bytes
     if ((Get-SHA256Hex $bytes) -cne $ExpectedSha256) { Write-Error "git blob SHA-256 mismatch for ${Commit}:${Path}" }
-    return $bytes
+    return ,$bytes
 }
 
 # ---- 5. Stage tree and binding ---------------------------------------------
@@ -585,22 +628,23 @@ function New-TrainerCommonMounts {
         [Parameter(Mandatory)][string]$RowsDir,
         [string]$ExpectedDigests,
         [string]$TrustedDigestRoot,
-        [switch]$EpochMode
+        [switch]$EpochMode,
+        [string]$RunId
     )
     $mounts = @()
-    # Epoch outputs need no runs mount. Mount only report outputs, never the
-    # reports parent containing Route R custody. Keep smoke/probe destinations.
+    # No mode exposes runs or custody-bearing reports parents for writes.
+    if (-not $EpochMode -and $RunId -cnotmatch '^m2-[0-9a-f]{8}$') { Write-Error 'smoke/probe mounts require a run id' }
     $pairs = if ($EpochMode) {
         @(@('hf', 'hf'), @('models\m2', 'models/m2'), @('reports\adapter-output', 'reports'))
     } else {
-        @(@('hf', 'hf'), @('runs', 'runs'), @('models\m2', 'models/m2'), @('reports', 'reports'))
+        @(@('hf', 'hf'), @(('models\m2\' + $RunId), 'models/m2'), @(('reports\adapter-output\' + $RunId), 'reports'))
     }
     foreach ($pair in $pairs) {
         $hostDir = Join-Path $HotRoot $pair[0]
         New-Item -ItemType Directory -Force $hostDir | Out-Null
-        # Epoch loads are pinned, complete-cache and local-files-only. Preserve
-        # legitimate HF blob links without exposing any of their targets for write.
-        $access = if ($EpochMode -and $pair[1] -ceq 'hf') { ':ro' } else { '' }
+        # Preserve legitimate HF blob links without exposing any of their targets
+        # for write. Cache availability and read-only image compatibility are runtime gates.
+        $access = if ($pair[1] -ceq 'hf') { ':ro' } else { '' }
         $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])${access}")
     }
     if (-not $EpochMode) {
@@ -636,15 +680,37 @@ function Assert-TrainerMountIsolation {
                 Write-Error "writable trainer mount overlaps protected publication path: $hostPath"
             }
         }
-        Assert-NoReparsePointInAncestry $hostPath
-        # Do not follow aliases within an otherwise safe writable directory.
-        # The read-only HF cache is skipped above; model payload bytes are not read.
-        if (Test-Path -LiteralPath $hostPath) {
-            foreach ($entry in (Get-ChildItem -LiteralPath $hostPath -Force -Recurse)) {
-                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                    Write-Error "writable trainer mount contains a junction or symbolic link: $($entry.FullName)"
-                }
+        # Filesystem calls (including ancestry checks) run inside the existing
+        # bounded job. A blocked enumeration cannot strand the wrapper before
+        # its deadline; timeout/uncertain cleanup refuses through Invoke-Bounded.
+        $path64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($hostPath))
+        $scan = "function Assert-NoReparsePointInAncestry {" + ${function:Assert-NoReparsePointInAncestry}.ToString() + "}`n" + @'
+$ErrorActionPreference = 'Stop'
+try {
+    $path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PATH64__'))
+    Assert-NoReparsePointInAncestry $path
+    $pending = [Collections.Generic.Stack[string]]::new()
+    if (Test-Path -LiteralPath $path) { $pending.Push($path) }
+    while ($pending.Count) {
+        $current = $pending.Pop()
+        # Enumerate one directory at a time; refuse links BEFORE descending.
+        foreach ($entry in (Get-ChildItem -LiteralPath $current -Force -ErrorAction Stop)) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "writable trainer mount contains a junction or symbolic link: $($entry.FullName)"
             }
+            if ($entry.PSIsContainer) { $pending.Push($entry.FullName) }
+        }
+    }
+    Write-Output 'TRAINER_MOUNT_SCAN_OK'
+} catch {
+    Write-Output ("TRAINER_MOUNT_SCAN_REFUSED: " + $_.Exception.Message)
+    exit 1
+}
+'@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scan.Replace('__PATH64__', $path64)))
+        $result = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) 60)
+        if ($result.Count -ne 2 -or $result[0] -cne 'TRAINER_MOUNT_SCAN_OK' -or $result[1] -cne '__EXIT__0') {
+            Write-Error "writable trainer mount scan failed: $($result -join '; ')"
         }
     }
 }
@@ -661,6 +727,7 @@ function New-TrainerDockerArgs {
         [Parameter(Mandatory)][string]$Revision,
         [Parameter(Mandatory)][string]$ReportContainerPath,
         [Parameter(Mandatory)][int]$Epochs,
+        [Parameter(Mandatory)][ValidateRange(2049, [int]::MaxValue)][int]$EpochContextLimit,
         [Parameter(Mandatory)][string]$AuthoritySource,
         [Parameter(Mandatory)][string]$Batch,
         [Parameter(Mandatory)][string]$RootFile,
@@ -717,5 +784,6 @@ function New-TrainerDockerArgs {
         '--base', $Base, '--revision', $Revision,
         '--report', $ReportContainerPath,
         '--epochs', "$Epochs",
+        '--epoch-context-limit', "$EpochContextLimit",
         '--publication-binding', '/workspace/publication-binding.json')
 }
