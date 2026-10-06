@@ -66,6 +66,7 @@ class TrustTests(unittest.TestCase):
     def test_offline_flags_and_forced_hf_home(self):
         # The image sets its own HF_HOME; the module must override it (not setdefault), and never go online.
         self.assertEqual(os.environ["HF_HOME"], "/workspace/hf")
+        self.assertEqual(smoke_train.HF_ROOT, Path("/workspace/hf"))
         self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
         self.assertEqual(os.environ["TRANSFORMERS_OFFLINE"], "1")
 
@@ -119,7 +120,9 @@ class TrustTests(unittest.TestCase):
                 smoke_train.load_digest_list(p, sha(p.read_bytes()), TRAIN, MERGE)
 
     def test_snapshot_dir_requires_full_revision_and_existing_snapshot(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"HF_HOME": tmp}):
+        # HF_HOME is moved the way unsloth's read-only-cache redirect moves it; the lookup must stay on HF_ROOT.
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(smoke_train, "HF_ROOT", Path(tmp)), \
+                mock.patch.dict(os.environ, {"HF_HOME": "/tmp/huggingface_0", "HF_HUB_CACHE": "/tmp/huggingface_0/hub"}):
             with self.assertRaisesRegex(smoke_train.SmokeFailure, "40-hex"):
                 smoke_train.snapshot_dir("org/m", "main")
             with self.assertRaisesRegex(smoke_train.SmokeFailure, "not a complete local snapshot"):

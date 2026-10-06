@@ -33,7 +33,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # The image sets HF_HOME=/workspace/.cache/huggingface; override it to the mounted (read-only) cache, and never go online.
+# Snapshots are resolved from HF_ROOT, never from os.environ after import: importing unsloth sees the read-only hub and
+# repoints HF_HOME/HF_HUB_CACHE to a writable /tmp fallback (unsloth_zoo hf_cache.redirect_hf_cache_if_readonly).
 os.environ["HF_HOME"] = "/workspace/hf"
+HF_ROOT = Path(os.environ["HF_HOME"])
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 # GGUF export uses ONLY the pinned image's own prebuilt llama.cpp (quantizer, converter and its co-versioned conversion/
@@ -143,7 +146,7 @@ def snapshot_dir(repo: str, revision: str) -> Path:
     """The cached snapshot directory for an exact 40-hex revision; never a ref, never a download."""
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise SmokeFailure(f"{repo}: revision {revision!r} is not a full 40-hex commit")
-    d = Path(os.environ["HF_HOME"]) / "hub" / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
+    d = HF_ROOT / "hub" / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
     if not d.is_dir():
         raise SmokeFailure(f"{repo}@{revision} is not a complete local snapshot")
     return d
