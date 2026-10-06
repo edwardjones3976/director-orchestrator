@@ -14,7 +14,7 @@ $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
 Assert-Equal $errors.Count 0 'parser: no errors'
 foreach ($name in 'Test-Reply', 'Test-SameContent', 'Test-LoadedModel', 'Test-LoopbackOnly', 'Test-LmStudioOwner', 'Resolve-SmokeTrainReport',
-    'Test-FinalOwnership', 'Read-RawBody', 'Assert-GgufMatchesReport', 'Write-ServeReceipt') {
+    'Test-FinalOwnership', 'Read-RawBody', 'Assert-GgufMatchesReport', 'Write-ServeReceipt', 'Get-PostRequestModelState') {
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
     . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -146,10 +146,28 @@ Assert-Equal ([bool]($ctrCall -and $ctrCall.Extent.Text -match '''--entrypoint''
 Assert-Equal ([bool]($text -notmatch 'FileMode\]::Truncate')) $true 'reserve: completion never truncates the reservation in place'
 Assert-Equal ($text.Contains('[IO.File]::Replace($sibling, $Path, [NullString]::Value)')) $true 'reserve: completion atomically replaces the reservation with a flushed sibling'
 # Fresh loaded-model state after the request: required for PASS, wired into the late cleanup, recorded in the receipt.
-$postModelAt = ($cmds | Where-Object { $_.Extent.Text -match '^Test-LoadedModel \$postLoaded' } | Select-Object -First 1).Extent.StartOffset
+$postModelAt = ($cmds | Where-Object { $_.Extent.Text -ceq 'Get-PostRequestModelState $known.path $TtlSeconds' } | Select-Object -First 1).Extent.StartOffset
 Assert-Equal ([bool]($postModelAt -and $postModelAt -gt $curl -and $postModelAt -lt $finalBind)) $true 'model after: loaded-model state is read again after the request'
 Assert-Equal ($text.Contains('-and $loopbackOnly -and $ownedByLmStudio -and $modelAfter')) $true 'model after: PASS requires the same model still loaded after the request'
-Assert-Equal ($text.Contains('model_after_request = [ordered]@{ expected_path = $known.path; still_loaded = $modelAfter')) $true 'model after: the receipt records the post-request model state'
+Assert-Equal ($text.Contains('model_after_request = [ordered]@{ expected_path = $known.path; still_loaded = $modelAfter; lms_ps_exit = $post.Exit;')) $true 'model after: the receipt records the post-request model state and the captured ps exit'
+# The post-request ps exit is captured at once: a failed ps (124) followed by the cleanup it triggers (which resets the shared
+# $lmsExit to 0) is still recorded as 124. Synthetic Invoke-Lms only; no LM Studio.
+$script:lmsExit = $null
+$script:psReply = @{ Exit = 124; Lines = @() }
+function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
+    if ($A[0] -eq 'ps') { $script:lmsExit = $script:psReply.Exit; $script:psReply.Lines } else { $script:lmsExit = 0; @() }
+}
+$st = Get-PostRequestModelState 'homemade-llm/smoke/new.gguf' 900
+Invoke-Lms @('unload', 'smoke') | Out-Null; Invoke-Lms @('server', 'stop') | Out-Null   # the cleanup a failed check triggers
+Assert-Equal $st.Exit 124 'model after: a failed lms ps exit survives the following cleanup calls'
+Assert-Equal $st.StillLoaded $false 'model after: a failed lms ps never counts as still loaded'
+Assert-Equal $script:lmsExit 0 'model after: (the cleanup really did overwrite the shared lms exit)'
+$script:psReply = @{ Exit = 0; Lines = @('[{"identifier":"smoke","path":"homemade-llm/smoke/new.gguf","ttlMs":900000}]') }
+$st = Get-PostRequestModelState 'homemade-llm/smoke/new.gguf' 900
+Assert-Equal ($st.Exit -eq 0 -and $st.StillLoaded -and $st.Entries.Count -eq 1 -and $st.Entries[0].path -eq 'homemade-llm/smoke/new.gguf') $true 'model after: the same model still loaded passes and is recorded'
+$script:psReply = @{ Exit = 0; Lines = @('[{"identifier":"smoke","path":"homemade-llm/smoke/other.gguf","ttlMs":900000}]') }
+Assert-Equal (Get-PostRequestModelState 'homemade-llm/smoke/new.gguf' 900).StillLoaded $false 'model after: a replaced model fails'
+Remove-Item Function:\Invoke-Lms
 Assert-Equal ($text.Contains('owners = @($finalOwners | ForEach-Object')) $true 'final owner: the receipt binds the final owners'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))

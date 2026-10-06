@@ -68,6 +68,16 @@ function Assert-GgufMatchesReport([string[]]$Paths, [long]$Bytes, [string]$Sha25
     }
 }
 
+# After the request: one bounded `lms ps`, its exit captured at once (every later lms call overwrites $lmsExit, including the
+# cleanup that a failed check triggers), and whether 'smoke' is still exactly this run's catalog path with the requested TTL.
+function Get-PostRequestModelState([string]$Path, [int]$TtlSeconds) {
+    $lines = Invoke-Lms @('ps', '--json')
+    $exit = $script:lmsExit
+    $loaded = try { $lines -join "`n" | ConvertFrom-Json } catch { $null }
+    [pscustomobject]@{ Exit = $exit; StillLoaded = (($exit -eq 0) -and (Test-LoadedModel $loaded $Path $TtlSeconds))
+        Entries = @($loaded | Where-Object { $_.identifier -eq 'smoke' } | ForEach-Object { [ordered]@{ path = $_.path; ttl_ms = $_.ttlMs } }) }
+}
+
 # Single-host receipt: -Reserve creates it exclusively (refusing ANY existing receipt: completed, failed or interrupted).
 # Completion writes and flushes the complete receipt to an exclusively created unique sibling, then atomically replaces only
 # this process's own reservation: until that replace succeeds the reservation stays exactly as written, and a failure removes
@@ -303,9 +313,8 @@ try {
 
     # Fresh, bounded loaded-model state AFTER the request: 'smoke' must still be exactly this run's catalog path with the
     # requested TTL. A pre/post check, not proof of continuous residency; a lost or replaced model fails the run.
-    $postLoaded = try { (Invoke-Lms @('ps', '--json')) -join "`n" | ConvertFrom-Json } catch { $null }
-    $modelAfter = ($lmsExit -eq 0) -and (Test-LoadedModel $postLoaded $known.path $TtlSeconds)
-    $smokeAfter = @($postLoaded | Where-Object { $_.identifier -eq 'smoke' } | ForEach-Object { [ordered]@{ path = $_.path; ttl_ms = $_.ttlMs } })
+    $post = Get-PostRequestModelState $known.path $TtlSeconds
+    $modelAfter = $post.StillLoaded
 
     # The API must not be reachable from the network: every listener on 1234 has to be loopback.
     # Checked again at the end in case the binding changed during the run.
@@ -330,7 +339,7 @@ try {
             gguf = [ordered]@{ path = $Gguf; sha256 = $bound.GgufSha256; bytes = $bound.GgufBytes }
             catalog = [ordered]@{ alias = 'smoke'; path = $known.path; model_key = $known.modelKey }
             ttl_seconds = $TtlSeconds
-            model_after_request = [ordered]@{ expected_path = $known.path; still_loaded = $modelAfter; lms_ps_exit = $lmsExit; smoke_entries = $smokeAfter }
+            model_after_request = [ordered]@{ expected_path = $known.path; still_loaded = $modelAfter; lms_ps_exit = $post.Exit; smoke_entries = $post.Entries }
             listener = [ordered]@{ loopback_only = $loopbackOnly; owned_by_lm_studio = $ownedByLmStudio; addresses = @($listeners.LocalAddress | Sort-Object -Unique)
                 owners = @($finalOwners | ForEach-Object { [ordered]@{ name = $_.ProcessName; pid = $_.Id } }) }
             request_sha256 = $requestSha; response_sha256 = $responseSha; response_bytes = $raw.Bytes
