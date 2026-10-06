@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,11 @@ from huggingface_hub import snapshot_download  # noqa: E402
 from transformers import TrainerCallback, set_seed  # noqa: E402
 from trl import SFTConfig, SFTTrainer  # noqa: E402
 
-import prompt_template  # noqa: E402
+def _prompt_template():
+    # Epoch admission runs before any row renderer is used. In the trusted
+    # bootstrap this import resolves the already verified in-memory module.
+    import prompt_template
+    return prompt_template
 
 SMOKE_BASE = "unsloth/qwen3-0.6b-unsloth-bnb-4bit"
 SMOKE_REVISION = "e86f5289a2ca40ab7114071959dc2079cf97cb3c"
@@ -511,14 +516,14 @@ def _require_accepted_row(row: dict[str, Any], line_number: int) -> None:
     if not isinstance(source, dict):
         fail(f"line {line_number}: input is not an object")
     try:
-        prompt_template.input_contract(source)
+        _prompt_template().input_contract(source)
     except (KeyError, TypeError, ValueError) as exc:
         fail(f"line {line_number}: {exc}")
 
 
 def messages_for(row: dict[str, Any]) -> list[dict[str, str]]:
     """Training chat through the shared template, using the row's input block as written. Thinking stays off at the call site (D-M1-3)."""
-    return prompt_template.render_messages(row["input"], row["target"])
+    return _prompt_template().render_messages(row["input"], row["target"])
 
 
 def labels_for_token_ids(prompt_ids: list[int], full_ids: list[int]) -> list[int]:
@@ -1073,11 +1078,11 @@ def _validate_dev_row(row: Any, split: str) -> None:
     source = row.get("input")
     if not isinstance(source, dict):
         raise ValueError("invalid row input")
-    prompt_template.input_contract(source)
+    _prompt_template().input_contract(source)
     for key in ("objective", "repository", "title"):
         if not isinstance(source.get(key), str) or not source[key].strip():
             raise ValueError("invalid input field")
-    if "context" in source and prompt_template.context_shape_errors(source["context"]):
+    if "context" in source and _prompt_template().context_shape_errors(source["context"]):
         raise ValueError("invalid cited context")
 
 
@@ -1430,6 +1435,7 @@ def build_report(
     state: str | None = None,
     selected_primary: dict[str, int] | None = None,
     completed_epoch_ids: list[int] | None = None,
+    publication: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report = {
         "run": run,
@@ -1448,6 +1454,7 @@ def build_report(
         "thinking": "disabled",
     }
     if epochs is not None:
+        report["publication"] = publication
         report["requested_epochs"] = epochs
         completed_ids = [entry["epoch"] for entry in checkpoints or []] if completed_epoch_ids is None else completed_epoch_ids
         report["completed_epochs"] = len(completed_ids)
@@ -1491,10 +1498,342 @@ def build_report(
 
 
 ADMITTED_TEMPLATE_SHA256 = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+EPOCH_AUTHORITY_SHA256 = "bd201f2f0d7c67f5c179f9071391a8518ec24629a7ef867ae2e5c94ab34b009d"
+
+
+def _epoch_authority():
+    """Load the exact verifier buffer pinned by this authenticated trainer."""
+    if '_BOOTSTRAP_AUTHORITY' in globals():
+        return globals()['_BOOTSTRAP_AUTHORITY']
+    import types
+    path = Path(__file__).with_name('epoch_authority.py')
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        fail(f'epoch authority source unavailable: {exc}')
+    if hashlib.sha256(data).hexdigest() != EPOCH_AUTHORITY_SHA256:
+        fail('epoch authority source differs from trainer pin')
+    module = types.ModuleType('epoch_authority')
+    module.__file__ = str(path)
+    exec(compile(data, str(path), 'exec'), module.__dict__)
+    return module
+
+# WO-R5 slice 4: authenticate the staged publication binding (rows, trainer,
+# predictor, scorer, renderer) before any GPU, model or tokenizer resource is
+# touched in epoch mode.
+_HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_HEX40_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_PUBLICATION_BATCH_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+PUBLICATION_BINDING_FORMAT = "adapter-publication-binding/v1"
+PUBLICATION_RESOLUTION_FORMAT = "route-r-resolution/v1"
+PUBLICATION_PROFILE_FORMAT = "route-r-publication-profile/v1"
+
+# (dir, name) -> the candidate.* key that must agree with this file's digest, or
+# None when the file carries no candidate identity of its own (the row files).
+PUBLICATION_PAYLOAD_FILES: dict[tuple[str, str], str | None] = {
+    ("rows", "accepted.jsonl"): None,
+    ("rows", "report.json"): None,
+    ("rows", "profile.json"): None,
+    ("train", "train_adapter.py"): "trainer_sha256",
+    ("train", "prompt_template.py"): "template_sha256",
+    ("eval", "predict_dev.py"): "predictor_sha256",
+    ("eval", "dev_selection.py"): "scorer_sha256",
+}
+PUBLICATION_CANDIDATE_KEYS = frozenset(
+    {"commit", "trainer_sha256", "predictor_sha256", "scorer_sha256", "template_sha256"})
+PUBLICATION_RESOLUTION_KEYS = frozenset({
+    "format", "batch", "verified", "accepted_jsonl_sha256", "profile_sha256",
+    "publication_sha256", "trust_root_sha256", "validation_report_sha256", "bridge_sha256",
+})
+PUBLICATION_PROFILE_KEYS = frozenset({
+    "format", "batch", "built_by", "accepted_jsonl_sha256", "candidate_row_sha256",
+    "bundle_manifest_sha256", "recount_sha256", "validation_report_sha256", "row_schema_sha256",
+    "trust_root_sha256", "verified_pins_sha256", "source_groups_and_splits", "input_lineage_sha256",
+    "split_table_sha256", "constructor_inputs_sha256", "constructor_manifest_sha256",
+    "constructor_receipt_sha256", "constructor_admission_sha256", "constructor_recount_sha256",
+})
+PUBLICATION_PROFILE_SCALAR_SHA_FIELDS = (
+    "accepted_jsonl_sha256", "bundle_manifest_sha256", "recount_sha256", "validation_report_sha256",
+    "row_schema_sha256", "trust_root_sha256", "verified_pins_sha256", "split_table_sha256",
+    "constructor_inputs_sha256", "constructor_manifest_sha256", "constructor_receipt_sha256",
+    "constructor_admission_sha256", "constructor_recount_sha256",
+)
+PUBLICATION_REPORT_KEYS = frozenset(
+    {"format", "batch", "rows_in", "rows_admitted", "schema_valid", "splits", "accepted_jsonl_sha256"})
+
+
+def _publication_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(token: str) -> Any:
+    raise ValueError(f"non-finite JSON constant is not allowed: {token}")
+
+
+def _load_strict_json(text: str) -> Any:
+    return json.loads(text, object_pairs_hook=_publication_object_pairs, parse_constant=_reject_json_constant)
+
+
+def _require_hex_field(value: Any, pattern: "re.Pattern[str]", label: str) -> None:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        fail(f"publication binding {label} is invalid")
+
+
+def _read_publication_rows(
+    binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Authenticate the staged publication binding before any model, tokenizer or callback is touched.
+
+    Re-hashes every payload file named in ``files`` against the binding's own
+    record, refuses any missing, duplicate or extra entry and refuses any
+    unexpected entry in the three staged directories (while never touching
+    anything outside them), cross-checks every declared identity (candidate
+    hashes, resolution digests, the admitted renderer digest), and re-derives
+    the per-source-group split and unique-group counts from the accepted rows,
+    the authenticated profile and the validation report. Reads accepted.jsonl
+    twice against its bound digest before parsing any rows, then returns the
+    publication metadata and those authenticated rows without rereading files.
+    Any defect calls ``fail`` (raising ``SystemExit``) before returning.
+    """
+    binding_path = Path(binding_path)
+    if not binding_path.is_file():
+        fail(f"publication binding not found: {binding_path}")
+    try:
+        binding = _load_strict_json(binding_path.read_text(encoding="utf-8"))
+    except (ValueError, json.JSONDecodeError) as exc:
+        fail(f"publication binding is not usable: {exc}")
+    if not isinstance(binding, dict) or set(binding) != {
+            "format", "batch", "candidate", "resolution", "root_sha256", "files"}:
+        fail("publication binding must contain exactly format, batch, candidate, resolution, root_sha256, files")
+    if binding["format"] != PUBLICATION_BINDING_FORMAT:
+        fail(f"publication binding format must be {PUBLICATION_BINDING_FORMAT!r}")
+    batch = binding["batch"]
+    if not isinstance(batch, str) or not _PUBLICATION_BATCH_PATTERN.fullmatch(batch):
+        fail("publication binding batch is invalid")
+
+    candidate = binding["candidate"]
+    if not isinstance(candidate, dict) or set(candidate) != PUBLICATION_CANDIDATE_KEYS:
+        fail("publication binding candidate must contain exactly commit, trainer_sha256, "
+             "predictor_sha256, scorer_sha256, template_sha256")
+    _require_hex_field(candidate["commit"], _HEX40_PATTERN, "candidate.commit")
+    for key in ("trainer_sha256", "predictor_sha256", "scorer_sha256", "template_sha256"):
+        _require_hex_field(candidate[key], _HEX64_PATTERN, f"candidate.{key}")
+    if candidate["template_sha256"] != ADMITTED_TEMPLATE_SHA256:
+        fail("publication binding candidate template_sha256 is not the admitted renderer digest")
+
+    resolution = binding["resolution"]
+    if not isinstance(resolution, dict) or set(resolution) != PUBLICATION_RESOLUTION_KEYS:
+        fail("publication binding resolution has an unexpected key set")
+    if resolution["format"] != PUBLICATION_RESOLUTION_FORMAT:
+        fail(f"publication binding resolution format must be {PUBLICATION_RESOLUTION_FORMAT!r}")
+    if resolution["batch"] != batch:
+        fail("publication binding resolution batch does not match the binding batch")
+    if resolution["verified"] is not True:
+        fail("publication binding resolution is not verified")
+    for key in ("accepted_jsonl_sha256", "profile_sha256", "publication_sha256",
+                "trust_root_sha256", "validation_report_sha256", "bridge_sha256"):
+        _require_hex_field(resolution[key], _HEX64_PATTERN, f"resolution.{key}")
+
+    root_sha256 = binding["root_sha256"]
+    _require_hex_field(root_sha256, _HEX64_PATTERN, "root_sha256")
+    if resolution["trust_root_sha256"] != root_sha256:
+        fail("publication binding root_sha256 does not match the resolution's trust_root_sha256")
+
+    files = binding["files"]
+    if not isinstance(files, list):
+        fail("publication binding files must be a list")
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in files:
+        if (not isinstance(entry, dict) or set(entry) != {"dir", "name", "sha256", "bytes"}
+                or not isinstance(entry.get("dir"), str) or not isinstance(entry.get("name"), str)
+                or (entry["dir"], entry["name"]) not in PUBLICATION_PAYLOAD_FILES
+                or not isinstance(entry.get("sha256"), str) or not _HEX64_PATTERN.fullmatch(entry["sha256"])
+                or type(entry.get("bytes")) is not int or entry["bytes"] < 0):
+            fail(f"publication binding files entry is invalid: {entry!r}")
+        key = (entry["dir"], entry["name"])
+        if key in by_key:
+            fail(f"publication binding files has a duplicate entry: {key[0]}/{key[1]}")
+        by_key[key] = entry
+    missing = set(PUBLICATION_PAYLOAD_FILES) - set(by_key)
+    extra = set(by_key) - set(PUBLICATION_PAYLOAD_FILES)
+    if missing or extra:
+        fail("publication binding files must list exactly the seven payload files "
+             f"(missing={sorted(missing)}, extra={sorted(extra)})")
+
+    dir_paths = {"rows": Path(rows_dir), "train": Path(code_dir), "eval": Path(eval_dir)}
+    payloads: dict[tuple[str, str], bytes] = {}
+    for (directory, name), entry in by_key.items():
+        path = dir_paths[directory] / name
+        if not path.is_file():
+            fail(f"publication binding payload file is missing: {directory}/{name}")
+        # Authenticate the exact bytes consumed below. Accepted rows need two
+        # independent reads; neither row JSON nor caller-provided objects are
+        # consumed until both reads match the admitted digest.
+        for _ in range(2 if (directory, name) == ("rows", "accepted.jsonl") else 1):
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                fail(f"publication payload cannot be read: {directory}/{name}: {exc}")
+            if len(data) != entry["bytes"]:
+                fail(f"publication binding payload file has an unexpected byte count: {directory}/{name}")
+            if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+                fail(f"publication binding payload file does not match its recorded digest: {directory}/{name}")
+        payloads[(directory, name)] = data
+
+    for directory, path in dir_paths.items():
+        allowed_names = {name for (d, name) in PUBLICATION_PAYLOAD_FILES if d == directory}
+        unexpected = {child.name for child in path.iterdir()} - allowed_names
+        if unexpected:
+            fail(f"unexpected entries in the staged {directory} directory: {sorted(unexpected)}")
+
+    for (directory, name), identity_key in PUBLICATION_PAYLOAD_FILES.items():
+        if identity_key is not None and candidate[identity_key] != by_key[(directory, name)]["sha256"]:
+            fail(f"publication binding candidate.{identity_key} does not match the staged {directory}/{name}")
+
+    for resolution_key, (directory, name) in (
+        ("accepted_jsonl_sha256", ("rows", "accepted.jsonl")),
+        ("validation_report_sha256", ("rows", "report.json")),
+        ("profile_sha256", ("rows", "profile.json")),
+    ):
+        if resolution[resolution_key] != by_key[(directory, name)]["sha256"]:
+            fail(f"publication binding resolution.{resolution_key} does not match the staged {directory}/{name}")
+
+    try:
+        profile = _load_strict_json(payloads[("rows", "profile.json")].decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        fail(f"profile.json is not usable: {exc}")
+    if not isinstance(profile, dict) or set(profile) != PUBLICATION_PROFILE_KEYS:
+        fail("profile.json has an unexpected key set")
+    if profile["format"] != PUBLICATION_PROFILE_FORMAT:
+        fail(f"profile.json format must be {PUBLICATION_PROFILE_FORMAT!r}")
+    if profile["batch"] != batch:
+        fail("profile.json batch does not match the publication binding")
+    if not isinstance(profile["built_by"], str) or not profile["built_by"].strip():
+        fail("profile.json built_by is invalid")
+    for field in PUBLICATION_PROFILE_SCALAR_SHA_FIELDS:
+        _require_hex_field(profile[field], _HEX64_PATTERN, f"profile.{field}")
+    if profile["accepted_jsonl_sha256"] != resolution["accepted_jsonl_sha256"]:
+        fail("profile.json accepted_jsonl_sha256 does not match the resolution")
+    if profile["validation_report_sha256"] != resolution["validation_report_sha256"]:
+        fail("profile.json validation_report_sha256 does not match the resolution")
+    if profile["trust_root_sha256"] != resolution["trust_root_sha256"]:
+        fail("profile.json trust_root_sha256 does not match the resolution")
+
+    _epoch_authority().authenticate(binding, profile,
+        by_key[("rows", "accepted.jsonl")]["sha256"],
+        by_key[("rows", "report.json")]["sha256"],
+        by_key[("rows", "profile.json")]["sha256"])
+
+    groups_and_splits = profile["source_groups_and_splits"]
+    if (not isinstance(groups_and_splits, dict) or not groups_and_splits
+            or any(not isinstance(group, str) or not group.strip() or split not in ("train", "dev")
+                   for group, split in groups_and_splits.items())):
+        fail("profile.json source_groups_and_splits must map each source group to 'train' or 'dev'")
+
+    lineage = profile["input_lineage_sha256"]
+    if (not isinstance(lineage, dict) or set(lineage) != set(groups_and_splits)
+            or any(not isinstance(v, str) or not _HEX64_PATTERN.fullmatch(v) for v in lineage.values())):
+        fail("profile.json input_lineage_sha256 must be an object keyed exactly like source_groups_and_splits")
+
+    row_digests = profile["candidate_row_sha256"]
+    if (not isinstance(row_digests, list)
+            or not row_digests
+            or any(not isinstance(d, str) or not _HEX64_PATTERN.fullmatch(d) for d in row_digests)
+            or len(set(row_digests)) != len(row_digests)):
+        fail("profile.json candidate_row_sha256 must be a non-empty, duplicate-free ordered list of row digests")
+
+    try:
+        validation_report = _load_strict_json(payloads[("rows", "report.json")].decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        fail(f"report.json is not usable: {exc}")
+    if not isinstance(validation_report, dict) or set(validation_report) != PUBLICATION_REPORT_KEYS:
+        fail("report.json has an unexpected key set")
+    if validation_report["format"] != "route-r-validation-report/v1":
+        fail("report.json format must be route-r-validation-report/v1")
+    if validation_report["batch"] != batch:
+        fail("report.json batch does not match the publication binding")
+    for key in ("rows_in", "rows_admitted", "schema_valid"):
+        if type(validation_report[key]) is not int or validation_report[key] < 0:
+            fail(f"report.json {key} is invalid")
+    splits = validation_report["splits"]
+    if (not isinstance(splits, dict) or set(splits) != {"train", "dev"}
+            or any(type(v) is not int or v < 0 for v in splits.values())):
+        fail("report.json splits must contain exactly non-negative train and dev counts")
+    _require_hex_field(validation_report["accepted_jsonl_sha256"], _HEX64_PATTERN, "report.accepted_jsonl_sha256")
+    if validation_report["accepted_jsonl_sha256"] != resolution["accepted_jsonl_sha256"]:
+        fail("report.json accepted_jsonl_sha256 does not match the resolution")
+
+    try:
+        lines = [line for line in payloads[("rows", "accepted.jsonl")].decode("utf-8").splitlines() if line.strip()]
+    except UnicodeError as exc:
+        fail(f"accepted.jsonl is not UTF-8: {exc}")
+    if len(lines) != len(row_digests):
+        fail("accepted.jsonl row count does not match the profile's candidate_row_sha256")
+    parsed_rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            parsed = _load_strict_json(line)
+        except (ValueError, json.JSONDecodeError) as exc:
+            fail(f"accepted.jsonl line {line_number} is not usable: {exc}")
+        if not isinstance(parsed, dict):
+            fail(f"accepted.jsonl line {line_number} is not an object")
+        group, split = parsed.get("source_group"), parsed.get("split")
+        if not isinstance(group, str) or not group.strip() or split not in ("train", "dev"):
+            fail(f"accepted.jsonl line {line_number} has an invalid source_group or split")
+        parsed_rows.append(parsed)
+
+    if len(parsed_rows) != validation_report["rows_admitted"] or len(parsed_rows) != validation_report["schema_valid"]:
+        fail("accepted row count does not match report.json rows_admitted and schema_valid")
+
+    groups_by_split: dict[str, set[str]] = {"train": set(), "dev": set()}
+    for parsed in parsed_rows:
+        group, split = parsed["source_group"], parsed["split"]
+        expected_split = groups_and_splits.get(group)
+        if expected_split is None:
+            fail(f"accepted row source_group {group!r} is not in the profile's source_groups_and_splits")
+        if expected_split != split:
+            fail(f"accepted row source_group {group!r} split {split!r} does not match the profile's {expected_split!r}")
+        groups_by_split[split].add(group)
+
+    if set(groups_and_splits) - (groups_by_split["train"] | groups_by_split["dev"]):
+        fail("not every profile source_group appears among the accepted rows")
+    for split in ("train", "dev"):
+        if len(groups_by_split[split]) != splits[split]:
+            fail(f"unique source_group count for split {split!r} does not match report.json splits")
+
+    return {"batch": batch, "profile_sha256": resolution["profile_sha256"], "root_sha256": root_sha256}, parsed_rows
+
+
+def verify_publication_binding(
+    binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
+) -> dict[str, Any]:
+    """Verify the publication without exposing row content in its receipt."""
+    publication, _ = _read_publication_rows(binding_path, rows_dir, code_dir, eval_dir)
+    return publication
+
+
+def load_epoch_rows(
+    binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Consume the admitted producer schema; legacy loaders remain unchanged."""
+    publication, accepted = _read_publication_rows(binding_path, rows_dir, code_dir, eval_dir)
+    splits: dict[str, list[dict[str, Any]]] = {"train": [], "dev": []}
+    for line_number, row in enumerate(accepted, 1):
+        _require_accepted_row(row, line_number)
+        _validate_dev_row(row, row["split"])
+        splits[row["split"]].append(row)
+    return publication, splits["train"], splits["dev"]
+
 
 def train(
-    rows: list[dict[str, Any]],
-    dev_rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]] | None,
+    dev_rows: list[dict[str, Any]] | None,
     base: str,
     revision: str,
     steps: int | None,
@@ -1505,14 +1844,22 @@ def train(
     trusted_digest_root_path: Path | None = None,
     epochs: int | None = None,
     use_gradient_checkpointing: str | bool = "unsloth",
+    publication_binding_path: Path | None = None,
+    publication_rows_dir: Path | None = None,
+    publication_code_dir: Path | None = None,
+    publication_eval_dir: Path | None = None,
 ) -> dict[str, Any]:
     """QLoRA on admitted rows, with synchronous bound dev gates in epoch mode."""
     started = time.time()
-    run_dir = create_run_directory(report_path) if epochs is not None else None
+    supplied_rows, supplied_dev_rows = rows, dev_rows
+    if epochs is not None:
+        rows, dev_rows = [], []
+    run_dir = None
     checkpoints: list[dict[str, Any]] = []
     digest_verification, callback, trainer, peak, result = None, None, None, None, None
     memory_tracking_initialized = False
     resolved, mask_coverage = revision, 0.0
+    publication: dict[str, Any] | None = None
 
     def retained_report(*, state: str, selected: Any = None, completed: bool = False) -> dict[str, Any]:
         cadence = None if callback is None else {
@@ -1530,6 +1877,7 @@ def train(
             loss=None if state == "failed" or result is None else round(result.training_loss, 4),
             wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
             digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
+            publication=publication,
             final_adapter=None, export_ready=False, output_dir=str(run_dir) if run_dir is not None else None,
             trainer_epoch=actual_trainer_epoch(getattr(trainer, "state", None)),
             checkpoint_artifacts_ready=completed, dev_cadence=cadence,
@@ -1546,6 +1894,20 @@ def train(
 
     try:
         if epochs is not None:
+            if publication_binding_path is None:
+                raise ValueError("epoch mode requires a publication binding")
+            if publication_rows_dir is None or publication_code_dir is None or publication_eval_dir is None:
+                raise ValueError("epoch mode requires the publication rows, code and eval directories")
+            # Authenticate the staged publication binding before anything else in
+            # epoch mode: no model, tokenizer, GPU or callback resource is touched
+            # above this line.
+            publication, rows, dev_rows = load_epoch_rows(
+                publication_binding_path, publication_rows_dir, publication_code_dir, publication_eval_dir)
+            # Direct callers cannot substitute rows after authenticating a
+            # different publication. Train only the decoded admitted bytes.
+            if ((supplied_rows is not None and supplied_rows != rows)
+                    or (supplied_dev_rows is not None and supplied_dev_rows != dev_rows)):
+                raise ValueError("epoch caller rows differ from the admitted publication")
             if type(epochs) is not int or not 1 <= epochs <= EPOCH_MODE_MAX:
                 raise ValueError("invalid requested epochs")
             if not is_winner_pin(base, revision):
@@ -1556,6 +1918,7 @@ def train(
                 _validate_dev_row(row, "train")
             for row in dev_rows:
                 _validate_dev_row(row, "dev")
+            run_dir = create_run_directory(report_path)
             # Batch size is fixed at one. With <= 8 rows the first optimizer
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
@@ -1629,7 +1992,7 @@ def train(
         require_vram(peak, winner=winner)
         return report
     except BaseException as exc:
-        if epochs is not None:
+        if epochs is not None and run_dir is not None:
             if memory_tracking_initialized:
                 try:
                     sampled_peak = torch.cuda.max_memory_reserved() / 2**30
@@ -1820,6 +2183,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--expected-digests", type=Path, default=None)
     parser.add_argument("--trusted-digest-root", type=Path, default=None,
                         help="Approved root file; its SHA-256 is pinned in the trainer.")
+    parser.add_argument("--publication-binding", type=Path, default=None,
+                        help="Epoch mode only: staged publication binding authenticating rows, "
+                             "trainer, predictor, scorer and renderer before GPU training proceeds.")
     args = parser.parse_args(argv)
     explicit_pin = args.base is not None and args.revision is not None
     args.base = args.base if args.base is not None else os.environ.get("ADAPTER_BASE", SMOKE_BASE)
@@ -1839,8 +2205,13 @@ def main(argv: list[str] | None = None) -> None:
             fail("--epochs cannot be combined with --probe")
         if not explicit_pin or not is_winner_pin(args.base, args.revision):
             fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
-    elif not args.probe and not args.check_only and args.steps is None:
-        fail("a training run needs exactly one of --steps or --epochs")
+        if args.publication_binding is None:
+            fail("--publication-binding is required in epoch mode")
+    else:
+        if args.publication_binding is not None:
+            fail("--publication-binding is only valid in epoch mode")
+        if not args.probe and not args.check_only and args.steps is None:
+            fail("a training run needs exactly one of --steps or --epochs")
     if args.probe_rows_total is not None and args.probe_rows_total < 1:
         fail("probe-rows-total must be positive")
     if args.probe_seq_len < 1:
@@ -1857,10 +2228,22 @@ def main(argv: list[str] | None = None) -> None:
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
     try:
-        rows = load_training_rows(args.rows)
-        dev_rows = load_dev_rows(args.rows) if args.epochs is not None else []
-    except BaseException as exc:
         if args.epochs is not None:
+            if args.rows.name != "accepted.jsonl":
+                fail("epoch mode requires the admitted accepted.jsonl")
+            # The normal epoch path loads once inside train(), before CUDA or
+            # model access. Check-only uses the same authenticated loader.
+            rows, dev_rows = None, None
+            if args.check_only:
+                _, rows, dev_rows = load_epoch_rows(
+                    args.publication_binding, args.rows.parent,
+                    Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent / "eval")
+                if not rows:
+                    fail(f"no train rows in {args.rows}")
+        else:
+            rows, dev_rows = load_training_rows(args.rows), []
+    except BaseException as exc:
+        if args.epochs is not None and not args.check_only:
             run_dir = create_run_directory(args.report)
             _initial_failure_state(run_dir, "input_" + type(exc).__name__)
             report = build_report(run=args.report.stem, base=args.base, revision=args.revision,
@@ -1899,6 +2282,10 @@ def main(argv: list[str] | None = None) -> None:
             expected_digests_path=args.expected_digests,
             trusted_digest_root_path=args.trusted_digest_root,
             epochs=args.epochs,
+            publication_binding_path=args.publication_binding,
+            publication_rows_dir=args.rows.parent,
+            publication_code_dir=Path(__file__).resolve().parent,
+            publication_eval_dir=Path(__file__).resolve().parent.parent / "eval",
         )
     print(json.dumps(report, indent=2))
 

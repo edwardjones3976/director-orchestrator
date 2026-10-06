@@ -173,7 +173,26 @@ def make_reparse_link(link: Path, target: Path) -> bool:
     return False
 
 
-class TrainAdapterTests(unittest.TestCase):
+def _wrapper_mount_construction(source: str) -> str:
+    """Load the real helper and extract only the wrapper's mount call."""
+    helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+    start = source.index("$mounts = New-TrainerCommonMounts")
+    end = source.index("\n$code =", start)
+    return ". '" + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n"
+
+
+class AuthorityFixtureCase(unittest.TestCase):
+    def setUp(self):
+        import epoch_authority
+        self._authority_patch = mock.patch.object(train_adapter, '_epoch_authority', return_value=epoch_authority)
+        self._authority_patch.start()
+        self.addCleanup(self._authority_patch.stop)
+        paths = mock.patch.object(epoch_authority, 'production_paths', side_effect=lambda *args: _TEST_AUTHORITY_PATHS)
+        paths.start()
+        self.addCleanup(paths.stop)
+
+
+class TrainAdapterTests(AuthorityFixtureCase):
     def test_response_mask_ignores_the_prompt_and_covers_the_answer(self):
         labels = train_adapter.labels_for_token_ids([4, 5, 6, 7], [4, 5, 6, 7, 8, 9, 10])
         self.assertEqual(labels, [-100, -100, -100, -100, 8, 9, 10])
@@ -418,15 +437,20 @@ class TrainAdapterTests(unittest.TestCase):
                     train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
                                         "--epochs", "1", *pin])
                 rows.assert_not_called()
-        with mock.patch.object(train_adapter, "load_training_rows", return_value=slice3_train_rows()), \
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(train_adapter, "load_training_rows", return_value=slice3_train_rows()), \
              mock.patch.object(train_adapter, "load_dev_rows", return_value=slice3_dev_rows()), \
              mock.patch.object(train_adapter, "train", return_value={}) as training, \
              contextlib.redirect_stdout(io.StringIO()):
-            train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/report.json",
+            fx = _build_publication_fixture(Path(tmp), rows=slice3_train_rows() + slice3_dev_rows())
+            train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(Path(tmp) / "out.json"),
                                 "--epochs", "1", "--base", train_adapter.WINNER_BASE,
-                                "--revision", train_adapter.WINNER_REVISION])
+                                "--revision", train_adapter.WINNER_REVISION,
+                                "--publication-binding", str(fx["binding_path"])])
             self.assertEqual(training.call_args.args[2:4], (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
             self.assertEqual(training.call_args.kwargs["epochs"], 1)
+            self.assertEqual(training.call_args.kwargs["publication_binding_path"], fx["binding_path"])
+            self.assertEqual(training.call_args.kwargs["publication_rows_dir"], fx["rows_dir"])
 
     def test_wrapper_carries_the_same_winner_pin(self):
         script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
@@ -452,16 +476,16 @@ class TrainAdapterTests(unittest.TestCase):
         end = source.index("    function Get-AdapterState", start)
         construction = source[start:end]
         for digests in ("", "dummy-digests.json"):
-            with self.subTest(expected_digests=bool(digests)):
+            with self.subTest(expected_digests=bool(digests)), tempfile.TemporaryDirectory() as tmp:
+                hot_root = Path(tmp).as_posix().replace("'", "''")
                 command = """
 $ErrorActionPreference = 'Stop'
-$mounts = @('-v', 'dummy:/workspace/hf')
-$name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
+$name = 'dummy-container'; $code = 'dummy-code'; $evalCode = 'dummy-eval'; $Image = 'dummy-image'
 $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
-$Rows = 'accepted.jsonl'; $runId = 'dummy-run'; $HotRoot = 'C:\\synthetic'
+$Epochs = 0; $runId = 'dummy-run'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
-""" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+""" + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
                 completed = subprocess.run(
                     [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True, text=True, timeout=30,
@@ -472,6 +496,9 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
                 self.assertEqual(args[image + 1], "/code/train_adapter.py")
                 options, trainer = args[:image], args[image + 2:]
+                self._assert_common_mounts(options, Path(tmp), epoch_mode=False, digests=bool(digests))
+                self.assertIn("dummy-code:/code:ro", options)
+                self.assertIn("dummy-eval:/eval:ro", options)
                 self.assertNotIn("-e", trainer)
                 for flag in ("HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1"):
                     if digests:
@@ -492,51 +519,325 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 self.assertIn("--winner", trainer)
                 self.assertEqual(trainer[-5:], ["--probe", "--probe-seq-len", "2048", "--probe-rows-total", "96"])
 
-    def test_wrapper_epoch_mode_serialized_arguments_map_output_and_skip_steps(self):
+    def test_wrapper_epoch_mode_docker_args_use_the_staged_tree_not_code(self):
+        # Epoch mode's docker-argument contract moved from an inline snippet to
+        # New-TrainerDockerArgs (scripts/train-adapter-stage.ps1): call the real
+        # function directly with a synthetic stage/binding, since it needs no
+        # custody, git or resolver fixture to exercise the resulting vector.
         pwsh = shutil.which("pwsh")
         if pwsh is None:
             self.skipTest("PowerShell is required to evaluate Docker argument construction")
-        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
-        source = script.read_text(encoding="utf-8")
-        start = source.index("    $dockerArgs = ")
-        end = source.index("    function Get-AdapterState", start)
-        construction = source[start:end]
-        command = """
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            hot_root = Path(tmp).as_posix().replace("'", "''")
+            (Path(tmp) / 'authority' / 'publication').mkdir(parents=True)
+            for name in ('pin.py', 'route-r-trust-root-v2r4.json', 'publication/batch-0001.publication.json'):
+                (Path(tmp) / 'authority' / name).write_text('{}')
+            # These functions create directories only beneath the temporary HotRoot.
+            command = f"""
 $ErrorActionPreference = 'Stop'
-$mounts = @('-v', 'dummy:/workspace/models/m2')
-$name = 'dummy-container'; $code = 'dummy-code'; $Image = 'dummy-image'
-$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20; $Epochs = 4
-$Rows = 'accepted.jsonl'; $runId = 'dummy-run'; $HotRoot = 'C:\\synthetic'
-$Winner = $false; $Probe = $false; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
-$PSBoundParameters = @{}
-$ExpectedDigests = ''
-$TrustedDigestRoot = ''
-""" + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
-        completed = subprocess.run(
-            [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
-            capture_output=True, text=True, timeout=30,
-        )
+$HotRoot = '{hot_root}'; $Rows = '{hot_root}/accepted.jsonl'; $Epochs = 4
+$ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
+{_wrapper_mount_construction(source)}
+$stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
+$args_ = New-TrainerDockerArgs -Image 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
+    -AuthoritySource '# synthetic authenticated source' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+    -Locations @{{ PinFile = '{hot_root}/authority/pin.py'; CustodyRoot = '{hot_root}/authority' }} `
+    -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
+    -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -ModelsHostDir 'C:/synthetic/models/m2' `
+    -ExtraEnv @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
+ConvertTo-Json -InputObject $args_ -Compress
+"""
+            completed = subprocess.run(
+                [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                capture_output=True, text=True, timeout=30,
+            )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         args = json.loads(completed.stdout)
-        image = args.index("dummy-image")
+        image = args.index("unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739")
         self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
-        self.assertEqual(args[image + 1], "/code/train_adapter.py")
-        options, trainer = args[:image], args[image + 2:]
-        self.assertNotIn("-e", trainer)
-        self.assertNotIn("--steps", args)
-        self.assertNotIn("ADAPTER_STEPS=20", args)
-        self.assertEqual(options[options.index("ADAPTER_MODELS_DIR=/workspace/models/m2") - 1], "-e")
-        self.assertIn("ADAPTER_MODELS_HOST_DIR=C:\\synthetic\\models\\m2", options)
-        self.assertIn("ADAPTER_BASE=dummy-base", options)
+        self.assertEqual(args[image + 1:image + 4], ["-I", "-B", "-c"])
+        self.assertTrue(args[image + 4].endswith('bootstrap()\n'))
+        options, trainer = args[:image], args[image + 5:]
+        self._assert_common_mounts(options, Path(tmp), epoch_mode=True, digests=True)
+        self.assertNotIn("/code", " ".join(args))
+        self.assertNotIn("/code:ro", options)
+        self.assertIn("C:/synthetic/Train:/train:ro", options)
+        self.assertIn("C:/synthetic/Eval:/eval:ro", options)
+        self.assertIn("C:/synthetic/Input:/workspace/rows:ro", options)
+        self.assertIn("C:/synthetic/Meta/publication-binding.json:/workspace/publication-binding.json:ro", options)
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", options)
+        self.assertIn("ADAPTER_MODELS_DIR=/workspace/models/m2", options)
+        self.assertIn("ADAPTER_MODELS_HOST_DIR=C:/synthetic/models/m2", options)
+        self.assertIn(f"ADAPTER_BASE={train_adapter.WINNER_BASE}", options)
+        self.assertEqual(trainer[trainer.index("--base") + 1], train_adapter.WINNER_BASE)
+        self.assertEqual(trainer[trainer.index("--revision") + 1], train_adapter.WINNER_REVISION)
         self.assertIn("HF_HOME=/workspace/hf", options)
-        self.assertNotIn("HF_HUB_OFFLINE=1", args)
+        self.assertIn("HF_HUB_OFFLINE=1", options)
         self.assertEqual(trainer[:2], ["--rows", "/workspace/rows/accepted.jsonl"])
         self.assertIn("--epochs", trainer)
         self.assertEqual(trainer[trainer.index("--epochs") + 1], "4")
+        self.assertIn("--publication-binding", trainer)
+        self.assertEqual(trainer[trainer.index("--publication-binding") + 1], "/workspace/publication-binding.json")
+        self.assertNotIn("--steps", args)
+        self.assertNotIn("ADAPTER_STEPS=20", args)
         self.assertIn("--report", trainer)
         self.assertEqual(trainer[trainer.index("--report") + 1], "/workspace/reports/dummy-run.json")
         self.assertNotIn("--winner", trainer)
         self.assertNotIn("--probe", trainer)
+
+    def _assert_common_mounts(self, options, root, *, epoch_mode, digests):
+        mounts = [options[index + 1].replace("\\", "/")
+                  for index, value in enumerate(options) if value == "-v"]
+        for directory in (("hf", "models/m2") if epoch_mode else ("hf", "runs", "models/m2", "reports")):
+            self.assertIn(f"{root.as_posix()}/{directory}:/workspace/{directory}"
+                          + (":ro" if epoch_mode and directory == "hf" else ""), mounts)
+        if epoch_mode:
+            self.assertIn(f"{root.as_posix()}/reports/adapter-output:/workspace/reports", mounts)
+            self.assertFalse(any(":/workspace/runs" in mount for mount in mounts))
+            self.assertNotIn(f"{root.as_posix()}/reports:/workspace/reports", mounts)
+        rows_mounts = [mount for mount in mounts if ":/workspace/rows" in mount]
+        self.assertEqual(rows_mounts, ["C:/synthetic/Input:/workspace/rows:ro"] if epoch_mode
+                         else [f"{root.as_posix()}:/workspace/rows:ro"])
+        for filename, host in (("expected-digests", "dummy-digests"), ("trusted-digest-root", "dummy-root")):
+            actual = [mount for mount in mounts if f":/workspace/{filename}.json" in mount]
+            self.assertEqual(actual, [f"{host}.json:/workspace/{filename}.json:ro"] if digests else [])
+
+    def test_epoch_mounts_refuse_writable_protected_aliases(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate mount isolation")
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            protected = root / "runs" / "stage" / "m2-01234567"
+            protected.mkdir(parents=True)
+            link = root / "output" / "custody-link"
+            link.parent.mkdir()
+            linked = make_reparse_link(link, protected)
+            command = f". '{helper.as_posix()}'\n" + r"""
+$ErrorActionPreference = 'Stop'
+function Refuses($Mount, $Protected, $Message) {
+    try { Assert-TrainerMountIsolation @('-v', $Mount) @($Protected) }
+    catch { if ($_.Exception.Message.Contains($Message)) { return }; throw }
+    throw "unsafe mount accepted: $Mount"
+}
+""" + f"""
+$root = '{root.as_posix()}'; $protected = '{protected.as_posix()}'
+Refuses "$root/runs:/workspace/runs" $protected 'overlaps protected'
+Refuses "$protected`:/alternate" $protected 'overlaps protected'
+Refuses "$protected/child:/alternate" $protected 'overlaps protected'
+Assert-TrainerMountIsolation @('-v', "$root/runs:/workspace/runs:ro") @($protected)
+Assert-TrainerMountIsolation @('-v', "$root/runs-other:/workspace/output") @($protected)
+"""
+            if linked:
+                command += f"Refuses '{link.parent.as_posix()}:/workspace/output' $protected 'junction or symbolic link'\n"
+            completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                       capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_epoch_readonly_cache_keeps_linked_layout_without_recursive_scan(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate mount isolation")
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "hf" / "hub"
+            shared = hub / "blobs"
+            shared.mkdir(parents=True)
+            repo = hub / "models--synthetic--model"
+            snapshot = repo / "snapshots" / ("a" * 40)
+            snapshot.mkdir(parents=True)
+            # Directory links also work without Windows file-symlink privilege.
+            # This tests mount traversal only, not model snapshot admission.
+            linked = make_reparse_link(repo / "blobs", shared)
+            if linked:
+                linked = make_reparse_link(snapshot / "linked", repo / "blobs")
+            command = f". '{helper.as_posix()}'\n" + f"""
+$ErrorActionPreference = 'Stop'
+$m = @(New-TrainerCommonMounts -HotRoot '{root.as_posix()}' -RowsDir '{root.as_posix()}/rows' -EpochMode)
+$cache = @($m | Where-Object {{ $_ -like '*:/workspace/hf*' }})
+if ($cache.Count -ne 1 -or -not $cache[0].EndsWith(':/workspace/hf:ro')) {{ throw 'cache not read-only' }}
+# A scan of HF would fail this control even on hosts without link privilege.
+function Get-ChildItem {{ throw 'read-only cache must not be recursively traversed' }}
+Assert-TrainerMountIsolation @('-v', $cache[0]) @('{root.as_posix()}/custody')
+Write-Output 'PASS'
+"""
+            completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                       capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            if linked:
+                self.assertTrue((snapshot / "linked").is_dir())
+
+    def test_git_payload_requires_commit_object_before_path_lookup(self):
+        # The transport is synthetic; assert refusal precedes path extraction,
+        # including tags that peel successfully but are not the supplied commit.
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate the Git object guard")
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
+        command = f". '{helper.as_posix()}'\n" + r"""
+$ErrorActionPreference = 'Stop'
+$script:count = 0
+function Invoke-Bounded($Exe, $A, $Seconds) {
+    $script:count++
+    if ($script:count -eq 2 -and $script:validCommit) {
+        if ($A[-1] -cne (('a' * 40) + ':payload.py')) { throw 'unexpected path lookup' }
+        throw 'verified commit reached path lookup'
+    }
+    if ($A[-1] -cne (('a' * 40) + '^{commit}')) { throw 'path lookup happened before commit verification' }
+    return $script:reply
+}
+$script:validCommit = $false
+foreach ($reply in @(@('__EXIT__128'), @(('b' * 40), '__EXIT__0'), @(('a' * 40), 'extra', '__EXIT__0'))) {
+    $script:reply = $reply; $script:count = 0
+    try { Get-GitBlobBytes -RepoRoot '.' -Commit ('a' * 40) -Path 'payload.py' -ExpectedSha256 ('0' * 64); throw 'accepted invalid commit' }
+    catch { if (-not $_.Exception.Message.Contains('must name the exact commit object')) { throw } }
+    if ($script:count -ne 1) { throw 'invalid commit reached a second Git call' }
+}
+$script:validCommit = $true; $script:count = 0; $script:reply = @(('a' * 40), '__EXIT__0')
+try { Get-GitBlobBytes -RepoRoot '.' -Commit ('a' * 40) -Path 'payload.py' -ExpectedSha256 ('0' * 64); throw 'missing path lookup' }
+catch { if (-not $_.Exception.Message.Contains('verified commit reached path lookup')) { throw } }
+if ($script:count -ne 2) { throw 'valid commit did not reach path lookup' }
+Write-Output 'PASS'
+"""
+        completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                   capture_output=True, text=True, timeout=30)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_wrapper_epoch_mode_requires_batch_and_runs_the_binding_chain_before_the_mutex(self):
+        # Structural proof, no execution: -Batch is gated with -Epochs, the
+        # wrapper dot-sources the new stage script, and every binding step
+        # (resolver through docker-arg construction) appears in the source
+        # before the GPU mutex is created.
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        self.assertIn("train-adapter-stage.ps1", source)
+        self.assertIn("-Epochs requires -Batch", source)
+        self.assertIn("-Batch is only valid with -Epochs", source)
+        mutex_index = source.index("[System.Threading.Mutex]::new(")
+        for call in (
+            "Get-ProductionLocations", "Read-RootPin", "Read-ApprovedRoot",
+            "Invoke-PublicationResolver", "Read-PublicationRecords",
+            "New-StageTree", "New-PublicationBinding", "New-TrainerDockerArgs",
+        ):
+            index = source.index(call)
+            self.assertGreater(index, 0, f"{call} not found")
+            self.assertLess(index, mutex_index, f"{call} must run before the GPU mutex is created")
+
+    def test_epoch_image_guards_refuse_aliases_before_setup(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell is required for actual wrapper argument guards')
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'train-adapter.ps1'
+        source = script.read_text(encoding='utf-8')
+        # Execute the real parameter defaults and guard prefix, stopping before
+        # row/custody reads. Only dot-sourcing the Windows process helper is
+        # omitted: no bounded process is invoked by these argument guards.
+        prefix = source[:source.index('$Rows = [IO.Path]::GetFullPath($Rows)')]
+        prefix = prefix.replace(". (Join-Path $PSScriptRoot 'invoke-bounded.ps1')", '')
+        prefix = prefix.replace(". (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')",
+                                ". '" + script.with_name('train-adapter-stage.ps1').as_posix() + "'")
+        approved = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739'
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix_file = Path(tmp) / 'wrapper-guards.ps1'
+            prefix_file.write_text(prefix + "\n'GUARDS-PASSED'\n", encoding='utf-8')
+            command = f"""
+$ErrorActionPreference = 'Stop'
+$approved = '{approved}'
+$args_ = @{{ Rows = '{Path(tmp).as_posix()}/absent/accepted.jsonl'; Epochs = 1; Batch = 'batch-0001';
+    Base = '{train_adapter.WINNER_BASE}'; Revision = '{train_adapter.WINNER_REVISION}'; TimeoutMinutes = 1 }}
+# Both the parameter default and the explicit identical digest pass.
+if ((& '{prefix_file.as_posix()}' @args_) -ne 'GUARDS-PASSED') {{ throw 'default refused' }}
+if ((& '{prefix_file.as_posix()}' @args_ -Image $approved) -ne 'GUARDS-PASSED') {{ throw 'exact digest refused' }}
+foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+        (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+    $denied = $false
+    try {{ & '{prefix_file.as_posix()}' @args_ -Image $bad | Out-Null }}
+    catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+    if (-not $denied) {{ throw "wrapper admitted alias: $bad" }}
+}}
+# Non-epoch and probe image selection keeps its previous behavior.
+foreach ($probe in $false, $true) {{
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' -Image 'custom/image:tag' -Probe:$probe) -ne 'GUARDS-PASSED') {{ throw 'legacy image changed' }}
+}}
+. '{script.with_name('train-adapter-stage.ps1').as_posix()}'
+foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+        (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+    $denied = $false
+    try {{ New-TrainerDockerArgs -Image $bad -Name 'unused' -CommonMounts @('-v','unused:/safe:ro') `
+        -Stage @{{}} -BindingPath 'unused' -Base 'unused' -Revision 'unused' -ReportContainerPath 'unused' `
+        -Epochs 1 -AuthoritySource 'unused' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+        -Locations @{{}} | Out-Null }}
+    catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+    if (-not $denied) {{ throw "direct helper reached authority or mounts with alias: $bad" }}
+}}
+'PASS default + exact + five wrapper aliases + five direct helper aliases + legacy/probe'
+"""
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASS default + exact', result.stdout)
+            self.assertFalse((Path(tmp) / 'absent').exists())
+
+    def test_epoch_preflight_precedes_first_directory_mutation(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell is required for wrapper ordering checks')
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'train-adapter.ps1'
+        source = script.read_text(encoding='utf-8')
+        first = source.index('# Epoch storage admission')
+        mutex = source.index('$gpuLock = [System.Threading.Mutex]::new(')
+        fragment = source[first:mutex]
+        self.assertLess(first, source.index('$mounts = New-TrainerCommonMounts'))
+        self.assertLess(first, source.index('$stage = New-StageTree'))
+        self.assertLess(first, source.index('(Write-StageFile'))
+        self.assertLess(mutex, source.index('$pf = @(Invoke-Bounded'))
+        self.assertNotIn('New-Item', source[:first])
+        self.assertNotIn('Set-Content', source[:first])
+        # Execute actual preflight and mount/staging statements. The first
+        # mutation is replaced with a sentinel and stops the success control;
+        # failure must never reach it or the later stage/binding/GPU statements.
+        with tempfile.TemporaryDirectory() as tmp:
+            sentinel = Path(tmp) / 'mutation'
+            command = f"""
+$ErrorActionPreference = 'Stop'
+$HotRoot = '{Path(tmp).as_posix()}'; $Rows = 'unused'; $ExpectedDigests = ''; $TrustedDigestRoot = ''; $Epochs = 1
+$script:seen = [Collections.Generic.List[string]]::new()
+function Invoke-Bounded($exe, $argv, $seconds) {{
+    if ($exe -cne 'pwsh' -or $seconds -ne 180 -or
+        ($argv -join '|') -cne "-NoProfile|-File|$(Join-Path $PSScriptRoot 'preflight.ps1')|-HotRoot|$HotRoot") {{ throw 'unexpected preflight command' }}
+    $script:seen.Add('read-only-preflight')
+    $script:reply
+}}
+function New-TrainerCommonMounts {{
+    $script:seen.Add('first-directory-mutation')
+    [IO.File]::WriteAllText('{sentinel.as_posix()}', 'synthetic')
+    throw 'SYNTHETIC-FIRST-MUTATION-STOP'
+}}
+foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
+    $script:seen.Clear()
+    $script:reply = switch ($case) {{ 'exit1' {{ '__EXIT__1' }} 'timeout' {{ '__EXIT__timeout' }} 'empty' {{ @() }} 'success' {{ '__EXIT__0' }} }}
+    $reason = ''
+    try {{
+{fragment}
+    }} catch {{ $reason = $_.Exception.Message }}
+    if ($case -ceq 'success') {{
+        if ($reason -cne 'SYNTHETIC-FIRST-MUTATION-STOP' -or ($script:seen -join ',') -cne 'read-only-preflight,first-directory-mutation') {{ throw 'success ordering incorrect' }}
+    }} else {{
+        if (-not $reason.Contains('pre-stage preflight did not pass') -or ($script:seen -join ',') -cne 'read-only-preflight' -or (Test-Path -LiteralPath '{sentinel.as_posix()}')) {{ throw "preflight failure reached a side effect: $case; reason=$reason; seen=$($script:seen -join ',')" }}
+    }}
+}}
+'PASS nonzero/timeout/empty refuse before writes; success preflight precedes first mutation'
+"""
+            test_script = Path(tmp) / 'preflight-order.ps1'
+            test_script.write_text(command, encoding='utf-8')
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(test_script)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASS nonzero/timeout/empty', result.stdout)
+            self.assertEqual(set(Path(tmp).iterdir()), {sentinel, test_script})
 
     def test_wrapper_guard_block_refuses_winner_without_probe_and_bad_epochs(self):
         pwsh = shutil.which("pwsh")
@@ -544,10 +845,16 @@ $TrustedDigestRoot = ''
             self.skipTest("PowerShell is required to evaluate wrapper argument guards")
         script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
         source = script.read_text(encoding="utf-8")
-        start = source.index("if ($Winner -and $Fallback)")
-        end = source.index("if ($Steps -lt 1)", start)
-        guards = source[start:end]
+        start = source.index("$WinnerBase = ")
+        guard_start = source.index("if ($Winner -and $Fallback)", start)
+        end = source.index("if ($Steps -lt 1)", guard_start)
+        prerequisites, guards = source[start:guard_start], source[guard_start:end]
+        helper = script.with_name("train-adapter-stage.ps1")
+        prerequisites = ". '" + helper.as_posix().replace("'", "''") + "'\n" + prerequisites
+        prerequisites += "$Image = '" + 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' + "'\n"
+        epoch_pin = {"Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
         cases = [
+            ({}, None),
             ({"Winner": "$true", "Probe": "$false"}, "-Winner is only valid together with -Probe"),
             ({"Epochs": "0"}, "-Epochs must be between 1 and 6"),
             ({"Epochs": "7"}, "-Epochs must be between 1 and 6"),
@@ -555,9 +862,13 @@ $TrustedDigestRoot = ''
             ({"Epochs": "4", "Probe": "$true"}, "-Epochs is a training mode"),
             ({"Epochs": "4"}, "requires explicit positive -TimeoutMinutes"),
             ({"Epochs": "4", "TimeoutMinutes": "1"}, "requires explicit -Base"),
-            ({"Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}, None),
+            ({**epoch_pin, "Batch": "'batch-0001'"}, None),
+            (epoch_pin, "-Epochs requires -Batch"),
+            *[({**epoch_pin, "Batch": value}, "-Batch is not a valid batch id")
+              for value in ("''", "'../escape'", "'UPPER'")],
+            ({"Batch": "'batch-0001'"}, "-Batch is only valid with -Epochs"),
             ({"Epochs": "4", "TimeoutMinutes": "1", "Base": "'smoke'", "Revision": "$WinnerRevision"}, "requires explicit -Base"),
-            *[({"Epochs": "4", "TimeoutMinutes": value, "Base": "$WinnerBase", "Revision": "$WinnerRevision"},
+            *[({**epoch_pin, "Batch": "'batch-0001'", "TimeoutMinutes": value},
                "must be finite and positive") for value in ("0", "-1", "[double]::NaN", "[double]::PositiveInfinity")],
             ({"Winner": "$true", "Probe": "$true"}, None),
         ]
@@ -565,16 +876,16 @@ $TrustedDigestRoot = ''
             with self.subTest(overrides=overrides, message=message):
                 bound = "@{ " + "; ".join(
                     f"{name} = {value}" for name, value in overrides.items()
-                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes")
+                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch")
                 ) + " }"
                 setup = "\n".join(
                     f"${name} = {value}" for name, value in overrides.items()
                 )
                 command = (
                     "$ErrorActionPreference = 'Stop'\n"
-                    f"$WinnerBase = '{train_adapter.WINNER_BASE}'; $WinnerRevision = '{train_adapter.WINNER_REVISION}'\n"
                     "$Winner = $false; $Fallback = $false; $Probe = $false; "
-                    "$Epochs = 0; $Steps = 20; $TimeoutMinutes = 90; $PSBoundParameters = @{}\n"
+                    "$Epochs = 0; $Steps = 20; $TimeoutMinutes = 90; $Batch = ''; $PSBoundParameters = @{}\n"
+                    + prerequisites
                     + setup + "\n"
                     + (f"$PSBoundParameters = {bound}\n" if bound != "@{  }" else "")
                     + guards + "\n'GUARDS-PASSED'"
@@ -589,6 +900,54 @@ $TrustedDigestRoot = ''
                 else:
                     self.assertNotEqual(completed.returncode, 0)
                     self.assertIn(message, completed.stderr + completed.stdout)
+
+    def test_root_pin_accepts_only_one_literal_definition_with_optional_comment(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate the root pin reader")
+        helper = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1").read_text(encoding="utf-8")
+        # Extract the actual reader and its ancestry guard without evaluating
+        # the wrapper, loading production pins or starting any GPU operation.
+        guard = helper[helper.index("function Assert-NoReparsePointInAncestry("):
+                       helper.index("function Test-ExactKeySet(")]
+        reader = helper[helper.index("function Read-RootPin {"):
+                        helper.index("function Test-PathShaEntry(")]
+        expected = {"ROOT_FILE": "route-r-trust-root-v2r4.json",
+                    "ROOT_FORMAT": "route-r-trust-root/v2r4",
+                    "APPROVED_TRUST_ROOT_SHA256": "a" * 64}
+        plain = "".join(f"{name} = '{value}'\n" for name, value in expected.items())
+        cases = [(plain, True)]
+        for quote in ("'", '"'):
+            for newline in ("\n", "\r\n"):
+                cases.append((newline.join(
+                    f"\t{name} = {quote}{value}{quote}\t # comment 'quoted' = ignored"
+                    for name, value in expected.items()) + newline, True))
+        for name, value in expected.items():
+            line = f"{name} = '{value}'\n"
+            for replacement in ("", f"{name} = None # not approved\n",
+                                f"{name} = '{value}' + 'suffix'\n",
+                                f"{name} = '{value}\n",
+                                line + line, line + f"{name} = malformed\n"):
+                cases.append((plain.replace(line, replacement), False))
+        cases.extend((plain.replace("'" + "a" * 64 + "'", repr(value)), False)
+                     for value in ("A" * 64, "a" * 63, "g" * 64, "a" * 64 + "\n"))
+        cases.append((plain.replace("route-r-trust-root-v2r4.json", "../root.json"), False))
+        with tempfile.TemporaryDirectory() as tmp:
+            pin = Path(tmp) / "synthetic_pin.py"
+            command = ("$ErrorActionPreference = 'Stop'\n" + guard + reader
+                       + "\nRead-RootPin -PinFile '" + str(pin).replace("'", "''")
+                       + "' | ConvertTo-Json -Compress")
+            for index, (source, valid) in enumerate(cases):
+                with self.subTest(case=index, valid=valid):
+                    pin.write_bytes(source.encode("utf-8"))
+                    result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                            capture_output=True, text=True, timeout=30)
+                    if valid:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(json.loads(result.stdout), expected)
+                    else:
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertIn("root pin", result.stderr + result.stdout)
 
     def test_length_statistics_on_a_known_list(self):
         lengths = [10, 20, 30, 40, 50]
@@ -842,11 +1201,7 @@ $TrustedDigestRoot = ''
                 with self.subTest(mode=mode):
                     self.assertEqual(result.returncode == 0, mode == "matching", result.stderr)
 
-    def test_wrapper_root_mount_is_read_only_and_trainer_has_no_pin_override(self):
-        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
-        self.assertIn('${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro', source)
-        self.assertLess(source.index('${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro'),
-                        source.index("'--entrypoint', 'python', $Image"))
+    def test_trainer_has_no_pin_override(self):
         with contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as raised:
                 train_adapter.main(["--help"])
@@ -1538,19 +1893,13 @@ $TrustedDigestRoot = ''
         text = script.read_text(encoding="utf-8")
         self.assertIn("-Winner is only valid together with -Probe", text)
         self.assertIn("-Rows <jsonl> -Winner -Probe", text)
-        self.assertIn("-Rows <jsonl> -Epochs <N> -Base 'Qwen/Qwen3-14B'", text)
+        self.assertIn("-Rows <jsonl> -Batch <published-batch-id> -Epochs <N> -Base 'Qwen/Qwen3-14B'", text)
         self.assertIn("-TimeoutMinutes <explicit-approved-bound>", text)
         self.assertIn("'-Epochs must be between 1 and 6'", text)
         self.assertIn("'-Epochs and -Steps are mutually exclusive; pass exactly one'", text)
         self.assertIn("ContainsKey('Epochs')", text)
         self.assertIn("ContainsKey('Steps')", text)
-        # The persistent models mount and the read-only trust mounts stay.
-        self.assertIn("@('models\\m2', 'models/m2')", text)
-        self.assertIn(":/workspace/rows:ro", text)
-        self.assertIn(":/code:ro", text)
-        self.assertIn(":/workspace/trusted-digest-root.json:ro", text)
-        self.assertIn(":/workspace/expected-digests.json:ro", text)
-        self.assertIn("ADAPTER_MODELS_DIR=/workspace/models/m2", text)
+        # Mount protections are exercised by the composed argument tests above.
 
     def _minimal_probe_report_kwargs(self) -> dict:
         return {
@@ -1622,6 +1971,11 @@ $TrustedDigestRoot = ''
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             report = self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=3)
+            binding = json.loads((root / "publication-binding.json").read_bytes())
+            self.assertEqual(report["publication"], {
+                "batch": binding["batch"], "profile_sha256": binding["resolution"]["profile_sha256"],
+                "root_sha256": binding["root_sha256"],
+            })
             self.assertEqual(report["completed_epoch_ids"], [1, 2, 3])
             self.assertTrue(report["operational_completion"])
             self.assertFalse(report["qualified"])
@@ -1646,10 +2000,12 @@ $TrustedDigestRoot = ''
                  mock.patch.object(train_adapter, "SFTTrainer") as trainer, \
                  mock.patch.object(train_adapter, "digest_verification_before_load") as digests:
                 path = Path(tmp) / "report.json"
+                rows, dev_rows = slice3_train_rows(count), slice3_dev_rows()
+                fx = _build_publication_fixture(Path(tmp), rows=rows + dev_rows)
                 with self.assertRaisesRegex(ValueError, "interior first-epoch update"):
-                    train_adapter.train(slice3_train_rows(count), slice3_dev_rows(),
+                    train_adapter.train(rows, dev_rows,
                         train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, None,
-                        path, winner=False, epochs=1)
+                        path, winner=False, epochs=1, **fx["train_kwargs"])
                 seed.assert_not_called()
                 self.assertEqual(cuda.mock_calls, [])
                 self.assertEqual(model.mock_calls, [])
@@ -1719,6 +2075,8 @@ $TrustedDigestRoot = ''
         row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None,
     ):
         import predict_dev
+        rows, dev_rows = slice3_train_rows(row_count), slice3_dev_rows()
+        fx = _build_publication_fixture(root, rows=rows + dev_rows)
         # Epoch mode uses the actual explicit winner pin even in offline fixtures.
         base, revision = train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION
         model = mock.Mock(config=types.SimpleNamespace(_commit_hash=revision))
@@ -1727,7 +2085,6 @@ $TrustedDigestRoot = ''
             Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
         model.save_pretrained.side_effect = save
         tokenizer = mock.Mock()
-        rows = slice3_train_rows(row_count)
         encoded = [{"input_ids": [1, 2], "attention_mask": [1, 1], "labels": [-100, 2]}
                    for _ in rows]
         if cuda is None:
@@ -1761,7 +2118,7 @@ $TrustedDigestRoot = ''
                 return result
             return types.SimpleNamespace(train=run, state=getattr(inner, "state", None))
 
-        fixture_template = b"synthetic shared template bytes\n"
+        fixture_template = (fx["code_dir"] / "prompt_template.py").read_bytes()
         with contextlib.ExitStack() as stack:
             if scores is not None:
                 import dev_selection
@@ -1778,15 +2135,15 @@ $TrustedDigestRoot = ''
                 mock.patch.object(train_adapter, "digest_verification_before_load",
                                   return_value={"upstream_digest_list_sha256": "b" * 64}),
                 mock.patch.object(predict_dev, "_default_template_source", return_value=fixture_template),
-                mock.patch.object(train_adapter, "ADMITTED_TEMPLATE_SHA256", hashlib.sha256(fixture_template).hexdigest()),
                 mock.patch.object(predict_dev, "run_predictions", side_effect=slice3_predictions),
                 mock.patch.object(train_adapter, "SFTConfig", lambda **kw: types.SimpleNamespace(**kw)),
                 mock.patch.object(train_adapter, "SFTTrainer", offline_trainer),
             ):
                 stack.enter_context(patch)
-            return train_adapter.train(rows, slice3_dev_rows(), base, revision, None,
+            return train_adapter.train(rows, dev_rows, base, revision, None,
                                        report_path, winner=winner, epochs=epochs,
-                                       use_gradient_checkpointing=use_gradient_checkpointing)
+                                       use_gradient_checkpointing=use_gradient_checkpointing,
+                                       **fx["train_kwargs"])
 
     def test_train_shares_configured_checkpointing_with_peft_and_callback(self):
         for mode in ("unsloth", True, False):
@@ -2503,6 +2860,7 @@ $TrustedDigestRoot = ''
         self.assertEqual(hashlib.sha256(admitted_lf).hexdigest(), train_adapter.ADMITTED_TEMPLATE_SHA256)
         for bad in (b"unadmitted template\n", admitted_lf.replace(b"\n", b"\r\n")):
             with self.subTest(bytes=bad), tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+                fx = _build_publication_fixture(Path(tmp), rows=slice3_train_rows() + slice3_dev_rows())
                 stack.enter_context(mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(Path(tmp) / "models")}))
                 loader = mock.Mock(side_effect=AssertionError("must refuse before model load"))
                 stack.enter_context(mock.patch.object(train_adapter, "digest_verification_before_load", return_value={"upstream_digest_list_sha256": "b" * 64}))
@@ -2512,7 +2870,8 @@ $TrustedDigestRoot = ''
                 seed = stack.enter_context(mock.patch.object(train_adapter, "set_seed"))
                 with self.assertRaisesRegex((ValueError, SystemExit), "template digest mismatch"):
                     train_adapter.train(slice3_train_rows(), slice3_dev_rows(), train_adapter.WINNER_BASE,
-                        train_adapter.WINNER_REVISION, None, Path(tmp) / "report.json", winner=True, epochs=1)
+                        train_adapter.WINNER_REVISION, None, Path(tmp) / "report.json", winner=True, epochs=1,
+                        **fx["train_kwargs"])
                 loader.assert_not_called()
                 seed.assert_not_called()
                 self.assertEqual(cuda.mock_calls, [])
@@ -3060,6 +3419,654 @@ class TestFrozenDevCadence(unittest.TestCase):
             with self.assertRaises((ValueError, SystemExit)):
                 train_adapter._initial_failure_state(root, "new generic reason")
             self.assertEqual(state_path.read_bytes(), corrupt)
+
+
+# WO-R5 slice 4: the publication binding authenticates the staged rows, trainer,
+# predictor, scorer and renderer before any GPU, model or tokenizer resource is
+# touched in epoch mode. These fixtures build a self-consistent synthetic
+# binding directly in Python (three accepted rows, two source groups, so rows
+# and unique groups differ and a group/row count mix-up cannot hide behind
+# the fixture), then tamper with exactly one aspect per test.
+_PUBLICATION_DEFAULT_ROWS = [
+    {"source_group": "group-a", "split": "train", "row_id": "r1"},
+    {"source_group": "group-a", "split": "train", "row_id": "r2"},
+    {"source_group": "group-b", "split": "dev", "row_id": "r3"},
+]
+
+
+def _publication_row_digest(row: dict) -> str:
+    return hashlib.sha256(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _publication_write_file(path: Path, data: bytes) -> dict:
+    path.write_bytes(data)
+    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+
+
+def _publication_admitted_template_bytes() -> bytes:
+    """The admitted renderer is an LF Git blob; the host working copy is CRLF.
+
+    This mirrors ``test_template_mismatch_refuses_before_any_model_load`` above:
+    normalizing the *test fixture's copy* of the working tree's bytes to LF is
+    not the same as normalizing the repository's own working-copy file, which
+    stays untouched on disk.
+    """
+    template_path = Path(train_adapter.__file__).with_name("prompt_template.py")
+    return template_path.read_bytes().replace(b"\r\n", b"\n")
+
+
+def _splice_json_object(text: str, extra_member: str) -> str:
+    """Insert ``extra_member`` (a bare ``"key": value`` fragment) as one more
+    member of the outermost JSON object in ``text``, for tests that need a
+    raw duplicate or extra key a Python dict literal cannot express."""
+    stripped = text.rstrip()
+    assert stripped.endswith("}")
+    idx = stripped.rfind("}")
+    return stripped[:idx] + "," + extra_member + stripped[idx:]
+
+
+def _build_publication_fixture(
+    root: Path,
+    *,
+    batch: str = "batch-0001",
+    rows: list[dict] | None = None,
+    report_overrides: dict | None = None,
+    profile_overrides: dict | None = None,
+    candidate_overrides: dict | None = None,
+    resolution_overrides: dict | None = None,
+    binding_overrides: dict | None = None,
+    files_mutator=None,
+    tamper_file: tuple[str, str, bytes] | None = None,
+    extra_file: tuple[str, str, bytes] | None = None,
+    binding_text: str | None = None,
+) -> dict:
+    """A self-consistent synthetic publication binding plus its three staged
+    directories. Every keyword overrides exactly one layer so a test can
+    introduce exactly one defect without having to re-derive the rest."""
+    rows_dir, code_dir, eval_dir = root / "rows", root / "train", root / "eval"
+    for d in (rows_dir, code_dir, eval_dir):
+        d.mkdir()
+
+    rows = _PUBLICATION_DEFAULT_ROWS if rows is None else rows
+    accepted_bytes = ("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)).encode("utf-8")
+    accepted_info = _publication_write_file(rows_dir / "accepted.jsonl", accepted_bytes)
+    row_digests = [_publication_row_digest(r) for r in rows]
+
+    groups_and_splits: dict[str, str] = {}
+    for r in rows:
+        groups_and_splits[r["source_group"]] = r["split"]
+    unique_by_split: dict[str, set] = {"train": set(), "dev": set()}
+    for group, split in groups_and_splits.items():
+        unique_by_split[split].add(group)
+    splits = {"train": len(unique_by_split["train"]), "dev": len(unique_by_split["dev"])}
+
+    report = {
+        "format": "route-r-validation-report/v1",
+        "batch": batch,
+        "rows_in": len(rows),
+        "rows_admitted": len(rows),
+        "schema_valid": len(rows),
+        "splits": splits,
+        "accepted_jsonl_sha256": accepted_info["sha256"],
+    }
+    report.update(report_overrides or {})
+    report_info = _publication_write_file(rows_dir / "report.json", json.dumps(report, sort_keys=True).encode("utf-8"))
+
+    trainer_info = _publication_write_file(code_dir / "train_adapter.py", b"synthetic trainer bytes\n")
+    template_info = _publication_write_file(code_dir / "prompt_template.py", _publication_admitted_template_bytes())
+    predictor_info = _publication_write_file(eval_dir / "predict_dev.py", b"synthetic predictor bytes\n")
+    scorer_info = _publication_write_file(eval_dir / "dev_selection.py", b"synthetic scorer bytes\n")
+
+    profile = {
+        "format": "route-r-publication-profile/v1",
+        "batch": batch,
+        "built_by": "codex",
+        "accepted_jsonl_sha256": accepted_info["sha256"],
+        "candidate_row_sha256": row_digests,
+        "bundle_manifest_sha256": "1" * 64,
+        "recount_sha256": "2" * 64,
+        "validation_report_sha256": report_info["sha256"],
+        "row_schema_sha256": "3" * 64,
+        "trust_root_sha256": "4" * 64,
+        "verified_pins_sha256": "5" * 64,
+        "source_groups_and_splits": groups_and_splits,
+        "input_lineage_sha256": {group: "6" * 64 for group in groups_and_splits},
+        "split_table_sha256": "7" * 64,
+        "constructor_inputs_sha256": "8" * 64,
+        "constructor_manifest_sha256": "9" * 64,
+        "constructor_receipt_sha256": "a" * 64,
+        "constructor_admission_sha256": "b" * 64,
+        "constructor_recount_sha256": "c" * 64,
+    }
+    profile.update(profile_overrides or {})
+    profile_info = _publication_write_file(rows_dir / "profile.json", json.dumps(profile, sort_keys=True).encode("utf-8"))
+
+    candidate = {
+        "commit": "d" * 40,
+        "trainer_sha256": trainer_info["sha256"],
+        "predictor_sha256": predictor_info["sha256"],
+        "scorer_sha256": scorer_info["sha256"],
+        "template_sha256": template_info["sha256"],
+    }
+    candidate.update(candidate_overrides or {})
+
+    # Independent synthetic admin files: mutation of stage/binding never rewrites
+    # these anchors. Tests patch fixed production locations, not a CLI override.
+    global _TEST_AUTHORITY_PATHS
+    authority_dir = root / 'authority'
+    authority_dir.mkdir()
+    authority_root = {
+        'format': 'route-r-trust-root/v2r4', 'row_schema': {'sha256': '3' * 64},
+        'custody': {'admins': ['codex']},
+        'adapter_consumption': {
+            'candidate': dict(candidate),
+            **{key: {'path': 'synthetic-' + key, 'sha256': 'f' * 64}
+               for key in ('bridge', 'interpreter', 'resolver_entry')},
+        },
+    }
+    root_data = json.dumps(authority_root, sort_keys=True).encode()
+    root_sha = hashlib.sha256(root_data).hexdigest()
+    root_path = authority_dir / 'root.json'
+    root_path.write_bytes(root_data)
+    pin_path = authority_dir / 'root-pin.py'
+    pin_path.write_text(f"ROOT_FILE = 'route-r-trust-root-v2r4.json'\nROOT_FORMAT = 'route-r-trust-root/v2r4'\nAPPROVED_TRUST_ROOT_SHA256 = '{root_sha}'\n")
+    if not profile_overrides or 'trust_root_sha256' not in profile_overrides:
+        profile['trust_root_sha256'] = root_sha
+    profile_info = _publication_write_file(rows_dir / 'profile.json', json.dumps(profile, sort_keys=True).encode())
+    publication_path = authority_dir / 'publication.json'
+    publication_path.write_text(json.dumps({
+        'format': 'route-r-publication/v1', 'batch': batch, 'published_by': 'codex',
+        'publication_profile_sha256': profile_info['sha256'], 'accepted_jsonl_sha256': accepted_info['sha256'],
+        'bundle_manifest_sha256': profile['bundle_manifest_sha256'], 'recount_sha256': profile['recount_sha256'],
+    }, sort_keys=True))
+    _TEST_AUTHORITY_PATHS = (pin_path, root_path, publication_path)
+
+    resolution = {
+        "format": "route-r-resolution/v1",
+        "batch": batch,
+        "verified": True,
+        "accepted_jsonl_sha256": accepted_info["sha256"],
+        "profile_sha256": profile_info["sha256"],
+        "publication_sha256": hashlib.sha256(publication_path.read_bytes()).hexdigest(),
+        "trust_root_sha256": profile["trust_root_sha256"],
+        "validation_report_sha256": report_info["sha256"],
+        "bridge_sha256": "f" * 64,
+    }
+    resolution.update(resolution_overrides or {})
+
+    files = [
+        {"dir": "rows", "name": "accepted.jsonl", **accepted_info},
+        {"dir": "rows", "name": "report.json", **report_info},
+        {"dir": "rows", "name": "profile.json", **profile_info},
+        {"dir": "train", "name": "train_adapter.py", **trainer_info},
+        {"dir": "train", "name": "prompt_template.py", **template_info},
+        {"dir": "eval", "name": "predict_dev.py", **predictor_info},
+        {"dir": "eval", "name": "dev_selection.py", **scorer_info},
+    ]
+    if files_mutator is not None:
+        files = files_mutator(files)
+
+    binding = {
+        "format": "adapter-publication-binding/v1",
+        "batch": batch,
+        "candidate": candidate,
+        "resolution": resolution,
+        "root_sha256": profile["trust_root_sha256"],
+        "files": files,
+    }
+    binding.update(binding_overrides or {})
+
+    directories = {"rows": rows_dir, "train": code_dir, "eval": eval_dir}
+    if tamper_file is not None:
+        directory, name, data = tamper_file
+        directories[directory].joinpath(name).write_bytes(data)
+    if extra_file is not None:
+        directory, name, data = extra_file
+        directories[directory].joinpath(name).write_bytes(data)
+
+    binding_path = root / "publication-binding.json"
+    text = binding_text if binding_text is not None else json.dumps(binding, sort_keys=True)
+    binding_path.write_text(text, encoding="utf-8")
+
+    return {
+        "binding_path": binding_path, "rows_dir": rows_dir, "code_dir": code_dir, "eval_dir": eval_dir,
+        "binding": binding, "profile": profile, "report": report, "rows": rows, "row_digests": row_digests,
+        "authority_paths": _TEST_AUTHORITY_PATHS,
+        "train_kwargs": {"publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
+                         "publication_code_dir": code_dir, "publication_eval_dir": eval_dir},
+    }
+
+
+class PublicationBindingTests(AuthorityFixtureCase):
+    """verify_publication_binding and the --publication-binding CLI gate."""
+
+    def _verify(self, fx):
+        return train_adapter.verify_publication_binding(
+            fx["binding_path"], fx["rows_dir"], fx["code_dir"], fx["eval_dir"])
+
+    def _load_epoch(self, fx):
+        return train_adapter.load_epoch_rows(
+            fx["binding_path"], fx["rows_dir"], fx["code_dir"], fx["eval_dir"])
+
+    def test_admitted_producer_rows_reach_epoch_check_only_without_legacy_schema(self):
+        # Regression for the retained authenticated-chain RED: two training
+        # rows share one group; the producer's splits are group counts.
+        rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fx = _build_publication_fixture(root, rows=rows)
+            publication, training, dev = self._load_epoch(fx)
+            self.assertEqual(publication, self._verify(fx))
+            self.assertEqual(training, rows[:2])
+            self.assertEqual(dev, rows[2:])
+            self.assertEqual(fx["report"]["splits"], {"train": 1, "dev": 1})
+            self.assertNotIn("rows_per_split", fx["report"])
+            output = io.StringIO()
+            with mock.patch.object(train_adapter, "__file__", str(fx["code_dir"] / "train_adapter.py")), \
+                 mock.patch.object(train_adapter, "load_training_rows", side_effect=AssertionError("legacy loader")), \
+                 mock.patch.object(train_adapter, "load_dev_rows", side_effect=AssertionError("legacy loader")), \
+                 mock.patch.object(train_adapter, "train") as training_run, \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                 mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda, \
+                 contextlib.redirect_stdout(output):
+                train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"),
+                    "--report", str(root / "out.json"), "--epochs", "1", "--check-only",
+                    "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                    "--publication-binding", str(fx["binding_path"])])
+            self.assertEqual(json.loads(output.getvalue()), {"train_rows": 2, "check_only": True})
+            training_run.assert_not_called()
+            self.assertEqual(model.mock_calls, [])
+            self.assertEqual(cuda.mock_calls, [])
+            self.assertFalse((root / "out.json").exists())
+
+    def test_epoch_consumption_reads_twice_before_parsing_and_never_rereads(self):
+        rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), rows=rows)
+            accepted = fx["rows_dir"] / "accepted.jsonl"
+            raw_read, raw_parse = Path.read_bytes, train_adapter._load_strict_json
+            reads, parsed = [], []
+            def read(path):
+                data = raw_read(path)
+                if path == accepted:
+                    reads.append(data)
+                    self.assertLessEqual(len(reads), 2, "third accepted-row read")
+                    if len(reads) == 2:
+                        # A later disk mutation must not replace consumed bytes.
+                        path.write_bytes(b"not the admitted rows")
+                return data
+            def parse(text):
+                if text in [json.dumps(r, sort_keys=True) for r in rows]:
+                    self.assertEqual(len(reads), 2)
+                    parsed.append(text)
+                return raw_parse(text)
+            with mock.patch.object(Path, "read_bytes", read), \
+                 mock.patch.object(train_adapter, "_load_strict_json", side_effect=parse):
+                _, training, dev = self._load_epoch(fx)
+            self.assertEqual(training + dev, rows)
+            self.assertEqual(len(parsed), len(rows))
+            self.assertEqual(len(reads), 2)
+            self.assertTrue(all(hashlib.sha256(data).hexdigest() == fx["binding"]["resolution"]["accepted_jsonl_sha256"]
+                                for data in reads))
+
+    def test_epoch_digest_mutation_refuses_before_any_row_parse(self):
+        rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+        for mutation_read in (1, 2):
+            for changed in (b"x", None):
+                with self.subTest(read=mutation_read, changed_length=changed is not None), \
+                     tempfile.TemporaryDirectory() as tmp:
+                    fx = _build_publication_fixture(Path(tmp), rows=rows)
+                    accepted = fx["rows_dir"] / "accepted.jsonl"
+                    original = accepted.read_bytes()
+                    bad = changed if changed is not None else original.replace(b"train-synthetic-00", b"train-synthetic-99")
+                    self.assertNotEqual(bad, original)
+                    raw_read, raw_parse = Path.read_bytes, train_adapter._load_strict_json
+                    count = 0
+                    row_parses = []
+                    def read(path):
+                        nonlocal count
+                        if path == accepted:
+                            count += 1
+                            if count == mutation_read:
+                                path.write_bytes(bad)
+                        return raw_read(path)
+                    def parse(text):
+                        if text in [json.dumps(r, sort_keys=True) for r in rows]:
+                            row_parses.append(text)
+                        return raw_parse(text)
+                    with mock.patch.object(Path, "read_bytes", read), \
+                         mock.patch.object(train_adapter, "_load_strict_json", side_effect=parse):
+                        with self.assertRaises(SystemExit):
+                            self._load_epoch(fx)
+                    self.assertEqual(row_parses, [])
+                    self.assertEqual(count, mutation_read)
+
+    def test_epoch_report_requires_exact_producer_format(self):
+        for value in ("route-r-validation-report/v2", "other/v1", "", None, 1):
+            with self.subTest(format=value), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), rows=slice3_train_rows(2) + slice3_dev_rows()[:1], report_overrides={"format": value})
+                with self.assertRaisesRegex(SystemExit, "format must be route-r-validation-report/v1"):
+                    self._load_epoch(fx)
+        with tempfile.TemporaryDirectory() as tmp:
+            self._load_epoch(_build_publication_fixture(Path(tmp), rows=slice3_train_rows(2) + slice3_dev_rows()[:1]))
+
+    def test_epoch_consumer_refuses_admitted_row_and_group_count_disagreement(self):
+        rows = slice3_train_rows(2) + slice3_dev_rows()[:1]
+        for override in ({"rows_admitted": 2}, {"schema_valid": 2},
+                         {"splits": {"train": 2, "dev": 1}}, {"splits": {"train": 1, "dev": 0}},
+                         {"rows_admitted": True}, {"schema_valid": 3.0}):
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), rows=rows, report_overrides=override)
+                with self.assertRaises(SystemExit):
+                    self._load_epoch(fx)
+
+    def test_direct_epoch_train_refuses_caller_row_substitution_before_gpu(self):
+        for split in ("train", "dev"):
+            with self.subTest(split=split), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                rows, dev = slice3_train_rows(), slice3_dev_rows()
+                fx = _build_publication_fixture(root, rows=rows + dev)
+                supplied_rows, supplied_dev = json.loads(json.dumps(rows)), json.loads(json.dumps(dev))
+                changed = supplied_rows if split == "train" else supplied_dev
+                changed[0]["input"]["title"] = "not the authenticated input"
+                with mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}), \
+                     mock.patch.object(train_adapter, "set_seed") as seed, \
+                     mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                     mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda, \
+                     mock.patch.object(train_adapter, "digest_verification_before_load") as digests:
+                    with self.assertRaisesRegex(ValueError, "caller rows differ"):
+                        train_adapter.train(supplied_rows, supplied_dev, train_adapter.WINNER_BASE,
+                            train_adapter.WINNER_REVISION, None, root / "out.json", winner=False,
+                            epochs=1, **fx["train_kwargs"])
+                seed.assert_not_called()
+                digests.assert_not_called()
+                self.assertEqual(model.mock_calls, [])
+                self.assertEqual(cuda.mock_calls, [])
+
+    def test_real_epoch_main_authenticates_once_before_model_or_cuda(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fx = _build_publication_fixture(root, rows=slice3_train_rows() + slice3_dev_rows())
+            accepted = fx["rows_dir"] / "accepted.jsonl"
+            raw_read = Path.read_bytes
+            reads = []
+            stop = RuntimeError("authenticated epoch reached model-digest gate")
+            def read(path):
+                data = raw_read(path)
+                if path == accepted:
+                    reads.append(data)
+                return data
+            with mock.patch.object(train_adapter, "__file__", str(fx["code_dir"] / "train_adapter.py")), \
+                 mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}), \
+                 mock.patch.object(Path, "read_bytes", read), \
+                 mock.patch.object(train_adapter, "load_training_rows", side_effect=AssertionError("legacy loader")), \
+                 mock.patch.object(train_adapter, "load_dev_rows", side_effect=AssertionError("legacy loader")), \
+                 mock.patch.object(train_adapter, "digest_verification_before_load", side_effect=stop), \
+                 mock.patch.object(train_adapter, "set_seed") as seed, \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                 mock.patch.object(train_adapter.torch, "cuda", mock.Mock(), create=True) as cuda:
+                with self.assertRaises(RuntimeError) as caught:
+                    train_adapter.main(["--rows", str(accepted), "--report", str(root / "out.json"),
+                        "--epochs", "1", "--base", train_adapter.WINNER_BASE,
+                        "--revision", train_adapter.WINNER_REVISION,
+                        "--publication-binding", str(fx["binding_path"])])
+            self.assertIs(caught.exception, stop)
+            self.assertEqual(len(reads), 2)
+            seed.assert_not_called()
+            self.assertEqual(model.mock_calls, [])
+            self.assertEqual(cuda.mock_calls, [])
+
+    def test_valid_binding_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp))
+            result = self._verify(fx)
+            self.assertEqual(result, {
+                "batch": fx["binding"]["batch"],
+                "profile_sha256": fx["binding"]["resolution"]["profile_sha256"],
+                "root_sha256": fx["binding"]["root_sha256"],
+            })
+
+    def test_main_requires_publication_binding_in_epoch_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit):
+                train_adapter.main([
+                    "--rows", str(Path(tmp, "missing-accepted.jsonl")),
+                    "--report", str(Path(tmp, "out.json")),
+                    "--base", train_adapter.WINNER_BASE, "--revision", train_adapter.WINNER_REVISION,
+                    "--epochs", "1",
+                ])
+
+    def test_main_refuses_publication_binding_outside_epoch_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit):
+                train_adapter.main([
+                    "--rows", str(Path(tmp, "missing-accepted.jsonl")),
+                    "--report", str(Path(tmp, "out.json")),
+                    "--steps", "20",
+                    "--publication-binding", str(Path(tmp, "missing-binding.json")),
+                ])
+
+    def test_binding_duplicate_key_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp))
+            text = fx["binding_path"].read_text(encoding="utf-8")
+            fx["binding_path"].write_text(
+                _splice_json_object(text, f'"batch": {json.dumps(fx["binding"]["batch"])}'), encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_binding_extra_key_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp))
+            text = fx["binding_path"].read_text(encoding="utf-8")
+            fx["binding_path"].write_text(_splice_json_object(text, '"extra": 1'), encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_binding_wrong_type_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), binding_overrides={"batch": 123})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_payload_file_byte_tamper_refused(self):
+        for directory, name in (
+            ("rows", "accepted.jsonl"), ("rows", "report.json"), ("rows", "profile.json"),
+            ("train", "train_adapter.py"), ("train", "prompt_template.py"),
+            ("eval", "predict_dev.py"), ("eval", "dev_selection.py"),
+        ):
+            with self.subTest(directory=directory, name=name), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), tamper_file=(directory, name, b"tampered bytes\n"))
+                with self.assertRaises(SystemExit):
+                    self._verify(fx)
+
+    def test_payload_file_wrong_byte_count_refused(self):
+        def mutate(files):
+            for entry in files:
+                if entry["dir"] == "rows" and entry["name"] == "accepted.jsonl":
+                    entry["bytes"] += 1
+            return files
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), files_mutator=mutate)
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_extra_file_in_directory_refused(self):
+        for directory in ("rows", "train", "eval"):
+            with self.subTest(directory=directory), tempfile.TemporaryDirectory() as tmp:
+                fx = _build_publication_fixture(Path(tmp), extra_file=(directory, "__pycache__", b""))
+                with self.assertRaises(SystemExit):
+                    self._verify(fx)
+
+    def test_extra_file_outside_staged_directories_is_not_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp))
+            (Path(tmp) / "unrelated.txt").write_bytes(b"not part of any staged directory\n")
+            self._verify(fx)  # must not raise
+
+    def test_renderer_hash_mismatch_refused(self):
+        def mutate(files):
+            for entry in files:
+                if entry["dir"] == "train" and entry["name"] == "prompt_template.py":
+                    entry["sha256"] = hashlib.sha256(b"not the admitted renderer\n").hexdigest()
+                    entry["bytes"] = len(b"not the admitted renderer\n")
+            return files
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(
+                Path(tmp), files_mutator=mutate,
+                tamper_file=("train", "prompt_template.py", b"not the admitted renderer\n"),
+                candidate_overrides={"template_sha256": hashlib.sha256(b"not the admitted renderer\n").hexdigest()})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_profile_accepted_split_mismatch_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), profile_overrides={
+                "source_groups_and_splits": {"group-a": "dev", "group-b": "dev"},
+                "input_lineage_sha256": {"group-a": "6" * 64, "group-b": "6" * 64},
+            })
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_missing_group_in_accepted_rows_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), profile_overrides={
+                "source_groups_and_splits": {"group-a": "train", "group-b": "dev", "group-c": "train"},
+                "input_lineage_sha256": {"group-a": "6" * 64, "group-b": "6" * 64, "group-c": "6" * 64},
+            })
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_unique_group_count_mismatch_versus_report_splits_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), report_overrides={"splits": {"train": 2, "dev": 1}})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_rows_admitted_mismatch_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), report_overrides={"rows_admitted": 4})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_schema_valid_mismatch_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), report_overrides={"schema_valid": 4})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_input_lineage_not_object_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), profile_overrides={"input_lineage_sha256": ["not", "an", "object"]})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_input_lineage_key_set_mismatch_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), profile_overrides={"input_lineage_sha256": {"wrong-group": "6" * 64}})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_candidate_row_sha256_not_list_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), profile_overrides={"candidate_row_sha256": "not-a-list"})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_candidate_row_sha256_duplicate_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = _publication_row_digest(_PUBLICATION_DEFAULT_ROWS[0])
+            fx = _build_publication_fixture(Path(tmp), profile_overrides={"candidate_row_sha256": [digest, digest, digest]})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_files_entry_duplicate_refused(self):
+        def mutate(files):
+            return files + [dict(files[0])]
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), files_mutator=mutate)
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_files_entry_missing_refused(self):
+        def mutate(files):
+            return [entry for entry in files if entry["name"] != "prompt_template.py"]
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), files_mutator=mutate)
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_files_entry_extra_refused(self):
+        def mutate(files):
+            return files + [{"dir": "rows", "name": "extra.json", "sha256": "0" * 64, "bytes": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), files_mutator=mutate)
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_files_entry_for_binding_itself_refused(self):
+        def mutate(files):
+            return files + [{"dir": "rows", "name": "publication-binding.json", "sha256": "0" * 64, "bytes": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), files_mutator=mutate)
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_files_entry_unsafe_name_refused(self):
+        def mutate(files):
+            return files + [{"dir": "train", "name": "../evil.py", "sha256": "0" * 64, "bytes": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), files_mutator=mutate)
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_candidate_hash_disagrees_with_files_entry_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), candidate_overrides={"trainer_sha256": "0" * 64})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_resolution_hash_disagrees_with_files_entry_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = _build_publication_fixture(Path(tmp), resolution_overrides={"accepted_jsonl_sha256": "0" * 64})
+            with self.assertRaises(SystemExit):
+                self._verify(fx)
+
+    def test_verification_runs_before_model_load(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            root = Path(tmp)
+            rows_dir, code_dir, eval_dir = root / "rows", root / "train", root / "eval"
+            for d in (rows_dir, code_dir, eval_dir):
+                d.mkdir()
+            stack.enter_context(mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}))
+            fake_flm = mock.MagicMock()
+            fake_flm.from_pretrained = mock.MagicMock()
+            stack.enter_context(mock.patch.object(train_adapter, "FastLanguageModel", fake_flm))
+            with self.assertRaises(SystemExit):
+                train_adapter.train(
+                    [], [], train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, None,
+                    root / "report.json", winner=False, epochs=1,
+                    publication_binding_path=root / "missing-publication-binding.json",
+                    publication_rows_dir=rows_dir, publication_code_dir=code_dir, publication_eval_dir=eval_dir,
+                )
+            fake_flm.from_pretrained.assert_not_called()
+
+    @unittest.skipUnless(
+        os.environ.get("ADAPTER_TEST_STAGE_DIR"),
+        "set ADAPTER_TEST_STAGE_DIR to a tree built by scripts/test-train-adapter.ps1 to run this probe",
+    )
+    def test_wrapper_staged_tree_verifies(self):
+        import epoch_authority
+        stage = Path(os.environ["ADAPTER_TEST_STAGE_DIR"])
+        # Test-only host fixture transport; production has no anchor override.
+        paths = json.loads(os.environ["ADAPTER_TEST_AUTHORITY_PATHS"])
+        self.assertEqual(len(paths), 3)
+        self.assertTrue(all(isinstance(path, str) and Path(path).is_absolute() for path in paths))
+        with mock.patch.object(epoch_authority, 'production_paths', return_value=tuple(map(Path, paths))):
+            result = train_adapter.verify_publication_binding(
+                stage / "Meta" / "publication-binding.json", stage / "Input", stage / "Train", stage / "Eval")
+        self.assertEqual(set(result), {"batch", "profile_sha256", "root_sha256"})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

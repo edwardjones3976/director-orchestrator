@@ -53,7 +53,14 @@ def _load_prompt_template() -> Tuple[Any, bytes]:
     # A preloaded module's metadata is only a rejection check. Execute the
     # allowed source bytes afresh; neither its callable nor cached bytecode is evidence.
     try:
-        source = TRAIN_PROMPT_TEMPLATE.read_bytes()
+        # Only the trusted epoch launcher supplies this already authenticated
+        # buffer. Legacy/direct predictor entry retains the existing reader.
+        source = globals().get('_EPOCH_TEMPLATE_BYTES')
+        if source is None:
+            source = TRAIN_PROMPT_TEMPLATE.read_bytes()
+        elif (not isinstance(source, bytes) or hashlib.sha256(source).hexdigest() !=
+              '6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea'):
+            raise UnsupportedRuntime('Epoch template buffer is not the admitted renderer')
     except OSError as exc:
         raise UnsupportedRuntime("Missing or unreadable prompt_template source") from exc
     import importlib.util
