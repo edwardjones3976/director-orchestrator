@@ -210,7 +210,7 @@ Write-Output 'console-test-ok'
 # P7 trust: the smoke-only root reader, the pin equality, the mount vector and the trust-outside-writable rule, loaded
 # from train-smoke.ps1's syntax tree and run against a synthetic pin/root/digest list (never the production files).
 . (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')
-foreach ($name in 'Read-SmokeTrust', 'Assert-SmokePins', 'Assert-TrustOutsideWritable', 'New-SmokeMounts', 'New-SmokeDockerArgs') {
+foreach ($name in 'Read-SmokeTrust', 'Assert-SmokePins', 'Assert-TrustOutsideWritable', 'New-SmokeMounts', 'New-SmokeDockerArgs', 'Assert-NoLinkInMountSources') {
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
     if (-not $fn) { $fail += "train-smoke.ps1: function $name missing" } else { . ([scriptblock]::Create($fn.Extent.Text)) }
 }
@@ -294,6 +294,50 @@ try {
     }
     if ($d[-2] -cne $img -or $d[-1] -cne '/code/smoke_train.py' -or $d[-4] -cne '--entrypoint') { $fail += 'docker argv: the pinned image and entrypoint must close the vector' }
 } finally { [IO.Directory]::Delete($trustDir, $true) }
+
+# Link guard scope (#299 6011426186): the production guard over the production mount vector of a synthetic C: root (real
+# junctions; no admin rights needed). An unrelated parent-tree junction (a retained review fixture under reports\, another
+# run's entry under runs\smoke\, or anything under runs\m2) is allowed; a native link inside each actual mounted source,
+# and an ancestor redirect of a mounted source, are refused.
+$gRoot = Join-Path ([IO.Path]::GetTempPath()) ("train-smoke-guard-" + [guid]::NewGuid().ToString('N'))
+$gLinks = @()
+try {
+    $gRun = 'smoke-20261006-070000-abcdef'
+    $outside = Join-Path $gRoot 'outside'
+    foreach ($dd in 'outside\smoke', 'hf\hub', 'models\smoke', 'reports\smoke', "runs\smoke\$gRun", 'reports\old-review\fixture', 'runs\m2') {
+        New-Item -ItemType Directory -Force (Join-Path $gRoot $dd) | Out-Null
+    }
+    function Get-GuardRefusal([string]$Root) {
+        $gm = New-SmokeMounts -HotRoot $Root -RunId $gRun -ListPath (Join-Path $gRoot 'outside\list.json')
+        try { Assert-NoLinkInMountSources -Dirs (@($gm.ReadOnlyDirs) + @($gm.Writable)); '' } catch { $_.Exception.Message }
+    }
+    $gm = New-SmokeMounts -HotRoot $gRoot -RunId $gRun -ListPath (Join-Path $gRoot 'outside\list.json')
+    $want = @('hf', "runs\smoke\$gRun", 'models\smoke', 'reports\smoke' | ForEach-Object { Join-Path $gRoot $_ })
+    if (((@($gm.ReadOnlyDirs) + @($gm.Writable)) -join '|') -ne ($want -join '|')) { $fail += "link guard: walked sources are not exactly the mount vector's directories: $((@($gm.ReadOnlyDirs) + @($gm.Writable)) -join '|')" }
+    if ($gm.Mounts[1] -cne "$($gm.ReadOnlyDirs[0]):/workspace/hf:ro") { $fail += 'link guard: the read-only HF source is not the mounted HF directory' }
+    $r = Get-GuardRefusal $gRoot
+    if ($r) { $fail += "link guard: a clean root was refused: $r" }
+    $gLinks += New-Item -ItemType Junction (Join-Path $gRoot 'reports\old-review\fixture\parent-junction') -Target $outside
+    $gLinks += New-Item -ItemType Junction (Join-Path $gRoot 'runs\smoke\other-run-junction') -Target $outside
+    $gLinks += New-Item -ItemType Junction (Join-Path $gRoot 'runs\m2\alias') -Target $outside
+    $r = Get-GuardRefusal $gRoot
+    if ($r) { $fail += "link guard: an unrelated parent-tree junction was refused: $r" }
+    foreach ($src in 'hf\hub', 'models\smoke', 'reports\smoke', "runs\smoke\$gRun") {
+        $l = New-Item -ItemType Junction (Join-Path $gRoot "$src\inner-link") -Target $outside
+        $r = Get-GuardRefusal $gRoot
+        $l.Delete()
+        if ($r -notmatch 'is a Junction inside a mounted folder') { $fail += "link guard: a junction inside the mounted $src was not refused ($r)" }
+    }
+    # Ancestor redirect: 'models' itself is a junction, so the mounted models\smoke resolves somewhere else.
+    $aRoot = Join-Path $gRoot 'aroot'
+    New-Item -ItemType Directory (Join-Path $aRoot 'hf'), (Join-Path $aRoot 'reports\smoke') | Out-Null
+    $gLinks += New-Item -ItemType Junction (Join-Path $aRoot 'models') -Target $outside
+    $r = Get-GuardRefusal $aRoot
+    if ($r -notmatch 'models is a junction or symbolic link; HotRoot and its mounted folders must be real folders') { $fail += "link guard: an ancestor redirect of models\smoke was not refused ($r)" }
+} finally {
+    foreach ($l in $gLinks) { if ($l) { $l.Delete() } }   # remove the links themselves before the recursive delete
+    [IO.Directory]::Delete($gRoot, $true)
+}
 
 # Pre-preflight refusals (run the real script; all stop before preflight or Docker).
 $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("train-smoke-root-" + [guid]::NewGuid().ToString('N'))
@@ -421,6 +465,7 @@ Write-Output 'ok  smoke container argv: --network none, exactly the run mounts p
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'
+Write-Output 'ok  link guard walks only the mount sources: unrelated parent-tree junctions allowed; inside each mounted source and ancestor redirect refused'
 Write-Output 'ok  base or revision override without a merge pin, and a non-commit revision, refused'
 Write-Output 'ok  both scripts release the GPU mutex in a finally block'
 Write-Output 'ok  bounded command tree verified gone through its job object or it throws; poison marker unless the container is confirmed gone'

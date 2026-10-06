@@ -97,9 +97,31 @@ function New-SmokeMounts {
         (Join-Path $HotRoot 'models\smoke')       = '/workspace/models/smoke'
         (Join-Path $HotRoot 'reports\smoke')      = '/workspace/reports'
     }
-    $mounts = @('-v', "$(Join-Path $HotRoot 'hf'):/workspace/hf:ro", '-v', "${ListPath}:/workspace/smoke-digests.json:ro")
+    $readOnlyDirs = @(Join-Path $HotRoot 'hf')
+    $mounts = @('-v', "$($readOnlyDirs[0]):/workspace/hf:ro", '-v', "${ListPath}:/workspace/smoke-digests.json:ro")
     foreach ($k in $writable.Keys) { $mounts += @('-v', "${k}:$($writable[$k])") }
-    return @{ Mounts = $mounts; Writable = @($writable.Keys) }
+    return @{ Mounts = $mounts; Writable = @($writable.Keys); ReadOnlyDirs = $readOnlyDirs }
+}
+
+# The path string says C:, but a Windows link on the path to a directory the container mounts, or anywhere inside one,
+# could land on a drive preflight never gates; refuse rather than resolve. Only the actual directory bind sources are
+# walked (every ancestor, then their contents), never unrelated siblings such as other runs or retained reports. The
+# Linux symlinks the HF cache creates through the bind mount are reparse points too, but have no LinkType and resolve
+# inside the container.
+function Assert-NoLinkInMountSources {
+    param([Parameter(Mandatory)][string[]]$Dirs)
+    foreach ($d in $Dirs) {
+        for ($p = [IO.Path]::GetFullPath($d); $p; $p = Split-Path $p -Parent) {
+            if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                Write-Error "$p is a junction or symbolic link; HotRoot and its mounted folders must be real folders on C:"
+            }
+        }
+        if (Test-Path -LiteralPath $d) {
+            $link = Get-ChildItem -LiteralPath $d -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop |
+                Where-Object { $_.LinkType -in 'Junction', 'SymbolicLink' } | Select-Object -First 1
+            if ($link) { Write-Error "$($link.FullName) is a $($link.LinkType) inside a mounted folder; it could redirect writes off C:" }
+        }
+    }
 }
 
 # The container command: no network at all (every input is local and the GGUF export uses the image's own prebuilt
@@ -127,23 +149,6 @@ foreach ($r in $Revision, $MergeRevision) { if ($r -notmatch '^[0-9a-f]{40}$') {
 # preflight's free-space floor and hot-tier cap gate drive C only, so the hot root must live there.
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
-# The path string says C:, but a junction or symlink on it, on a mounted folder or anywhere inside one could
-# land on another drive that preflight never gates; refuse rather than trying to resolve them.
-foreach ($sub in '', 'hf', 'runs', 'runs\smoke', 'models', 'models\smoke', 'reports', 'reports\smoke') {
-    for ($p = Join-Path $HotRoot $sub; $p; $p = Split-Path $p -Parent) {
-        if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            Write-Error "$p is a junction or symbolic link; HotRoot and its mounted folders must be real folders on C:"
-        }
-    }
-    # Inside a mount only native Windows links redirect host writes. The Linux symlinks the HF cache creates
-    # through the bind mount are also reparse points, but have no LinkType and resolve inside the container.
-    $dir = Join-Path $HotRoot $sub
-    if ($sub -and (Test-Path -LiteralPath $dir)) {
-        $link = Get-ChildItem -LiteralPath $dir -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop |
-            Where-Object { $_.LinkType -in 'Junction', 'SymbolicLink' } | Select-Object -First 1
-        if ($link) { Write-Error "$($link.FullName) is a $($link.LinkType) inside a mounted folder; it could redirect writes off C:" }
-    }
-}
 # The container's HF_HOME is the mounted <HotRoot>\hf, which is also Hugging Face's default token location:
 # refuse to hand a stored credential to the network-enabled third-party image.
 foreach ($t in 'token', 'stored_tokens') {
@@ -157,6 +162,8 @@ Assert-SmokePins -Trust $trust -Base $Base -Revision $Revision -MergeSource $Mer
 $run = 'smoke-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
 $smoke = New-SmokeMounts -HotRoot $HotRoot -RunId $run -ListPath $trust.ListPath
 Assert-TrustOutsideWritable -WritableDirs $smoke.Writable -TrustPaths @($trust.PinFile, $trust.RootFile, $trust.ListPath)
+# Still before the GPU mutex, any container and any runtime write: the mount vector exists only in memory here.
+Assert-NoLinkInMountSources -Dirs (@($smoke.ReadOnlyDirs) + @($smoke.Writable))
 if (Test-Path -LiteralPath (Join-Path $HotRoot "runs\smoke\$run")) { Write-Error "run directory for $run already exists" }
 
 # One GPU job at a time, shared with serve-smoke.ps1, held from before the LM Studio unload until this process
