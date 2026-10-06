@@ -4,10 +4,11 @@
 #       20-step dry run on the smoke base (the M0 pins).
 #   .\train-adapter.ps1 -Rows <jsonl> -Winner -Probe
 #       D-M2-6 probe on Qwen/Qwen3-14B at 40c069824f4251a91eefaf281ebe4c544efd3e18.
-#   .\train-adapter.ps1 -Rows <jsonl> -Epochs <N> -Base 'Qwen/Qwen3-14B' `
+#   .\train-adapter.ps1 -Rows <jsonl> -Batch <published-batch-id> -Epochs <N> -Base 'Qwen/Qwen3-14B' `
 #       -Revision '40c069824f4251a91eefaf281ebe4c544efd3e18' `
 #       -ExpectedDigests <approved-list> -TimeoutMinutes <explicit-approved-bound>
 #       Epoch-mode training: one adapter leaf per epoch under models\m2\<run id>.
+#       Epoch summaries are saved under reports\adapter-output\<run id>.json.
 # -Winner is only valid together with -Probe; -Epochs is a training mode and
 #   excludes -Steps, -Probe, -Winner and -Fallback.
 # Refuses a short revision, a winner probe pointed at any other base, a hot root
@@ -15,6 +16,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Rows,
+    [string]$Batch,
     [string]$Image = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739',
     [string]$HotRoot = 'C:\llm',
     [string]$Base = 'unsloth/qwen3-0.6b-unsloth-bnb-4bit',
@@ -33,6 +35,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
+. (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')
 
 $WinnerBase = 'Qwen/Qwen3-14B'
 $WinnerRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18'
@@ -42,6 +45,7 @@ if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually ex
 if ($Winner -and -not $Probe) { Write-Error '-Winner is only valid together with -Probe' }
 if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
 if ($PSBoundParameters.ContainsKey('Epochs')) {
+    Assert-ApprovedEpochImage -Image $Image
     if ($Epochs -lt 1 -or $Epochs -gt 6) { Write-Error '-Epochs must be between 1 and 6' }
     if ($PSBoundParameters.ContainsKey('Steps')) { Write-Error '-Epochs and -Steps are mutually exclusive; pass exactly one' }
     if ($Probe) { Write-Error '-Epochs is a training mode and cannot be combined with -Probe' }
@@ -52,6 +56,11 @@ if ($PSBoundParameters.ContainsKey('Epochs')) {
         $Base -cne $WinnerBase -or $Revision -cne $WinnerRevision) {
         Write-Error "-Epochs requires explicit -Base $WinnerBase -Revision $WinnerRevision"
     }
+    if (-not $PSBoundParameters.ContainsKey('Batch')) { Write-Error '-Epochs requires -Batch (the publication batch id to resolve and stage)' }
+    if ($Batch -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { Write-Error "-Batch is not a valid batch id: $Batch" }
+}
+if ($PSBoundParameters.ContainsKey('Batch') -and -not $PSBoundParameters.ContainsKey('Epochs')) {
+    Write-Error '-Batch is only valid with -Epochs'
 }
 if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
 if ([double]::IsNaN($TimeoutMinutes) -or [double]::IsInfinity($TimeoutMinutes) -or $TimeoutMinutes -le 0) {
@@ -133,6 +142,82 @@ foreach ($t in 'token', 'stored_tokens') {
     if (Test-Path -LiteralPath (Join-Path $HotRoot "hf\$t")) { Write-Error "$HotRoot\hf\$t exists (a stored Hugging Face credential); move it out of the mounted cache before training" }
 }
 
+# Epoch storage admission must precede even common-mount directory creation.
+# Keep the final prelaunch check below: staging can change available storage.
+if ($Epochs) {
+    $preStage = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
+    $preStage | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
+    if ($preStage[-1] -ne '__EXIT__0') { Write-Error "pre-stage preflight did not pass ($($preStage[-1] -replace '^__EXIT__', 'exit ')); not staging training" }
+}
+
+# Steps 1-5 (resolve the batch, read its custody records, stage the admitted
+# code and verified rows, bind them, and build the training image's argument
+# vector) complete before the GPU lock: none of it needs GPU ownership, and a
+# run that cannot be authenticated must never reach the point of poisoning the
+# GPU marker. $mounts/$code/$evalCode/$name/$runId are shared with the
+# non-epoch argument vector built later, once the lock and preflight pass.
+# Epoch mode mounts the staged Input tree as /workspace/rows (New-TrainerDockerArgs),
+# never the caller's rows directory; smoke and probe keep the caller rows mount.
+$mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
+    -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs)
+$code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
+$evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
+$name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+$runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+
+$epochDockerArgs = $null
+if ($Epochs) {
+    $locations = Get-ProductionLocations
+    $pin = Read-RootPin -PinFile $locations.PinFile
+    $root = Read-ApprovedRoot -CustodyRoot $locations.CustodyRoot -Pin $pin
+    $resolution = Invoke-PublicationResolver -Root $root -ApprovedTrustRootSHA256 $pin.APPROVED_TRUST_ROOT_SHA256 -Batch $Batch
+    $records = Read-PublicationRecords -CustodyRoot $locations.CustodyRoot -Batch $Batch -Resolution $resolution -Rows $Rows
+    if ($records.Profile['row_schema_sha256'] -cne $root['row_schema']['sha256']) { Write-Error 'publication row schema differs from approved contract' }
+    # The candidate commit is assumed to live in the repository this worktree
+    # belongs to; worktrees share one object database, so any worktree root
+    # resolves any reachable commit's blobs.
+    $repoRootOut = @(Invoke-Bounded 'git' @('-C', $PSScriptRoot, 'rev-parse', '--show-toplevel') 30)
+    if ($repoRootOut[-1] -ne '__EXIT__0') { Write-Error 'could not resolve the repository root for the candidate commit' }
+    # @(...) keeps a one-line result an array (a scalar string's [0] is a CHARACTER).
+    $repoRootLines = @(if ($repoRootOut.Count -gt 1) { $repoRootOut[0..($repoRootOut.Count - 2)] } else { @() })
+    if ($repoRootLines.Count -ne 1) { Write-Error 'git rev-parse --show-toplevel returned an unexpected result' }
+    $repoRoot = $repoRootLines[0]
+    $candidate = $root['adapter_consumption']['candidate']
+    $stage = New-StageTree -HotRoot $HotRoot -RunId $runId
+    $trainerBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/train/train_adapter.py' -ExpectedSha256 $candidate['trainer_sha256']
+    # Acyclic identity: approved root -> trainer bytes -> verifier bytes. Parse
+    # only one literal constant from the authenticated trainer, never execute it.
+    $trainerText = [Text.Encoding]::UTF8.GetString($trainerBytes)
+    $authorityDefinitions = [regex]::Matches($trainerText, '(?m)^EPOCH_AUTHORITY_SHA256\s*=')
+    $authorityPins = [regex]::Matches($trainerText, '(?m)^EPOCH_AUTHORITY_SHA256 = "([0-9a-f]{64})"\r?$')
+    if ($authorityDefinitions.Count -ne 1 -or $authorityPins.Count -ne 1) { Write-Error 'candidate trainer must pin exactly one epoch authority digest' }
+    $authorityBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/train/epoch_authority.py' -ExpectedSha256 $authorityPins[0].Groups[1].Value
+    $predictorBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/eval/predict_dev.py' -ExpectedSha256 $candidate['predictor_sha256']
+    $scorerBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/eval/dev_selection.py' -ExpectedSha256 $candidate['scorer_sha256']
+    $rendererBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $AdmittedRendererCommit -Path $AdmittedRendererPath -ExpectedOid $AdmittedRendererBlobId -ExpectedSha256 $AdmittedRendererSHA256
+    $stagedFiles = @(
+        (Write-StageFile -DirLabel Train -Dir $stage.Train -Name 'train_adapter.py' -Bytes $trainerBytes -ExpectedSha256 $candidate['trainer_sha256']),
+        (Write-StageFile -DirLabel Train -Dir $stage.Train -Name 'prompt_template.py' -Bytes $rendererBytes -ExpectedSha256 $AdmittedRendererSHA256),
+        (Write-StageFile -DirLabel Eval -Dir $stage.Eval -Name 'predict_dev.py' -Bytes $predictorBytes -ExpectedSha256 $candidate['predictor_sha256']),
+        (Write-StageFile -DirLabel Eval -Dir $stage.Eval -Name 'dev_selection.py' -Bytes $scorerBytes -ExpectedSha256 $candidate['scorer_sha256']),
+        (Write-StageFile -DirLabel Input -Dir $stage.Input -Name 'accepted.jsonl' -Bytes $records.AcceptedBytes -ExpectedSha256 $resolution['accepted_jsonl_sha256']),
+        (Write-StageFile -DirLabel Input -Dir $stage.Input -Name 'report.json' -Bytes $records.ReportBytes -ExpectedSha256 $resolution['validation_report_sha256']),
+        (Write-StageFile -DirLabel Input -Dir $stage.Input -Name 'profile.json' -Bytes $records.ProfileBytes -ExpectedSha256 $resolution['profile_sha256'])
+    )
+    $bindingPath = New-PublicationBinding -Batch $Batch -Candidate $candidate -Resolution $resolution -RootSha256 $pin.APPROVED_TRUST_ROOT_SHA256 -Files $stagedFiles -MetaDir $stage.Meta
+    $epochDockerArgs = New-TrainerDockerArgs -Image $Image -Name $name -CommonMounts $mounts -Stage $stage -BindingPath $bindingPath `
+        -AuthoritySource ([Text.Encoding]::UTF8.GetString($authorityBytes)) -Batch $Batch -RootFile $pin.ROOT_FILE `
+        -Base $Base -Revision $Revision -ReportContainerPath "/workspace/reports/$runId.json" -Epochs $Epochs `
+        -ModelsHostDir (Join-Path $HotRoot 'models\m2') `
+        -ExtraEnv @(if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) { @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1') } else { @() })
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+        $epochDockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
+        $epochDockerArgs += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
+    }
+}
+
 $gpuLock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
 try { $held = $gpuLock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
 if (-not $held) { Write-Error 'another GPU job (train-adapter, train-smoke or serve-smoke) is running; not starting' }
@@ -152,56 +237,38 @@ try {
         if ($r[-1] -ne '__EXIT__0') { Write-Error "lms unload --all failed ($($r[-1] -replace '^__EXIT__', 'exit ')); not starting training" }
     }
 
-    $mounts = @()
-    foreach ($pair in @(@('hf', 'hf'), @('runs', 'runs'), @('models\m2', 'models/m2'), @('reports', 'reports'))) {
-        $hostDir = Join-Path $HotRoot $pair[0]
-        New-Item -ItemType Directory -Force $hostDir | Out-Null
-        $mounts += @('-v', "${hostDir}:/workspace/$($pair[1])")
-    }
-    $rowsDir = Split-Path $Rows -Parent
-    $mounts += @('-v', "${rowsDir}:/workspace/rows:ro")
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
-        $mounts += @('-v', "${ExpectedDigests}:/workspace/expected-digests.json:ro")
-    }
-    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
-        $mounts += @('-v', "${TrustedDigestRoot}:/workspace/trusted-digest-root.json:ro")
-    }
-    $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
-    $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
-    $name = 'hl-adapter-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
-        '-v', "${code}:/code:ro",
-        '-v', "${evalCode}:/eval:ro",
-        '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision") + $(if ($Epochs) {
-        # Epoch mode runs against the persistent models/m2 mount and derives its
-        # run directory from the report id; no steps env in epoch mode.
-        @('-e', 'ADAPTER_MODELS_DIR=/workspace/models/m2',
-          '-e', "ADAPTER_MODELS_HOST_DIR=$(Join-Path $HotRoot 'models\m2')")
+    $dockerArgs = if ($Epochs) {
+        $epochDockerArgs
     } else {
-        @('-e', "ADAPTER_STEPS=$Steps")
-    }) + @(
-        '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
-        $dockerArgs += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
-    }
-    $dockerArgs += @(
-        '--entrypoint', 'python', $Image, '/code/train_adapter.py',
-        '--rows', ("/workspace/rows/" + (Split-Path $Rows -Leaf)),
-        '--base', $Base, '--revision', $Revision,
-        '--report', "/workspace/reports/$runId.json") + $(if ($Epochs) { @('--epochs', "$Epochs") } else { @('--steps', "$Steps") })
-    if ($Winner) { $dockerArgs += '--winner' }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
-        $dockerArgs += @('--expected-digests', '/workspace/expected-digests.json')
-    }
-    if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
-        $dockerArgs += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
-    }
-    if ($Probe) {
-        $dockerArgs += @('--probe', '--probe-seq-len', "$ProbeSeqLen")
-        if ($PSBoundParameters.ContainsKey('ProbeRowsTotal')) {
-            $dockerArgs += @('--probe-rows-total', "$ProbeRowsTotal")
+        $d = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
+            '-v', "${code}:/code:ro",
+            '-v', "${evalCode}:/eval:ro",
+            '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision",
+            '-e', "ADAPTER_STEPS=$Steps",
+            '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+            $d += @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
         }
+        $d += @(
+            '--entrypoint', 'python', $Image, '/code/train_adapter.py',
+            '--rows', ("/workspace/rows/" + (Split-Path $Rows -Leaf)),
+            '--base', $Base, '--revision', $Revision,
+            '--report', "/workspace/reports/$runId.json",
+            '--steps', "$Steps")
+        if ($Winner) { $d += '--winner' }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+            $d += @('--expected-digests', '/workspace/expected-digests.json')
+        }
+        if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
+            $d += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
+        }
+        if ($Probe) {
+            $d += @('--probe', '--probe-seq-len', "$ProbeSeqLen")
+            if ($PSBoundParameters.ContainsKey('ProbeRowsTotal')) {
+                $d += @('--probe-rows-total', "$ProbeRowsTotal")
+            }
+        }
+        $d
     }
     function Get-AdapterState {
         try {
