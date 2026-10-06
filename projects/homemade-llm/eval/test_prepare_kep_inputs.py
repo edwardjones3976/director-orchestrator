@@ -140,6 +140,18 @@ def v3_body(number=7000, newline="\n", **overrides):
     return newline.join(lines)
 
 
+def nest_section(body, heading, after_text, attach):
+    """Move one level-2 section of a v3_body (from `heading` up to the next level-2 heading) so it becomes a level-3 heading placed directly after
+    `after_text`, either as its own block (attach=False, blank-line separated) or joined to that paragraph (attach=True, no blank line)."""
+    start = body.index(heading)
+    following = body.find("\n## ", start + 1)
+    end = following + 1 if following != -1 else len(body)
+    block = body[start:end].replace(heading, "#" + heading, 1).strip("\n")
+    rest = body[:start] + body[end:]
+    at = rest.index(after_text) + len(after_text)
+    return rest[:at] + ("\n" if attach else "\n\n") + block + "\n" + rest[at:]
+
+
 def v3_policy(template, frozen_at="2020-01-01T00:00:00Z"):
     return {"protocol": "kep-input-selection/v3", "authority": tool.V3_AUTHORITY,
             "repository": tool.REPOSITORY, "commit": tool.COMMIT,
@@ -1646,6 +1658,76 @@ class KepInputSelectionV3Tests(unittest.TestCase):
         self.assertEqual(result["stage_counts"], expected)
         _, _, manifest = self.load()
         self.assertEqual(manifest["stage_counts"], expected)
+
+    def test_no_usable_inputs_refusal_carries_v3_stage_counts_and_v2_summary_unchanged(self):
+        fixture = V3Fixture(self.root, [dict(number=8101, sig="sig-example", status="implemented", text=v3_body(8101, non_goals=None))])
+        with self.assertRaisesRegex(tool.Refusal, "NO_USABLE_INPUTS") as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["stage_counts"],
+                         {"status_candidates": 1, "qualified_before_template_removal": 1, "qualified_after_template_removal": 0,
+                          "paragraph_qualified": 0, "usable_inputs": 0})
+        root = self.root / "v2"
+        root.mkdir()
+        v2text = source().replace("## Non-Goals\nDo not expand unrelated work.\n", "")
+        v2fixture = Fixture(root, [dict(number=19, sig="sig-example", status="implemented", text=v2text)])
+        with self.assertRaisesRegex(tool.Refusal, "NO_USABLE_INPUTS") as raised:
+            tool.prepare(**v2fixture.args())
+        self.assertNotIn("stage_counts", raised.exception.summary)
+
+    # -- 9b. Overlapping source spans (Copilot 4190535796; the root counterexample of #299 6007550254). --
+    def test_span_overlap_helper_positive_adjacent_disjoint_and_nested(self):
+        span = lambda start, end: {"start": start, "end": end}
+        self.assertTrue(tool._spans_overlap([span(0, 10), span(9, 12)]))        # one shared character
+        self.assertTrue(tool._spans_overlap([span(5, 20), span(0, 30)]))        # nested
+        self.assertTrue(tool._spans_overlap([span(3, 4), span(3, 4)]))          # identical
+        self.assertFalse(tool._spans_overlap([span(0, 10), span(10, 12)]))      # adjacent: touching is allowed
+        self.assertFalse(tool._spans_overlap([span(20, 25), span(0, 5), span(5, 20)]))  # disjoint, any input order
+        self.assertFalse(tool._spans_overlap([span(0, 10)]))
+
+    def test_objective_context_overlap_refuses_root_counterexample(self):
+        """Non-Goals nested as ### and joined to the Goals paragraph: the objective paragraph then contains the Non-Goals heading, which is also
+        emitted as Non-Goals context (root receipt: objective [200,241) and context [228,242) shared 13 characters at fe28857d)."""
+        text = nest_section(v3_body(7101), "## Non-Goals", "Bound synthetic scope 7101.", attach=True)
+        fixture = V3Fixture(self.root, [dict(number=7101, sig="sig-example", status="implemented", text=text)])
+        with self.assertRaisesRegex(tool.Refusal, "NO_USABLE_INPUTS") as raised:
+            fixture.prepare()
+        self.assertEqual(raised.exception.summary["refused_by_reason"], {"CONTEXT_SPAN_OVERLAP": 1})
+        self.assertFalse((self.root / "out").exists())
+
+    def test_context_context_overlap_refuses_for_support_and_optional_roles(self):
+        cases = {
+            "support-in-support-separate": ("## Test Plan", "Do not expand unrelated work.", False),
+            "support-in-support-attached": ("## Test Plan", "Do not expand unrelated work.", True),
+            "support-in-optional-summary": ("## Notes/Constraints/Caveats (Optional)", "Short synthetic summary 7101.", False),
+            "support-in-optional-motivation-attached": ("## Test Plan", "Motivating need 7101.", True),
+        }
+        for name, (heading, after, attach) in cases.items():
+            with self.subTest(case=name):
+                root = self.root / name
+                root.mkdir()
+                text = nest_section(v3_body(7101), heading, after, attach)
+                fixture = V3Fixture(root, [dict(number=7101, sig="sig-example", status="implemented", text=text)])
+                with self.assertRaisesRegex(tool.Refusal, "NO_USABLE_INPUTS") as raised:
+                    fixture.prepare()
+                self.assertEqual(raised.exception.summary["refused_by_reason"], {"CONTEXT_SPAN_OVERLAP": 1})
+
+    def test_valid_and_disjoint_nesting_controls_still_emit_with_exact_disjoint_spans(self):
+        bodies = {"ordinary": v3_body(7101),
+                  "nested-in-goals-separate": nest_section(v3_body(7101), "## Non-Goals", "Bound synthetic scope 7101.", attach=False)}
+        for name, text in bodies.items():
+            with self.subTest(case=name):
+                root = self.root / name
+                root.mkdir()
+                fixture = V3Fixture(root, [dict(number=7101, sig="sig-example", status="implemented", text=text)])
+                result = fixture.prepare()
+                self.assertEqual(result["usable_inputs"], 1)
+                _, rows, _ = self.load(root / "out")
+                row = rows[0]
+                spans = [row["objective_span"]] + row["context_spans"]
+                self.assertFalse(tool._spans_overlap(spans))
+                self.assertEqual(row["input"]["objective"], text[row["objective_span"]["start"]:row["objective_span"]["end"]])
+                for item, span in zip(row["input"]["context"], row["context_spans"]):
+                    self.assertEqual(item["text"], text[span["start"]:span["end"]])
 
     # -- 10. Token-gate declaration. --
     def test_token_gate_required_recorded_and_no_tokenizer_import(self):

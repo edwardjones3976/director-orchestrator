@@ -446,6 +446,12 @@ def _span_cost(text, span):
     return len(text[span["start"]:span["end"]])
 
 
+def _spans_overlap(spans):
+    """True when any two half-open source spans [start, end) share a character; spans that only touch (one ends where the next starts) do not."""
+    ordered = sorted((span["start"], span["end"]) for span in spans)
+    return any(later[0] < earlier[1] for earlier, later in zip(ordered, ordered[1:]))
+
+
 def _qualifying_paragraph_runs(text, lines, removed_flags, source):
     """For each whole source paragraph of a section body, in source order, its surviving visible runs after template-line removal; a paragraph
     with no surviving visible content is omitted (it costs nothing and never blocks a later paragraph)."""
@@ -1106,6 +1112,10 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                         items = _select_budgeted_items(text, doc_lines, removed_flags, source, V3_OPTIONAL_BUDGETS[role])
                         optional_used[role] = sum(_span_cost(text, item) for item in items)
                         context_items.extend(items)
+                    # The objective and every emitted context span must be pairwise disjoint source spans (touching is allowed). A recognized heading
+                    # nested inside another section can otherwise put the same source characters in two items; refuse rather than clip or reallocate.
+                    if _spans_overlap([objective_span] + context_items):
+                        raise Refusal("CONTEXT_SPAN_OVERLAP")
                     # Independent reconciliation against the exact emitted strings.
                     mandatory_total = len(text[objective_span["start"]:objective_span["end"]]) + sum(
                         len(text[item["start"]:item["end"]]) for role in SUPPORT_SECTIONS for item in selected[role])
@@ -1174,7 +1184,8 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                          "qualified_after_template_removal": stage_after, "paragraph_qualified": stage_paragraph,
                          "usable_inputs": summary["usable_inputs"]}
     if not records:
-        raise Refusal("NO_USABLE_INPUTS", summary)
+        # v3 refusals carry the same qualification funnel as successful results (#463); v2 summaries are unchanged.
+        raise Refusal("NO_USABLE_INPUTS", summary if stage_counts is None else dict(summary, stage_counts=stage_counts))
     payloads = [json_bytes(record) + b"\n" for record in records]
     data = b"".join(payloads)
     manifest = {"protocol": "kep-input-manifest/v1", "disposition": "construction_only", "repository": REPOSITORY, "commit": COMMIT,
