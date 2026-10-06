@@ -2228,7 +2228,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                 approved = ((train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)
                             if mode == "matching_8b" else (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
                 trusted, listing, pin = self._trusted_chain(root, base=approved[0], revision=approved[1])
-                fixture_block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json", str(trusted))
+                fixture_block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v3.json", str(trusted))
                 fixture_block = fixture_block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
                 if mode == "changed_list":
                     listing.write_bytes(b"changed")
@@ -2253,13 +2253,22 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         self.assertEqual(raised.exception.code, 0)
         self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
 
-    def test_python_and_wrapper_use_the_same_owner_approved_v2_root_pin_and_default(self):
-        approved_pin = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+    def test_python_and_wrappers_use_the_same_approved_v3_root_pin_and_defaults(self):
+        approved_pin = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
         self.assertEqual(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, approved_pin)
         source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
         self.assertIn(f"$TrustedDigestRootSHA256 = '{train_adapter.TRUSTED_DIGEST_ROOT_SHA256}'", source)
-        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json'", source)
+        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v3.json'", source)
         self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-14b-v2.json'", source)
+        self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-8b-v2.json'", source)
+        scripts = Path(__file__).resolve().parents[1] / "scripts"
+        export = (scripts / "export-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn(f"$script:PinnedTrustedDigestManifestSha256 = '{approved_pin}'", export)
+        self.assertIn("'reports\\m2-trusted-digest-manifest-v3.json'", export)
+        self.assertIn("'reports\\m2-expected-qwen3-14b-v2.json'", export)
+        export_fixture = (scripts / "test-export-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn("$rootPath = Join-Path $cRoot 'reports\\m2-trusted-digest-manifest-v3.json'", export_fixture)
+        self.assertIn(approved_pin, export_fixture)
 
     def _complete_trusted_snapshot(self, root: Path) -> tuple[Path, Path, str]:
         trusted, listing, _ = self._trusted_chain(root)
@@ -2929,7 +2938,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         self.assertIn("-Fallback", text)
         self.assertIn("mutually exclusive", text)
         self.assertIn("-Fallback is only valid together with -Probe", text)
-        self.assertIn("m1-expected-qwen3-8b.json", text)
+        self.assertIn("m2-expected-qwen3-8b-v2.json", text)
         self.assertIn("ContainsKey('TimeoutMinutes')", text)
         self.assertIn("$TimeoutMinutes = 150", text)
 

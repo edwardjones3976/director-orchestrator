@@ -161,7 +161,7 @@ try {
     # New two-file trust chain: a root manifest (pinned by SHA-256 inside
     # export-adapter.ps1) names, per base repo@revision, the SHA-256 of the list
     # manifest that is actually authenticated and parsed for per-file hashes/sizes.
-    $rootPath = Join-Path $cRoot 'reports\m2-trusted-digest-manifest-v2.json'
+    $rootPath = Join-Path $cRoot 'reports\m2-trusted-digest-manifest-v3.json'
     $expectedPath = Join-Path $cRoot 'reports\m2-expected-qwen3-14b-v2.json'
 
     function Write-FixtureIndex {
@@ -2231,8 +2231,8 @@ else:
     $pinErrors = $null
     $realAst = [Management.Automation.Language.Parser]::ParseInput($st, [ref]$pinTokens, [ref]$pinErrors)
     $pinAssignments = @($realAst.FindAll({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$script:PinnedTrustedDigestManifestSha256' }, $true))
-    Assert ($pinAssignments.Count -eq 1 -and $pinAssignments[0].Right.Extent.Text -ceq "'d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'") 'static: committed approved v2 root SHA-256 pin equals literal authority'
-    Assert ($st.Contains("'reports\m2-trusted-digest-manifest-v2.json'") -and $st.Contains("'reports\m2-expected-qwen3-14b-v2.json'")) 'static: committed default root and list paths remain approved v2'
+    Assert ($pinAssignments.Count -eq 1 -and $pinAssignments[0].Right.Extent.Text -ceq "'37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af'") 'static: committed approved v3 root SHA-256 pin equals literal authority'
+    Assert ($st.Contains("'reports\m2-trusted-digest-manifest-v3.json'") -and $st.Contains("'reports\m2-expected-qwen3-14b-v2.json'")) 'static: committed default v3 root and retained approved 14B v2 list paths'
     Assert ($st.Contains('snap = "/base-snapshot"') -and $st -notmatch ':/hf:ro') 'static: model loader consumes exact frozen snapshot mount and never mounts mutable HF cache'
     Assert ($st -match 'verify_base_snapshot\(\)\r?\nbase = AutoModel' -and $st -match 'verify_base_snapshot\(\)\r?\nAutoTokenizer') 'static: full two-read gate immediately precedes both model and tokenizer loads'
     Assert ($st -notmatch '--gpus') 'static: no --gpus'
