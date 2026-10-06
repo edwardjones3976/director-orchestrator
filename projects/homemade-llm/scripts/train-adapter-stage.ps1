@@ -29,11 +29,67 @@ $StageAllowedNames = @{
 $StageDirBindingName = @{ Train = 'train'; Eval = 'eval'; Input = 'rows' }
 
 # ---- Small shared primitives --------------------------------------------
+function Assert-ApprovedEpochImage([string]$Image) {
+    # The bootstrap is only trustworthy inside this existing approved image.
+    if ($Image -cne 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739') {
+        Write-Error 'epoch mode requires the exact approved training image'
+    }
+}
+
 function Get-SHA256Hex([byte[]]$Bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { [Convert]::ToHexString($sha.ComputeHash($Bytes)).ToLowerInvariant() } finally { $sha.Dispose() }
 }
 function Get-SHA256HexOfFile([string]$Path) { Get-SHA256Hex([IO.File]::ReadAllBytes($Path)) }
+
+function Get-BoundedCallerFileSHA256 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][ValidateRange(0, [long]::MaxValue)][long]$MaxBytes,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 60
+    )
+    # The already authenticated custody buffer supplies the exact byte ceiling.
+    # Open, ancestry checks and every read run inside the existing bounded job:
+    # even a blocked filesystem read is killed on deadline/pipeline cancellation.
+    # One fixed buffer plus a one-byte over-limit probe avoids caller-sized allocation.
+    $path64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Path))
+    $reader = "function Assert-NoReparsePointInAncestry {" + ${function:Assert-NoReparsePointInAncestry}.ToString() + "}`n" + @'
+$ErrorActionPreference = 'Stop'
+$stream = $null; $sha = $null
+try {
+    $path = [IO.Path]::GetFullPath([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PATH64__')))
+    Assert-NoReparsePointInAncestry $path
+    $stream = [IO.File]::OpenRead($path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $buffer = [byte[]]::new(65536)
+    [long]$remaining = __MAX_BYTES__
+    while ($true) {
+        $wanted = if ($remaining -ge $buffer.Length) { $buffer.Length } else { [int]$remaining + 1 }
+        $count = $stream.Read($buffer, 0, $wanted)
+        if ($count -eq 0) { break }
+        if ($count -gt $remaining) { throw 'caller file exceeds authenticated custody byte limit' }
+        $null = $sha.TransformBlock($buffer, 0, $count, $buffer, 0)
+        $remaining -= $count
+    }
+    $null = $sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
+    [Convert]::ToHexString($sha.Hash).ToLowerInvariant()
+} catch {
+    Write-Output ("CALLER_HASH_REFUSED: " + $_.Exception.Message)
+    exit 1
+} finally {
+    if ($null -ne $sha) { $sha.Dispose() }
+    if ($null -ne $stream) { $stream.Dispose() }
+}
+'@
+    $reader = $reader.Replace('__PATH64__', $path64).Replace('__MAX_BYTES__', $MaxBytes.ToString([Globalization.CultureInfo]::InvariantCulture))
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($reader))
+    $result = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) $TimeoutSeconds)
+    if ($result.Count -ne 2 -or $result[0] -cnotmatch '^[0-9a-f]{64}$' -or $result[1] -cne '__EXIT__0') {
+        Write-Error "bounded caller file hash failed: $($result -join '; ')"
+    }
+    return $result[0]
+}
 
 function Assert-NoReparsePointInAncestry([string]$Path) {
     for ($p = $Path; $p; $p = Split-Path $p -Parent) {
@@ -270,6 +326,9 @@ function Read-ApprovedRoot {
     # with extra, missing or mistyped keys, is indistinguishable from an
     # unqualified one and refuses identically before any GPU, Docker or model step.
     if (-not $consumptionOk) { Write-Error 'admission authority missing or unqualified' }
+    $schema = $root['row_schema']
+    if ($schema -isnot [System.Collections.IDictionary] -or $schema['sha256'] -isnot [string] -or
+        $schema['sha256'] -cnotmatch '^[0-9a-f]{64}$') { Write-Error 'approved row schema missing or unqualified' }
     return $root
 }
 
@@ -376,10 +435,10 @@ function Read-PublicationRecords {
 
     $rowsFull = [IO.Path]::GetFullPath($Rows)
     if (-not (Test-Path -LiteralPath $rowsFull -PathType Leaf)) { Write-Error "caller rows file not found: $rowsFull" }
-    if ((Get-SHA256HexOfFile $rowsFull) -cne $Resolution['accepted_jsonl_sha256']) { Write-Error "caller rows file does not match the verified custody accepted.jsonl: $rowsFull" }
+    if ((Get-BoundedCallerFileSHA256 -Path $rowsFull -MaxBytes $acceptedBytes.LongLength) -cne $Resolution['accepted_jsonl_sha256']) { Write-Error "caller rows file does not match the verified custody accepted.jsonl: $rowsFull" }
     $callerReport = Join-Path (Split-Path $rowsFull -Parent) 'report.json'
     if (-not (Test-Path -LiteralPath $callerReport -PathType Leaf)) { Write-Error "caller report.json not found beside rows: $callerReport" }
-    if ((Get-SHA256HexOfFile $callerReport) -cne $Resolution['validation_report_sha256']) { Write-Error "caller report.json does not match the verified custody validation report: $callerReport" }
+    if ((Get-BoundedCallerFileSHA256 -Path $callerReport -MaxBytes $reportBytes.LongLength) -cne $Resolution['validation_report_sha256']) { Write-Error "caller report.json does not match the verified custody validation report: $callerReport" }
 
     # The staged copy is made from these verified custody bytes, never from a
     # second read of the caller's path.
@@ -669,13 +728,48 @@ function New-TrainerDockerArgs {
         [Parameter(Mandatory)][string]$ReportContainerPath,
         [Parameter(Mandatory)][int]$Epochs,
         [Parameter(Mandatory)][ValidateRange(2049, [int]::MaxValue)][int]$EpochContextLimit,
+        [Parameter(Mandatory)][string]$AuthoritySource,
+        [Parameter(Mandatory)][string]$Batch,
+        [Parameter(Mandatory)][string]$RootFile,
         [string]$ModelsHostDir,
         [string[]]$ExtraEnv = @(),
         [hashtable]$Locations = (Get-ProductionLocations)
     )
+    Assert-ApprovedEpochImage -Image $Image
+    if ($Batch -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$' -or $RootFile -cnotmatch '^route-r-trust-root-v[0-9a-z]+\.json$') {
+        Write-Error 'invalid authority batch or root file'
+    }
+    $authorityMounts = @()
+    foreach ($pair in @(@($Locations.PinFile, 'root-pin.py'),
+            @((Join-Path $Locations.CustodyRoot $RootFile), 'root.json'),
+            @((Join-Path $Locations.CustodyRoot "publication/$Batch.publication.json"), 'publication.json'))) {
+        Assert-NoReparsePointInAncestry $pair[0]
+        if (-not (Test-Path -LiteralPath $pair[0] -PathType Leaf)) { Write-Error "authority file missing: $($pair[0])" }
+        $authorityMounts += @('-v', "$($pair[0]):/run/route-r-authority/$($pair[1]):ro")
+    }
+    # Read-only aliases can also shadow a trusted destination. Reserve the
+    # complete authority namespace and all fixed stage mount destinations.
+    $seenDestinations = @()
+    foreach ($mount in $CommonMounts) {
+        if ($mount -ceq '-v') { continue }
+        if ($mount -cnotmatch '^(.+):(/[^:]+)(:ro)?$') { Write-Error 'unexpected trainer common mount syntax' }
+        $dest = $Matches[2].TrimEnd('/')
+        if ($dest -match '(^|/)\.\.?(/|$)' -or $dest.Contains('//')) { Write-Error 'noncanonical mount destination' }
+        foreach ($seen in $seenDestinations) {
+            if ($dest -ceq $seen -or $dest.StartsWith($seen + '/', [StringComparison]::Ordinal) -or $seen.StartsWith($dest + '/', [StringComparison]::Ordinal)) {
+                Write-Error "overlapping trainer mount destinations: $dest and $seen"
+            }
+        }
+        $seenDestinations += $dest
+        foreach ($reserved in '/run/route-r-authority', '/train', '/eval', '/workspace/rows', '/workspace/publication-binding.json') {
+            if ($dest -ceq $reserved -or $dest -ceq '' -or $dest.StartsWith($reserved + '/', [StringComparison]::Ordinal) -or $reserved.StartsWith($dest + '/', [StringComparison]::Ordinal)) {
+                Write-Error "trainer mount shadows reserved destination: $dest"
+            }
+        }
+    }
     Assert-TrainerMountIsolation -Mounts $CommonMounts -ProtectedPaths @(
         $Stage.Train, $Stage.Eval, $Stage.Input, $BindingPath, $Locations.PinFile, $Locations.CustodyRoot)
-    @('run', '--rm', '--name', $Name, '--gpus', 'all', '--shm-size', '4g') + $CommonMounts + @(
+    @('run', '--rm', '--name', $Name, '--gpus', 'all', '--shm-size', '4g') + $CommonMounts + $authorityMounts + @(
         '-v', "$($Stage.Train):/train:ro",
         '-v', "$($Stage.Eval):/eval:ro",
         '-v', "$($Stage.Input):/workspace/rows:ro",
@@ -685,7 +779,7 @@ function New-TrainerDockerArgs {
         '-e', "ADAPTER_MODELS_HOST_DIR=$ModelsHostDir",
         '-e', 'PYTHONDONTWRITEBYTECODE=1') + $ExtraEnv + @(
         '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token',
-        '--entrypoint', 'python', $Image, '-B', '/train/train_adapter.py',
+        '--entrypoint', 'python', $Image, '-I', '-B', '-c', ($AuthoritySource + "`nbootstrap()`n"),
         '--rows', '/workspace/rows/accepted.jsonl',
         '--base', $Base, '--revision', $Revision,
         '--report', $ReportContainerPath,

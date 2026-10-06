@@ -52,6 +52,7 @@ if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually ex
 if ($Winner -and -not $Probe) { Write-Error '-Winner is only valid together with -Probe' }
 if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
 if ($PSBoundParameters.ContainsKey('Epochs')) {
+    Assert-ApprovedEpochImage -Image $Image
     if ($Epochs -lt 1 -or $Epochs -gt 6) { Write-Error '-Epochs must be between 1 and 6' }
     if ($PSBoundParameters.ContainsKey('Steps')) { Write-Error '-Epochs and -Steps are mutually exclusive; pass exactly one' }
     if ($Probe) { Write-Error '-Epochs is a training mode and cannot be combined with -Probe' }
@@ -155,6 +156,14 @@ foreach ($t in 'token', 'stored_tokens') {
     if (Test-Path -LiteralPath (Join-Path $HotRoot "hf\$t")) { Write-Error "$HotRoot\hf\$t exists (a stored Hugging Face credential); move it out of the mounted cache before training" }
 }
 
+# Epoch storage admission must precede even common-mount directory creation.
+# Keep the final prelaunch check below: staging can change available storage.
+if ($Epochs) {
+    $preStage = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
+    $preStage | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
+    if ($preStage[-1] -ne '__EXIT__0') { Write-Error "pre-stage preflight did not pass ($($preStage[-1] -replace '^__EXIT__', 'exit ')); not staging training" }
+}
+
 # Steps 1-5 (resolve the batch, read its custody records, stage the admitted
 # code and verified rows, bind them, and build the training image's argument
 # vector) complete before the GPU lock: none of it needs GPU ownership, and a
@@ -164,10 +173,10 @@ foreach ($t in 'token', 'stored_tokens') {
 # Epoch mode mounts the staged Input tree as /workspace/rows (New-TrainerDockerArgs),
 # never the caller's rows directory; smoke and probe keep the caller rows mount.
 $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-$mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-    -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
-if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
-    $mounts += @('-v', "${ProbeContextInputs}:/workspace/context-inputs.jsonl:ro")
+$mounts = @()
+if ($Epochs) {
+    $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
+        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
 }
 $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
@@ -180,6 +189,7 @@ if ($Epochs) {
     $root = Read-ApprovedRoot -CustodyRoot $locations.CustodyRoot -Pin $pin
     $resolution = Invoke-PublicationResolver -Root $root -ApprovedTrustRootSHA256 $pin.APPROVED_TRUST_ROOT_SHA256 -Batch $Batch
     $records = Read-PublicationRecords -CustodyRoot $locations.CustodyRoot -Batch $Batch -Resolution $resolution -Rows $Rows
+    if ($records.Profile['row_schema_sha256'] -cne $root['row_schema']['sha256']) { Write-Error 'publication row schema differs from approved contract' }
     # The candidate commit is assumed to live in the repository this worktree
     # belongs to; worktrees share one object database, so any worktree root
     # resolves any reachable commit's blobs.
@@ -192,6 +202,13 @@ if ($Epochs) {
     $candidate = $root['adapter_consumption']['candidate']
     $stage = New-StageTree -HotRoot $HotRoot -RunId $runId
     $trainerBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/train/train_adapter.py' -ExpectedSha256 $candidate['trainer_sha256']
+    # Acyclic identity: approved root -> trainer bytes -> verifier bytes. Parse
+    # only one literal constant from the authenticated trainer, never execute it.
+    $trainerText = [Text.Encoding]::UTF8.GetString($trainerBytes)
+    $authorityDefinitions = [regex]::Matches($trainerText, '(?m)^EPOCH_AUTHORITY_SHA256\s*=')
+    $authorityPins = [regex]::Matches($trainerText, '(?m)^EPOCH_AUTHORITY_SHA256 = "([0-9a-f]{64})"\r?$')
+    if ($authorityDefinitions.Count -ne 1 -or $authorityPins.Count -ne 1) { Write-Error 'candidate trainer must pin exactly one epoch authority digest' }
+    $authorityBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/train/epoch_authority.py' -ExpectedSha256 $authorityPins[0].Groups[1].Value
     $predictorBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/eval/predict_dev.py' -ExpectedSha256 $candidate['predictor_sha256']
     $scorerBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $candidate['commit'] -Path 'projects/homemade-llm/eval/dev_selection.py' -ExpectedSha256 $candidate['scorer_sha256']
     $rendererBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit $AdmittedRendererCommit -Path $AdmittedRendererPath -ExpectedOid $AdmittedRendererBlobId -ExpectedSha256 $AdmittedRendererSHA256
@@ -206,6 +223,7 @@ if ($Epochs) {
     )
     $bindingPath = New-PublicationBinding -Batch $Batch -Candidate $candidate -Resolution $resolution -RootSha256 $pin.APPROVED_TRUST_ROOT_SHA256 -Files $stagedFiles -MetaDir $stage.Meta
     $epochDockerArgs = New-TrainerDockerArgs -Image $Image -Name $name -CommonMounts $mounts -Stage $stage -BindingPath $bindingPath `
+        -AuthoritySource ([Text.Encoding]::UTF8.GetString($authorityBytes)) -Batch $Batch -RootFile $pin.ROOT_FILE `
         -Base $Base -Revision $Revision -ReportContainerPath "/workspace/reports/$runId.json" -Epochs $Epochs -EpochContextLimit $EpochContextLimit `
         -ModelsHostDir (Join-Path $HotRoot 'models\m2') `
         -ExtraEnv @(if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) { @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1') } else { @() })
@@ -215,13 +233,6 @@ if ($Epochs) {
     if (-not [string]::IsNullOrWhiteSpace($TrustedDigestRoot)) {
         $epochDockerArgs += @('--trusted-digest-root', '/workspace/trusted-digest-root.json')
     }
-}
-
-if (-not $Epochs) {
-    $locations = Get-ProductionLocations
-    Assert-TrainerMountIsolation -Mounts $mounts -ProtectedPaths @(
-        (Join-Path $HotRoot 'runs\stage'), $Rows, $code, $evalCode, $locations.PinFile, $locations.CustodyRoot;
-        if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs })
 }
 
 $gpuLock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
@@ -237,6 +248,19 @@ try {
     $pf = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
     $pf | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
     if ($pf[-1] -ne '__EXIT__0') { Write-Error "preflight did not pass ($($pf[-1] -replace '^__EXIT__', 'exit ')); not starting training" }
+    # Smoke/probe output directories are created only after mutex, poison
+    # and preflight admission. Epoch staging retains its separate early check.
+    if (-not $Epochs) {
+        $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
+            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -RunId $runId
+        if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
+            $mounts += @('-v', "${ProbeContextInputs}:/workspace/context-inputs.jsonl:ro")
+        }
+        $locations = Get-ProductionLocations
+        Assert-TrainerMountIsolation -Mounts $mounts -ProtectedPaths @(
+            (Join-Path $HotRoot 'runs\stage'), $Rows, $code, $evalCode, $locations.PinFile, $locations.CustodyRoot;
+            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs })
+    }
     if (Get-Command lms -ErrorAction SilentlyContinue) {
         $r = @(Invoke-Bounded 'lms' @('unload', '--all') 60)
         $r | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host

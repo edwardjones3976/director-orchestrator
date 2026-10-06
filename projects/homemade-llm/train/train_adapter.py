@@ -36,7 +36,11 @@ from huggingface_hub import snapshot_download  # noqa: E402
 from transformers import TrainerCallback, set_seed  # noqa: E402
 from trl import SFTConfig, SFTTrainer  # noqa: E402
 
-import prompt_template  # noqa: E402
+def _prompt_template():
+    # Epoch admission runs before any row renderer is used. In the trusted
+    # bootstrap this import resolves the already verified in-memory module.
+    import prompt_template
+    return prompt_template
 
 SMOKE_BASE = "unsloth/qwen3-0.6b-unsloth-bnb-4bit"
 SMOKE_REVISION = "e86f5289a2ca40ab7114071959dc2079cf97cb3c"
@@ -512,14 +516,14 @@ def _require_accepted_row(row: dict[str, Any], line_number: int) -> None:
     if not isinstance(source, dict):
         fail(f"line {line_number}: input is not an object")
     try:
-        prompt_template.input_contract(source)
+        _prompt_template().input_contract(source)
     except (KeyError, TypeError, ValueError) as exc:
         fail(f"line {line_number}: {exc}")
 
 
 def messages_for(row: dict[str, Any]) -> list[dict[str, str]]:
     """Training chat through the shared template, using the row's input block as written. Thinking stays off at the call site (D-M1-3)."""
-    return prompt_template.render_messages(row["input"], row["target"])
+    return _prompt_template().render_messages(row["input"], row["target"])
 
 
 def labels_for_token_ids(prompt_ids: list[int], full_ids: list[int]) -> list[int]:
@@ -1074,11 +1078,11 @@ def _validate_dev_row(row: Any, split: str) -> None:
     source = row.get("input")
     if not isinstance(source, dict):
         raise ValueError("invalid row input")
-    prompt_template.input_contract(source)
+    _prompt_template().input_contract(source)
     for key in ("objective", "repository", "title"):
         if not isinstance(source.get(key), str) or not source[key].strip():
             raise ValueError("invalid input field")
-    if "context" in source and prompt_template.context_shape_errors(source["context"]):
+    if "context" in source and _prompt_template().context_shape_errors(source["context"]):
         raise ValueError("invalid cited context")
 
 
@@ -1494,6 +1498,25 @@ def build_report(
 
 
 ADMITTED_TEMPLATE_SHA256 = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+EPOCH_AUTHORITY_SHA256 = "bd201f2f0d7c67f5c179f9071391a8518ec24629a7ef867ae2e5c94ab34b009d"
+
+
+def _epoch_authority():
+    """Load the exact verifier buffer pinned by this authenticated trainer."""
+    if '_BOOTSTRAP_AUTHORITY' in globals():
+        return globals()['_BOOTSTRAP_AUTHORITY']
+    import types
+    path = Path(__file__).with_name('epoch_authority.py')
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        fail(f'epoch authority source unavailable: {exc}')
+    if hashlib.sha256(data).hexdigest() != EPOCH_AUTHORITY_SHA256:
+        fail('epoch authority source differs from trainer pin')
+    module = types.ModuleType('epoch_authority')
+    module.__file__ = str(path)
+    exec(compile(data, str(path), 'exec'), module.__dict__)
+    return module
 
 # WO-R5 slice 4: authenticate the staged publication binding (rows, trainer,
 # predictor, scorer, renderer) before any GPU, model or tokenizer resource is
@@ -1702,6 +1725,11 @@ def _read_publication_rows(
     if profile["trust_root_sha256"] != resolution["trust_root_sha256"]:
         fail("profile.json trust_root_sha256 does not match the resolution")
 
+    _epoch_authority().authenticate(binding, profile,
+        by_key[("rows", "accepted.jsonl")]["sha256"],
+        by_key[("rows", "report.json")]["sha256"],
+        by_key[("rows", "profile.json")]["sha256"])
+
     groups_and_splits = profile["source_groups_and_splits"]
     if (not isinstance(groups_and_splits, dict) or not groups_and_splits
             or any(not isinstance(group, str) or not group.strip() or split not in ("train", "dev")
@@ -1818,7 +1846,7 @@ def _single_token_ids(encoded: Any) -> list[int]:
 def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any]) -> list[int]:
     # Match predict_dev's exact input-only renderer and generation call. Compare
     # its default tokenization with explicit untruncated tokens before generation.
-    messages = prompt_template.render_messages(input_block)
+    messages = _prompt_template().render_messages(input_block)
     kwargs = dict(tokenize=True, add_generation_prompt=True, enable_thinking=False, return_tensors="pt")
     actual = _single_token_ids(tokenizer.apply_chat_template(messages, **kwargs))
     untruncated = _single_token_ids(tokenizer.apply_chat_template(messages, truncation=False, **kwargs))
@@ -1879,7 +1907,7 @@ def train(
     supplied_rows, supplied_dev_rows = rows, dev_rows
     if epochs is not None:
         rows, dev_rows = [], []
-    run_dir = create_run_directory(report_path) if epochs is not None else None
+    run_dir = None
     checkpoints: list[dict[str, Any]] = []
     digest_verification, callback, trainer, peak, result = None, None, None, None, None
     memory_tracking_initialized = False
@@ -1947,6 +1975,7 @@ def train(
                 _validate_dev_row(row, "train")
             for row in dev_rows:
                 _validate_dev_row(row, "dev")
+            run_dir = create_run_directory(report_path)
             # Batch size is fixed at one. With <= 8 rows the first optimizer
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
@@ -2023,7 +2052,7 @@ def train(
         require_vram(peak, winner=winner)
         return report
     except BaseException as exc:
-        if epochs is not None:
+        if epochs is not None and run_dir is not None:
             if memory_tracking_initialized:
                 try:
                     sampled_peak = torch.cuda.max_memory_reserved() / 2**30
@@ -2058,12 +2087,12 @@ def context_probe_input(record: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("context probe constructor input shape is invalid")
     if not isinstance(record, dict):
         raise ValueError("context probe input must be an object")
-    prompt_template.input_contract(record)  # Reject targets and all other extra fields.
+    _prompt_template().input_contract(record)  # Reject targets and all other extra fields.
     if any(not isinstance(record[key], str) or not record[key].strip() for key in ("objective", "repository", "title")):
         raise ValueError("context probe input fields must be nonempty strings")
-    if "context" in record and prompt_template.context_shape_errors(record["context"]):
+    if "context" in record and _prompt_template().context_shape_errors(record["context"]):
         raise ValueError("context probe input context shape is invalid")
-    prompt_template.render_messages(record)  # Validate rendering before any model load.
+    _prompt_template().render_messages(record)  # Validate rendering before any model load.
     return record
 
 

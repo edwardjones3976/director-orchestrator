@@ -14,6 +14,7 @@ import hashlib
 import json
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -177,11 +178,14 @@ def make_reparse_link(link: Path, target: Path) -> bool:
 def _wrapper_mount_construction(source: str) -> str:
     """Load the real helper and extract only the wrapper's mount call."""
     helper = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter-stage.ps1"
-    start = source.index("$mounts = New-TrainerCommonMounts")
-    end = source.index("\n$code =", start)
+    # Both launch modes use these same real argument statements; the wrapper
+    # executes them at different admission points (covered separately below).
+    call = re.search(r"\$mounts = New-TrainerCommonMounts[^\n]+\n[^\n]+", source).group()
+    probe_start = source.index("if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {", source.index("# Smoke/probe output directories"))
+    probe_end = source.index("\n        }", probe_start) + len("\n        }")
     bounded = helper.with_name("invoke-bounded.ps1")
     return (". '" + bounded.as_posix().replace("'", "''") + "'\n. '"
-            + helper.as_posix().replace("'", "''") + "'\n" + source[start:end] + "\n")
+            + helper.as_posix().replace("'", "''") + "'\n" + call + "\n" + source[probe_start:probe_end] + "\n")
 
 
 def synthetic_kep_input(item):
@@ -206,7 +210,255 @@ class ContextTokenizer:
         return list(range(length))
 
 
-class TrainAdapterTests(unittest.TestCase):
+class AuthorityFixtureCase(unittest.TestCase):
+    def setUp(self):
+        import epoch_authority
+        self._authority_patch = mock.patch.object(train_adapter, '_epoch_authority', return_value=epoch_authority)
+        self._authority_patch.start()
+        self.addCleanup(self._authority_patch.stop)
+        paths = mock.patch.object(epoch_authority, 'production_paths', side_effect=lambda *args: _TEST_AUTHORITY_PATHS)
+        paths.start()
+        self.addCleanup(paths.stop)
+
+
+class TrainAdapterTests(AuthorityFixtureCase):
+    def test_smoke_probe_admission_precedes_mount_directory_creation(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell required for wrapper admission statements')
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        source = (scripts / 'train-adapter.ps1').read_text(encoding='utf-8')
+        fragment = source[source.index("$runId = 'm2-'"):source.index('    if (Get-Command lms')]
+        # Exercise the actual control flow; substitute only the machine-wide
+        # mutex, external preflight and recursive mount scan. All writes are real
+        # writes under a fresh temporary directory, never the production marker.
+        fragment = fragment.replace("[System.Threading.Mutex]::new($false, 'Global\\homemade-llm-gpu')", '$fakeLock')
+        cleanup = source[source.rindex('} finally {'):source.index('\n# [[Cursor', source.rindex('} finally {'))]
+        with tempfile.TemporaryDirectory() as tmp:
+            command = f". '{(scripts / 'train-adapter-stage.ps1').as_posix()}'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$PSScriptRoot = '__SCRIPTS__'
+$fakeLock = [pscustomobject]@{}
+$fakeLock | Add-Member ScriptMethod WaitOne { param($wait) $script:seen.Add('mutex'); return $script:case -cne 'busy' }
+$fakeLock | Add-Member ScriptMethod ReleaseMutex { $script:seen.Add('release') }
+$fakeLock | Add-Member ScriptMethod Dispose { }
+function Invoke-Bounded($Exe, $A, $Seconds) {
+    if ($Exe -cne 'pwsh' -or $Seconds -ne 180 -or ($A -join '|') -cne "-NoProfile|-File|$(Join-Path '__SCRIPTS__' 'preflight.ps1')|-HotRoot|$HotRoot") { throw 'unexpected external call' }
+    $script:seen.Add('preflight')
+    switch ($script:case) { 'preflight' { '__EXIT__1' }; 'timeout' { '__EXIT__timeout' }; default { '__EXIT__0' } }
+}
+function Get-ProductionLocations { @{ PinFile = '__ROOT__/pin'; CustodyRoot = '__ROOT__/custody' } }
+function Assert-TrainerMountIsolation { $script:seen.Add('mounts-created') }
+foreach ($Probe in $false, $true) {
+    foreach ($script:case in 'busy', 'poison', 'preflight', 'timeout', 'success') {
+        $HotRoot = '__ROOT__/' + $Probe + '-' + $script:case
+        $Rows = "$HotRoot/accepted.jsonl"; $GpuMarker = "$HotRoot/guard/marker"
+        $Epochs = 0; $ExpectedDigests = ''; $TrustedDigestRoot = ''; $ProbeContextInputs = ''
+        $markerWritten = $false; $containerGone = $null; $BoundedUnconfirmed = $false; $keepLock = $false
+        $script:seen = [Collections.Generic.List[string]]::new()
+        if ($script:case -ceq 'poison') {
+            New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+            Set-Content -LiteralPath $GpuMarker -Value 'synthetic poison'
+        }
+        $reason = ''
+        try {
+__FRAGMENT__
+            throw 'SUCCESS-STOP-BEFORE-LMS-OR-DOCKER'
+__CLEANUP__
+        } catch { $reason = $_.Exception.Message }
+        $made = Test-Path -LiteralPath "$HotRoot/hf"
+        if ($script:case -ceq 'success') {
+            if (-not $made -or $reason -cne 'SUCCESS-STOP-BEFORE-LMS-OR-DOCKER' -or ($script:seen -join ',') -cne 'mutex,preflight,mounts-created,release') { throw "success order: $reason; $script:seen" }
+            if (-not (Test-Path -LiteralPath "$HotRoot/models/m2/$runId") -or -not (Test-Path -LiteralPath "$HotRoot/reports/adapter-output/$runId")) { throw 'valid mounts absent' }
+        } else {
+            if ($made -or (Test-Path -LiteralPath "$HotRoot/models") -or (Test-Path -LiteralPath "$HotRoot/reports")) { throw "refusal created mount directories: $script:case" }
+            $expected = switch ($script:case) { 'busy' { 'another GPU job' }; 'poison' { 'GPU is poisoned' }; default { 'preflight did not pass' } }
+            if (-not $reason.Contains($expected)) { throw "wrong refusal: $reason" }
+        }
+        if ($script:case -ceq 'poison') {
+            if ((Get-Content -LiteralPath $GpuMarker -Raw).Trim() -cne 'synthetic poison') { throw 'poison overwritten' }
+        } elseif (Test-Path -LiteralPath $GpuMarker) { throw 'synthetic marker survived cleanup' }
+    }
+}
+'PASS smoke/probe busy, poison, failed/timed-out preflight, valid mount order'
+'''
+            command = command.replace('__ROOT__', Path(tmp).as_posix()).replace('__SCRIPTS__', scripts.as_posix())
+            command = command.replace('__FRAGMENT__', fragment).replace('__CLEANUP__', cleanup)
+            path = Path(tmp) / 'admission.ps1'
+            path.write_text(command, encoding='utf-8')
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(path)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('PASS smoke/probe', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows bounded job required')
+    def test_caller_hash_byte_edges_and_authenticated_custody_buffers(self):
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = _build_publication_fixture(root)
+            custody = root / 'custody'
+            (custody / 'accepted').mkdir(parents=True)
+            (custody / 'publication').mkdir()
+            for leaf, target in [('accepted.jsonl', 'accepted/batch-0001.accepted.jsonl'),
+                                 ('report.json', 'accepted/batch-0001.validation-report.json'),
+                                 ('profile.json', 'publication/batch-0001.profile.json')]:
+                shutil.copyfile(fixture['rows_dir'] / leaf, custody / target)
+            for size in (0, 1, 65536, 65537):
+                (root / f'bytes-{size}').write_bytes(bytes((i % 256 for i in range(size))))
+            command = f". '{(scripts / 'invoke-bounded.ps1').as_posix()}'\n. '{(scripts / 'train-adapter-stage.ps1').as_posix()}'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$GpuMarker = '__ROOT__/synthetic-marker'
+foreach ($size in 0, 1, 65536, 65537) {
+    $path = "__ROOT__/bytes-$size"
+    $wanted = Get-SHA256HexOfFile $path
+    foreach ($limit in $size, ($size + 1)) {
+        if ((Get-BoundedCallerFileSHA256 -Path $path -MaxBytes $limit) -cne $wanted) { throw 'valid byte edge digest changed' }
+    }
+    if ($size -gt 0) {
+        $refused = $false
+        try { Get-BoundedCallerFileSHA256 -Path $path -MaxBytes ($size - 1) | Out-Null }
+        catch { $refused = $_.Exception.Message.Contains('byte limit') }
+        if (-not $refused) { throw 'over-limit byte edge accepted' }
+    }
+}
+$binding = ConvertFrom-StrictJson ([IO.File]::ReadAllText('__BINDING__'))
+$args_ = @{ CustodyRoot = '__ROOT__/custody'; Batch = 'batch-0001'; Resolution = $binding['resolution']; Rows = '__ROWS__/accepted.jsonl' }
+$records = Read-PublicationRecords @args_
+foreach ($pair in @(@('accepted.jsonl','accepted_jsonl_sha256'), @('report.json','validation_report_sha256'))) {
+    $path = '__ROWS__/' + $pair[0]
+    $original = [IO.File]::ReadAllBytes($path)
+    [IO.File]::WriteAllBytes($path, [byte[]]::new(0))
+    $refused = $false
+    try { Read-PublicationRecords @args_ | Out-Null } catch { $refused = $_.Exception.Message.Contains('does not match the verified custody') }
+    if (-not $refused) { throw 'short caller file accepted' }
+    [IO.File]::WriteAllBytes($path, $original)
+    # Sparse-sized small fixture, not a multi-GB input: rejection must happen
+    # at the authenticated byte ceiling, regardless of caller-reported length.
+    $file = [IO.File]::OpenWrite($path); try { $file.SetLength(16777216) } finally { $file.Dispose() }
+    $refused = $false
+    try { Read-PublicationRecords @args_ | Out-Null } catch { $refused = $_.Exception.Message.Contains('byte limit') }
+    if (-not $refused) { throw 'oversized caller file accepted' }
+    [IO.File]::WriteAllBytes($path, $original)
+    $original[0] = $original[0] -bxor 1
+    [IO.File]::WriteAllBytes($path, $original)
+    $refused = $false
+    try { Read-PublicationRecords @args_ | Out-Null } catch { $refused = $_.Exception.Message.Contains('does not match the verified custody') }
+    if (-not $refused) { throw 'equal-length digest substitution accepted' }
+    $original[0] = $original[0] -bxor 1
+    [IO.File]::WriteAllBytes($path, $original)
+}
+# Returned payloads remain the authenticated custody buffers, regardless of
+# a subsequent caller rewrite; staging never reopens those caller paths.
+[IO.File]::WriteAllText('__ROWS__/accepted.jsonl', 'caller changed after return')
+[IO.File]::WriteAllText('__ROWS__/report.json', 'caller changed after return')
+if ((Get-SHA256Hex $records.AcceptedBytes) -cne $binding['resolution']['accepted_jsonl_sha256'] -or
+    (Get-SHA256Hex $records.ReportBytes) -cne $binding['resolution']['validation_report_sha256']) { throw 'custody buffer changed' }
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) { throw 'uncertain cleanup' }
+'PASS byte edges, oversized accepted/report, equal-length mutations, retained custody buffers'
+'''
+            command = command.replace('__ROOT__', root.as_posix()).replace('__ROWS__', fixture['rows_dir'].as_posix()).replace('__BINDING__', fixture['binding_path'].as_posix())
+            result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, text=True, timeout=90,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('PASS byte edges', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows bounded job required')
+    def test_caller_hash_timeout_cancellation_reparse_and_incomplete_receipts(self):
+        scripts = Path(__file__).resolve().parents[1] / 'scripts'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'payload').write_bytes(b'fixed synthetic payload\x00\xff\r\n')
+            linked = make_reparse_link(root / 'alias', root)
+            setup = f". '{(scripts / 'invoke-bounded.ps1').as_posix()}'\n. '{(scripts / 'train-adapter-stage.ps1').as_posix()}'\n" + r'''
+$ErrorActionPreference = 'Stop'
+$GpuMarker = '__ROOT__/synthetic-marker'
+$realBounded = ${function:Invoke-Bounded}
+'''
+            setup = setup.replace('__ROOT__', root.as_posix())
+            fault = r'''
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    $reader = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($A[-1]))
+    if (-not $reader.Contains('$buffer = [byte[]]::new(65536)') -or $reader.Contains('ReadAllBytes')) { throw 'caller-sized allocation returned' }
+    # Delay the actual read site inside the owned child (not a clock check
+    # around a blocking filesystem operation in the wrapper process).
+    $site = '$count = $stream.Read($buffer, 0, $wanted)'
+    $reader = $reader.Replace($site, 'Set-Content -LiteralPath "__PID__" -Value $PID; Start-Sleep -Seconds 30; ' + $site)
+    $A[-1] = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($reader))
+    & $realBounded $Exe $A $Seconds
+}
+'''
+            cancel = setup + fault.replace('__PID__', (root / 'cancel-pid').as_posix())
+            cancel += f"\nGet-BoundedCallerFileSHA256 -Path '{root.as_posix()}/payload' -MaxBytes 100 -TimeoutSeconds 60\n"
+            (root / 'cancel.ps1').write_text(cancel, encoding='utf-8')
+            command = setup + fault.replace('__PID__', (root / 'timeout-pid').as_posix()) + r'''
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/payload' -MaxBytes 100 -TimeoutSeconds 2 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('__EXIT__timeout') }
+if (-not $refused -or $clock.Elapsed.TotalSeconds -gt 15) { throw 'read deadline failed' }
+$childPid = [int](Get-Content -LiteralPath '__ROOT__/timeout-pid')
+if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) { throw 'timed-out reader survived' }
+Set-Item Function:Invoke-Bounded $realBounded
+foreach ($fake in 'empty', 'nonzero', 'extra') {
+    $script:receipt = $fake
+    function Invoke-Bounded {
+        switch ($script:receipt) {
+            'empty' { @() }; 'nonzero' { ('a' * 64); '__EXIT__9' }; 'extra' { ('a' * 64); 'extra'; '__EXIT__0' }
+        }
+    }
+    $refused = $false
+    try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/payload' -MaxBytes 100 | Out-Null }
+    catch { $refused = $_.Exception.Message.Contains('bounded caller file hash failed') }
+    if (-not $refused) { throw 'incomplete receipt accepted' }
+}
+function Invoke-Bounded { throw 'synthetic cleanup unconfirmed' }
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/payload' -MaxBytes 100 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('synthetic cleanup unconfirmed') }
+if (-not $refused) { throw 'cleanup uncertainty swallowed' }
+Set-Item Function:Invoke-Bounded $realBounded
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/absent' -MaxBytes 100 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('__EXIT__1') }
+if (-not $refused) { throw 'native error accepted' }
+__REPARSE__
+# PowerShell.Stop exercises the bounded helper's cancellation/finally cleanup.
+# Stop only this synthetic reader runspace, never another provider or GPU job.
+$ps = [PowerShell]::Create()
+try {
+    $null = $ps.AddScript([IO.File]::ReadAllText('__ROOT__/cancel.ps1'))
+    $async = $ps.BeginInvoke()
+    $until = [DateTime]::UtcNow.AddSeconds(15)
+    while (-not (Test-Path -LiteralPath '__ROOT__/cancel-pid') -and [DateTime]::UtcNow -lt $until -and -not $async.IsCompleted) { Start-Sleep -Milliseconds 50 }
+    if (-not (Test-Path -LiteralPath '__ROOT__/cancel-pid')) { throw 'cancellation reader did not enter read' }
+    $clock.Restart()
+    $ps.Stop()
+    try { $null = $ps.EndInvoke($async) } catch [Management.Automation.PipelineStoppedException] { }
+    if ($clock.Elapsed.TotalSeconds -gt 15) { throw 'cancellation cleanup exceeded bound' }
+    $childPid = [int](Get-Content -LiteralPath '__ROOT__/cancel-pid')
+    if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) { throw 'cancelled reader survived' }
+} finally { $ps.Dispose() }
+if ($BoundedUnconfirmed -or (Test-Path -LiteralPath $GpuMarker)) { throw 'unconfirmed cleanup; stop' }
+'PASS deadline + cancellation killed readers; receipts/native errors/uncertain cleanup refused'
+'''
+            reparse = r'''
+$refused = $false
+try { Get-BoundedCallerFileSHA256 -Path '__ROOT__/alias/payload' -MaxBytes 100 | Out-Null }
+catch { $refused = $_.Exception.Message.Contains('junction or symbolic link') }
+if (-not $refused) { throw 'reparse ancestry accepted' }
+'''
+            command = command.replace('__REPARSE__', reparse if linked else '').replace('__ROOT__', root.as_posix())
+            path = root / 'bounds.ps1'
+            path.write_text(command, encoding='utf-8')
+            try:
+                result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-File', str(path)], capture_output=True, text=True, timeout=60,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('PASS deadline + cancellation', result.stdout)
+            finally:
+                if linked:
+                    (root / 'alias').rmdir() if os.name == 'nt' else (root / 'alias').unlink()
+
     def test_epoch_dev_preflight_exact_boundaries_and_no_truncation(self):
         rows = [row("dev")]
         train_adapter.preflight_epoch_dev(rows, ContextTokenizer(prompt=2, full=2048), 2050)
@@ -744,6 +996,7 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
                 self.assertEqual(trainer[trainer.index("--probe-seq-len") + 1], "2048")
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
+    @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows bounded job required")
     def test_wrapper_epoch_mode_docker_args_use_the_staged_tree_not_code(self):
         # Epoch mode's docker-argument contract moved from an inline snippet to
         # New-TrainerDockerArgs (scripts/train-adapter-stage.ps1): call the real
@@ -755,6 +1008,9 @@ $PSBoundParameters = @{ ProbeRowsTotal = 96 }
         source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as tmp:
             hot_root = Path(tmp).as_posix().replace("'", "''")
+            (Path(tmp) / 'authority' / 'publication').mkdir(parents=True)
+            for name in ('pin.py', 'route-r-trust-root-v2r4.json', 'publication/batch-0001.publication.json'):
+                (Path(tmp) / 'authority' / name).write_text('{}')
             # These functions create directories only beneath the temporary HotRoot.
             command = f"""
 $ErrorActionPreference = 'Stop'
@@ -763,7 +1019,9 @@ $ExpectedDigests = 'dummy-digests.json'; $TrustedDigestRoot = 'dummy-root.json'
 {_wrapper_mount_construction(source)}
 $GpuMarker = '{hot_root}/synthetic-marker'
 $stage = @{{ Train = 'C:/synthetic/Train'; Eval = 'C:/synthetic/Eval'; Input = 'C:/synthetic/Input' }}
-$args_ = New-TrainerDockerArgs -Image 'dummy-image' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
+$args_ = New-TrainerDockerArgs -Image 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' -Name 'dummy-container' -CommonMounts $mounts -Stage $stage `
+    -AuthoritySource '# synthetic authenticated source' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+    -Locations @{{ PinFile = '{hot_root}/authority/pin.py'; CustodyRoot = '{hot_root}/authority' }} `
     -BindingPath 'C:/synthetic/Meta/publication-binding.json' -Base '{train_adapter.WINNER_BASE}' -Revision '{train_adapter.WINNER_REVISION}' `
     -ReportContainerPath '/workspace/reports/dummy-run.json' -Epochs 4 -EpochContextLimit 4096 -ModelsHostDir 'C:/synthetic/models/m2' `
     -ExtraEnv @('-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1')
@@ -776,10 +1034,11 @@ ConvertTo-Json -InputObject $args_ -Compress
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         args = json.loads(completed.stdout)
-        image = args.index("dummy-image")
+        image = args.index("unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739")
         self.assertEqual(args[image - 2:image], ["--entrypoint", "python"])
-        self.assertEqual(args[image + 1:image + 3], ["-B", "/train/train_adapter.py"])
-        options, trainer = args[:image], args[image + 3:]
+        self.assertEqual(args[image + 1:image + 4], ["-I", "-B", "-c"])
+        self.assertTrue(args[image + 4].endswith('bootstrap()\n'))
+        options, trainer = args[:image], args[image + 5:]
         self._assert_common_mounts(options, Path(tmp), epoch_mode=True, digests=True)
         self.assertNotIn("/code", " ".join(args))
         self.assertNotIn("/code:ro", options)
@@ -1018,6 +1277,119 @@ Write-Output 'PASS'
             self.assertGreater(index, 0, f"{call} not found")
             self.assertLess(index, mutex_index, f"{call} must run before the GPU mutex is created")
 
+    def test_epoch_image_guards_refuse_aliases_before_setup(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell is required for actual wrapper argument guards')
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'train-adapter.ps1'
+        source = script.read_text(encoding='utf-8')
+        # Execute the real parameter defaults and guard prefix, stopping before
+        # row/custody reads. Only dot-sourcing the Windows process helper is
+        # omitted: no bounded process is invoked by these argument guards.
+        prefix = source[:source.index('$Rows = [IO.Path]::GetFullPath($Rows)')]
+        prefix = prefix.replace(". (Join-Path $PSScriptRoot 'invoke-bounded.ps1')", '')
+        prefix = prefix.replace(". (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')",
+                                ". '" + script.with_name('train-adapter-stage.ps1').as_posix() + "'")
+        approved = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739'
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix_file = Path(tmp) / 'wrapper-guards.ps1'
+            prefix_file.write_text(prefix + "\n'GUARDS-PASSED'\n", encoding='utf-8')
+            command = f"""
+$ErrorActionPreference = 'Stop'
+$approved = '{approved}'
+$args_ = @{{ Rows = '{Path(tmp).as_posix()}/absent/accepted.jsonl'; Epochs = 1; Batch = 'batch-0001';
+    Base = '{train_adapter.WINNER_BASE}'; Revision = '{train_adapter.WINNER_REVISION}'; TimeoutMinutes = 1; EpochContextLimit = 4096 }}
+# Both the parameter default and the explicit identical digest pass.
+if ((& '{prefix_file.as_posix()}' @args_) -ne 'GUARDS-PASSED') {{ throw 'default refused' }}
+if ((& '{prefix_file.as_posix()}' @args_ -Image $approved) -ne 'GUARDS-PASSED') {{ throw 'exact digest refused' }}
+foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+        (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+    $denied = $false
+    try {{ & '{prefix_file.as_posix()}' @args_ -Image $bad | Out-Null }}
+    catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+    if (-not $denied) {{ throw "wrapper admitted alias: $bad" }}
+}}
+# Non-epoch and probe image selection keeps its previous behavior.
+foreach ($probe in $false, $true) {{
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' -Image 'custom/image:tag' -Probe:$probe) -ne 'GUARDS-PASSED') {{ throw 'legacy image changed' }}
+}}
+. '{script.with_name('train-adapter-stage.ps1').as_posix()}'
+foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+        (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+    $denied = $false
+    try {{ New-TrainerDockerArgs -Image $bad -Name 'unused' -CommonMounts @('-v','unused:/safe:ro') `
+        -Stage @{{}} -BindingPath 'unused' -Base 'unused' -Revision 'unused' -ReportContainerPath 'unused' `
+        -Epochs 1 -EpochContextLimit 4096 -AuthoritySource 'unused' -Batch 'batch-0001' -RootFile 'route-r-trust-root-v2r4.json' `
+        -Locations @{{}} | Out-Null }}
+    catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+    if (-not $denied) {{ throw "direct helper reached authority or mounts with alias: $bad" }}
+}}
+'PASS default + exact + five wrapper aliases + five direct helper aliases + legacy/probe'
+"""
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASS default + exact', result.stdout)
+            self.assertFalse((Path(tmp) / 'absent').exists())
+
+    def test_epoch_preflight_precedes_first_directory_mutation(self):
+        pwsh = shutil.which('pwsh')
+        if pwsh is None:
+            self.skipTest('PowerShell is required for wrapper ordering checks')
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'train-adapter.ps1'
+        source = script.read_text(encoding='utf-8')
+        first = source.index('# Epoch storage admission')
+        mutex = source.index('$gpuLock = [System.Threading.Mutex]::new(')
+        fragment = source[first:mutex]
+        self.assertLess(first, source.index('$mounts = New-TrainerCommonMounts'))
+        self.assertLess(first, source.index('$stage = New-StageTree'))
+        self.assertLess(first, source.index('(Write-StageFile'))
+        self.assertLess(mutex, source.index('$pf = @(Invoke-Bounded'))
+        self.assertNotIn('New-Item', source[:first])
+        self.assertNotIn('Set-Content', source[:first])
+        # Execute actual preflight and mount/staging statements. The first
+        # mutation is replaced with a sentinel and stops the success control;
+        # failure must never reach it or the later stage/binding/GPU statements.
+        with tempfile.TemporaryDirectory() as tmp:
+            sentinel = Path(tmp) / 'mutation'
+            command = f"""
+$ErrorActionPreference = 'Stop'
+$HotRoot = '{Path(tmp).as_posix()}'; $Rows = 'unused'; $ExpectedDigests = ''; $TrustedDigestRoot = ''; $Epochs = 1
+$script:seen = [Collections.Generic.List[string]]::new()
+function Invoke-Bounded($exe, $argv, $seconds) {{
+    if ($exe -cne 'pwsh' -or $seconds -ne 180 -or
+        ($argv -join '|') -cne "-NoProfile|-File|$(Join-Path $PSScriptRoot 'preflight.ps1')|-HotRoot|$HotRoot") {{ throw 'unexpected preflight command' }}
+    $script:seen.Add('read-only-preflight')
+    $script:reply
+}}
+function New-TrainerCommonMounts {{
+    $script:seen.Add('first-directory-mutation')
+    [IO.File]::WriteAllText('{sentinel.as_posix()}', 'synthetic')
+    throw 'SYNTHETIC-FIRST-MUTATION-STOP'
+}}
+foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
+    $script:seen.Clear()
+    $script:reply = switch ($case) {{ 'exit1' {{ '__EXIT__1' }} 'timeout' {{ '__EXIT__timeout' }} 'empty' {{ @() }} 'success' {{ '__EXIT__0' }} }}
+    $reason = ''
+    try {{
+{fragment}
+    }} catch {{ $reason = $_.Exception.Message }}
+    if ($case -ceq 'success') {{
+        if ($reason -cne 'SYNTHETIC-FIRST-MUTATION-STOP' -or ($script:seen -join ',') -cne 'read-only-preflight,first-directory-mutation') {{ throw 'success ordering incorrect' }}
+    }} else {{
+        if (-not $reason.Contains('pre-stage preflight did not pass') -or ($script:seen -join ',') -cne 'read-only-preflight' -or (Test-Path -LiteralPath '{sentinel.as_posix()}')) {{ throw "preflight failure reached a side effect: $case; reason=$reason; seen=$($script:seen -join ',')" }}
+    }}
+}}
+'PASS nonzero/timeout/empty refuse before writes; success preflight precedes first mutation'
+"""
+            test_script = Path(tmp) / 'preflight-order.ps1'
+            test_script.write_text(command, encoding='utf-8')
+            result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(test_script)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASS nonzero/timeout/empty', result.stdout)
+            self.assertEqual(set(Path(tmp).iterdir()), {sentinel, test_script})
+
     def test_wrapper_guard_block_refuses_winner_without_probe_and_bad_epochs(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -1028,6 +1400,9 @@ Write-Output 'PASS'
         guard_start = source.index("if ($Winner -and $Fallback)", start)
         end = source.index("if ($Steps -lt 1)", guard_start)
         prerequisites, guards = source[start:guard_start], source[guard_start:end]
+        helper = script.with_name("train-adapter-stage.ps1")
+        prerequisites = ". '" + helper.as_posix().replace("'", "''") + "'\n" + prerequisites
+        prerequisites += "$Image = '" + 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' + "'\n"
         epoch_pin = {"EpochContextLimit": "4096", "Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
         cases = [
             ({}, None),
@@ -3703,7 +4078,7 @@ def _build_publication_fixture(
     profile = {
         "format": "route-r-publication-profile/v1",
         "batch": batch,
-        "built_by": "route_r_publish.py/test",
+        "built_by": "codex",
         "accepted_jsonl_sha256": accepted_info["sha256"],
         "candidate_row_sha256": row_digests,
         "bundle_manifest_sha256": "1" * 64,
@@ -3733,13 +4108,44 @@ def _build_publication_fixture(
     }
     candidate.update(candidate_overrides or {})
 
+    # Independent synthetic admin files: mutation of stage/binding never rewrites
+    # these anchors. Tests patch fixed production locations, not a CLI override.
+    global _TEST_AUTHORITY_PATHS
+    authority_dir = root / 'authority'
+    authority_dir.mkdir()
+    authority_root = {
+        'format': 'route-r-trust-root/v2r4', 'row_schema': {'sha256': '3' * 64},
+        'custody': {'admins': ['codex']},
+        'adapter_consumption': {
+            'candidate': dict(candidate),
+            **{key: {'path': 'synthetic-' + key, 'sha256': 'f' * 64}
+               for key in ('bridge', 'interpreter', 'resolver_entry')},
+        },
+    }
+    root_data = json.dumps(authority_root, sort_keys=True).encode()
+    root_sha = hashlib.sha256(root_data).hexdigest()
+    root_path = authority_dir / 'root.json'
+    root_path.write_bytes(root_data)
+    pin_path = authority_dir / 'root-pin.py'
+    pin_path.write_text(f"ROOT_FILE = 'route-r-trust-root-v2r4.json'\nROOT_FORMAT = 'route-r-trust-root/v2r4'\nAPPROVED_TRUST_ROOT_SHA256 = '{root_sha}'\n")
+    if not profile_overrides or 'trust_root_sha256' not in profile_overrides:
+        profile['trust_root_sha256'] = root_sha
+    profile_info = _publication_write_file(rows_dir / 'profile.json', json.dumps(profile, sort_keys=True).encode())
+    publication_path = authority_dir / 'publication.json'
+    publication_path.write_text(json.dumps({
+        'format': 'route-r-publication/v1', 'batch': batch, 'published_by': 'codex',
+        'publication_profile_sha256': profile_info['sha256'], 'accepted_jsonl_sha256': accepted_info['sha256'],
+        'bundle_manifest_sha256': profile['bundle_manifest_sha256'], 'recount_sha256': profile['recount_sha256'],
+    }, sort_keys=True))
+    _TEST_AUTHORITY_PATHS = (pin_path, root_path, publication_path)
+
     resolution = {
         "format": "route-r-resolution/v1",
         "batch": batch,
         "verified": True,
         "accepted_jsonl_sha256": accepted_info["sha256"],
         "profile_sha256": profile_info["sha256"],
-        "publication_sha256": "e" * 64,
+        "publication_sha256": hashlib.sha256(publication_path.read_bytes()).hexdigest(),
         "trust_root_sha256": profile["trust_root_sha256"],
         "validation_report_sha256": report_info["sha256"],
         "bridge_sha256": "f" * 64,
@@ -3783,12 +4189,13 @@ def _build_publication_fixture(
     return {
         "binding_path": binding_path, "rows_dir": rows_dir, "code_dir": code_dir, "eval_dir": eval_dir,
         "binding": binding, "profile": profile, "report": report, "rows": rows, "row_digests": row_digests,
+        "authority_paths": _TEST_AUTHORITY_PATHS,
         "train_kwargs": {"epoch_context_limit": 4096, "publication_binding_path": binding_path, "publication_rows_dir": rows_dir,
                          "publication_code_dir": code_dir, "publication_eval_dir": eval_dir},
     }
 
 
-class PublicationBindingTests(unittest.TestCase):
+class PublicationBindingTests(AuthorityFixtureCase):
     """verify_publication_binding and the --publication-binding CLI gate."""
 
     def _verify(self, fx):
@@ -4275,9 +4682,15 @@ class PublicationBindingTests(unittest.TestCase):
         "set ADAPTER_TEST_STAGE_DIR to a tree built by scripts/test-train-adapter.ps1 to run this probe",
     )
     def test_wrapper_staged_tree_verifies(self):
+        import epoch_authority
         stage = Path(os.environ["ADAPTER_TEST_STAGE_DIR"])
-        result = train_adapter.verify_publication_binding(
-            stage / "Meta" / "publication-binding.json", stage / "Input", stage / "Train", stage / "Eval")
+        # Test-only host fixture transport; production has no anchor override.
+        paths = json.loads(os.environ["ADAPTER_TEST_AUTHORITY_PATHS"])
+        self.assertEqual(len(paths), 3)
+        self.assertTrue(all(isinstance(path, str) and Path(path).is_absolute() for path in paths))
+        with mock.patch.object(epoch_authority, 'production_paths', return_value=tuple(map(Path, paths))):
+            result = train_adapter.verify_publication_binding(
+                stage / "Meta" / "publication-binding.json", stage / "Input", stage / "Train", stage / "Eval")
         self.assertEqual(set(result), {"batch", "profile_sha256", "root_sha256"})
 
 

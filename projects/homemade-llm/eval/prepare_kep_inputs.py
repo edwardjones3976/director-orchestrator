@@ -42,6 +42,41 @@ RECORD_KEYS = frozenset({
     "source_captured_at", "generated_at", "input", "title_span", "objective_span", "context_spans",
 })
 
+# -- Rule v3 (length-budgeted, two-alias) constants. The v2 path above is untouched;
+# every name below is new and only reached when a policy's protocol is v3. --
+V3_AUTHORITY = "issue299/comment6004258885"         # allocation amendment; supersedes the fixed-cap authority 6000111441
+V3_SECTION_ALIASES = {"Notes/Constraints/Caveats": ["Risks and Mitigations"], "Alpha Graduation Criteria": ["Graduation Criteria"]}
+# Reverse lookup used only to recognize an alias HEADING; the original heading
+# text and wording are always kept verbatim, never renamed to the role name.
+V3_ALIAS_HEADING_ROLE = {"risks and mitigations": "Notes/Constraints/Caveats", "graduation criteria": "Alpha Graduation Criteria"}
+V3_ALIAS_PRECEDENCE = "canonical-nonempty-before-alias; duplicate-refuses; no-post-trim-fallback"
+TEMPLATE_PATH = "keps/NNNN-kep-template/README.md"
+TEMPLATE_SHA256 = "38ed9f6e5c99bf72398fdb7c048515783bf20c1a4a1d691dc1d82e921eb63db7"
+TEMPLATE_GIT_BLOB = "d7d230223518a9982a6d8f717b285d3e76a2c45b"
+V3_TEMPLATE = {"path": TEMPLATE_PATH, "sha256": TEMPLATE_SHA256, "git_blob": TEMPLATE_GIT_BLOB}
+# Shared allocation (addendum ecf5d343...a0f5): the five mandatory minima (objective plus each support role's retained heading/prefix and first
+# qualifying whole paragraph) are reserved first inside one 2,100-character pool; support roles then fill in order from what remains; Summary and
+# Motivation keep separate 200-character budgets that never transfer. Costs are Unicode code points of the exact emitted text.
+V3_MANDATORY_BUDGET = 2100
+V3_TOTAL_BUDGET = 2500
+V3_OPTIONAL_BUDGETS = {"Summary": 200, "Motivation": 200}
+V3_ALLOCATION = {"mode": "shared-mandatory-minima-then-ordered-prefix/v1", "mandatory_character_budget": V3_MANDATORY_BUDGET,
+                 "total_character_budget": V3_TOTAL_BUDGET, "mandatory_reservation_order": ["objective", *SUPPORT_SECTIONS],
+                 "support_fill_order": list(SUPPORT_SECTIONS), "objective_selection": "first-qualifying-whole-contiguous-paragraph-only",
+                 "nonfitting_paragraph": "stop-current-role; continue-next-role; no-skip-within-role",
+                 "optional_character_budgets": V3_OPTIONAL_BUDGETS, "optional_budget_transfer": False,
+                 "character_accounting": "unicode-codepoints-of-exact-emitted-span-text; retained-separators-included; no-inserted-join-separators"}
+V3_TRIM = {"line_match": "exact-unicode-excluding-newline",
+           "paragraphs": "source-order-whole-prefix; no-oversized-first-paragraph-skip",
+           "preserve_original_spans": True, "duplicate_goals_context": False,
+           "allocation": V3_ALLOCATION}
+V3_TOKEN_GATE = {"maximum_input_prompt_tokens": 1400, "target_median": 1000, "minimum_usable_inputs": 200,
+                 "implementation": "separate-pinned-offline-tokenizer; over-limit-refused-not-retrimmed"}
+V3_POLICY_KEYS = frozenset({
+    "protocol", "authority", "repository", "commit", "statuses", "creation_date_filter", "order", "frozen_at",
+    "required_sections", "section_aliases", "alias_precedence", "template", "trim", "postconstruction_token_gate",
+})
+
 
 class Refusal(ValueError):
     """Only a fixed reason code is exposed to the operator."""
@@ -225,6 +260,241 @@ def visibly_nonempty(text):
         if any(char.isalnum() for char in visible):
             return True
     return False
+
+
+def validate_v3_policy(rule):
+    """Closed-key, fixed-constant check for a kep-input-selection/v3 policy.
+
+    Every field except ``frozen_at`` is a pinned constant (deep-equality against
+    the accepted specification); ``frozen_at`` is validated by the caller the
+    same way v2 validates it, via utc(). This never runs for a v2 policy and
+    never changes the v2 validation above."""
+    if not isinstance(rule, dict) or set(rule) != V3_POLICY_KEYS:
+        raise Refusal("INVALID_POLICY")
+    fixed = {
+        "protocol": "kep-input-selection/v3", "authority": V3_AUTHORITY, "repository": REPOSITORY,
+        "commit": COMMIT, "statuses": ["implemented", "implementable"], "creation_date_filter": None,
+        "order": ORDER, "required_sections": list(SUPPORT_SECTIONS), "section_aliases": V3_SECTION_ALIASES,
+        "alias_precedence": V3_ALIAS_PRECEDENCE, "template": V3_TEMPLATE, "trim": V3_TRIM,
+        "postconstruction_token_gate": V3_TOKEN_GATE,
+    }
+    for key, value in fixed.items():
+        if not _typed_equal(rule.get(key), value):
+            raise Refusal("INVALID_POLICY")
+
+
+def _typed_equal(got, want):
+    """Deep equality that also requires identical JSON types at every level: a Boolean never stands for an integer or the reverse, a float never
+    for an integer, and every object must carry exactly the expected keys (unknown, missing or old fixed-cap keys therefore refuse)."""
+    if type(got) is not type(want):
+        return False
+    if isinstance(want, dict):
+        return set(got) == set(want) and all(_typed_equal(got[k], want[k]) for k in want)
+    if isinstance(want, list):
+        return len(got) == len(want) and all(_typed_equal(g, w) for g, w in zip(got, want))
+    return got == want
+
+
+def source_sections_v3(text):
+    """Canonical detection is an unmodified copy of source_sections (v2): same
+    title rule, same nested-Alpha form, same AMBIGUOUS_SECTION duplicate check,
+    in the same order, so the v2 function above is never touched or reused in a
+    way that could change its behavior.
+
+    This additionally records the two configured alias headings ("Risks and
+    Mitigations" for Notes/Constraints/Caveats, a plain "Graduation Criteria"
+    for Alpha Graduation Criteria) in a SEPARATE map, with its own
+    AMBIGUOUS_ALIAS duplicate check. A heading already consumed as the title or
+    as a canonical section (including the "Graduation Criteria" parent of a
+    nested canonical Alpha heading) is never also treated as an alias source."""
+    headings = []
+    for offset, visible, fenced in visible_lines(text):
+        if not fenced:
+            clean = visible.rstrip("\r\n")
+            match = re.match(r"^ {0,3}(#{1,6})[ \t]+(.*)$", clean)
+            if match:
+                name = re.sub(r"[ \t]+#+[ \t]*$", "", match[2]).strip(" \t")
+                if not name:
+                    continue
+                start = match.start(2) + len(match[2]) - len(match[2].lstrip(" \t"))
+                end = start + len(name)
+                headings.append((len(match[1]), name, offset, offset + len(visible),
+                                 {"start": offset + start, "end": offset + end}))
+    sections = {}
+    title = None
+    mapping = {name.casefold(): name for name in CONTEXT_SECTIONS}
+    consumed = set()
+    for index, (level, name, start, body, title_span) in enumerate(headings):
+        if level == 1 and title is None:
+            if text[title_span["start"]:title_span["end"]] != name:
+                raise Refusal("AMBIGUOUS_INPUT_TITLE")
+            title = title_span
+            consumed.add(index)
+            continue
+        key_name = heading_name(name)
+        key = mapping.get(key_name)
+        parent = None
+        if key_name == "alpha":
+            parent = next((head for head in reversed(headings[:index]) if head[0] < level), None)
+            if parent and heading_name(parent[1]) == "graduation criteria":
+                if any(head[2] > parent[2] for head in headings[:index]):
+                    raise Refusal("ALPHA_PRECEDING_SIBLING")
+                key = "Alpha Graduation Criteria"
+                for parent_index, head in enumerate(headings[:index]):
+                    if head[2] == parent[2]:
+                        consumed.add(parent_index)
+        if key:
+            if key in sections:
+                raise Refusal("AMBIGUOUS_SECTION")
+            end = next((head[2] for head in headings[index + 1:] if head[0] <= level), len(text))
+            context_start = parent[2] if key == "Alpha Graduation Criteria" and key_name == "alpha" else start
+            sections[key] = {"start": context_start, "body_start": body, "end": end}
+            consumed.add(index)
+    alias_sections = {}
+    for index, (level, name, start, body, title_span) in enumerate(headings):
+        if index in consumed:
+            continue
+        role = V3_ALIAS_HEADING_ROLE.get(heading_name(name))
+        if role is None:
+            continue
+        if role in alias_sections:
+            raise Refusal("AMBIGUOUS_ALIAS")
+        end = next((head[2] for head in headings[index + 1:] if head[0] <= level), len(text))
+        alias_sections[role] = {"start": start, "body_start": body, "end": end}
+    return title, sections, alias_sections
+
+
+def _physical_lines(text):
+    """Every physical line of text, segmented the same way visible_lines
+    segments it (str.splitlines), yielded as (start, end-with-terminator,
+    content-with-the-terminator-removed)."""
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        split = line.splitlines()
+        yield offset, offset + len(line), split[0] if split else ""
+        offset += len(line)
+
+
+def _document_lines(text):
+    """One record per physical line: original offsets, raw content (for exact
+    template-line matching) and masked/visible content plus fence state (for
+    blank-line and visibility checks), built from the same two generators
+    source_sections_v3 and visibly_nonempty already rely on."""
+    lines = []
+    for (start, end, raw), (_, visible, fenced) in zip(_physical_lines(text), visible_lines(text)):
+        split = visible.splitlines()
+        lines.append({"start": start, "end": end, "raw": raw, "visible": split[0] if split else "", "fenced": fenced})
+    return lines
+
+
+def _template_line_set(template_text):
+    """Exact-Unicode, newline-excluded template body lines used for removal.
+
+    Blank (whitespace-only) lines are deliberately excluded: a template
+    necessarily contains many blank lines, and matching on them would strip
+    every blank-line paragraph separator from every KEP body, destroying
+    paragraph structure everywhere rather than removing boilerplate text."""
+    return frozenset(content for _, _, content in _physical_lines(template_text) if content.strip())
+
+
+def _surviving_spans(lines, removed_flags, start, end):
+    """Contiguous original spans inside [start, end) after dropping any line
+    flagged removed; a removed line always starts a new, separate span."""
+    spans, current = [], None
+    for line, removed in zip(lines, removed_flags):
+        if line["start"] < start or line["start"] >= end:
+            continue
+        if removed:
+            if current is not None:
+                spans.append(current)
+                current = None
+            continue
+        if current is None:
+            current = {"start": line["start"], "end": line["end"]}
+        else:
+            current["end"] = line["end"]
+    if current is not None:
+        spans.append(current)
+    return spans
+
+
+def _source_paragraphs(lines, start, end):
+    """Whole-paragraph spans inside [start, end) in source order, computed
+    BEFORE template-line removal: a blank visible line ends a paragraph unless
+    a fence is open, in which case an internal blank line never splits it."""
+    paragraphs, current = [], None
+    for line in lines:
+        if line["start"] < start or line["start"] >= end:
+            continue
+        blank = not line["fenced"] and line["visible"].strip() == ""
+        if blank:
+            if current is not None:
+                paragraphs.append(current)
+                current = None
+            continue
+        if current is None:
+            current = {"start": line["start"], "end": line["end"]}
+        else:
+            current["end"] = line["end"]
+    if current is not None:
+        paragraphs.append(current)
+    return paragraphs
+
+
+def _span_cost(text, span):
+    """Unicode code points of the exact emitted text of one span (CR, LF and every other retained character count; no separator is added)."""
+    return len(text[span["start"]:span["end"]])
+
+
+def _spans_overlap(spans):
+    """True when any two half-open source spans [start, end) share a character; spans that only touch (one ends where the next starts) do not."""
+    ordered = sorted((span["start"], span["end"]) for span in spans)
+    return any(later[0] < earlier[1] for earlier, later in zip(ordered, ordered[1:]))
+
+
+def _qualifying_paragraph_runs(text, lines, removed_flags, source):
+    """For each whole source paragraph of a section body, in source order, its surviving visible runs after template-line removal; a paragraph
+    with no surviving visible content is omitted (it costs nothing and never blocks a later paragraph)."""
+    out = []
+    for paragraph in _source_paragraphs(lines, source["body_start"], source["end"]):
+        runs = [run for run in _surviving_spans(lines, removed_flags, paragraph["start"], paragraph["end"])
+                if visibly_nonempty(text[run["start"]:run["end"]])]
+        if runs:
+            out.append(runs)
+    return out
+
+
+def _select_budgeted_items(text, lines, removed_flags, source, budget):
+    """A heading item plus a source-order whole-paragraph prefix of body items.
+
+    The retained heading's own character length counts against the budget,
+    same as retained paragraph text (only renderer metadata is excluded, and
+    none of these helpers ever emit any). A source paragraph that template
+    removal empties entirely contributes no content and no cost: it is not
+    "an oversized first content paragraph" (it has no content at all), so it
+    never blocks a later, real paragraph -- it is skipped for free. The
+    prefix instead stops (without skipping past it) at the first paragraph
+    that still has non-empty surviving content but would push the running
+    total over budget."""
+    heading = {"start": source["start"], "end": source["body_start"]}
+    used = heading["end"] - heading["start"]
+    if used > budget:
+        return []
+    paragraphs = _source_paragraphs(lines, source["body_start"], source["end"])
+    accepted = []
+    for paragraph in paragraphs:
+        runs = [run for run in _surviving_spans(lines, removed_flags, paragraph["start"], paragraph["end"])
+                if visibly_nonempty(text[run["start"]:run["end"]])]
+        if not runs:
+            continue  # Wholly template boilerplate; never blocks a later paragraph.
+        length = sum(run["end"] - run["start"] for run in runs)
+        if used + length > budget:
+            break
+        used += length
+        accepted.extend(runs)
+    if not accepted:
+        return []
+    return [heading] + accepted
 
 
 class _WindowsDirectories:
@@ -618,9 +888,17 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
     pinned_file(license_file, pins["license"])
     raw_policy = pinned_file(policy, policy_sha256, 65536)
     rule = strict_json(raw_policy)
-    policy_keys = {"protocol", "repository", "commit", "statuses", "creation_date_filter", "required_sections", "order", "frozen_at", "authority"}
-    if not isinstance(rule, dict) or set(rule) != policy_keys or rule.get("authority") != "issue299/comment5973258630" or rule.get("protocol") != "kep-input-selection/v2" or rule.get("repository") != REPOSITORY or rule.get("commit") != COMMIT or rule.get("statuses") != ["implemented", "implementable"] or rule.get("creation_date_filter") is not None or rule.get("required_sections") != list(SUPPORT_SECTIONS) or rule.get("order") != ORDER:
+    if not isinstance(rule, dict):
         raise Refusal("INVALID_POLICY")
+    protocol = rule.get("protocol")
+    if protocol == "kep-input-selection/v3":
+        # v3 is additive only; the v2 branch below is untouched and a v2
+        # policy is validated exactly as it always was.
+        validate_v3_policy(rule)
+    else:
+        policy_keys = {"protocol", "repository", "commit", "statuses", "creation_date_filter", "required_sections", "order", "frozen_at", "authority"}
+        if set(rule) != policy_keys or rule.get("authority") != "issue299/comment5973258630" or rule.get("protocol") != "kep-input-selection/v2" or rule.get("repository") != REPOSITORY or rule.get("commit") != COMMIT or rule.get("statuses") != ["implemented", "implementable"] or rule.get("creation_date_filter") is not None or rule.get("required_sections") != list(SUPPORT_SECTIONS) or rule.get("order") != ORDER:
+            raise Refusal("INVALID_POLICY")
     frozen_at = rule.get("frozen_at")
     utc(frozen_at)
     started_at = next_clock(clock, frozen_at)
@@ -691,6 +969,8 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         decision["selection_rank"] = rank
     order_hash = digest(json_bytes([{key: decision[key] for key in ("path", "sig", "kep_number", "selection_rank")} for _, decision in ordered]))
     prepared, source_total = [], 0
+    stage_before = stage_after = stage_paragraph = 0  # v3 funnel counts only; unused and unreported for v2.
+    template_lines = frozenset()
     prefix = "enhancements-" + COMMIT + "/"
     last_time = started_at
     with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:gz") as tar:
@@ -726,6 +1006,11 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         archive_license, _ = read_member("LICENSE")
         if digest(archive_license) != pins["license"]:
             raise Refusal("LICENSE_MISMATCH")
+        if protocol == "kep-input-selection/v3":
+            raw_template, template_blob = read_member(rule["template"]["path"])
+            if digest(raw_template) != rule["template"]["sha256"] or template_blob != rule["template"]["git_blob"]:
+                raise Refusal("TEMPLATE_PIN_MISMATCH")
+            template_lines = _template_line_set(raw_template.decode("utf-8"))
         # Authenticate census semantics for every entry before reading bodies;
         # a false ineligible status must not silently remove a pinned source.
         for entry in metadata["items"]:
@@ -745,19 +1030,120 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 text = raw.decode("utf-8")
                 captured = next_clock(clock, last_time)
                 last_time = captured
-                title_span, sections = source_sections(text)
-                if any(name not in sections or not visibly_nonempty(text[sections[name]["body_start"]:sections[name]["end"]]) for name in SUPPORT_SECTIONS):
-                    raise Refusal("MISSING_OR_EMPTY_SUPPORT_SECTION")
-                decision["section_qualified"] = True
-                if title_span is None:
-                    raise Refusal("INPUT_TITLE_MISSING")
-                if "Goals" not in sections or not visibly_nonempty(text[sections["Goals"]["body_start"]:sections["Goals"]["end"]]):
-                    raise Refusal("INPUT_GOALS_MISSING")
-                objective_span = trim_span(text, {"start": sections["Goals"]["body_start"], "end": sections["Goals"]["end"]})
-                spans = sorted(({"start": sections[name]["start"], "end": sections[name]["end"]} for name in CONTEXT_SECTIONS if name in sections and visibly_nonempty(text[sections[name]["body_start"]:sections[name]["end"]])), key=lambda span: span["start"])
-                source_sha = digest(raw)
-                item = {"objective": text[objective_span["start"]:objective_span["end"]], "title": text[title_span["start"]:title_span["end"]], "repository": REPOSITORY,
-                        "context": [{"kind": "assignment_packet", "source_ref": path, "source_sha256": source_sha, "text": text[span["start"]:span["end"]]} for span in spans]}
+                if protocol == "kep-input-selection/v3":
+                    # -- v3: alias-aware selection, then template-line removal,
+                    # then a paragraph-budget trim. The v2 branch below (the
+                    # `else`) is the original, untouched code. --
+                    title_span, sections, alias_sections = source_sections_v3(text)
+                    chosen = {}
+                    for role in SUPPORT_SECTIONS:
+                        canonical = sections.get(role)
+                        if canonical is not None and visibly_nonempty(text[canonical["body_start"]:canonical["end"]]):
+                            chosen[role] = canonical
+                            continue
+                        alias = alias_sections.get(role)
+                        if alias is not None and visibly_nonempty(text[alias["body_start"]:alias["end"]]):
+                            chosen[role] = alias
+                            continue
+                        raise Refusal("MISSING_OR_EMPTY_SUPPORT_SECTION")
+                    decision["section_qualified"] = True  # Matches v2's meaning: the 4 roles alone, independent of title/Goals.
+                    if title_span is None:
+                        raise Refusal("INPUT_TITLE_MISSING")
+                    if "Goals" not in sections or not visibly_nonempty(text[sections["Goals"]["body_start"]:sections["Goals"]["end"]]):
+                        raise Refusal("INPUT_GOALS_MISSING")
+                    stage_before += 1  # Title + Goals + all 4 chosen roles, per the v3 stage-count definition.
+
+                    doc_lines = _document_lines(text)
+                    removed_flags = [bool(rec["raw"].strip()) and rec["raw"] in template_lines for rec in doc_lines]
+
+                    required_bodies = {"Goals": {"start": sections["Goals"]["body_start"], "end": sections["Goals"]["end"]}}
+                    for role in SUPPORT_SECTIONS:
+                        required_bodies[role] = {"start": chosen[role]["body_start"], "end": chosen[role]["end"]}
+                    for body_span in required_bodies.values():
+                        runs = _surviving_spans(doc_lines, removed_flags, body_span["start"], body_span["end"])
+                        if not any(visibly_nonempty(text[run["start"]:run["end"]]) for run in runs):
+                            raise Refusal("EMPTY_AFTER_TEMPLATE_REMOVAL")
+                    stage_after += 1
+
+                    goals_paragraphs = _source_paragraphs(doc_lines, required_bodies["Goals"]["start"], required_bodies["Goals"]["end"])
+                    objective_paragraph = None
+                    for paragraph in goals_paragraphs:
+                        runs = [run for run in _surviving_spans(doc_lines, removed_flags, paragraph["start"], paragraph["end"])
+                                if visibly_nonempty(text[run["start"]:run["end"]])]
+                        if not runs:
+                            continue  # Wholly template boilerplate; the real objective paragraph may follow it.
+                        objective_paragraph = (paragraph, runs)
+                        break
+                    if objective_paragraph is None:
+                        raise Refusal("NO_WHOLE_PARAGRAPH_WITHIN_BUDGET")
+                    first_goals_paragraph, goals_runs = objective_paragraph
+                    if len(goals_runs) > 1 or goals_runs[0]["start"] != first_goals_paragraph["start"] or goals_runs[0]["end"] != first_goals_paragraph["end"]:
+                        raise Refusal("OBJECTIVE_SPAN_NOT_CONTIGUOUS")
+                    objective_span = trim_span(text, goals_runs[0])
+
+                    # Reserve every mandatory minimum BEFORE any fill: the objective and, per support role, its retained heading/prefix once plus all
+                    # surviving runs of its first qualifying whole paragraph (never skipped, whatever its size).
+                    minima, rests = {}, {}
+                    for role in SUPPORT_SECTIONS:
+                        qualifying = _qualifying_paragraph_runs(text, doc_lines, removed_flags, chosen[role])
+                        if not qualifying:
+                            raise Refusal("EMPTY_AFTER_TEMPLATE_REMOVAL")
+                        minima[role] = [{"start": chosen[role]["start"], "end": chosen[role]["body_start"]}] + qualifying[0]
+                        rests[role] = qualifying[1:]
+                    used = _span_cost(text, objective_span) + sum(_span_cost(text, item) for role in SUPPORT_SECTIONS for item in minima[role])
+                    if used > V3_MANDATORY_BUDGET:
+                        raise Refusal("MANDATORY_MINIMA_OVER_BUDGET")
+                    # Fill support roles only, in the fixed order, with each next whole paragraph that fits the remaining pool; the first one that does
+                    # not fit stops that role (no skip within a role) and the next role continues. The objective never receives more.
+                    selected = {role: list(minima[role]) for role in SUPPORT_SECTIONS}
+                    for role in SUPPORT_SECTIONS:
+                        for runs in rests[role]:
+                            cost = sum(_span_cost(text, run) for run in runs)
+                            if used + cost > V3_MANDATORY_BUDGET:
+                                break
+                            used += cost
+                            selected[role].extend(runs)
+                    context_items = [item for role in SUPPORT_SECTIONS for item in selected[role]]
+                    optional_used = {}
+                    for role in ("Summary", "Motivation"):
+                        source = sections.get(role)
+                        if source is None or not visibly_nonempty(text[source["body_start"]:source["end"]]):
+                            continue
+                        items = _select_budgeted_items(text, doc_lines, removed_flags, source, V3_OPTIONAL_BUDGETS[role])
+                        optional_used[role] = sum(_span_cost(text, item) for item in items)
+                        context_items.extend(items)
+                    # The objective and every emitted context span must be pairwise disjoint source spans (touching is allowed). A recognized heading
+                    # nested inside another section can otherwise put the same source characters in two items; refuse rather than clip or reallocate.
+                    if _spans_overlap([objective_span] + context_items):
+                        raise Refusal("CONTEXT_SPAN_OVERLAP")
+                    # Independent reconciliation against the exact emitted strings.
+                    mandatory_total = len(text[objective_span["start"]:objective_span["end"]]) + sum(
+                        len(text[item["start"]:item["end"]]) for role in SUPPORT_SECTIONS for item in selected[role])
+                    if (mandatory_total != used or mandatory_total > V3_MANDATORY_BUDGET
+                            or any(optional_used[role] > V3_OPTIONAL_BUDGETS[role] for role in optional_used)
+                            or mandatory_total + sum(optional_used.values()) > V3_TOTAL_BUDGET
+                            or len({(item["start"], item["end"]) for item in context_items}) != len(context_items)):
+                        raise Refusal("ALLOCATION_ACCOUNTING_MISMATCH")
+                    stage_paragraph += 1
+
+                    spans = sorted(context_items, key=lambda span: span["start"])
+                    source_sha = digest(raw)
+                    item = {"objective": text[objective_span["start"]:objective_span["end"]], "title": text[title_span["start"]:title_span["end"]], "repository": REPOSITORY,
+                            "context": [{"kind": "assignment_packet", "source_ref": path, "source_sha256": source_sha, "text": text[span["start"]:span["end"]]} for span in spans]}
+                else:
+                    title_span, sections = source_sections(text)
+                    if any(name not in sections or not visibly_nonempty(text[sections[name]["body_start"]:sections[name]["end"]]) for name in SUPPORT_SECTIONS):
+                        raise Refusal("MISSING_OR_EMPTY_SUPPORT_SECTION")
+                    decision["section_qualified"] = True
+                    if title_span is None:
+                        raise Refusal("INPUT_TITLE_MISSING")
+                    if "Goals" not in sections or not visibly_nonempty(text[sections["Goals"]["body_start"]:sections["Goals"]["end"]]):
+                        raise Refusal("INPUT_GOALS_MISSING")
+                    objective_span = trim_span(text, {"start": sections["Goals"]["body_start"], "end": sections["Goals"]["end"]})
+                    spans = sorted(({"start": sections[name]["start"], "end": sections[name]["end"]} for name in CONTEXT_SECTIONS if name in sections and visibly_nonempty(text[sections[name]["body_start"]:sections[name]["end"]])), key=lambda span: span["start"])
+                    source_sha = digest(raw)
+                    item = {"objective": text[objective_span["start"]:objective_span["end"]], "title": text[title_span["start"]:title_span["end"]], "repository": REPOSITORY,
+                            "context": [{"kind": "assignment_packet", "source_ref": path, "source_sha256": source_sha, "text": text[span["start"]:span["end"]]} for span in spans]}
                 if any(marker in json.dumps(item, ensure_ascii=False) for marker in SECRET_MARKERS):
                     raise Refusal("SECRET_PATTERN")
                 prepared.append({"decision": decision, "text": text, "item": item, "spans": spans, "title_span": title_span, "objective_span": objective_span, "captured": captured, "source_ref": path, "source_sha": source_sha, "blob": blob})
@@ -792,8 +1178,14 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                "usable_inputs": len(records), "refused": len(decisions) - len(records), "refused_by_reason": dict(sorted(Counter(item["reason"] for item in decisions if item["reason"]).items())),
                "excluded_symlink_members": len(excluded_links),
                "excluded_symlink_member_paths": excluded_symlink_paths}
+    stage_counts = None
+    if protocol == "kep-input-selection/v3":
+        stage_counts = {"status_candidates": summary["status_candidates"], "qualified_before_template_removal": stage_before,
+                         "qualified_after_template_removal": stage_after, "paragraph_qualified": stage_paragraph,
+                         "usable_inputs": summary["usable_inputs"]}
     if not records:
-        raise Refusal("NO_USABLE_INPUTS", summary)
+        # v3 refusals carry the same qualification funnel as successful results (#463); v2 summaries are unchanged.
+        raise Refusal("NO_USABLE_INPUTS", summary if stage_counts is None else dict(summary, stage_counts=stage_counts))
     payloads = [json_bytes(record) + b"\n" for record in records]
     data = b"".join(payloads)
     manifest = {"protocol": "kep-input-manifest/v1", "disposition": "construction_only", "repository": REPOSITORY, "commit": COMMIT,
@@ -801,8 +1193,10 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 "construction_started_at": started_at, "recorded_at": next_clock(clock, last_time), "order_sha256": order_hash,
                 "qualified_selection_sha256": qualification_sha, "qualification": qualification, "summary": summary,
                 "inputs_sha256": digest(data), "records": [{"source_group": record["source_group"], "selection_rank": record["selection_rank"], "sha256": digest(payload)} for record, payload in zip(records, payloads)]}
+    if stage_counts is not None:
+        manifest["stage_counts"] = stage_counts
     if dry_run:
-        return {"completion_status": "not_completed", "dry_run": True, **summary}
+        return {"completion_status": "not_completed", "dry_run": True, **summary, **({"stage_counts": stage_counts} if stage_counts is not None else {})}
     manifest_data = json_bytes(manifest) + b"\n"
     with _Publication(out) as publication:
         publication.publish(data, manifest_data)
@@ -810,7 +1204,8 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
     # comes from the external host receipt, never this caller-visible dictionary.
     return {"protocol": "kep-input-completion/v1", "completion_status": "completed",
             "dry_run": False, "inputs_sha256": digest(data),
-            "manifest_sha256": digest(manifest_data), "policy_sha256": policy_sha256, **summary}
+            "manifest_sha256": digest(manifest_data), "policy_sha256": policy_sha256, **summary,
+            **({"stage_counts": stage_counts} if stage_counts is not None else {})}
 
 
 def main(argv=None):
