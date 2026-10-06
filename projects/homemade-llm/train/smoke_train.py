@@ -65,6 +65,9 @@ WS = Path("/workspace")
 RUN_DIR, MODEL_DIR = WS / "runs" / RUN, WS / "models" / "smoke"
 REPORT, FAILURE = WS / "reports" / f"{RUN}.json", WS / "reports" / f"{RUN}.failure.json"
 EXPORT_DIR = Path("/tmp") / RUN / "gguf"
+# The pinned Unsloth writes the GGUF to the SIBLING "<save_directory>_gguf", not beneath save_directory
+# (unsloth/save.py _gguf_output_directory in the pinned image), so publication reads exactly that directory.
+GGUF_DIR = Path(f"{EXPORT_DIR}_gguf")
 LIST_ENTRY_KEYS = {"files", "smoke_only", "source"}
 FILE_KEYS = {"path", "sha256", "size"}
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -359,7 +362,7 @@ def main() -> None:
         evidence["completed_stages"].append("export")
 
         stage = "publish"
-        report["gguf"] = publish_all(EXPORT_DIR, MODEL_DIR)
+        report["gguf"] = publish_all(GGUF_DIR, MODEL_DIR)
         report["status"] = "complete"
         report["wall_seconds"] = round(time.time() - t0, 1)
         try:

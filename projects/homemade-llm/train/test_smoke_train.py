@@ -396,6 +396,72 @@ class FailureReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(smoke_train.SmokeFailure, "saved adapter bytes differ"):
                 smoke_train.export()
 
+    def test_main_publishes_the_gguf_unsloth_writes_beside_the_export_directory(self):
+        # The pinned Unsloth writes <save_directory>_gguf/<model>.Q4_K_M.gguf, a SIBLING of save_directory (save.py
+        # _gguf_output_directory). Drive main() end to end with a fake export that writes exactly there: publishing from
+        # EXPORT_DIR would find nothing and fail with "no GGUF produced".
+        self.assertEqual(smoke_train.GGUF_DIR, Path(f"{smoke_train.EXPORT_DIR}_gguf"))
+
+        class FakeModel:
+            def save_pretrained(self, d):
+                Path(d).mkdir(parents=True, exist_ok=True)
+
+        class FakeTok:
+            def apply_chat_template(self, messages, tokenize, enable_thinking):
+                return json.dumps(messages)
+
+            def __call__(self, text):
+                return {"input_ids": [0] * 8}
+
+            def save_pretrained(self, d):
+                Path(d).mkdir(parents=True, exist_ok=True)
+
+        class FakeLoader:
+            @staticmethod
+            def from_pretrained(name, **kwargs):
+                return FakeModel(), FakeTok()
+
+            @staticmethod
+            def get_peft_model(model, **kwargs):
+                return model
+
+        class FakeTrainer:
+            def __init__(self, **kwargs):
+                self.state = types.SimpleNamespace(global_step=smoke_train.STEPS, log_history=[{"loss": 1.0}])
+
+            def train(self):
+                return types.SimpleNamespace(training_loss=1.0)
+        cuda = types.SimpleNamespace(reset_peak_memory_stats=lambda: None, max_memory_allocated=lambda: 0, max_memory_reserved=lambda: 0,
+                                     empty_cache=lambda: None, get_device_name=lambda i: "fake")
+        with tempfile.TemporaryDirectory() as tmp:
+            export_dir = Path(tmp, "run", "gguf")
+
+            def fake_export(cmd, check, env):   # the child's effect, at the pinned Unsloth's output location
+                Path(f"{export_dir}_gguf").mkdir(parents=True)
+                Path(f"{export_dir}_gguf", "qwen3-0.6b.Q4_K_M.gguf").write_bytes(b"g" * 100)
+            models, report = Path(tmp, "models"), Path(tmp, "report.json")
+            with mock.patch.object(smoke_train, "FAILURE", Path(tmp, "failure.json")), mock.patch.object(smoke_train, "REPORT", report), \
+                    mock.patch.object(smoke_train, "RUN_DIR", Path(tmp, "run-dir")), mock.patch.object(smoke_train, "MODEL_DIR", models), \
+                    mock.patch.object(smoke_train, "EXPORT_DIR", export_dir), mock.patch.object(smoke_train, "GGUF_DIR", Path(f"{export_dir}_gguf")), \
+                    mock.patch.object(smoke_train, "load_digest_list", return_value={smoke_train.BASE + "@" + smoke_train.REVISION: {},
+                                                                                    smoke_train.MERGE_SOURCE + "@" + smoke_train.MERGE_REVISION: {}}), \
+                    mock.patch.object(smoke_train, "snapshot_dir", return_value=Path(tmp, "snap")), \
+                    mock.patch.object(smoke_train, "verify_snapshot", return_value={"files": 1}), \
+                    mock.patch.object(smoke_train, "verify_template"), \
+                    mock.patch.object(smoke_train, "adapter_manifest", return_value={"manifest_sha256": "m" * 64}), \
+                    mock.patch.object(smoke_train, "FastLanguageModel", FakeLoader), \
+                    mock.patch.object(smoke_train, "Dataset", types.SimpleNamespace(from_dict=lambda d: d)), \
+                    mock.patch.object(smoke_train, "SFTConfig", lambda **kw: kw), mock.patch.object(smoke_train, "SFTTrainer", FakeTrainer), \
+                    mock.patch.object(smoke_train, "torch", types.SimpleNamespace(cuda=cuda, __version__="fake")), \
+                    mock.patch.object(smoke_train.subprocess, "run", side_effect=fake_export), \
+                    mock.patch.object(smoke_train.signal, "signal"):
+                smoke_train.main()
+            final = json.loads(report.read_text())
+            self.assertEqual(final["status"], "complete")
+            self.assertEqual([Path(g["path"]).name for g in final["gguf"]], [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
+            self.assertEqual(sorted(p.name for p in models.iterdir()), [f"{smoke_train.RUN}-qwen3-0.6b.Q4_K_M.gguf"])
+            self.assertFalse(Path(tmp, "failure.json").exists())
+
     def test_unconstrained_sample_generation_removed(self):
         src = inspect.getsource(smoke_train)
         self.assertNotIn("sample_output", src)

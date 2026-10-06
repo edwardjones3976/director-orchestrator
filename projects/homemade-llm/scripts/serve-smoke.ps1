@@ -10,7 +10,8 @@
 # The model is imported as a hard link (no second copy) and loaded with a TTL so it frees the GPU itself.
 # Default (two-leg) mode: exit 0 = both calls returned HTTP 200 with schema-valid JSON and LM Studio is loopback-only.
 # Single-host mode: the GGUF must be the one the train report names, with its SHA-256 (read twice) equal to the
-# report's; exit 0 = the one call is schema-valid and loopback-only, recorded in a no-clobber serve-<run>.json receipt.
+# report's; exit 0 = the one call is schema-valid, loopback-only and LM Studio-owned, recorded in serve-<run>.json, which is
+# reserved exclusively before any server effect (an existing one refuses) and completed in place after the call.
 [CmdletBinding()]
 param(
     [string]$Gguf,
@@ -37,6 +38,50 @@ function Test-LmStudioOwner($Processes) {
     ($p.Count -gt 0) -and (@($p | Where-Object { $_.ProcessName -ne 'LM Studio' }).Count -eq 0)
 }
 
+# The owning process of each listener, looked up now (a listener whose owner cannot be resolved contributes nothing).
+function Get-ListenerOwners($Listeners) { @($Listeners | ForEach-Object { Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue }) }
+
+# After the request: every final listener must resolve to an owner, and every owner must be LM Studio. An owner that vanished
+# or changed during the run means the answer cannot be attributed to the model this run loaded.
+function Test-FinalOwnership($Listeners, $Owners) {
+    $l = @($Listeners); $o = @($Owners)
+    ($l.Count -gt 0) -and ($o.Count -eq $l.Count) -and (Test-LmStudioOwner $o)
+}
+
+# The exact response body bytes curl wrote, hashed before any decoding, plus their UTF-8 text for the schema check.
+function Read-RawBody([string]$Path) {
+    $bytes = [byte[]]::new(0)   # assigned directly: an if-expression would enumerate the bytes into object[]
+    if (Test-Path -LiteralPath $Path -PathType Leaf) { $bytes = [IO.File]::ReadAllBytes($Path) }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hex = [Convert]::ToHexString($sha.ComputeHash($bytes)).ToLowerInvariant() } finally { $sha.Dispose() }
+    @{ Sha256 = $hex; Bytes = $bytes.Length; Text = [Text.Encoding]::UTF8.GetString($bytes) }
+}
+
+# Immediately before the load: the source GGUF and LM Studio's imported copy must both still be the train report's bytes
+# (its size, and two SHA-256 reads each), so a replacement after the first validation refuses before anything is loaded.
+function Assert-GgufMatchesReport([string[]]$Paths, [long]$Bytes, [string]$Sha256) {
+    foreach ($p in $Paths) {
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf) -or (Get-Item -LiteralPath $p).Length -ne $Bytes) { Write-Error "GGUF $p no longer has the train report's size" }
+        foreach ($n in 1, 2) {
+            if ((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Sha256) { Write-Error "GGUF $p SHA-256 read $n no longer equals the train report" }
+        }
+    }
+}
+
+# Single-host receipt: -Reserve creates it exclusively (refusing ANY existing receipt: completed, failed or interrupted);
+# completion replaces only this process's own reservation. A reservation is never deleted, so nothing retries automatically.
+function Write-ServeReceipt([string]$Path, $Receipt, [switch]$Reserve) {
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Receipt | ConvertTo-Json -Depth 6) + "`n")
+    if ($Reserve) {
+        $fs = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)   # refuses an existing receipt
+    } else {
+        $held = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($Path)) -NoEnumerate
+        if ($held.status -cne 'reserved' -or $held.run -cne $Receipt.run -or [int]$held.pid -ne $PID) { Write-Error "serve receipt $Path is not this run's own reservation; not overwritten" }
+        $fs = [IO.File]::Open($Path, [IO.FileMode]::Truncate, [IO.FileAccess]::Write)
+    }
+    try { $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+}
+
 # True only when `lms ps` shows exactly one 'smoke' model, loaded from the expected catalog path with the
 # requested TTL; this is what proves the reload happened and the GPU-release bound is in force.
 function Test-LoadedModel($Loaded, [string]$Path, [int]$TtlSeconds) {
@@ -59,6 +104,13 @@ function Resolve-SmokeTrainReport([string]$ReportPath, [string]$Root, [string]$R
     $reportBytes = [IO.File]::ReadAllBytes($ReportPath)
     $r = ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString($reportBytes)) -NoEnumerate
     if ($r.status -cne 'complete') { Write-Error "train report status is '$($r.status)', not 'complete'" }
+    # The run names the receipt file: it must be exactly the id train-smoke.ps1 generates, and the receipt must stay in the
+    # report's own directory, before anything else is done with it.
+    $run = $r.run
+    if ($run -isnot [string] -or $run -cnotmatch '^smoke-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$') { Write-Error "train report run is not a generated smoke run id: $run" }
+    $reportDir = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ReportPath))
+    $receiptPath = [IO.Path]::GetFullPath((Join-Path $reportDir "serve-$run.json"))
+    if (-not [IO.Path]::GetDirectoryName($receiptPath).Equals($reportDir, [StringComparison]::OrdinalIgnoreCase)) { Write-Error "serve receipt for $run would leave $reportDir" }
     $g = @($r.gguf)
     if ($g.Count -ne 1) { Write-Error "train report must name exactly one GGUF (names $($g.Count))" }
     $g = $g[0]
@@ -75,7 +127,8 @@ function Resolve-SmokeTrainReport([string]$ReportPath, [string]$Root, [string]$R
     }
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $reportSha = [Convert]::ToHexString($sha.ComputeHash($reportBytes)).ToLowerInvariant() } finally { $sha.Dispose() }
-    @{ Gguf = $hostPath; GgufSha256 = $g.sha256; Run = [string]$r.run; ReportSha256 = $reportSha; ReportPath = [IO.Path]::GetFullPath($ReportPath) }
+    @{ Gguf = $hostPath; GgufSha256 = $g.sha256; GgufBytes = [long]$g.bytes; Run = $run; ReportSha256 = $reportSha; ReportPath = [IO.Path]::GetFullPath($ReportPath)
+        ReceiptPath = $receiptPath }
 }
 
 if ($SingleHost -xor [bool]$TrainReport) { Write-Error '-SingleHost and -TrainReport go together: the single-host completion is always bound to a train report' }
@@ -106,6 +159,15 @@ try {
     New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
     Set-Content -LiteralPath $GpuMarker -Value "serve-smoke (pid $PID) GPU job in progress since $((Get-Date).ToUniversalTime().ToString('o'))"
     $markerWritten = $true
+    if ($SingleHost) {
+        # One completion per train report, ever: reserve its receipt durably BEFORE any server, model or request effect. An
+        # existing receipt (completed, failed or interrupted) refuses here with no request; a failure later keeps the
+        # reservation, so a rerun refuses too instead of issuing a second, unrecorded completion.
+        $reservation = [ordered]@{ format = 'p7-serve-receipt/v1'; run = $bound.Run; mode = 'single-host'; status = 'reserved'
+            train_report = [ordered]@{ path = $bound.ReportPath; sha256 = $bound.ReportSha256 }
+            reserved_utc = (Get-Date).ToUniversalTime().ToString('o'); pid = $PID }
+        Write-ServeReceipt $bound.ReceiptPath $reservation -Reserve
+    }
 
     # lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
     function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
@@ -149,6 +211,7 @@ try {
     if (-not (Test-SameContent $Gguf $imported)) { Write-Error "LM Studio's $($known.path) is not the requested GGUF (content differs)" }
     # Always (re)load, so the requested TTL applies even when this model is already resident.
     if (((Invoke-Lms @('ps', '--json')) -join "`n" | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }) { Invoke-Lms @('unload', 'smoke') | Out-Null }
+    if ($SingleHost) { Assert-GgufMatchesReport @($Gguf, $imported) $bound.GgufBytes $bound.GgufSha256 }
     Invoke-Lms @('load', $known.modelKey, '--identifier', 'smoke', '--ttl', $TtlSeconds, '-y') 300 | Out-Null
     # If the load or its TTL cannot be verified, the GPU-release deadline cannot be trusted: unload before failing.
     if ($lmsExit -ne 0) { Invoke-Lms @('unload', 'smoke') | Out-Null; Write-Error "lms load failed (exit $lmsExit; smoke unloaded)" }
@@ -193,21 +256,21 @@ try {
         [pscustomobject]@{ caller = $Label; curl = $CurlExit; http = $status; schema_valid = $ok; content = $shown }
     }
 
+    # curl writes the response body to its own file, so its exact bytes are hashed before any decoding.
+    $bodyFile = Join-Path $reports ("serve-smoke-response-{0}.bin" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
     $startedUtc = (Get-Date).ToUniversalTime().ToString('o')
     try {
         [IO.File]::WriteAllText($reqFile, $request)   # inside try so a partial write is still cleaned up
-        $hostLines = @(curl.exe -s -w "`n%{http_code}" --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile")
+        $hostStatus = @(curl.exe -s -o $bodyFile -w '%{http_code}' --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile") -join ''
         $hostExit = $LASTEXITCODE
-        $results = @(Test-Reply 'windows' $hostLines $hostExit)
+        $raw = Read-RawBody $bodyFile
+        $results = @(Test-Reply 'windows' @($raw.Text, $hostStatus) $hostExit)
         if ($SingleHost) {
             # Exactly one constrained completion: no container leg. Hashes are of the exact request bytes sent and the
-            # exact response body received; the content itself is not stored.
+            # exact response body bytes received; the content itself is not stored.
             $sha = [Security.Cryptography.SHA256]::Create()
-            try {
-                $requestSha = [Convert]::ToHexString($sha.ComputeHash([IO.File]::ReadAllBytes($reqFile))).ToLowerInvariant()
-                $bodyText = if ($hostLines.Count -gt 1) { $hostLines[0..($hostLines.Count - 2)] -join "`n" } else { '' }
-                $responseSha = [Convert]::ToHexString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($bodyText))).ToLowerInvariant()
-            } finally { $sha.Dispose() }
+            try { $requestSha = [Convert]::ToHexString($sha.ComputeHash([IO.File]::ReadAllBytes($reqFile))).ToLowerInvariant() } finally { $sha.Dispose() }
+            $responseSha = $raw.Sha256
         }
 
         # From a container: Docker Desktop forwards host.docker.internal to the host loopback, so LM Studio
@@ -224,37 +287,40 @@ try {
         }
     } finally {
         if (Test-Path -LiteralPath $reqFile) { [IO.File]::Delete($reqFile) }
+        if (Test-Path -LiteralPath $bodyFile) { [IO.File]::Delete($bodyFile) }   # model output is never kept
     }
 
     # The API must not be reachable from the network: every listener on 1234 has to be loopback.
     # Checked again at the end in case the binding changed during the run.
     $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue)
     $loopbackOnly = Test-LoopbackOnly $listeners
-    if (-not $loopbackOnly) {
-        # Exposure appeared during the run: take the model and the server down now, not at TTL expiry.
+    # Owners are looked up afresh from the FINAL listeners: the pre-load owners may no longer be the ones answering.
+    $finalOwners = Get-ListenerOwners $listeners
+    $ownedByLmStudio = Test-FinalOwnership $listeners $finalOwners
+    if (-not ($loopbackOnly -and $ownedByLmStudio)) {
+        # Exposure or a changed owner appeared during the run: take the model and the server down now, not at TTL expiry.
         Invoke-Lms @('unload', 'smoke') | Out-Null
         Invoke-Lms @('server', 'stop') | Out-Null
     }
     $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
-    Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly)"
-    $pass = (@($results | Where-Object schema_valid).Count -eq $(if ($SingleHost) { 1 } else { 2 })) -and $loopbackOnly
+    Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly; owned by LM Studio: $ownedByLmStudio)"
+    $pass = (@($results | Where-Object schema_valid).Count -eq $(if ($SingleHost) { 1 } else { 2 })) -and $loopbackOnly -and $ownedByLmStudio
     if ($SingleHost) {
-        # Durable, no-clobber binding of the one completion to its train report, GGUF, catalog entry and listener.
-        $receiptPath = Join-Path (Split-Path $bound.ReportPath -Parent) ("serve-{0}.json" -f $bound.Run)
+        # Completes this run's own reservation: the one completion bound to its train report, GGUF, catalog entry and listener.
         $receipt = [ordered]@{
-            format = 'p7-serve-receipt/v1'; run = $bound.Run; mode = 'single-host'
+            format = 'p7-serve-receipt/v1'; run = $bound.Run; mode = 'single-host'; status = 'complete'
             train_report = [ordered]@{ path = $bound.ReportPath; sha256 = $bound.ReportSha256 }
-            gguf = [ordered]@{ path = $Gguf; sha256 = $bound.GgufSha256 }
+            gguf = [ordered]@{ path = $Gguf; sha256 = $bound.GgufSha256; bytes = $bound.GgufBytes }
             catalog = [ordered]@{ alias = 'smoke'; path = $known.path; model_key = $known.modelKey }
             ttl_seconds = $TtlSeconds
-            listener = [ordered]@{ loopback_only = $loopbackOnly; addresses = @($listeners.LocalAddress | Sort-Object -Unique); owners = @($owners | ForEach-Object { [ordered]@{ name = $_.ProcessName; pid = $_.Id } }) }
-            request_sha256 = $requestSha; response_sha256 = $responseSha
+            listener = [ordered]@{ loopback_only = $loopbackOnly; owned_by_lm_studio = $ownedByLmStudio; addresses = @($listeners.LocalAddress | Sort-Object -Unique)
+                owners = @($finalOwners | ForEach-Object { [ordered]@{ name = $_.ProcessName; pid = $_.Id } }) }
+            request_sha256 = $requestSha; response_sha256 = $responseSha; response_bytes = $raw.Bytes
             curl_exit = $hostExit; http = $results[0].http; schema_valid = [bool]$results[0].schema_valid
             started_utc = $startedUtc; finished_utc = (Get-Date).ToUniversalTime().ToString('o'); pass = [bool]$pass
         }
-        $fs = [IO.File]::Open($receiptPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)   # refuses an existing receipt
-        try { $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($receipt | ConvertTo-Json -Depth 6) + "`n"); $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
-        Write-Output "serve receipt: $receiptPath"
+        Write-ServeReceipt $bound.ReceiptPath $receipt
+        Write-Output "serve receipt: $($bound.ReceiptPath)"
     }
     Write-Output "serve-smoke: $(if ($pass) { 'PASS' } else { 'FAIL' }) (model $($known.modelKey), ttl ${TtlSeconds}s)"
     exit ([int](-not $pass))
