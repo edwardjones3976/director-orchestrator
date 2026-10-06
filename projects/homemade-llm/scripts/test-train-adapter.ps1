@@ -16,7 +16,7 @@ Set-Content -LiteralPath $rows -Value '{"split":"train"}' -Encoding utf8
 try {
     $bad = Run @('-Rows', $rows, '-Revision', 'main')
     if ($LASTEXITCODE -eq 0 -or $bad -notmatch 'not a full 40-hex commit') { $fail += "short revision was accepted: $bad" }
-    $mixed = Run @('-Rows', $rows, '-Winner', '-Base', 'org/other')
+    $mixed = Run @('-Rows', $rows, '-Probe', '-Winner', '-Base', 'org/other')
     if ($LASTEXITCODE -eq 0 -or $mixed -notmatch 'do not pass -Base') { $fail += "winner probe accepted another base: $mixed" }
     $missing = Run @('-Rows', (Join-Path (Split-Path $rows -Parent) 'accepted.jsonl'))
     if ($LASTEXITCODE -eq 0 -or $missing -notmatch 'training rows not found') { $fail += "missing rows file was accepted: $missing" }
