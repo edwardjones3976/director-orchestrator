@@ -92,6 +92,11 @@ def is_fallback_pin(base: str, revision: str) -> bool:
     return base == FALLBACK_BASE and revision == FALLBACK_REVISION
 
 
+def is_allowed_epoch_pin(base: str, revision: str) -> bool:
+    """Exact supported students; manifest authentication still precedes loading."""
+    return is_winner_pin(base, revision) or is_fallback_pin(base, revision)
+
+
 def is_allowed_probe_pin(base: str, revision: str) -> bool:
     return (
         is_winner_pin(base, revision)
@@ -1985,8 +1990,8 @@ def train(
                 raise ValueError("epoch caller rows differ from the admitted publication")
             if type(epochs) is not int or not 1 <= epochs <= EPOCH_MODE_MAX:
                 raise ValueError("invalid requested epochs")
-            if not is_winner_pin(base, revision):
-                raise ValueError("epoch mode requires the explicit winner pin")
+            if not is_allowed_epoch_pin(base, revision):
+                raise ValueError("epoch mode requires an explicit supported student pin")
             if type(epoch_context_limit) is not int or epoch_context_limit <= SEQ:
                 raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
             # Validate the cohort before any model or GPU operation. The approved
@@ -2000,11 +2005,12 @@ def train(
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
-        resolved: list[Path] = []
+        snapshot_paths: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved)
-        # The one resolution (the verified snapshot when digests were checked), before any CUDA or model effect.
-        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=snapshot_paths)
+        # Keep the report's resolved commit separate from snapshot discovery,
+        # including when authentication or model loading fails before resolution.
+        snapshot = snapshot_paths[0] if snapshot_paths else local_snapshot_dir(base, revision)
         callbacks = []
         if epochs is not None:
             if not isinstance(digest_verification, dict):
@@ -2058,6 +2064,8 @@ def train(
         peak = torch.cuda.max_memory_reserved() / 2**30
         if epochs is not None:
             require_vram(peak, winner=winner)
+            if not math.isfinite(peak) or peak < 0 or not probe_memory_pass(peak):
+                fail(f"epoch peak reserved VRAM must be finite, non-negative and strictly below {WINNER_VRAM_GIB:.1f} GiB")
             # Refuse absent callback termination; do not synthesize completion
             # from a Trainer result or from files alone.
             selected = callback.completed_selection()
@@ -2444,8 +2452,9 @@ def main(argv: list[str] | None = None) -> None:
             fail(f"--epochs must be {EPOCH_MODE_MIN} to {EPOCH_MODE_MAX}")
         if args.probe:
             fail("--epochs cannot be combined with --probe")
-        if not explicit_pin or not is_winner_pin(args.base, args.revision):
-            fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
+        if not explicit_pin or not is_allowed_epoch_pin(args.base, args.revision):
+            fail(f"epoch mode requires explicit --base and --revision for {WINNER_BASE}@{WINNER_REVISION} "
+                 f"or {FALLBACK_BASE}@{FALLBACK_REVISION}")
         if args.publication_binding is None:
             fail("--publication-binding is required in epoch mode")
         if args.epoch_context_limit is None or args.epoch_context_limit <= SEQ:

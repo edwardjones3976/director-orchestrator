@@ -60,8 +60,9 @@ if ($PSBoundParameters.ContainsKey('Epochs')) {
     if ($Fallback) { Write-Error '-Epochs cannot be combined with -Fallback' }
     if (-not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { Write-Error '-Epochs requires explicit positive -TimeoutMinutes' }
     if (-not $PSBoundParameters.ContainsKey('Base') -or -not $PSBoundParameters.ContainsKey('Revision') -or
-        $Base -cne $WinnerBase -or $Revision -cne $WinnerRevision) {
-        Write-Error "-Epochs requires explicit -Base $WinnerBase -Revision $WinnerRevision"
+        -not (($Base -ceq $WinnerBase -and $Revision -ceq $WinnerRevision) -or
+              ($Base -ceq $FallbackBase -and $Revision -ceq $FallbackRevision))) {
+        Write-Error "-Epochs requires explicit -Base and -Revision for $WinnerBase@$WinnerRevision or $FallbackBase@$FallbackRevision"
     }
     if (-not $PSBoundParameters.ContainsKey('Batch')) { Write-Error '-Epochs requires -Batch (the publication batch id to resolve and stage)' }
     if (-not $PSBoundParameters.ContainsKey('EpochContextLimit') -or $EpochContextLimit -le 2048) { Write-Error '-Epochs requires explicit -EpochContextLimit greater than max_new_tokens' }

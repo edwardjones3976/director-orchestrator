@@ -1130,8 +1130,9 @@ if ($RunId -and $RunId -cnotmatch '^[a-z0-9][a-z0-9-]{0,80}$') {
 if ($RunId -and $Checkpoint.Count -gt 1) {
     Write-Error "parameter RunId: cannot be used with more than one checkpoint"
 }
-if ($BaseRepo -cne 'Qwen/Qwen3-14B') {
-    Write-Error "parameter BaseRepo: only the approved Qwen/Qwen3-14B export is supported, got '$BaseRepo'"
+if (-not (($BaseRepo -ceq 'Qwen/Qwen3-14B' -and $BaseRevision -ceq '40c069824f4251a91eefaf281ebe4c544efd3e18') -or
+          ($BaseRepo -ceq 'Qwen/Qwen3-8B' -and $BaseRevision -ceq 'b968826d9c46dd6066d109eabc6255188de91218'))) {
+    Write-Error "parameter BaseRepo/BaseRevision: only the pinned 14B or 8B student export is supported, got '$BaseRepo@$BaseRevision'"
 }
 
 $utcStamp = Get-UtcStamp

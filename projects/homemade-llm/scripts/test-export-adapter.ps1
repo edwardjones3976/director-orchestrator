@@ -122,7 +122,7 @@ try {
     $shimPath = Join-Path $root 'docker-shim.ps1'
     $shimLogPath = Join-Path $root 'shim.log'
 
-    $rev = '0123456789abcdef0123456789abcdef01234567'
+    $rev = '40c069824f4251a91eefaf281ebe4c544efd3e18'
     $templateSha = 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe'
     $cFreeOk = [long](200GB)
     $eFreeOk = [long](150GB)
