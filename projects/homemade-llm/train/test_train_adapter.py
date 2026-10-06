@@ -1236,6 +1236,80 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         self.assertIn("m2-expected-qwen3-14b-v2.json", text)
         self.assertIn("HF_HUB_OFFLINE", text)
 
+    def _context_wrapper_run(self, tmp: Path, code_dir: Path, override: str = ""):
+        """Run the REAL wrapper mount/staging block and argument construction for a context probe; return (completed, args)."""
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required to evaluate the context-probe renderer staging")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        construction = source[source.index("    $dockerArgs = "):source.index("    function Get-AdapterState")]
+        setup = _wrapper_mount_construction(source)
+        marker = "$mounts = New-TrainerCommonMounts"
+        setup = setup.replace(marker, override + "\n" + marker, 1)
+        q = lambda p: Path(p).as_posix().replace("'", "''")
+        command = (
+            "$ErrorActionPreference = 'Stop'\n"
+            f"$name = 'dummy-container'; $code = '{q(code_dir)}'; $evalCode = 'dummy-eval'; $Image = 'dummy-image'\n"
+            "$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20; $Epochs = 0; $runId = 'm2-0123abcd'\n"
+            "$Winner = $false; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96; $PSBoundParameters = @{}\n"
+            "$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n"
+            f"$repoRoot = '{q(Path(__file__).resolve().parents[3])}'\n"
+            f"$HotRoot = '{q(tmp)}'\n$Rows = '{q(tmp)}/accepted.jsonl'\n$ExpectedDigests = ''\n$TrustedDigestRoot = ''\n"
+            + setup + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress")
+        completed = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                   capture_output=True, text=True, timeout=60)
+        args = json.loads(completed.stdout) if completed.returncode == 0 else None
+        return completed, args
+
+    def test_context_probe_wrapper_binds_the_admitted_lf_renderer_over_a_crlf_checkout(self):
+        # The Windows working tree is CRLF; the probe must still see the exact admitted LF renderer (#472 P1 4193399786).
+        admitted = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            code_dir = tmp / "checkout-train"
+            code_dir.mkdir()
+            lf = Path(train_adapter.__file__).with_name("prompt_template.py").read_bytes().replace(b"\r\n", b"\n")
+            (code_dir / "prompt_template.py").write_bytes(lf.replace(b"\n", b"\r\n"))
+            self.assertNotEqual(hashlib.sha256((code_dir / "prompt_template.py").read_bytes()).hexdigest(), admitted)
+            completed, args = self._context_wrapper_run(tmp, code_dir)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            image = args.index("dummy-image")
+            options = args[:image]
+            renderer_mounts = [options[i + 1] for i in range(len(options) - 1)
+                               if options[i] == "-v" and options[i + 1].endswith(":/code/prompt_template.py:ro")]
+            self.assertEqual(len(renderer_mounts), 1, options)
+            source = Path(renderer_mounts[0][:-len(":/code/prompt_template.py:ro")])
+            self.assertEqual(source, tmp / "runs" / "stage" / "m2-0123abcd" / "Train" / "prompt_template.py")
+            staged = source.read_bytes()
+            self.assertNotIn(b"\r\n", staged)
+            self.assertEqual(hashlib.sha256(staged).hexdigest(), admitted)
+            self.assertIn(f"{code_dir.as_posix()}:/code:ro", options)
+            self.assertLess(options.index(f"{code_dir.as_posix()}:/code:ro"), options.index(renderer_mounts[0]))
+            self.assertIn("C:/synthetic/inputs.jsonl:/workspace/context-inputs.jsonl:ro", options)
+
+    def test_context_probe_wrapper_refuses_tampered_renderer_bytes_before_any_container(self):
+        override = ("function Get-GitBlobBytes { param($RepoRoot, $Commit, $Path, $ExpectedOid, $ExpectedSha256) "
+                    "return [Text.Encoding]::UTF8.GetBytes('tampered renderer') }")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            code_dir = tmp / "checkout-train"
+            code_dir.mkdir()
+            completed, args = self._context_wrapper_run(tmp, code_dir, override)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIsNone(args)
+            self.assertIn("do not match the expected SHA-256", completed.stderr)
+            self.assertFalse((tmp / "runs" / "stage" / "m2-0123abcd" / "Train" / "prompt_template.py").exists())
+
+    def test_context_probe_renderer_staging_follows_gpu_admission_and_preflight(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
+        preflight = source.index("preflight did not pass ($($pf[-1]")
+        stage = source.index("$rendererStage = New-StageTree -HotRoot $HotRoot -RunId $runId")
+        mutex = source.index("$gpuLock.WaitOne(0)")
+        self.assertLess(mutex, preflight)
+        self.assertLess(preflight, stage)
+        self.assertLess(stage, source.index("    $dockerArgs = "))
+
     def test_wrapper_serialized_docker_arguments_keep_offline_flags_before_image(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -1256,7 +1330,7 @@ $Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20
 $Epochs = 0; $runId = 'm2-01234567'
 $Winner = $true; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96
 $PSBoundParameters = @{ ProbeRowsTotal = 96 }
-""" + ("$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n" if context_file else "") + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
+""" + f"$repoRoot = '{Path(__file__).resolve().parents[3].as_posix()}'\n" + ("$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n" if context_file else "") + f"$HotRoot = '{hot_root}'\n$Rows = '{hot_root}/accepted.jsonl'\n" + f"$ExpectedDigests = '{digests}'\n$TrustedDigestRoot = '{'dummy-root.json' if digests else ''}'\n" + _wrapper_mount_construction(source) + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress"
                 completed = subprocess.run(
                     [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                     capture_output=True, text=True, timeout=30,
