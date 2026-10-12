@@ -1,0 +1,81 @@
+schema_version: "director-project-profile/v1"
+project:
+  id: "aesop-learning-lab"
+  name: "Aesop Learning Lab"
+  proposition: "Build a local-first learning application with reviewed content, independent practice, delayed checks, and transparent evidence."
+  state: "building"
+  owner: "repository owner"
+  created_at: "2026-10-12T17:14:05Z"
+  updated_at: "2026-10-12T17:14:05Z"
+  rollout_packet: "rollout-packet.html"
+source_context:
+  thread: "https://chatgpt.com/s/t_6accfb5560548191bdc0ba8d8b8d"
+  inherited_authority: false
+outcomes:
+  desired:
+    - value: "A persistent five-concept practice loop with learner-controlled continued practice and delayed independent checks."
+      status: "confirmed"
+  evidence_standard:
+    - "Reviewed content and keys; exact candidate CI; browser journey; independent provider review."
+  stopping_point: "Stop the M1 slice before merge or learner release until content review and exact-candidate review pass."
+surfaces:
+  deployment:
+    intent: "analysis_only"
+    status: "not_activated_for_this_project"
+    profile: "not_created"
+    state_namespace: "not_created"
+  slack:
+    status: "not_configured_for_this_project"
+    channel: "pending"
+    app: "pending"
+  repositories:
+    - name: "edwardjones3976/aesop-learning-lab"
+      starting_ref: "master"
+      status: "confirmed"
+  systems_and_data:
+    classification: "private"
+    allowed_sources:
+      - "The Aesop Learning Lab repository and its GitHub issues and pull requests."
+    prohibited_sources:
+      - "Credentials or private context from other Director projects."
+  external_effects:
+    mode: "explicitly_scoped"
+    allowed:
+      - "Project-specific GitHub issues, branches, draft pull requests, and review comments."
+    prohibited:
+      - "Merge, deployment, publication, paid provider dispatch, or Slack messaging without their separate gates."
+modules:
+  discovery: "enabled"
+  design_and_decision: "enabled"
+  implementation: "enabled"
+  quality_and_security: "enabled"
+  review_to_merge: "enabled"
+  operations: "disabled"
+team:
+  director:
+    provider: "openai_codex"
+    appointment: "Owner request to coordinate the Aesop Learning Lab provider team on 2026-10-12."
+    responsibilities: ["decomposition", "routing", "integration", "evidence synthesis"]
+  lanes:
+    - {provider: "openai_codex", role: "producer", scope: "learner state, scheduler, local API"}
+    - {provider: "claude", role: "producer", scope: "reviewed programming content and assessment"}
+    - {provider: "cursor", role: "producer", scope: "browser adapter and learner experience"}
+    - {provider: "grok", role: "provisional_reviewer", scope: "independent exact-candidate review if authenticated repository transport is ready"}
+    - {provider: "zai", role: "provisional_verifier", scope: "bounded QA if production activation and transport are ready"}
+  note: "Grok Bot is documented as proposed, not a working dispatch route. Profiles do not grant authority."
+coordination:
+  canonical_review_and_merge: "github"
+  live_transport: "not_configured"
+  provider_messages_relay_through_director: true
+controls:
+  paid_provider_dispatch: "disabled_until_project_budget_and_readiness_are_verified"
+  separate_review_required: true
+  no_self_merge: true
+  runtime_project_allowlist: "not_configured"
+  runtime_repository_allowlist: "not_configured"
+fallbacks:
+  - "Continue reversible Codex work and GitHub coordination when a provider transport is unavailable."
+  - "Keep draft pull requests open rather than infer approval from silence."
+next:
+  action: "Review and integrate the guided self-review candidate, then implement the persistent practice loop against reviewed content."
+  evidence: "Approved PR, content receipts, scheduler/API/browser tests, and a local acceptance journey."
