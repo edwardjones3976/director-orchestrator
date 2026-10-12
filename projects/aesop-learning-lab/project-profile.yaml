@@ -9,7 +9,7 @@ project:
   updated_at: "2026-10-12T17:14:05Z"
   rollout_packet: "rollout-packet.html"
 source_context:
-  thread: "https://chatgpt.com/s/t_6accfb5560548191bdc0ba8d8b8d"
+  thread: "https://chatgpt.com/s/t_6accfb5560548191bdc0ba8d133d8b8d"
   inherited_authority: false
 outcomes:
   desired:
