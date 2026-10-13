@@ -24,10 +24,12 @@ def search(text: str) -> dict:
             "query": text, "limit": 5, "sources": ["web"], "safe": True,
             "scrapeOptions": {},
         }, {"Authorization": f"Bearer {key}"})
-        if response.get("success") is not True or not isinstance(response.get("data"), list):
+        data = response.get("data")
+        if (response.get("success") is not True or not isinstance(data, dict)
+                or not isinstance(data.get("web"), list)):
             raise RuntimeError("Firecrawl search returned an unsuccessful or invalid result")
         finish(receipt, "RETURNED", response)
-        return {"provider": "firecrawl", "results": response["data"],
+        return {"provider": "firecrawl", "results": data,
                 "production_credit": False}
     except Exception:
         finish(receipt, "FAILED_OR_AMBIGUOUS")

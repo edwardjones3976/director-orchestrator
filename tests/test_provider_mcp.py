@@ -233,6 +233,16 @@ class ProviderMcpTests(unittest.TestCase):
                 firecrawl.search("public example")
             finish.assert_called_once_with(Path("test-receipt"), "FAILED_OR_AMBIGUOUS")
 
+        valid = {"success": True, "data": {"web": [{"url": "https://example.org"}]}}
+        with patch.dict(os.environ, {"DIRECTOR_MCP_PAID_CALLS_ENABLED": "true",
+                                     "FIRECRAWL_MCP_ENABLED": "true",
+                                     "FIRECRAWL_API_KEY": "synthetic-test-key"}), \
+             patch.object(firecrawl, "reserve", return_value=Path("test-receipt")), \
+             patch.object(firecrawl, "finish") as finish, \
+             patch.object(firecrawl, "post_json", return_value=valid):
+            self.assertEqual(firecrawl.search("public example")["results"], valid["data"])
+            finish.assert_called_once_with(Path("test-receipt"), "RETURNED", valid)
+
     def test_antigravity_requires_exact_interaction_authorization(self):
         from scripts.provider_mcp import antigravity
 
