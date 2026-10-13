@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.provider_mcp.common import reserve
+from scripts.provider_mcp.secret_store import import_key, load_key, store_path
 
 
 def exchange(module: str, requests: list[dict], env: dict[str, str] | None = None) -> list[dict]:
@@ -61,6 +62,13 @@ class ProviderMcpTests(unittest.TestCase):
         self.assertTrue(reply["result"]["isError"])
         self.assertIn("activation", reply["result"]["content"][0]["text"])
 
+    def test_zai_activation_format_matches_director(self):
+        from scripts.provider_mcp.zai import activated
+        with patch.dict(os.environ, {"ZAI_PRODUCTION_ACTIVATION": "a" * 64}):
+            self.assertFalse(activated())
+        with patch.dict(os.environ, {"ZAI_PRODUCTION_ACTIVATION": "sha256:" + "a" * 64}):
+            self.assertTrue(activated())
+
     def test_status_does_not_expose_key_value(self):
         reply = exchange("xai", [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                   "params": {"name": "xai_status", "arguments": {}}}],
@@ -76,6 +84,18 @@ class ProviderMcpTests(unittest.TestCase):
             reserve("xai", "two", 2)
             with self.assertRaisesRegex(ValueError, "daily call cap"):
                 reserve("xai", "three", 2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows DPAPI only")
+    def test_zai_secret_store_encrypts_for_current_user(self):
+        sample = b"synthetic-zai-test-key-12345"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(Path, "home", return_value=Path(tmp)):
+            with patch.dict(os.environ, {"ZAI_API_KEY": ""}):
+                import_key(sample)
+                self.assertTrue(store_path().is_file())
+                self.assertNotIn(sample, store_path().read_bytes())
+                self.assertEqual(load_key(), sample.decode("ascii"))
+                with self.assertRaisesRegex(ValueError, "already stored"):
+                    import_key(sample)
 
 
 if __name__ == "__main__":

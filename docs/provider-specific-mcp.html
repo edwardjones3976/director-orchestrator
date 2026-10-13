@@ -36,7 +36,11 @@ registration alone grants no provider authority.</p>
 Both <code>DIRECTOR_MCP_PAID_CALLS_ENABLED=true</code> and the matching provider
 switch (<code>XAI_MCP_ENABLED=true</code> or <code>ZAI_MCP_ENABLED=true</code>)
 must be present in the server process. Grok reads <code>XAI_API_KEY</code> and
-Z.ai reads <code>ZAI_API_KEY</code> at call time. Z.ai additionally requires the
+Z.ai reads <code>ZAI_API_KEY</code> or its current-user Windows DPAPI store at
+call time. The Z.ai key can be imported from standard input with
+<code>py -3.12 -m provider_mcp.secret_store import-stdin</code> while
+<code>PYTHONPATH</code> points at the installed adapter directory. Never pass
+the key on the command line or in chat. Z.ai additionally requires the
 owner's production activation record digest in <code>ZAI_PRODUCTION_ACTIVATION</code>.
 The old Z.ai trial ended on 29 September 2026 and is not an available route.
 Never put a credential value in an MCP registration command or tracked file.</p>
