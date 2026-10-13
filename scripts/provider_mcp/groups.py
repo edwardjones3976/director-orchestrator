@@ -66,8 +66,14 @@ def grok_bot_call(name: str, arguments: dict) -> dict:
     request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                "params": {"name": name, "arguments": arguments}}
     try:
+        allowed = {"PATH", "SYSTEMROOT", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+                   "TEMP", "TMP", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "PATHEXT",
+                   "GROK_BOT_DISPATCH_SCRIPT", "GROK_BOT_EXECUTABLE",
+                   "GROK_BOT_DESKTOP_INPUT_ENABLED", "GROK_BOT_DESKTOP_SEND_ENABLED"}
+        child_env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
         result = subprocess.run([sys.executable, str(script)], input=json.dumps(request) + "\n",
-                                text=True, capture_output=True, timeout=50, check=False)
+                                text=True, capture_output=True, timeout=50, check=False,
+                                env=child_env)
     except subprocess.TimeoutExpired:
         raise ValueError("Grok Bot MCP adapter timed out") from None
     if result.returncode or not result.stdout:

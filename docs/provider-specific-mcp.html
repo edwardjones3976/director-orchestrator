@@ -73,8 +73,9 @@ registration alone grants no provider authority.</p>
 default. Both <code>DIRECTOR_MCP_PAID_CALLS_ENABLED=true</code> and the
 matching provider switch (for example <code>XAI_MCP_ENABLED=true</code> or
 <code>CLAUDE_MCP_ENABLED=true</code>) must be present in the server process.
-Antigravity's read-only lookup uses <code>ANTIGRAVITY_MCP_READ_ENABLED</code>
-instead. Grok reads <code>XAI_API_KEY</code> and
+Antigravity's read-only lookup requires <code>ANTIGRAVITY_MCP_READ_ENABLED</code>
+and an exact interaction ID in <code>ANTIGRAVITY_MCP_ALLOWED_INTERACTION_IDS</code>
+(comma-separated); a global switch alone grants no interaction access. Grok reads <code>XAI_API_KEY</code> and
 Z.ai reads <code>ZAI_API_KEY</code> or its current-user Windows DPAPI store at
 call time. The Z.ai key can be imported from standard input with
 <code>py -3.12 -m provider_mcp.secret_store import-stdin</code> while
@@ -85,7 +86,10 @@ The old Z.ai trial ended on 29 September 2026 and is not an available route.
 Never put a credential value in an MCP registration command or tracked file.</p>
 <p>Action input is capped at 24 KB. API model requests disable tools and bound
 output to 4000 tokens. Native CLIs run in empty temporary workspaces and
-return bounded output. Receipts are written under
+return bounded output. Cursor additionally requires a CLI version with workspace
+read controls and <code>sandbox.readBoundary=workspace</code> in its global
+<code>cli-config.json</code>; Ask mode and an empty workspace alone do not confine
+file reads. Receipts are written under
 <code>~/.codex/provider-mcp-receipts/&lt;provider&gt;/</code> outside worktrees.
 Calls are capped at 40 xAI or 20 Z.ai attempts per UTC day. A repeated input
 digest refuses instead of silently retrying an ambiguous previous attempt.

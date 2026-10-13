@@ -219,6 +219,60 @@ class ProviderMcpTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "daily call cap"):
                 reserve("xai", "three", 2)
 
+    def test_firecrawl_reports_provider_failure_as_failed_receipt(self):
+        from scripts.provider_mcp import firecrawl
+
+        with patch.dict(os.environ, {"DIRECTOR_MCP_PAID_CALLS_ENABLED": "true",
+                                     "FIRECRAWL_MCP_ENABLED": "true",
+                                     "FIRECRAWL_API_KEY": "synthetic-test-key"}), \
+             patch.object(firecrawl, "reserve", return_value=Path("test-receipt")), \
+             patch.object(firecrawl, "finish") as finish, \
+             patch.object(firecrawl, "post_json", return_value={"success": False,
+                                                                 "error": "provider rejected"}):
+            with self.assertRaisesRegex(RuntimeError, "unsuccessful"):
+                firecrawl.search("public example")
+            finish.assert_called_once_with(Path("test-receipt"), "FAILED_OR_AMBIGUOUS")
+
+    def test_antigravity_requires_exact_interaction_authorization(self):
+        from scripts.provider_mcp import antigravity
+
+        with patch.dict(os.environ, {"ANTIGRAVITY_MCP_READ_ENABLED": "true",
+                                     "ANTIGRAVITY_MCP_ALLOWED_INTERACTION_IDS": "approved_1",
+                                     "GEMINI_API_KEY": "synthetic-test-key"}), \
+             patch.object(antigravity, "get_json", return_value={"id": "approved_1"}) as get_json:
+            with self.assertRaisesRegex(ValueError, "exact authorization"):
+                antigravity.get_interaction("other_1")
+            get_json.assert_not_called()
+            self.assertEqual(antigravity.get_interaction("approved_1")["interaction"],
+                             {"id": "approved_1"})
+
+    def test_grok_bot_bridge_does_not_pass_unrelated_credentials(self):
+        from scripts.provider_mcp import groups
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "grok_bot_mcp.py"
+            script.touch()
+            reply = {"result": {"content": [{"text": "{}"}]}}
+            completed = subprocess.CompletedProcess([], 0, stdout=json.dumps(reply) + "\n")
+            with patch.dict(os.environ, {"GROK_BOT_MCP_SCRIPT": str(script),
+                                         "OPENAI_API_KEY": "synthetic-test-key",
+                                         "GROK_BOT_DESKTOP_INPUT_ENABLED": "true"}), \
+                 patch.object(groups.subprocess, "run", return_value=completed) as run:
+                groups.grok_bot_call("grok_bot_status", {})
+            child_env = run.call_args.kwargs["env"]
+            self.assertNotIn("OPENAI_API_KEY", child_env)
+            self.assertEqual(child_env["GROK_BOT_DESKTOP_INPUT_ENABLED"], "true")
+
+    def test_cursor_requires_workspace_read_boundary(self):
+        from scripts.provider_mcp import cursor
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, {"CURSOR_CONFIG_DIR": tmp}):
+            self.assertFalse(cursor.workspace_read_boundary())
+            (Path(tmp) / "cli-config.json").write_text(
+                json.dumps({"sandbox": {"readBoundary": "workspace"}}), encoding="utf-8")
+            self.assertTrue(cursor.workspace_read_boundary())
+
     @unittest.skipUnless(os.name == "nt", "Windows DPAPI only")
     def test_zai_secret_store_encrypts_for_current_user(self):
         sample = b"synthetic-zai-test-key-12345"
