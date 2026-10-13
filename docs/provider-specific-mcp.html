@@ -40,10 +40,6 @@ delegates to the matching provider transport above. These wrappers carry no
 new assignment, approval, merge, or publishing authority; the project charter
 and deterministic Director gates remain in force. They never send a prompt to
 another administrator as a fallback.</p>
-<p>An optional <code>admin-crew</code> wrapper collects their readiness and
-exposes three explicitly named consult tools. It has no generic target argument
-and no project authority. Calls still pass through the matching individual
-adapter and its disabled-by-default switches.</p>
 <p>Three group wrappers offer named contact tools without a target selector:
 <code>admin</code> contains OpenAI, Claude, and Cursor administrator consult
 contacts; <code>providers</code> contains all nine AI provider lanes plus the
@@ -113,8 +109,6 @@ py -3.12 -m scripts.provider_mcp.zai</code></pre>
 <pre><code>py -3.12 -m scripts.provider_mcp.admin_openai
 py -3.12 -m scripts.provider_mcp.admin_claude
 py -3.12 -m scripts.provider_mcp.admin_cursor</code></pre>
-<p>The combined entry runs <code>py -3.12 -m
-scripts.provider_mcp.admin_crew</code>.</p>
 <p>The group entries run <code>py -3.12 -m scripts.provider_mcp.admin</code>,
 <code>py -3.12 -m scripts.provider_mcp.providers</code>, and
 <code>py -3.12 -m scripts.provider_mcp.workers</code>. Set

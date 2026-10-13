@@ -97,22 +97,6 @@ class ProviderMcpTests(unittest.TestCase):
                 self.assertFalse(state["authority_granted"])
                 self.assertTrue(replies[2]["result"]["isError"])
 
-    def test_admin_crew_wrapper_has_explicit_contacts(self):
-        replies = exchange("admin_crew", [
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-             "params": {"name": "admin_crew_status", "arguments": {}}},
-            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-             "params": {"name": "admin_crew_cursor_consult", "arguments": {"text": "test"}}},
-        ])
-        self.assertEqual({tool["name"] for tool in replies[0]["result"]["tools"]},
-                         {"admin_crew_status", "admin_crew_openai_consult",
-                          "admin_crew_claude_consult", "admin_crew_cursor_consult"})
-        state = json.loads(replies[1]["result"]["content"][0]["text"])
-        self.assertEqual(set(state["contacts"]), {"openai", "claude", "cursor"})
-        self.assertFalse(state["authority_granted"])
-        self.assertTrue(replies[2]["result"]["isError"])
-
     def test_group_wrappers_have_exact_membership(self):
         expected_admin = {"openai", "claude", "cursor"}
         expected_workers = {"xai", "antigravity", "perplexity", "firecrawl",
