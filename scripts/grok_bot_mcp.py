@@ -28,9 +28,13 @@ def enabled(name: str) -> bool:
 
 def script_ready() -> tuple[bool, str]:
     try:
-        digest = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+        raw = SCRIPT.read_bytes()
     except (OSError, PermissionError):
         return False, "dispatcher is inaccessible; check Bitdefender Quarantine for grok_bot_chat.ps1"
+    # Git stores LF; Windows checkout uses CRLF. Reject other transformations.
+    if b"\r" in raw.replace(b"\r\n", b""):
+        return False, "dispatcher has unexpected line endings"
+    digest = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
     if digest != SCRIPT_SHA256:
         return False, "dispatcher bytes differ from the reviewed Git version"
     return True, "ready"

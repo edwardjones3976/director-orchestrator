@@ -19,6 +19,14 @@ class GrokBotMcpTests(unittest.TestCase):
                 path.write_text("unreviewed", encoding="ascii")
                 self.assertFalse(bot.script_ready()[0])
 
+    def test_windows_line_endings_match_reviewed_git_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "grok_bot_chat.ps1"
+            path.write_bytes(b"first\r\nsecond\r\n")
+            expected = hashlib.sha256(b"first\nsecond\n").hexdigest()
+            with patch.object(bot, "SCRIPT", path), patch.object(bot, "SCRIPT_SHA256", expected):
+                self.assertEqual(bot.script_ready(), (True, "ready"))
+
     def test_desktop_input_and_send_are_separate(self):
         with patch.dict(bot.os.environ, {"GROK_BOT_DESKTOP_INPUT_ENABLED": "",
                                          "GROK_BOT_DESKTOP_SEND_ENABLED": ""}):

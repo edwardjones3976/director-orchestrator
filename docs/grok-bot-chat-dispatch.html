@@ -45,9 +45,10 @@ adapter reports this as a blocked dispatcher. Restore only that exact file using
 Bitdefender Protection &gt; Antivirus &gt; Settings &gt; Manage quarantine, then
 verify that the MCP status reports <code>dispatcher_ready=true</code>. A restore
 may create an antivirus exception; check the quarantine settings before doing
-so. This machine's quarantine record names the original
-<code>director-provider-mcp\scripts\grok-bot-chat\grok_bot_chat.ps1</code> path;
-the local MCP registration points there through <code>GROK_BOT_DISPATCH_SCRIPT</code>.
+so. The local MCP registration points to the restored script in the
+<code>director-orchestrator</code> checkout through
+<code>GROK_BOT_DISPATCH_SCRIPT</code>. Git stores LF and Windows checks out CRLF;
+the adapter normalizes that line-ending difference before checking the Git hash.
 Do not edit Bitdefender's quarantine files directly or disable protection.</p>
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]] -->
 <h2 id="where-things-live">Where things live</h2>
