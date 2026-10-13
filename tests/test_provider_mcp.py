@@ -19,6 +19,10 @@ def exchange(module: str, requests: list[dict], env: dict[str, str] | None = Non
     child_env.pop("DIRECTOR_MCP_PAID_CALLS_ENABLED", None)
     child_env.pop("XAI_MCP_ENABLED", None)
     child_env.pop("ZAI_MCP_ENABLED", None)
+    for name in ("OPENAI_MCP_ENABLED", "CLAUDE_MCP_ENABLED", "CURSOR_MCP_ENABLED",
+                 "COPILOT_MCP_ENABLED", "PERPLEXITY_MCP_ENABLED", "FIRECRAWL_MCP_ENABLED",
+                 "ANTIGRAVITY_MCP_READ_ENABLED"):
+        child_env.pop(name, None)
     if env:
         child_env.update(env)
     result = subprocess.run(
@@ -53,6 +57,45 @@ class ProviderMcpTests(unittest.TestCase):
                                                       "arguments": {"text": "hello"}}}])[0]
                 self.assertTrue(reply["result"]["isError"])
                 self.assertIn("disabled", reply["result"]["content"][0]["text"])
+
+    def test_every_roster_lane_has_its_own_server(self):
+        additional = {"openai": "openai_ask", "claude": "claude_ask",
+                      "cursor": "cursor_ask", "copilot": "copilot_ask",
+                      "antigravity": "antigravity_get_interaction",
+                      "perplexity": "perplexity_search_public",
+                      "firecrawl": "firecrawl_search_public"}
+        for module, action in additional.items():
+            with self.subTest(module=module):
+                replies = exchange(module, [
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": action, "arguments": {"text": "test"}}},
+                ])
+                self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-03-26")
+                self.assertEqual({tool["name"] for tool in replies[1]["result"]["tools"]},
+                                 {f"{module}_status", action})
+                self.assertTrue(replies[2]["result"]["isError"])
+                self.assertIn("disabled", replies[2]["result"]["content"][0]["text"])
+
+    def test_admin_contacts_are_distinct_and_do_not_grant_authority(self):
+        for module, identity in (("admin_openai", "ChatGPT/Codex"),
+                                 ("admin_claude", "Claude"),
+                                 ("admin_cursor", "Cursor")):
+            with self.subTest(module=module):
+                replies = exchange(module, [
+                    {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                     "params": {"name": f"{module}_status", "arguments": {}}},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": f"{module}_consult", "arguments": {"text": "test"}}},
+                ])
+                self.assertEqual({tool["name"] for tool in replies[0]["result"]["tools"]},
+                                 {f"{module}_status", f"{module}_consult"})
+                state = json.loads(replies[1]["result"]["content"][0]["text"])
+                self.assertEqual(state["administrator"], identity)
+                self.assertFalse(state["authority_granted"])
+                self.assertTrue(replies[2]["result"]["isError"])
 
     def test_zai_requires_activation_even_when_switches_are_on(self):
         reply = exchange("zai", [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
