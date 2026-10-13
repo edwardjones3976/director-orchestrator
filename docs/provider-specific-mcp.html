@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Provider-specific MCP adapters · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a></nav></header>
+<main id="content">
+<h1>Provider-specific MCP adapters</h1>
+<p>Two local stdio servers expose four explicit tools. The <code>director-xai</code>
+server offers <code>xai_status</code> and <code>xai_ask</code>; the
+<code>director-zai</code> server offers <code>zai_status</code> and
+<code>zai_ask</code>. Each server names one provider, reads only its credential,
+and calls only its pinned provider endpoint. No generic provider argument or
+fallback router is accepted.</p>
+<p>Perplexity has a separate <a href="https://github.com/perplexityai/modelcontextprotocol">official MCP server</a>
+at <code>https://api.perplexity.ai/mcp</code>. Register it as its own MCP entry
+with <code>PERPLEXITY_API_KEY</code> supplied through the host environment. Its
+tools remain Perplexity research calls; they do not route to Grok or Z.ai.</p>
+<p>These are advisory model calls. They create no Director work packet, production
+credit, review verdict, assignment, or external effect. Use the Director's
+existing admission, budget, review and merge paths for project work. MCP host
+registration alone grants no provider authority.</p>
+<h2>Readiness and spending</h2>
+<p>Status calls are free and report booleans only. Ask calls refuse by default.
+Both <code>DIRECTOR_MCP_PAID_CALLS_ENABLED=true</code> and the matching provider
+switch (<code>XAI_MCP_ENABLED=true</code> or <code>ZAI_MCP_ENABLED=true</code>)
+must be present in the server process. Grok reads <code>XAI_API_KEY</code> and
+Z.ai reads <code>ZAI_API_KEY</code> at call time. Z.ai additionally requires the
+owner's production activation record digest in <code>ZAI_PRODUCTION_ACTIVATION</code>.
+The old Z.ai trial ended on 29 September 2026 and is not an available route.
+Never put a credential value in an MCP registration command or tracked file.</p>
+<p>Ask input is capped at 24 KB, both requests disable model tools, output is
+bounded to 4000 tokens, and receipts are written under
+<code>~/.codex/provider-mcp-receipts/&lt;provider&gt;/</code> outside worktrees.
+Calls are capped at 40 xAI or 20 Z.ai attempts per UTC day. A repeated input
+digest refuses instead of silently retrying an ambiguous previous attempt.
+These limits apply only to this advisory interface; Director's own budgets and
+ledger remain authoritative for project execution.</p>
+<h2>Local registration</h2>
+<p>From the repository root, run the module with Python 3.12. Set
+<code>PYTHONPATH</code> in each host entry to the absolute repository root,
+using the host's environment configuration. Register each server separately:</p>
+<pre><code>py -3.12 -m scripts.provider_mcp.xai
+py -3.12 -m scripts.provider_mcp.zai</code></pre>
+<p>For Codex, the official Perplexity remote registration is:</p>
+<pre><code>codex mcp add perplexity --url https://api.perplexity.ai/mcp --bearer-token-env-var PERPLEXITY_API_KEY</code></pre>
+<p>Do not enable paid-call switches merely to test the MCP handshake. Verify
+<code>initialize</code>, <code>tools/list</code>, and the status tools first.
+Run <code>py -3.12 -m unittest tests.test_provider_mcp -v</code> to verify
+protocol separation and default refusals without network calls.</p>
+</main>
+<footer class="site-footer">Dedicated provider adapters · Advisory tools only</footer>
+</body>
+</html>
