@@ -160,6 +160,48 @@ class ProviderMcpTests(unittest.TestCase):
         self.assertTrue(reply["result"]["isError"])
         self.assertIn("unknown group tool", reply["result"]["content"][0]["text"])
 
+    def test_researchers_exposes_only_two_public_searches(self):
+        replies = exchange("researchers", [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "researchers_status", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "researchers_perplexity_search",
+                        "arguments": {"query": "public example"}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+             "params": {"name": "researchers_firecrawl_search",
+                        "arguments": {"query": "public example"}}},
+        ])
+        self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-03-26")
+        self.assertEqual({tool["name"] for tool in replies[1]["result"]["tools"]},
+                         {"researchers_status", "researchers_perplexity_search",
+                          "researchers_firecrawl_search"})
+        state = replies[2]["result"]["structuredContent"]
+        self.assertEqual(set(state["contacts"]), {"perplexity", "firecrawl"})
+        self.assertEqual(state["delivery"], "returned_to_caller")
+        self.assertFalse(state["authority_granted"])
+        for reply in replies[3:]:
+            self.assertTrue(reply["result"]["isError"])
+            self.assertIn("disabled", reply["result"]["content"][0]["text"])
+
+    def test_researchers_returns_source_results_without_rewriting(self):
+        from scripts.provider_mcp import researchers
+        hits = [{"title": "Example", "url": "https://example.org/source",
+                 "snippet": "Original source excerpt"}]
+        for provider, tool in (("perplexity", "researchers_perplexity_search"),
+                               ("firecrawl", "researchers_firecrawl_search")):
+            with self.subTest(provider=provider):
+                original = researchers.SEARCHERS[tool]
+                try:
+                    researchers.SEARCHERS[tool] = (provider, lambda query: {"results": hits})
+                    result = researchers.call(tool, {"query": "public example"})
+                finally:
+                    researchers.SEARCHERS[tool] = original
+                self.assertEqual(result["results"], hits)
+                self.assertEqual(result["query"], "public example")
+                self.assertEqual(result["delivery"], "returned_to_caller")
+
     def test_zai_requires_activation_even_when_switches_are_on(self):
         reply = exchange("zai", [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                   "params": {"name": "zai_ask", "arguments": {"text": "hello"}}}],

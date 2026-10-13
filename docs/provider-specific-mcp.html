@@ -52,6 +52,13 @@ non-admin provider lanes plus Grok Bot. Each group reports contact readiness
 and forwards a call to the exact underlying adapter. The original credential,
 activation, spending, and desktop-input gates still apply. Group registration
 does not grant Director authority.</p>
+<p>The separate <code>Researchers</code> wrapper exposes only Perplexity and
+Firecrawl public search tools and a readiness status tool. It returns the
+underlying source results to the invoking human or AI client as JSON text and
+structured MCP content, including the query and provider identity. It does
+not brief another provider, create an assignment, or assert a research verdict.
+Its searches retain the original provider switches, credential checks, and
+daily attempt caps.</p>
 <p>Perplexity has a separate <a href="https://github.com/perplexityai/modelcontextprotocol">official MCP server</a>
 at <code>https://api.perplexity.ai/mcp</code>. Register it as its own MCP entry
 with <code>PERPLEXITY_API_KEY</code> supplied through the host environment. Its
@@ -115,6 +122,11 @@ scripts.provider_mcp.admin_crew</code>.</p>
 installed <code>grok_bot_mcp.py</code> adapter in the <code>providers</code>
 and <code>workers</code> host entries. If the desktop adapter is unavailable,
 its status reports unconfigured and its tools refuse.</p>
+<p>The research-only entry runs
+<code>py -3.12 -m scripts.provider_mcp.researchers</code> and may be registered
+as <code>Researchers</code>. Its two actions accept only a public
+<code>query</code> of at most 500 characters and return results only to the
+calling MCP host.</p>
 <p>For Codex, the official Perplexity remote registration is:</p>
 <pre><code>codex mcp add perplexity --url https://api.perplexity.ai/mcp --bearer-token-env-var PERPLEXITY_API_KEY
 codex mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_PAT_TOKEN</code></pre>
