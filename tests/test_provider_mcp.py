@@ -113,6 +113,53 @@ class ProviderMcpTests(unittest.TestCase):
         self.assertFalse(state["authority_granted"])
         self.assertTrue(replies[2]["result"]["isError"])
 
+    def test_group_wrappers_have_exact_membership(self):
+        expected_admin = {"openai", "claude", "cursor"}
+        expected_workers = {"xai", "antigravity", "perplexity", "firecrawl",
+                            "copilot", "zai"}
+        for group, members in (("admin", expected_admin),
+                               ("providers", expected_admin | expected_workers),
+                               ("workers", expected_workers)):
+            with self.subTest(group=group):
+                replies = exchange(group, [
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": f"{group}_status", "arguments": {}}},
+                ], {"GROK_BOT_MCP_SCRIPT": ""})
+                self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-03-26")
+                names = {tool["name"] for tool in replies[1]["result"]["tools"]}
+                self.assertIn(f"{group}_status", names)
+                for member in members:
+                    self.assertTrue(any(name.startswith(f"{group}_{member}_")
+                                        for name in names))
+                self.assertEqual(any("_grok_bot_" in name for name in names),
+                                 group != "admin")
+                state = json.loads(replies[2]["result"]["content"][0]["text"])
+                self.assertEqual(set(state["contacts"]),
+                                 members | ({"grok_bot"} if group != "admin" else set()))
+                self.assertFalse(state["authority_granted"])
+
+    def test_group_actions_keep_original_gates_and_no_fallback(self):
+        for group, action in (("admin", "admin_openai_consult"),
+                              ("providers", "providers_openai_ask"),
+                              ("workers", "workers_xai_ask")):
+            with self.subTest(group=group):
+                reply = exchange(group, [{"jsonrpc": "2.0", "id": 1,
+                                          "method": "tools/call",
+                                          "params": {"name": action,
+                                                     "arguments": {"text": "test"}}}],
+                                 {"GROK_BOT_MCP_SCRIPT": ""})[0]
+                self.assertTrue(reply["result"]["isError"])
+                self.assertIn("disabled", reply["result"]["content"][0]["text"])
+        reply = exchange("workers", [{"jsonrpc": "2.0", "id": 1,
+                                       "method": "tools/call",
+                                       "params": {"name": "workers_openai_ask",
+                                                  "arguments": {"text": "test"}}}],
+                         {"GROK_BOT_MCP_SCRIPT": ""})[0]
+        self.assertTrue(reply["result"]["isError"])
+        self.assertIn("unknown group tool", reply["result"]["content"][0]["text"])
+
     def test_zai_requires_activation_even_when_switches_are_on(self):
         reply = exchange("zai", [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                   "params": {"name": "zai_ask", "arguments": {"text": "hello"}}}],

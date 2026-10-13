@@ -44,6 +44,14 @@ another administrator as a fallback.</p>
 exposes three explicitly named consult tools. It has no generic target argument
 and no project authority. Calls still pass through the matching individual
 adapter and its disabled-by-default switches.</p>
+<p>Three group wrappers offer named contact tools without a target selector:
+<code>admin</code> contains OpenAI, Claude, and Cursor administrator consult
+contacts; <code>providers</code> contains all nine AI provider lanes plus the
+separate Grok Bot desktop contact; <code>workers</code> contains the six
+non-admin provider lanes plus Grok Bot. Each group reports contact readiness
+and forwards a call to the exact underlying adapter. The original credential,
+activation, spending, and desktop-input gates still apply. Group registration
+does not grant Director authority.</p>
 <p>Perplexity has a separate <a href="https://github.com/perplexityai/modelcontextprotocol">official MCP server</a>
 at <code>https://api.perplexity.ai/mcp</code>. Register it as its own MCP entry
 with <code>PERPLEXITY_API_KEY</code> supplied through the host environment. Its
@@ -100,6 +108,13 @@ py -3.12 -m scripts.provider_mcp.admin_claude
 py -3.12 -m scripts.provider_mcp.admin_cursor</code></pre>
 <p>The combined entry runs <code>py -3.12 -m
 scripts.provider_mcp.admin_crew</code>.</p>
+<p>The group entries run <code>py -3.12 -m scripts.provider_mcp.admin</code>,
+<code>py -3.12 -m scripts.provider_mcp.providers</code>, and
+<code>py -3.12 -m scripts.provider_mcp.workers</code>. Set
+<code>GROK_BOT_MCP_SCRIPT</code> to the absolute path of the separately
+installed <code>grok_bot_mcp.py</code> adapter in the <code>providers</code>
+and <code>workers</code> host entries. If the desktop adapter is unavailable,
+its status reports unconfigured and its tools refuse.</p>
 <p>For Codex, the official Perplexity remote registration is:</p>
 <pre><code>codex mcp add perplexity --url https://api.perplexity.ai/mcp --bearer-token-env-var PERPLEXITY_API_KEY
 codex mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_PAT_TOKEN</code></pre>
