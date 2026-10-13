@@ -63,11 +63,13 @@ class ProviderMcpTests(unittest.TestCase):
         self.assertIn("activation", reply["result"]["content"][0]["text"])
 
     def test_zai_activation_format_matches_director(self):
-        from scripts.provider_mcp.zai import activated
+        from scripts.provider_mcp.zai import activated, redact
         with patch.dict(os.environ, {"ZAI_PRODUCTION_ACTIVATION": "a" * 64}):
             self.assertFalse(activated())
         with patch.dict(os.environ, {"ZAI_PRODUCTION_ACTIVATION": "sha256:" + "a" * 64}):
             self.assertTrue(activated())
+        self.assertEqual(redact({"synthetic-key": ["synthetic-key"]}, "synthetic-key"),
+                         {"[REDACTED]": ["[REDACTED]"]})
 
     def test_status_does_not_expose_key_value(self):
         reply = exchange("xai", [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",

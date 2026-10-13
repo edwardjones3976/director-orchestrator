@@ -17,7 +17,7 @@ def redact(value: object, key: str) -> object:
     if isinstance(value, list):
         return [redact(item, key) for item in value]
     if isinstance(value, dict):
-        return {name: redact(item, key) for name, item in value.items()}
+        return {redact(name, key): redact(item, key) for name, item in value.items()}
     return value
 
 
