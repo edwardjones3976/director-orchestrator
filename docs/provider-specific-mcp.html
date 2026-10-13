@@ -22,6 +22,11 @@ fallback router is accepted.</p>
 at <code>https://api.perplexity.ai/mcp</code>. Register it as its own MCP entry
 with <code>PERPLEXITY_API_KEY</code> supplied through the host environment. Its
 tools remain Perplexity research calls; they do not route to Grok or Z.ai.</p>
+<p>GitHub likewise has an <a href="https://github.com/github/github-mcp-server">official MCP server</a>
+at <code>https://api.githubcopilot.com/mcp/</code>. A separate
+<code>github</code> host entry can read <code>GITHUB_PAT_TOKEN</code> from the
+environment. Registration alone does not authenticate or authorize repository
+writes; Director's GitHub workflow and review gates still apply.</p>
 <p>These are advisory model calls. They create no Director work packet, production
 credit, review verdict, assignment, or external effect. Use the Director's
 existing admission, budget, review and merge paths for project work. MCP host
@@ -49,7 +54,8 @@ using the host's environment configuration. Register each server separately:</p>
 <pre><code>py -3.12 -m scripts.provider_mcp.xai
 py -3.12 -m scripts.provider_mcp.zai</code></pre>
 <p>For Codex, the official Perplexity remote registration is:</p>
-<pre><code>codex mcp add perplexity --url https://api.perplexity.ai/mcp --bearer-token-env-var PERPLEXITY_API_KEY</code></pre>
+<pre><code>codex mcp add perplexity --url https://api.perplexity.ai/mcp --bearer-token-env-var PERPLEXITY_API_KEY
+codex mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_PAT_TOKEN</code></pre>
 <p>Do not enable paid-call switches merely to test the MCP handshake. Verify
 <code>initialize</code>, <code>tools/list</code>, and the status tools first.
 Run <code>py -3.12 -m unittest tests.test_provider_mcp -v</code> to verify
