@@ -116,11 +116,20 @@ class TestOpenAIActivityLedgers(unittest.TestCase):
         self.assertEqual(stats["production_events"], 0)
 
     def test_utilization_verdicts(self):
+        empty = OpenAIActivityLedgers(
+            str(Path(self.temp_dir.name) / "empty_director.sqlite3"),
+            str(Path(self.temp_dir.name) / "empty_production.sqlite3"),
+        )
+        with self.assertRaisesRegex(DirectorUtilizationHold, "insufficient_history"):
+            empty.require_floor()
+
         # 19 events (insufficient history)
         ledgers1 = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
         for i in range(19):
             ledgers1.director.record_activity(f"id_d_{i}", "planning", "task1", "purpose")
         self.assertEqual(ledgers1.utilization()["verdict"], "insufficient_history")
+        with self.assertRaisesRegex(DirectorUtilizationHold, "insufficient_history"):
+            ledgers1.require_floor()
         
         # 15 director, 5 production = exactly 15/20 (meets_floor)
         dir_path2 = Path(self.temp_dir.name) / "director2.sqlite3"
