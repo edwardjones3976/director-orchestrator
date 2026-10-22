@@ -1,4 +1,3 @@
-<!-- [[Cursor | composer-2.5 | 2026-10-22 | 19:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
@@ -347,7 +346,6 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | END]] -->
-<!-- [[Cursor | composer-2.5 | 2026-10-22 | 19:30 UTC | END]] -->
 
 
 ## Canonical HTML documentation
